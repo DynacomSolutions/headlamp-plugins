@@ -10,9 +10,8 @@ import {
   registerRoute,
   registerSidebarEntry,
 } from '@kinvolk/headlamp-plugin/lib';
-import { CommonComponents } from '@kinvolk/headlamp-plugin/lib';
-import type { ResourceTableColumn } from '@kinvolk/headlamp-plugin/lib';
-const { SectionBox } = CommonComponents;
+import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import type { ResourceTableColumn } from '@kinvolk/headlamp-plugin/lib/components/common/Resource/ResourceTable';
 import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
 import Table from '@mui/material/Table';

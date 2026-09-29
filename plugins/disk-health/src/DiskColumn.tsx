@@ -5,9 +5,8 @@
  * data comes from the shared capacityStore, which polls once for the whole
  * table rather than once per row.
  */
-import { CommonComponents } from '@kinvolk/headlamp-plugin/lib';
+import { PercentageBar } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Typography from '@mui/material/Typography';
-const { PercentageBar } = CommonComponents;
 import React from 'react';
 import { formatBytes, formatPercent, NodeCapacity } from './capacity';
 import { CapacitySnapshot, getCapacitySnapshot, subscribeCapacity } from './capacityStore';

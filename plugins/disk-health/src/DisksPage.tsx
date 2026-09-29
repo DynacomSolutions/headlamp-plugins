@@ -4,9 +4,8 @@
  * Reuses the same capacity and SMART fetchers as the Nodes list column and
  * the per-node "Disks" details section, so the figures always agree.
  */
-import { CommonComponents } from '@kinvolk/headlamp-plugin/lib';
+import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Alert from '@mui/material/Alert';
-const { SectionBox } = CommonComponents;
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Table from '@mui/material/Table';
