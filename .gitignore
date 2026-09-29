@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.log
+.vscode/
+# Private deny-list of real identifiers. NEVER commit this file.
+.identifiers-denylist
+.env
+.env.*

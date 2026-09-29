@@ -1,0 +1,29 @@
+# Install once per clone:  pre-commit install   (installs pre-commit + pre-push)
+default_install_hook_types: [pre-commit, pre-push]
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+        stages: [pre-commit]
+  - repo: local
+    hooks:
+      - id: identifiers
+        name: identifier check (generic + private deny-list)
+        entry: scripts/check-identifiers.sh
+        language: system
+        stages: [pre-commit]
+      - id: identifiers-all
+        name: identifier check, whole tree (pre-push)
+        entry: scripts/check-identifiers.sh --all
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: gitleaks-history
+        name: gitleaks, full history (pre-push)
+        entry: gitleaks git --no-banner --redact --verbose
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
