@@ -1,5 +1,4 @@
 import { ApiProxy, ConfigStore, K8s } from '@kinvolk/headlamp-plugin/lib';
-import { getAppUrl } from '@kinvolk/headlamp-plugin/lib/helpers/getAppUrl';
 import React from 'react';
 import {
   buildLocalStatus,
@@ -24,7 +23,7 @@ let defaultsPromise: Promise<PluginConfig> | null = null;
  */
 function loadDefaults(): Promise<PluginConfig> {
   if (!defaultsPromise) {
-    defaultsPromise = fetch(`${getAppUrl()}plugins/${CONFIG_KEY}/defaults.json`)
+    defaultsPromise = fetch(`/plugins/${CONFIG_KEY}/defaults.json`)
       .then(r => (r.ok ? r.json() : {}))
       .then(j => (j && typeof j === 'object' ? (j as PluginConfig) : {}))
       .catch(() => ({}));
