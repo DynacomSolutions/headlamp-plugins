@@ -49,11 +49,19 @@ jobs:
           cache: npm
           cache-dependency-path: ${{ env.PLUGIN_DIR }}/package-lock.json
 
-      - name: Typecheck
+      - name: Typecheck and build
+        # Installs and builds the plugin's JS on the runner itself, rather
+        # than inside the docker build below. The self-hosted runners' DinD
+        # daemon defaults to a 1500 MTU, larger than this cluster's pod
+        # network MTU, so large packets get silently dropped and `npm ci`'s
+        # HTTPS fetches hang and crash when run inside `docker build`.
+        # Building here and having the Dockerfile only COPY dist/ avoids
+        # that network path entirely.
         working-directory: ${{ env.PLUGIN_DIR }}
         run: |
           npm ci
           npm run tsc
+          npm run build
 
       - name: Log in to registry
         env:
