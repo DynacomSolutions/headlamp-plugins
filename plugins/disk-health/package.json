@@ -1,7 +1,7 @@
 {
   "name": "disk-health",
   "version": "0.1.0",
-  "description": "Headlamp plugin: per-node SMART disk health, sourced from a Prometheus-compatible metrics service",
+  "description": "Headlamp plugin: per-node SMART disk health and disk capacity, sourced from a Prometheus-compatible metrics service",
   "scripts": {
     "start": "headlamp-plugin start",
     "build": "headlamp-plugin build",
