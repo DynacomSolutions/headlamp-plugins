@@ -1,10 +1,17 @@
 /*
  * disk-health: a Headlamp plugin that shows per-disk SMART health on the
- * Node details page, sourced from a Prometheus-compatible metrics service
- * that scrapes smartctl_exporter.
+ * Node details page, disk capacity on the Nodes list, and a cluster-wide
+ * Disks page, all sourced from a Prometheus-compatible metrics service that
+ * scrapes smartctl_exporter and the node/host filesystem collector.
  */
-import { ApiProxy, registerDetailsViewSection } from '@kinvolk/headlamp-plugin/lib';
+import {
+  registerDetailsViewSection,
+  registerResourceTableColumnsProcessor,
+  registerRoute,
+  registerSidebarEntry,
+} from '@kinvolk/headlamp-plugin/lib';
 import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import type { ResourceTableColumn } from '@kinvolk/headlamp-plugin/lib/components/common/Resource/ResourceTable';
 import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
 import Table from '@mui/material/Table';
@@ -14,176 +21,10 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-
-// A Prometheus-compatible Service (VictoriaMetrics, Prometheus, ...). Adjust
-// these defaults to match your cluster. Only the plain Prometheus HTTP API
-// (instant `/api/v1/query`) is used.
-const VM_NAMESPACE = 'monitoring';
-const VM_SERVICE = 'victoria-metrics';
-const VM_PORT = '8428';
-
-/** One row of the disk table, merged from several PromQL queries. */
-interface DiskRow {
-  device: string;
-  model?: string;
-  serial?: string;
-  healthy?: boolean;
-  reallocatedSectorCt?: number;
-  currentPendingSector?: number;
-  offlineUncorrectable?: number;
-  mediaErrors?: number;
-  temperatureC?: number;
-  powerOnHours?: number;
-}
-
-/** True if this row should be flagged red: failed health or any non-zero error counter. */
-function isRowError(row: DiskRow): boolean {
-  if (row.healthy === false) {
-    return true;
-  }
-  const counters = [row.reallocatedSectorCt, row.currentPendingSector, row.offlineUncorrectable, row.mediaErrors];
-  return counters.some(v => typeof v === 'number' && v > 0);
-}
-
-/**
- * Runs a single PromQL instant query against the metrics service through the
- * Kubernetes API server's Service proxy - the same
- * /api/v1/namespaces/<ns>/services/<name>:<port>/proxy/... path the
- * bundled Prometheus plugin uses for its own Service-backed queries.
- */
-async function queryMetrics(promql: string): Promise<any[]> {
-  const params = new URLSearchParams({ query: promql });
-  const url =
-    `/api/v1/namespaces/${VM_NAMESPACE}/services/${VM_SERVICE}:${VM_PORT}` +
-    `/proxy/api/v1/query?${params.toString()}`;
-
-  const response = await ApiProxy.request(url, { method: 'GET', isJSON: false });
-  if (!response.ok) {
-    throw new Error(`Metrics service returned HTTP ${response.status}`);
-  }
-  const body = await response.json();
-  if (body.status !== 'success') {
-    throw new Error(body.error || 'Metrics query failed');
-  }
-  return body.data?.result ?? [];
-}
-
-function numberFromValue(sample: any): number | undefined {
-  const raw = sample?.value?.[1];
-  if (raw === undefined) {
-    return undefined;
-  }
-  const n = Number(raw);
-  return Number.isNaN(n) ? undefined : n;
-}
-
-function deviceKey(labels: Record<string, string>): string | undefined {
-  return labels.device || labels.disk || labels.name;
-}
-
-/**
- * Fetches and merges every disk-health signal for one node into a table of
- * DiskRow, one row per SMART/NVMe device.
- */
-async function fetchDiskRows(nodeName: string): Promise<DiskRow[]> {
-  const nodeFilter = `node="${nodeName}"`;
-
-  const [status, mediaErrors, attributes, temperature, powerOnSeconds, info] = await Promise.all([
-    queryMetrics(`smartctl_device_smart_status{${nodeFilter}}`),
-    queryMetrics(`smartctl_device_media_errors{${nodeFilter}}`).catch(() => []),
-    queryMetrics(
-      `smartctl_device_attribute{${nodeFilter},attribute_name=~"Reallocated_Sector_Ct|Current_Pending_Sector|Offline_Uncorrectable|Power_On_Hours|Temperature_Celsius"}`
-    ).catch(() => []),
-    queryMetrics(`smartctl_device_temperature{${nodeFilter}}`).catch(() => []),
-    queryMetrics(`smartctl_device_power_on_seconds{${nodeFilter}}`).catch(() => []),
-    queryMetrics(`smartctl_device_info{${nodeFilter}}`).catch(() => []),
-  ]);
-
-  const rows = new Map<string, DiskRow>();
-
-  const rowFor = (device: string | undefined): DiskRow | undefined => {
-    if (!device) {
-      return undefined;
-    }
-    let row = rows.get(device);
-    if (!row) {
-      row = { device };
-      rows.set(device, row);
-    }
-    return row;
-  };
-
-  for (const sample of status) {
-    const device = deviceKey(sample.metric);
-    const row = rowFor(device);
-    if (row) {
-      row.healthy = numberFromValue(sample) === 1;
-    }
-  }
-
-  for (const sample of mediaErrors) {
-    const row = rowFor(deviceKey(sample.metric));
-    if (row) {
-      row.mediaErrors = numberFromValue(sample);
-    }
-  }
-
-  for (const sample of temperature) {
-    const row = rowFor(deviceKey(sample.metric));
-    if (row) {
-      row.temperatureC = numberFromValue(sample);
-    }
-  }
-
-  for (const sample of powerOnSeconds) {
-    const row = rowFor(deviceKey(sample.metric));
-    if (row) {
-      const seconds = numberFromValue(sample);
-      row.powerOnHours = seconds !== undefined ? Math.round(seconds / 3600) : undefined;
-    }
-  }
-
-  for (const sample of info) {
-    const row = rowFor(deviceKey(sample.metric));
-    if (row) {
-      row.model = sample.metric.model_name || sample.metric.model || row.model;
-      row.serial = sample.metric.serial_number || sample.metric.serial || row.serial;
-    }
-  }
-
-  for (const sample of attributes) {
-    const row = rowFor(deviceKey(sample.metric));
-    if (!row) {
-      continue;
-    }
-    const value = numberFromValue(sample);
-    switch (sample.metric.attribute_name) {
-      case 'Reallocated_Sector_Ct':
-        row.reallocatedSectorCt = value;
-        break;
-      case 'Current_Pending_Sector':
-        row.currentPendingSector = value;
-        break;
-      case 'Offline_Uncorrectable':
-        row.offlineUncorrectable = value;
-        break;
-      case 'Power_On_Hours':
-        if (row.powerOnHours === undefined) {
-          row.powerOnHours = value;
-        }
-        break;
-      case 'Temperature_Celsius':
-        if (row.temperatureC === undefined) {
-          row.temperatureC = value;
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  return Array.from(rows.values()).sort((a, b) => a.device.localeCompare(b.device));
-}
+import { getCapacitySnapshot, startCapacityPolling } from './capacityStore';
+import { DiskUsageBarChart, useNodeCapacity } from './DiskColumn';
+import { DisksPage } from './DisksPage';
+import { DiskRow, fetchDiskRows, isRowError } from './smart';
 
 function cell(value: number | string | undefined): string {
   return value === undefined || value === null ? '-' : String(value);
@@ -199,7 +40,7 @@ function DiskHealthSection({ nodeName }: { nodeName: string }): JSX.Element {
     setLoading(true);
     setError(null);
 
-    fetchDiskRows(nodeName)
+    fetchDiskRows(`node="${nodeName}"`)
       .then(result => {
         if (!cancelled) {
           setRows(result);
@@ -307,4 +148,72 @@ registerDetailsViewSection(({ resource }) => {
       <DiskHealthSection nodeName={nodeName} />
     </SectionBox>
   );
+});
+
+/**
+ * Adds a "Disk" column to the Nodes list view, next to the built-in CPU and
+ * Memory columns, showing capacity the same way (usage bar, used/total,
+ * percentage). One shared, polled query covers every node in the table.
+ */
+type NodeLike = { jsonData?: { metadata?: { name?: string } }; metadata?: { name?: string } };
+
+function nodeNameOf(node: NodeLike): string {
+  return node.jsonData?.metadata?.name || node.metadata?.name || '';
+}
+
+/** The actual table cell: a real component, so it can subscribe to the shared capacityStore. */
+function NodeDiskCell({ nodeName }: { nodeName: string }): JSX.Element {
+  const { capacity, loading } = useNodeCapacity();
+  return <DiskUsageBarChart nodeName={nodeName} capacity={capacity} loading={loading} />;
+}
+
+/**
+ * The processor itself is a plain function called synchronously during
+ * NodeList's render (it is not a React component), so it must not call
+ * hooks. It starts/reads the shared capacityStore snapshot directly for
+ * sorting/filtering (getValue), while `render` mounts NodeDiskCell, a real
+ * component that subscribes to the store so the cell re-renders as new
+ * data arrives.
+ */
+function NodesDiskColumn({ id, columns }: { id: string; columns: unknown[] }): unknown[] {
+  if (id !== 'headlamp-nodes') {
+    return columns;
+  }
+
+  // Ensures the shared poll starts even before any row has mounted.
+  startCapacityPolling();
+
+  const diskColumn: ResourceTableColumn<NodeLike> = {
+    id: 'disk',
+    label: 'Disk',
+    gridTemplate: 'min-content',
+    disableFiltering: true,
+    getValue: node => getCapacitySnapshot().capacity.get(nodeNameOf(node))?.usedBytes ?? 0,
+    render: node => <NodeDiskCell nodeName={nodeNameOf(node)} />,
+  };
+
+  // Insert right after the built-in "memory" column, matching where the
+  // spec asks for it to sit ("next to CPU and Memory").
+  const memoryIndex = columns.findIndex((c: any) => c?.id === 'memory');
+  const newColumns = [...columns];
+  newColumns.splice(memoryIndex >= 0 ? memoryIndex + 1 : columns.length, 0, diskColumn);
+  return newColumns;
+}
+
+registerResourceTableColumnsProcessor(NodesDiskColumn as any);
+
+registerSidebarEntry({
+  parent: null,
+  name: 'disks',
+  label: 'Disks',
+  url: '/disks',
+  icon: 'mdi:harddisk',
+});
+
+registerRoute({
+  path: '/disks',
+  sidebar: 'disks',
+  name: 'disks',
+  exact: true,
+  component: DisksPage,
 });
