@@ -1,4 +1,4 @@
-import type { PluginSettingsDetailsProps } from '@kinvolk/headlamp-plugin/lib/plugin/pluginsSlice';
+import type { PluginSettingsDetailsProps } from '@kinvolk/headlamp-plugin/lib';
 import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';

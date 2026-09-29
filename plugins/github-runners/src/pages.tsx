@@ -1,4 +1,5 @@
-import { Link as HLink, SectionBox, StatusLabel, Table } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
+import { CommonComponents } from '@kinvolk/headlamp-plugin/lib';
+const { Link: HLink, SectionBox, StatusLabel, Table } = CommonComponents;
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
