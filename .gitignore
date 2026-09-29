@@ -1,6 +1,7 @@
 node_modules/
 dist/
 *.log
+.eslintcache
 .vscode/
 # Private deny-list of real identifiers. NEVER commit this file.
 .identifiers-denylist
