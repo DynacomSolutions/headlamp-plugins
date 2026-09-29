@@ -1,17 +1,16 @@
-# Builds the github-runners Headlamp plugin (TypeScript/React, official
-# @kinvolk/headlamp-plugin tooling) and ships only the compiled output. Meant
-# to run as a Headlamp initContainer that copies /plugin into the shared
-# plugins volume, then exits.
-FROM node:22-alpine AS build
-WORKDIR /src
-COPY package.json package-lock.json tsconfig.json ./
-RUN npm ci
-COPY src ./src
-RUN npx headlamp-plugin tsc && npx headlamp-plugin build
-
-# Minimal runtime: only the built plugin, owned by a non-root user.
-FROM alpine:3.20 AS runtime
+# Ships the github-runners Headlamp plugin's already-built dist/ output.
+# Meant to run as a Headlamp initContainer that copies /plugin into the
+# shared plugins volume, then exits.
+#
+# The JS is built by the CI workflow on the runner itself (setup-node + `npm
+# ci`/`npm run build`), not inside this docker build: the runner's DinD
+# daemon's default MTU (1500) is larger than this cluster's pod network MTU,
+# and large packets get silently dropped, which makes `npm ci`'s HTTPS
+# fetches hang and crash when run inside `docker build`. Doing the
+# network-heavy install on the runner instead of inside DinD avoids that.
+# See .github/workflows/image.yml.
+FROM alpine:3.20
 RUN addgroup -g 101 headlamp && adduser -D -u 100 -G headlamp headlamp
-COPY --from=build --chown=100:101 /src/dist /plugin
-COPY --from=build --chown=100:101 /src/package.json /plugin/
+COPY --chown=100:101 dist /plugin
+COPY --chown=100:101 package.json /plugin/
 USER 100:101
