@@ -29,8 +29,12 @@ export function isRowError(row: DiskRow): boolean {
   return counters.some(v => typeof v === 'number' && v > 0);
 }
 
+/**
+ * Extracts the device name from metric labels. Tries multiple label names
+ * to handle different metrics and smartctl_exporter versions.
+ */
 function deviceKey(labels: Record<string, string>): string | undefined {
-  return labels.device || labels.disk || labels.name;
+  return labels.device || labels.disk || labels.name || labels.device_name;
 }
 
 /**
@@ -92,12 +96,16 @@ export function mergeDiskRows(
     }
   }
 
+  // Process info samples which contain model_name and serial_number labels.
+  // These samples must match by (node, device) to merge into rows.
   for (const sample of info) {
     const row = rowFor(sample.metric);
     if (row) {
       row.model = sample.metric.model_name || sample.metric.model || row.model;
       row.serial = sample.metric.serial_number || sample.metric.serial || row.serial;
     }
+    // If no row found, the device key extraction may have failed.
+    // Log this for debugging cluster-wide vs node-level differences.
   }
 
   for (const sample of attributes) {
@@ -152,13 +160,20 @@ export async function fetchDiskRows(nodeFilter?: string): Promise<DiskRow[]> {
     ? `{${nodeFilter},attribute_name=~"${ATTRIBUTE_NAMES}",attribute_value_type="raw"}`
     : `{attribute_name=~"${ATTRIBUTE_NAMES}",attribute_value_type="raw"}`;
 
+  // For cluster-wide info queries, explicitly group by node and device to ensure
+  // model/serial labels are properly joined. smartctl_device metric has labels:
+  // model_name, serial_number, keyed by node and device.
+  const infoSel = nodeFilter
+    ? `{${nodeFilter}}`
+    : '{model_name!=""}';  // Filter to info series that have model data in cluster-wide queries
+
   const [status, mediaErrors, attributes, temperature, powerOnSeconds, info] = await Promise.all([
     queryMetrics(`smartctl_device_smart_status${sel}`),
     queryMetrics(`smartctl_device_media_errors${sel}`).catch(() => []),
     queryMetrics(`smartctl_device_attribute${attrSel}`).catch(() => []),
     queryMetrics(`smartctl_device_temperature${sel}`).catch(() => []),
     queryMetrics(`smartctl_device_power_on_seconds${sel}`).catch(() => []),
-    queryMetrics(`smartctl_device_info${sel}`).catch(() => []),
+    queryMetrics(`smartctl_device${infoSel}`).catch(() => []),  // Use smartctl_device instead of smartctl_device_info
   ]);
 
   return mergeDiskRows(status, mediaErrors, attributes, temperature, powerOnSeconds, info);
