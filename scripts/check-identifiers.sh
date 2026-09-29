@@ -71,7 +71,16 @@ report "private/internal IP address" "$out"
 out=$(grep -InP --color=never "$host_re" -- "${scan[@]}" 2>/dev/null | grep -v "$allow")
 report "internal hostname (*.local / *.internal)" "$out"
 
-out=$(grep -InoP --color=never "$mail_re" -- "${scan[@]}" 2>/dev/null \
+# Lock files carry third-party package author emails; skip them for this check.
+mail_scan=()
+for f in "${scan[@]}"; do
+  case "$f" in
+    *package-lock.json | *yarn.lock | *pnpm-lock.yaml) ;;
+    *) mail_scan+=("$f") ;;
+  esac
+done
+[ "${#mail_scan[@]}" -gt 0 ] || mail_scan=(/dev/null)
+out=$(grep -InoP --color=never "$mail_re" -- "${mail_scan[@]}" 2>/dev/null \
   | grep -v "$allow" \
   | grep -viE '@example\.(com|org|net)$|noreply|no-reply|^[^:]+:[0-9]+:git@github\.com$')
 report "email address (only @example.com or noreply allowed)" "$out"
