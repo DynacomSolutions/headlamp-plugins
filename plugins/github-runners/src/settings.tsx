@@ -3,13 +3,14 @@ import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { useConfig } from './data';
 import type { PluginConfig } from './types';
 
 export function Settings(props: PluginSettingsDetailsProps) {
   const { data, onDataChange } = props;
-  const cfg = (data || {}) as PluginConfig;
+  const cfg = useConfig();
   const set = (key: keyof PluginConfig) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    onDataChange?.({ ...cfg, [key]: e.target.value });
+    onDataChange?.({ ...((data || {}) as PluginConfig), [key]: e.target.value });
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={640}>
       <Typography variant="body2">

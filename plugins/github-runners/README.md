@@ -57,6 +57,12 @@ Expected schema (all fields are optional except those listed):
 // history.json: { "generated_at": "...", "jobs": [/* Job */] }
 ```
 
+To preconfigure every browser, ship a `defaults.json` next to `main.js` in the
+plugin directory (for example written by an initContainer). It uses the same keys
+as the settings (`statusUrl`, `historyUrl`, `externalWorkerGroup`,
+`externalWorkerVersion`, `nodeAliases`); non-empty values a user saves in the
+settings override it.
+
 Data older than 180 seconds is flagged stale. Kubernetes data stays the source
 of truth for what exists; the endpoint only overlays detail.
 

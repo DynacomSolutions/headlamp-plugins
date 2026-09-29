@@ -1,4 +1,5 @@
 import { ApiProxy, ConfigStore, K8s } from '@kinvolk/headlamp-plugin/lib';
+import { getAppUrl } from '@kinvolk/headlamp-plugin/lib/helpers/getAppUrl';
 import React from 'react';
 import {
   buildLocalStatus,
@@ -13,6 +14,41 @@ import type { History, PluginConfig, Raw, Status } from './types';
 export const CONFIG_KEY = 'github-runners';
 export const configStore = new ConfigStore<PluginConfig>(CONFIG_KEY);
 export const POLL_MS = 10000;
+
+let defaultsPromise: Promise<PluginConfig> | null = null;
+
+/**
+ * Deployment-supplied defaults: an optional defaults.json shipped next to
+ * main.js in the plugin directory (Headlamp serves it as a static file). Lets
+ * an installer preconfigure the endpoint without touching each browser.
+ */
+function loadDefaults(): Promise<PluginConfig> {
+  if (!defaultsPromise) {
+    defaultsPromise = fetch(`${getAppUrl()}plugins/${CONFIG_KEY}/defaults.json`)
+      .then(r => (r.ok ? r.json() : {}))
+      .then(j => (j && typeof j === 'object' ? (j as PluginConfig) : {}))
+      .catch(() => ({}));
+  }
+  return defaultsPromise;
+}
+
+/** Stored settings layered over the deployment defaults (non-empty values win). */
+export function useConfig(): PluginConfig {
+  const stored = (configStore.useConfig()() || {}) as PluginConfig;
+  const [defaults, setDefaults] = React.useState<PluginConfig>({});
+  React.useEffect(() => {
+    let alive = true;
+    loadDefaults().then(d => alive && setDefaults(d));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return React.useMemo(() => {
+    const out: PluginConfig = { ...defaults };
+    for (const [k, v] of Object.entries(stored)) if (v) (out as Record<string, string>)[k] = v as string;
+    return out;
+  }, [defaults, stored]);
+}
 
 const ARC_GROUP = 'actions.github.com';
 const ARC_VERSION = 'v1alpha1';
@@ -164,7 +200,7 @@ export interface Board {
 }
 
 export function useBoard(): Board {
-  const cfg = configStore.useConfig()() || {};
+  const cfg = useConfig();
   const nodes = useKind(K8s.ResourceClasses.Node);
   const pods = useKind(K8s.ResourceClasses.Pod);
   const sets = useKind(AutoscalingRunnerSet);

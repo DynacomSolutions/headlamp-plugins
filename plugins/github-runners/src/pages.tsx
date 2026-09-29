@@ -10,7 +10,7 @@ import Tabs from '@mui/material/Tabs';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Board, configStore, useBoard } from './data';
+import { Board, useBoard } from './data';
 import {
   ageSeconds,
   ago,
@@ -527,7 +527,7 @@ export function GitHubRunnersPage() {
     const t = setInterval(() => setTick(x => x + 1), 1000);
     return () => clearInterval(t);
   }, []);
-  const hasConfig = !!(configStore.get() || {}).statusUrl;
+  const hasConfig = board.remote.configured;
 
   const filters: Filters = { nodes: nodeSel, scaleSets: setSel, terms: parseTerms(q) };
   const toggle = (list: string[], set: (v: string[]) => void, v: string) =>
