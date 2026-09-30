@@ -7,6 +7,7 @@ Plugins for [Headlamp](https://headlamp.dev/), built with
 | --- | --- |
 | [`plugins/disk-health`](plugins/disk-health) | Per-node SMART disk health and disk capacity, on the Node details page, the Nodes list, and a cluster-wide Disks page (needs a Prometheus-compatible query endpoint) |
 | [`plugins/github-runners`](plugins/github-runners) | Actions Runner Controller (ARC) runner dashboard: scale sets, runners, pods, jobs, optional history |
+| [`plugins/sites`](plugins/sites) | Directory of the sites served by Emissary Mappings, folded by host, live, with links to each site and its Mapping resources |
 
 Each plugin has its own `package.json`, `Dockerfile` and README. The image is
 intended to run as a Headlamp initContainer that copies `/plugin` into the
