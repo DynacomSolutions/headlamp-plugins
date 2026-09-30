@@ -16,9 +16,23 @@ capacity and SMART/NVMe health throughout the cluster:
   percentage - the same style as those columns.
 - A cluster-wide "Disks" page (`/c/<cluster>/disks`) with a per-node capacity
   summary (used/total plus a per-filesystem breakdown: mountpoint, device,
-  filesystem, size, used, available, percentage) and every SMART/NVMe disk
-  across every node, grouped by node, with failing disks sorted to the top
-  and highlighted.
+  filesystem, size, used, available, percentage), a per-node, per-disk
+  **performance** table, and every SMART/NVMe disk across every node,
+  grouped by node, with failing disks sorted to the top and highlighted.
+
+  The performance table exists because SMART health can look perfectly
+  clean while a disk is still catastrophically slow to service IO - no
+  error counter moves, but every write takes hundreds or thousands of
+  milliseconds. It shows, per physical disk, over a trailing 5-minute
+  window: write and read latency (ms), write and read IOPS, write and read
+  throughput (MB/s), utilisation (%), and discard/TRIM activity (ops/s and
+  MB/s). Rows are highlighted amber/red by write latency or utilisation
+  (see thresholds in `src/performance.ts`), and each node also shows its IO
+  pressure (PSI "some" stalled percentage) where the kernel exposes it.
+  Only current values are shown - this repository's plugin has no charting
+  library or history-store dependency yet, so a sparkline/history view was
+  out of scope for this change; see "Where the data comes from" below for
+  the counters a future history view could read from.
 
 ## Where the data comes from
 
@@ -40,6 +54,26 @@ excluded, and figures are deduped by `(node, device)` so a device that is
 bind-mounted at more than one mountpoint is only counted once. The Nodes
 list column polls once for the whole table (not once per row) and refreshes
 every 60 seconds.
+
+Disk-performance figures (see `src/performance.ts`) come from node-exporter's
+per-device block-IO counters, each turned into a 5-minute rate:
+
+- Write/read latency (ms): `rate(node_disk_write_time_seconds_total[5m]) /
+  rate(node_disk_writes_completed_total[5m]) * 1000` (same shape for `read_*`).
+- Write/read IOPS: `rate(node_disk_writes_completed_total[5m])` (and `reads_*`).
+- Write/read throughput (MB/s): `rate(node_disk_written_bytes_total[5m]) / 1e6`
+  (and `read_bytes_total`).
+- Utilisation (%): `rate(node_disk_io_time_seconds_total[5m]) * 100`.
+- Discard ops/s: `rate(node_disk_discards_completed_total[5m])`; discarded
+  MB/s: `rate(node_disk_discarded_sectors_total[5m]) * 512 / 1e6` (the
+  counter is in fixed 512-byte sectors).
+- Per-node IO pressure (%): `rate(node_pressure_io_stalled_seconds_total[5m])
+  * 100`, from the kernel's PSI accounting where available.
+
+`loop*` and `zram*` devices are excluded as pseudo devices; `dm-` (device
+mapper) devices are deliberately kept, because a node that boots from an LVM
+root only exposes that root filesystem's latency on its `dm-` device, and
+that is exactly the IO path etcd's `fsync`/`fdatasync` calls go through.
 
 No extra RBAC is needed beyond Services proxy access, which the built-in
 `view` ClusterRole grants.
