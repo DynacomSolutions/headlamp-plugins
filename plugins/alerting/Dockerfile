@@ -13,4 +13,6 @@ FROM alpine:3.20
 RUN addgroup -g 101 headlamp && adduser -D -u 100 -G headlamp headlamp
 COPY --chown=100:101 dist /plugin
 COPY --chown=100:101 package.json /plugin/
+# Push service worker, served as /plugins/alerting/sw.js beside main.js.
+COPY --chown=100:101 sw.js /plugin/sw.js
 USER 100:101

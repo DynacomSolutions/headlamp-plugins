@@ -19,7 +19,7 @@ metadata:
   name: phone
   namespace: monitoring
 spec:
-  type: ntfy            # email | ntfy | pushover | webhook
+  type: ntfy            # email | ntfy | pushover | webhook | webpush
   enabled: true
   ntfy:
     server: https://ntfy.example.com
@@ -52,6 +52,31 @@ Other channel types: `email.to[]`, `pushover{userKeySecretRef,tokenSecretRef}`,
 the configured namespace (names and key names only; values are never displayed).
 If listing Secrets is forbidden or fails, the pickers become free-text inputs
 for the Secret name and key, so no Secret read access is needed.
+
+## Web push (desktop and app notifications)
+
+A `webpush` channel (`spec.webpush` with optional `ttl` seconds and `urgency`)
+delivers to browsers and installed web apps. Each device is a namespaced
+`PushSubscription` resource (`spec.channel`, `endpoint`, `keys.p256dh`,
+`keys.auth`, optional `label` and `userAgent`; `status.lastResult` and
+`lastError` written by the backend). On the Channels page, a section appears
+when a webpush channel exists:
+
+- **Enable on this device** asks for notification permission, registers the
+  service worker, subscribes with the public key the state API returns as
+  `webpush.publicKey`, and creates the `PushSubscription`.
+- **Disable on this device** deletes it and unsubscribes the browser.
+- **Send test** uses the normal test-send annotation and reaches every device
+  of the channel.
+- The device list shows every subscription and can delete any of them.
+
+The service worker (`sw.js`) is shipped beside `main.js`, so it is served at
+`/plugins/alerting/sw.js` with the default scope `/plugins/alerting/`, which is
+enough for push. It shows the notification (urgent ones stay until dismissed)
+and focuses or opens the dashboard on click. Push needs a secure context. On
+iPhone and iPad it only works from an app added to the Home Screen; the page
+says so. The service account needs get, list, watch, create and delete on
+`pushsubscriptions` in the namespace.
 
 ## Settings
 
