@@ -43,11 +43,12 @@ export function useSettings(): Settings {
   return React.useMemo(() => resolveSettings(stored, defaults), [stored, defaults]);
 }
 
-type Kind = 'NotificationChannel' | 'AlertRoute';
+type Kind = 'NotificationChannel' | 'AlertRoute' | 'PushSubscription';
 
 const PLURAL: Record<Kind, string> = {
   NotificationChannel: 'notificationchannels',
   AlertRoute: 'alertroutes',
+  PushSubscription: 'pushsubscriptions',
 };
 
 /** Custom resource class for the configured group and version. */
@@ -212,4 +213,21 @@ export function useStateApi(url: string): StateResult {
     };
   }, [url]);
   return res;
+}
+
+/** Create a PushSubscription; an existing one with the same name (same endpoint) is replaced. */
+export async function createSubscription(s: Settings, resource: any): Promise<void> {
+  try {
+    await ApiProxy.request(collectionPath(s, 'PushSubscription'), {
+      method: 'POST',
+      body: JSON.stringify(resource),
+    });
+  } catch (e: any) {
+    if ((e as any)?.status !== 409) throw e;
+    await deleteLive(s, 'PushSubscription', resource.metadata.name);
+    await ApiProxy.request(collectionPath(s, 'PushSubscription'), {
+      method: 'POST',
+      body: JSON.stringify(resource),
+    });
+  }
 }

@@ -53,7 +53,8 @@ export function secretListingFailed(err: unknown): boolean {
   return err !== null && err !== undefined && err !== false;
 }
 
-export const CHANNEL_TYPES = ['email', 'ntfy', 'pushover', 'webhook'] as const;
+export const CHANNEL_TYPES = ['email', 'ntfy', 'pushover', 'webhook', 'webpush'] as const;
+export const WEBPUSH_URGENCIES = ['very-low', 'low', 'normal', 'high'] as const;
 export type ChannelType = (typeof CHANNEL_TYPES)[number];
 export const ROUTE_KINDS = ['urgent', 'recovery', 'summary'] as const;
 export type RouteKind = (typeof ROUTE_KINDS)[number];
@@ -76,6 +77,8 @@ export interface ChannelForm {
   pushoverTokenSecret: SecretRef;
   webhookUrl: string;
   webhookHeadersSecret: SecretRef;
+  webpushTtl: string;
+  webpushUrgency: string;
 }
 
 export interface RouteForm {
@@ -106,6 +109,8 @@ export function emptyChannel(): ChannelForm {
     pushoverTokenSecret: emptyRef(),
     webhookUrl: '',
     webhookHeadersSecret: emptyRef(),
+    webpushTtl: '',
+    webpushUrgency: '',
   };
 }
 
@@ -158,6 +163,10 @@ export function channelFromResource(cr: any): ChannelForm {
     f.webhookUrl = s.webhook.url || '';
     f.webhookHeadersSecret = refOf(s.webhook.headersSecretRef);
   }
+  if (s.webpush) {
+    f.webpushTtl = s.webpush.ttl === undefined ? '' : String(s.webpush.ttl);
+    f.webpushUrgency = s.webpush.urgency || '';
+  }
   return f;
 }
 
@@ -204,6 +213,12 @@ export function channelResource(f: ChannelForm, s: Settings): any {
     const w: any = { url: f.webhookUrl };
     if (hasRef(f.webhookHeadersSecret)) w.headersSecretRef = refOut(f.webhookHeadersSecret);
     spec.webhook = w;
+  }
+  if (f.type === 'webpush') {
+    const w: any = {};
+    if (/^\d+$/.test(f.webpushTtl.trim())) w.ttl = Number(f.webpushTtl.trim());
+    if (f.webpushUrgency) w.urgency = f.webpushUrgency;
+    spec.webpush = w;
   }
   return {
     apiVersion: apiVersion(s),
@@ -258,6 +273,10 @@ export function validateChannel(f: ChannelForm): string[] {
     ] as const) {
       if (!r.name || !r.key) e.push(`Pushover ${label} secret and key are required.`);
     }
+  }
+  if (f.type === 'webpush') {
+    if (f.webpushTtl.trim() !== '' && !/^\d+$/.test(f.webpushTtl.trim()))
+      e.push('Web push TTL must be a whole number of seconds.');
   }
   if (f.type === 'webhook') {
     if (!/^https?:\/\//.test(f.webhookUrl)) e.push('Webhook URL must be an http(s) URL.');
@@ -428,6 +447,8 @@ export interface StatePayload {
   routing?: string;
   channels: ChannelInfo[];
   targets: TargetState[];
+  /** VAPID application server key (base64url) from the state API, when web push is available. */
+  webpushPublicKey?: string;
 }
 
 /**
@@ -478,6 +499,7 @@ export function parseStatePayload(json: any): StatePayload {
     routing: str(json?.routing),
     channels,
     targets,
+    webpushPublicKey: str(json?.webpush?.publicKey),
   };
 }
 
@@ -492,4 +514,117 @@ export function stateSeverity(state: string): 'success' | 'error' | 'warning' {
   if (['down', 'firing', 'failed', 'critical', 'alerting', 'urgent', 'error'].includes(s))
     return 'error';
   return 'warning';
+}
+
+// ---- Web push (devices) ----
+
+export interface DeviceSubscription {
+  endpoint: string;
+  keys: { p256dh: string; auth: string };
+}
+
+/** Decodes a base64url VAPID public key into the bytes pushManager.subscribe expects. */
+export function urlBase64ToBytes(value: string): Uint8Array {
+  const padded = value + '='.repeat((4 - (value.length % 4)) % 4);
+  const raw = atob(padded.replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+
+function bytesToUrlBase64(buf: ArrayBuffer | null | undefined): string {
+  if (!buf) return '';
+  let bin = '';
+  new Uint8Array(buf).forEach(b => (bin += String.fromCharCode(b)));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** Reads the endpoint and keys out of a browser PushSubscription. */
+export function subscriptionParts(sub: {
+  endpoint: string;
+  getKey: (name: 'p256dh' | 'auth') => ArrayBuffer | null;
+}): DeviceSubscription {
+  return {
+    endpoint: sub.endpoint,
+    keys: {
+      p256dh: bytesToUrlBase64(sub.getKey('p256dh')),
+      auth: bytesToUrlBase64(sub.getKey('auth')),
+    },
+  };
+}
+
+/** Stable resource name for an endpoint, so enabling twice replaces rather than duplicates. */
+export async function subscriptionName(endpoint: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+  const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('');
+  return `push-${hex.slice(0, 20)}`;
+}
+
+/** Short human label such as "Chrome on Linux" from a user agent string. */
+export function deviceLabel(ua: string): string {
+  const browser = /Edg\//.test(ua)
+    ? 'Edge'
+    : /OPR\/|Opera/.test(ua)
+    ? 'Opera'
+    : /Firefox\//.test(ua)
+    ? 'Firefox'
+    : /Chrome\/|CriOS\//.test(ua)
+    ? 'Chrome'
+    : /Safari\//.test(ua)
+    ? 'Safari'
+    : 'Browser';
+  const os = /iPhone|iPad|iPod/.test(ua)
+    ? 'iOS'
+    : /Android/.test(ua)
+    ? 'Android'
+    : /Windows/.test(ua)
+    ? 'Windows'
+    : /Mac OS X|Macintosh/.test(ua)
+    ? 'macOS'
+    : /CrOS/.test(ua)
+    ? 'ChromeOS'
+    : /Linux/.test(ua)
+    ? 'Linux'
+    : 'unknown OS';
+  return `${browser} on ${os}`;
+}
+
+export type PushSupport = 'ok' | 'needs-install' | 'unsupported';
+
+/**
+ * iOS and iPadOS only deliver web push to a web app added to the Home Screen,
+ * and expose PushManager only in that mode, so a missing PushManager on iOS
+ * means "install first" rather than "unsupported".
+ */
+export function pushSupport(env: {
+  ua: string;
+  standalone: boolean;
+  hasServiceWorker: boolean;
+  hasPushManager: boolean;
+  hasNotification: boolean;
+}): PushSupport {
+  const ios = /iPhone|iPad|iPod/.test(env.ua);
+  if (ios && !env.standalone) return 'needs-install';
+  if (env.hasServiceWorker && env.hasPushManager && env.hasNotification) return 'ok';
+  return 'unsupported';
+}
+
+export function subscriptionResource(
+  channel: string,
+  sub: DeviceSubscription,
+  name: string,
+  label: string,
+  userAgent: string,
+  s: Settings
+): any {
+  return {
+    apiVersion: apiVersion(s),
+    kind: 'PushSubscription',
+    metadata: { name, namespace: s.namespace },
+    spec: {
+      channel,
+      endpoint: sub.endpoint,
+      keys: sub.keys,
+      userAgent: userAgent.slice(0, 512),
+      label: label.slice(0, 128),
+    },
+  };
 }

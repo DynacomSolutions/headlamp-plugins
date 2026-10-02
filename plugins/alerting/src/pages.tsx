@@ -18,6 +18,7 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import {
   applyLive,
+  createSubscription,
   deleteLive,
   requestTestSend,
   useResources,
@@ -31,6 +32,7 @@ import {
   ChannelForm,
   channelFromResource,
   channelResource,
+  deviceLabel,
   emptyChannel,
   emptyRoute,
   manifestFileName,
@@ -42,11 +44,16 @@ import {
   SecretRef,
   Settings,
   stateSeverity,
+  subscriptionName,
+  subscriptionParts,
+  subscriptionResource,
   testState,
   toYaml,
   validateChannel,
   validateRoute,
+  WEBPUSH_URGENCIES,
 } from './model';
+import { currentSupport, existingSubscription, subscribeDevice, unsubscribeDevice } from './push';
 
 type Kind = 'NotificationChannel' | 'AlertRoute';
 
@@ -348,6 +355,34 @@ function ChannelEditor(props: {
               />
             </>
           )}
+          {f.type === 'webpush' && (
+            <>
+              <Typography variant="body2">
+                Delivers to browsers and installed apps that opt in from the Channels page. The
+                devices are not stored in this channel.
+              </Typography>
+              <TextField
+                label="TTL in seconds (optional)"
+                size="small"
+                value={f.webpushTtl}
+                onChange={e => up({ webpushTtl: e.target.value })}
+              />
+              <TextField
+                select
+                label="Urgency (optional)"
+                size="small"
+                value={f.webpushUrgency}
+                onChange={e => up({ webpushUrgency: e.target.value })}
+              >
+                <MenuItem value="">Automatic</MenuItem>
+                {WEBPUSH_URGENCIES.map(u => (
+                  <MenuItem key={u} value={u}>
+                    {u}
+                  </MenuItem>
+                ))}
+              </TextField>
+            </>
+          )}
           {problems.length > 0 && (
             <Alert severity="warning">
               {problems.map(p => (
@@ -403,9 +438,176 @@ function TestCell({ cr, settings }: { cr: any; settings: Settings }) {
   );
 }
 
+/** Per-device opt-in for webpush channels: enable or disable here, list and remove devices. */
+function DevicesPanel({
+  settings,
+  channels,
+  publicKey,
+}: {
+  settings: Settings;
+  channels: any[];
+  publicKey?: string;
+}) {
+  const subs = useResources('PushSubscription', settings);
+  const support = React.useMemo(() => currentSupport(), []);
+  const [endpoint, setEndpoint] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [msg, setMsg] = React.useState<{ severity: 'success' | 'error'; text: string } | null>(
+    null
+  );
+  const refresh = React.useCallback(
+    () =>
+      existingSubscription()
+        .then(sub => setEndpoint(sub ? sub.endpoint : null))
+        .catch(() => setEndpoint(null)),
+    []
+  );
+  React.useEffect(() => {
+    refresh();
+  }, [refresh]);
+  const mine = (channel: string) =>
+    subs.items.find(
+      (i: any) => i.spec?.channel === channel && endpoint && i.spec?.endpoint === endpoint
+    );
+  const run = async (fn: () => Promise<string>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      setMsg({ severity: 'success', text: await fn() });
+    } catch (e: any) {
+      setMsg({ severity: 'error', text: String(e?.message || e) });
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+  const enable = (channel: string) =>
+    run(async () => {
+      if (!publicKey) throw new Error('The state API did not provide a web push key.');
+      const sub = await subscribeDevice(publicKey);
+      const parts = subscriptionParts(sub);
+      const ua = navigator.userAgent;
+      await createSubscription(
+        settings,
+        subscriptionResource(
+          channel,
+          parts,
+          await subscriptionName(parts.endpoint),
+          deviceLabel(ua),
+          ua,
+          settings
+        )
+      );
+      return `Notifications are enabled on this device for ${channel}. Use Send test to check.`;
+    });
+  const disable = (channel: string) =>
+    run(async () => {
+      const own = mine(channel);
+      if (own) await deleteLive(settings, 'PushSubscription', own.metadata.name);
+      // Only drop the browser subscription when no other channel still uses it.
+      const others = subs.items.filter(
+        (i: any) => i.spec?.endpoint === endpoint && i.spec?.channel !== channel
+      );
+      if (others.length === 0) await unsubscribeDevice();
+      return `Notifications are disabled on this device for ${channel}.`;
+    });
+  const mineCount = subs.items.filter((i: any) => i.spec?.endpoint === endpoint).length;
+  return (
+    <Box sx={{ mt: 3 }}>
+      <Typography variant="h6" sx={{ mb: 1 }}>
+        Desktop and app notifications
+      </Typography>
+      {support === 'needs-install' && (
+        <Alert severity="info" sx={{ mb: 1 }}>
+          On iPhone and iPad, notifications only work from an app added to the Home Screen. Open
+          this page in Safari, choose Share, then Add to Home Screen, open the new app and enable
+          notifications there.
+        </Alert>
+      )}
+      {support === 'unsupported' && (
+        <Alert severity="warning" sx={{ mb: 1 }}>
+          This browser cannot receive web push notifications. Web push needs a secure (https) page,
+          a service worker and the Push API.
+        </Alert>
+      )}
+      {!publicKey && support === 'ok' && (
+        <Alert severity="warning" sx={{ mb: 1 }}>
+          The state API has not returned a web push key yet, so this device cannot subscribe.
+        </Alert>
+      )}
+      {msg && (
+        <Alert severity={msg.severity} sx={{ mb: 1 }} onClose={() => setMsg(null)}>
+          {msg.text}
+        </Alert>
+      )}
+      {channels.map((c: any) => {
+        const name = c.metadata.name;
+        const on = Boolean(mine(name));
+        return (
+          <Box key={name} display="flex" alignItems="center" gap={1} sx={{ mb: 1 }}>
+            <Typography sx={{ minWidth: 160 }}>{name}</Typography>
+            <Button
+              size="small"
+              variant={on ? 'outlined' : 'contained'}
+              disabled={busy || support !== 'ok'}
+              onClick={() => (on ? disable(name) : enable(name))}
+            >
+              {on ? 'Disable on this device' : 'Enable on this device'}
+            </Button>
+            <TestCell cr={c} settings={settings} />
+          </Box>
+        );
+      })}
+      {mineCount > 0 && (
+        <Typography variant="caption" display="block" sx={{ mb: 1 }}>
+          This device is subscribed to {mineCount} channel{mineCount === 1 ? '' : 's'}.
+        </Typography>
+      )}
+      <Table
+        loading={subs.loading}
+        data={subs.items}
+        columns={[
+          {
+            header: 'Device',
+            accessorFn: (i: any) =>
+              `${i.spec?.label || i.metadata.name}${
+                endpoint && i.spec?.endpoint === endpoint ? ' (this device)' : ''
+              }`,
+          },
+          { header: 'Channel', accessorFn: (i: any) => i.spec?.channel },
+          { header: 'Last result', accessorFn: (i: any) => i.status?.lastResult || '' },
+          { header: 'Last send', accessorFn: (i: any) => i.status?.lastSendTime || '' },
+          { header: 'Last error', accessorFn: (i: any) => i.status?.lastError || '' },
+          {
+            header: 'Actions',
+            id: 'actions',
+            enableSorting: false,
+            Cell: ({ row }: any) => (
+              <Button
+                size="small"
+                color="error"
+                onClick={() => {
+                  const own = endpoint && row.original.spec?.endpoint === endpoint;
+                  deleteLive(settings, 'PushSubscription', row.original.metadata.name)
+                    .then(() => (own ? unsubscribeDevice().then(refresh) : undefined))
+                    .catch(e => setMsg({ severity: 'error', text: String(e?.message || e) }));
+                }}
+              >
+                Delete
+              </Button>
+            ),
+          },
+        ]}
+      />
+    </Box>
+  );
+}
+
 export function ChannelsPage() {
   const settings = useSettings();
   const list = useResources('NotificationChannel', settings);
+  const state = useStateApi(settings.stateApiUrl);
+  const webpushChannels = list.items.filter((c: any) => c.spec?.type === 'webpush');
   const [editing, setEditing] = React.useState<{ form: ChannelForm; existing: any | null } | null>(
     null
   );
@@ -504,6 +706,13 @@ export function ChannelsPage() {
               ),
             },
           ]}
+        />
+      )}
+      {webpushChannels.length > 0 && (
+        <DevicesPanel
+          settings={settings}
+          channels={webpushChannels}
+          publicKey={state.webpushPublicKey}
         />
       )}
       {editing && (
