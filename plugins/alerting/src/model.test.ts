@@ -9,6 +9,7 @@ import {
   manifestPath,
   parseList,
   parseState,
+  parseStatePayload,
   proposalBody,
   resolveEndpoint,
   resolveSettings,
@@ -290,6 +291,53 @@ describe('endpoint and state API', () => {
     expect(stateSeverity('Up')).toBe('success');
     expect(stateSeverity('firing')).toBe('error');
     expect(stateSeverity('flapping')).toBe('warning');
+  });
+});
+
+describe('backend state shape', () => {
+  it('groups top-level episodes by target and exposes routing and channels', () => {
+    const p = parseStatePayload({
+      generated_at: '2026-01-01T00:10:00Z',
+      routing: 'crds',
+      channels: [{ name: 'phone', type: 'ntfy' }, 'ops-mail'],
+      targets: [
+        { target: 'web', state: 'down' },
+        { target: 'db', state: 'up' },
+      ],
+      episodes: [
+        {
+          id: 1,
+          target: 'web',
+          started: '2026-01-01T00:00:00Z',
+          ended: '2026-01-01T00:05:00Z',
+          alerted: true,
+          recoverySent: true,
+        },
+        {
+          id: 2,
+          target: 'web',
+          started: '2026-01-01T00:08:00Z',
+          ended: null,
+          alerted: true,
+          recoverySent: false,
+        },
+        { id: 3, target: 'other', started: 'x', ended: null },
+      ],
+    });
+    expect(p.routing).toBe('crds');
+    expect(p.generatedAt).toBe('2026-01-01T00:10:00Z');
+    expect(p.channels).toEqual([{ name: 'phone', detail: 'ntfy' }, { name: 'ops-mail' }]);
+    expect(p.targets.map(t => t.name)).toEqual(['web', 'db']);
+    expect(p.targets[0].episodes).toHaveLength(2);
+    expect(p.targets[0].episodes[0]).toMatchObject({
+      start: '2026-01-01T00:08:00Z',
+      end: undefined,
+    });
+    expect(p.targets[0].episodes[1].end).toBe('2026-01-01T00:05:00Z');
+    expect(p.targets[1].episodes).toEqual([]);
+    expect(parseStatePayload({ routing: 'legacy-alert_to', targets: [] }).routing).toBe(
+      'legacy-alert_to'
+    );
   });
 });
 

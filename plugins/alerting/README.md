@@ -109,14 +109,21 @@ spec:
 
 ## Status page
 
-`GET <state API URL>` is polled every 15 seconds and rendered as a table. The
-expected shape (extra fields are ignored):
+`GET <state API URL>` is polled every 15 seconds and rendered as a table, with
+the reported `routing` mode and `channels` above it. Expected shape (extra
+fields are ignored; episodes are grouped by `target` client-side, and nested
+per-target `episodes` are still accepted):
 
 ```json
-{ "targets": [
-  { "name": "web", "kind": "http", "state": "down", "since": "2026-01-01T00:00:00Z",
-    "episodes": [ { "start": "2026-01-01T00:00:00Z", "end": "2026-01-01T00:05:00Z", "state": "down" } ] }
-] }
+{
+  "generated_at": "2026-01-01T00:10:00Z",
+  "routing": "crds",
+  "channels": [{ "name": "phone", "type": "ntfy" }],
+  "targets": [{ "target": "web", "state": "down" }],
+  "episodes": [
+    { "id": 1, "target": "web", "started": "2026-01-01T00:00:00Z", "ended": null, "alerted": true, "recoverySent": false }
+  ]
+}
 ```
 
 ## Development

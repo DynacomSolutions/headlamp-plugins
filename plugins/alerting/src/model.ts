@@ -412,29 +412,84 @@ export interface TargetState {
 
 const str = (v: any) => (v === undefined || v === null || v === '' ? undefined : String(v));
 
-/** Tolerant parse: accepts {targets: [...]} or a bare array. */
-export function parseState(json: any): TargetState[] {
+function episodeOf(e: any): Episode {
+  return {
+    start: str(e?.start ?? e?.started ?? e?.startedAt ?? e?.from),
+    end: str(e?.end ?? e?.ended ?? e?.endedAt ?? e?.to ?? e?.resolvedAt),
+    state: str(e?.state ?? e?.kind),
+    detail:
+      str(e?.detail ?? e?.message ?? e?.reason) ??
+      (e?.alerted !== undefined || e?.recoverySent !== undefined
+        ? `alerted ${e?.alerted ? 'yes' : 'no'}, recovery sent ${e?.recoverySent ? 'yes' : 'no'}`
+        : undefined),
+  };
+}
+
+export interface ChannelInfo {
+  name: string;
+  detail?: string;
+}
+
+export interface StatePayload {
+  generatedAt?: string;
+  routing?: string;
+  channels: ChannelInfo[];
+  targets: TargetState[];
+}
+
+/**
+ * Tolerant parse. Accepts the backend shape ({generated_at, targets[{target,...}], episodes[{target,...}]
+ * at top level, channels, routing}), nested per-target episodes, or a bare array of targets.
+ */
+export function parseStatePayload(json: any): StatePayload {
   const list = Array.isArray(json) ? json : Array.isArray(json?.targets) ? json.targets : [];
-  return list.map((t: any): TargetState => {
-    const eps = Array.isArray(t?.episodes)
+  const top: any[] = Array.isArray(json?.episodes) ? json.episodes : [];
+  const byTarget = new Map<string, Episode[]>();
+  for (const e of top) {
+    const k = String(e?.target ?? '');
+    byTarget.set(k, [...(byTarget.get(k) || []), episodeOf(e)]);
+  }
+  const targets = list.map((t: any): TargetState => {
+    const name = String(t?.target ?? t?.name ?? t?.id ?? '');
+    const nested = Array.isArray(t?.episodes)
       ? t.episodes
       : Array.isArray(t?.recentEpisodes)
       ? t.recentEpisodes
       : [];
+    const episodes = [...nested.map(episodeOf), ...(byTarget.get(name) || [])].sort((x, y) =>
+      String(y.start ?? '').localeCompare(String(x.start ?? ''))
+    );
     return {
-      name: String(t?.name ?? t?.target ?? t?.id ?? ''),
+      name,
       kind: str(t?.kind ?? t?.type),
       state: String(t?.state ?? t?.status ?? 'unknown'),
       since: str(t?.since ?? t?.stateSince ?? t?.lastChange),
       detail: str(t?.detail ?? t?.message),
-      episodes: eps.map((e: any) => ({
-        start: str(e?.start ?? e?.startedAt ?? e?.from),
-        end: str(e?.end ?? e?.endedAt ?? e?.to ?? e?.resolvedAt),
-        state: str(e?.state ?? e?.kind),
-        detail: str(e?.detail ?? e?.message ?? e?.reason),
-      })),
+      episodes,
     };
   });
+  const channels: ChannelInfo[] = (Array.isArray(json?.channels) ? json.channels : []).map(
+    (c: any) =>
+      typeof c === 'string'
+        ? { name: c }
+        : {
+            name: String(c?.name ?? c?.id ?? ''),
+            detail:
+              [c?.type, c?.enabled === false ? 'disabled' : undefined, c?.lastResult]
+                .filter(Boolean)
+                .join(', ') || undefined,
+          }
+  );
+  return {
+    generatedAt: str(json?.generated_at ?? json?.generatedAt),
+    routing: str(json?.routing),
+    channels,
+    targets,
+  };
+}
+
+export function parseState(json: any): TargetState[] {
+  return parseStatePayload(json).targets;
 }
 
 /** Healthy-ish states render green, down-ish red, anything else amber. */

@@ -2,11 +2,11 @@ import { ApiProxy, ConfigStore, K8s } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
 import {
   CONFIG_KEY,
-  parseState,
+  parseStatePayload,
   resolveEndpoint,
   resolveSettings,
   Settings,
-  TargetState,
+  StatePayload,
   testRequestPatch,
 } from './model';
 
@@ -159,15 +159,19 @@ export async function submitProposal(
   return url;
 }
 
-export interface StateResult {
-  targets: TargetState[];
+export interface StateResult extends StatePayload {
   loading: boolean;
   error: string | null;
 }
 
 /** Polls the state API every 15 seconds while the page is mounted. */
 export function useStateApi(url: string): StateResult {
-  const [res, setRes] = React.useState<StateResult>({ targets: [], loading: true, error: null });
+  const [res, setRes] = React.useState<StateResult>({
+    channels: [],
+    targets: [],
+    loading: true,
+    error: null,
+  });
   React.useEffect(() => {
     if (!url) return;
     let alive = true;
@@ -180,7 +184,7 @@ export function useStateApi(url: string): StateResult {
               if (!r.ok) throw new Error(`State API returned HTTP ${r.status}`);
               return r.json();
             });
-        if (alive) setRes({ targets: parseState(json), loading: false, error: null });
+        if (alive) setRes({ ...parseStatePayload(json), loading: false, error: null });
       } catch (e: any) {
         if (alive) setRes(r => ({ ...r, loading: false, error: String(e?.message || e) }));
       }
