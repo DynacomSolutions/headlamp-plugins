@@ -32,7 +32,7 @@ jobs:
     strategy:
       max-parallel: 1
       matrix:
-        plugin: [disk-health, github-runners, sites]
+        plugin: [alerting, disk-health, github-runners, sites]
     defaults:
       run:
         working-directory: plugins/${{ matrix.plugin }}
@@ -45,3 +45,5 @@ jobs:
       - run: npm run tsc
       - run: npm run lint
       - run: npm run build
+      - run: npm test
+        if: matrix.plugin == 'alerting'
