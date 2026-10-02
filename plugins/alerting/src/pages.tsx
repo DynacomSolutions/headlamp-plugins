@@ -28,10 +28,12 @@ import {
   useStateApi,
 } from './data';
 import {
+  ALL_CHANNELS,
   CHANNEL_TYPES,
   ChannelForm,
   channelFromResource,
   channelResource,
+  describeChannels,
   deviceLabel,
   emptyChannel,
   emptyRoute,
@@ -41,6 +43,7 @@ import {
   RouteForm,
   routeFromResource,
   routeResource,
+  routeTargetsAll,
   SecretRef,
   Settings,
   stateSeverity,
@@ -763,11 +766,21 @@ function RouteEditor(props: {
             disabled={!isNew}
             onChange={e => up({ name: e.target.value })}
           />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={routeTargetsAll(f.channels)}
+                onChange={e => up({ channels: e.target.checked ? [ALL_CHANNELS] : [] })}
+              />
+            }
+            label="All enabled channels (including ones added later)"
+          />
           <Autocomplete
             multiple
             size="small"
+            disabled={routeTargetsAll(f.channels)}
             options={channelNames}
-            value={f.channels}
+            value={routeTargetsAll(f.channels) ? [] : f.channels}
             onChange={(_, v) => up({ channels: v })}
             renderInput={params => <TextField {...params} label="Channels" />}
           />
@@ -896,7 +909,7 @@ export function RoutesPage() {
           data={list.items}
           columns={[
             { header: 'Name', accessorFn: (r: any) => r.metadata.name },
-            { header: 'Channels', accessorFn: (r: any) => (r.spec?.channels || []).join(', ') },
+            { header: 'Channels', accessorFn: (r: any) => describeChannels(r.spec?.channels) },
             {
               header: 'Targets',
               accessorFn: (r: any) => (r.spec?.match?.targets || []).join(', ') || 'all',

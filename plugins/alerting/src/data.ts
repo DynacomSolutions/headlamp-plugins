@@ -137,12 +137,19 @@ export function useSecretKeys(
 const collectionPath = (s: Settings, kind: Kind) =>
   `/apis/${s.group}/${s.version}/namespaces/${s.namespace}/${PLURAL[kind]}`;
 
+/** Server-side apply field manager recorded for every write made from this plugin. */
+export const FIELD_MANAGER = 'headlamp-alerting';
+
+/** Append the field manager query so the API server attributes the edit to this plugin. */
+export const withFieldManager = (path: string) =>
+  `${path}${path.includes('?') ? '&' : '?'}fieldManager=${FIELD_MANAGER}`;
+
 /** Headlamp's proxy forwards no default content type; the API server rejects bodies without one. */
 export const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 /** Ephemeral test-send request; always applied live, never part of the Git-managed config. */
 export function requestTestSend(s: Settings, name: string): Promise<any> {
-  return ApiProxy.request(`${collectionPath(s, 'NotificationChannel')}/${name}`, {
+  return ApiProxy.request(withFieldManager(`${collectionPath(s, 'NotificationChannel')}/${name}`), {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/merge-patch+json' },
     body: JSON.stringify(testRequestPatch(s)),
@@ -162,13 +169,13 @@ export async function applyLive(
       ...resource,
       metadata: { ...resource.metadata, resourceVersion: existing.metadata?.resourceVersion },
     };
-    await ApiProxy.request(`${collectionPath(s, kind)}/${name}`, {
+    await ApiProxy.request(withFieldManager(`${collectionPath(s, kind)}/${name}`), {
       method: 'PUT',
       headers: JSON_HEADERS,
       body: JSON.stringify(body),
     });
   } else {
-    await ApiProxy.request(collectionPath(s, kind), {
+    await ApiProxy.request(withFieldManager(collectionPath(s, kind)), {
       method: 'POST',
       headers: JSON_HEADERS,
       body: JSON.stringify(resource),
@@ -177,7 +184,9 @@ export async function applyLive(
 }
 
 export function deleteLive(s: Settings, kind: Kind, name: string): Promise<any> {
-  return ApiProxy.request(`${collectionPath(s, kind)}/${name}`, { method: 'DELETE' });
+  return ApiProxy.request(withFieldManager(`${collectionPath(s, kind)}/${name}`), {
+    method: 'DELETE',
+  });
 }
 
 export interface StateResult extends StatePayload {
@@ -223,7 +232,7 @@ export function useStateApi(url: string): StateResult {
 /** Create a PushSubscription; an existing one with the same name (same endpoint) is replaced. */
 export async function createSubscription(s: Settings, resource: any): Promise<void> {
   try {
-    await ApiProxy.request(collectionPath(s, 'PushSubscription'), {
+    await ApiProxy.request(withFieldManager(collectionPath(s, 'PushSubscription')), {
       method: 'POST',
       headers: JSON_HEADERS,
       body: JSON.stringify(resource),
@@ -231,7 +240,7 @@ export async function createSubscription(s: Settings, resource: any): Promise<vo
   } catch (e: any) {
     if ((e as any)?.status !== 409) throw e;
     await deleteLive(s, 'PushSubscription', resource.metadata.name);
-    await ApiProxy.request(collectionPath(s, 'PushSubscription'), {
+    await ApiProxy.request(withFieldManager(collectionPath(s, 'PushSubscription')), {
       method: 'POST',
       headers: JSON_HEADERS,
       body: JSON.stringify(resource),
