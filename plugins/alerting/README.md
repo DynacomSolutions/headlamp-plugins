@@ -101,9 +101,12 @@ Custom resources can be managed in Git (GitOps) or live in the UI. Pick one per
 resource:
 
 - **UI-created resources:** keep them out of Git. Nothing else is needed.
-- **Git-managed resources:** the UI still writes live, so a GitOps tool will
-  see drift and may revert your edit. Either edit in Git instead, or tell the
-  tool to ignore drift in `/spec`. Argo CD example:
+- **Git-managed resources:** every write from the UI is recorded under the
+  field manager `headlamp-alerting`. Fields you change in the UI are owned by
+  that manager; fields you have not touched stay owned by the GitOps tool. Tell
+  the tool to leave only the UI-owned fields alone, rather than ignoring the
+  whole `/spec`. Argo CD example (also set `RespectIgnoreDifferences=true` in
+  the Application's sync options so syncs honour it):
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -112,13 +115,17 @@ spec:
   ignoreDifferences:
     - group: alerting.example.com
       kind: NotificationChannel
-      jsonPointers:
-        - /spec
+      managedFieldsManagers:
+        - headlamp-alerting
     - group: alerting.example.com
       kind: AlertRoute
-      jsonPointers:
-        - /spec
+      managedFieldsManagers:
+        - headlamp-alerting
 ```
+
+  With this, a UI edit survives self-heal, while a later Git change to a field
+  the UI has not edited still reaches the cluster. A field edited in the UI
+  keeps its live value until you revert it live or remove the resource.
 
 To bring a UI edit back into Git, use **Copy YAML** or **Download YAML** in the
 save dialog and commit the file yourself.

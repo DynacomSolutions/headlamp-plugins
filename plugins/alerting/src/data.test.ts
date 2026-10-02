@@ -1,5 +1,5 @@
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
-import { applyLive, createSubscription } from './data';
+import { applyLive, createSubscription, deleteLive, requestTestSend } from './data';
 
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
   ApiProxy: { request: vi.fn() },
@@ -37,5 +37,35 @@ describe('body-carrying requests set a JSON content type', () => {
     await createSubscription(S, res);
     expect(request.mock.calls.filter(([, o]: any) => o.method === 'POST')).toHaveLength(2);
     expectJson();
+  });
+});
+
+describe('every write names the field manager', () => {
+  beforeEach(() => request.mockReset().mockResolvedValue({}));
+  const expectManager = () => {
+    expect(request.mock.calls.length).toBeGreaterThan(0);
+    for (const [url] of request.mock.calls)
+      expect(url).toMatch(/[?&]fieldManager=headlamp-alerting$/);
+  };
+
+  it('POST', async () => {
+    await applyLive(S, 'AlertRoute', res, null);
+    expectManager();
+  });
+  it('PUT', async () => {
+    await applyLive(S, 'AlertRoute', res, { metadata: { resourceVersion: '1' } });
+    expectManager();
+  });
+  it('PATCH', async () => {
+    await requestTestSend(S, 'x');
+    expectManager();
+  });
+  it('DELETE', async () => {
+    await deleteLive(S, 'AlertRoute', 'x');
+    expectManager();
+  });
+  it('subscription POST', async () => {
+    await createSubscription(S, res);
+    expectManager();
   });
 });
