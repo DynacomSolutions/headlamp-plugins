@@ -8,14 +8,6 @@ export interface Settings {
   namespace: string;
   /** Empty hides the status page. `service/<ns>/<name>:<port>/path` is proxied via the API server. */
   stateApiUrl: string;
-  /** GitOps mode: edits become proposals (pull requests), not live writes. */
-  gitops: boolean;
-  /** URL accepting POST {path, content, message} and returning {prUrl}. Empty means copy/download only. */
-  proposalUrl: string;
-  /** Repository directory the generated manifests are written under. */
-  proposalPath: string;
-  /** Also offer to write live custom resources (for clusters not under GitOps). */
-  directApply: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -23,10 +15,6 @@ export const DEFAULT_SETTINGS: Settings = {
   version: 'v1alpha1',
   namespace: 'monitoring',
   stateApiUrl: '',
-  gitops: true,
-  proposalUrl: '',
-  proposalPath: 'alerting',
-  directApply: false,
 };
 
 /** Stored values layered over the defaults; empty strings fall back to the default. */
@@ -34,10 +22,10 @@ export function resolveSettings(stored: Partial<Settings> | undefined | null): S
   const out: Settings = { ...DEFAULT_SETTINGS };
   for (const [k, v] of Object.entries(stored || {})) {
     if (v === undefined || v === null) continue;
-    if (typeof (DEFAULT_SETTINGS as any)[k] === 'boolean') (out as any)[k] = Boolean(v);
-    else if (typeof v === 'string') {
+    if (!(k in DEFAULT_SETTINGS)) continue;
+    if (typeof v === 'string') {
       const t = v.trim();
-      if (t !== '' || k === 'stateApiUrl' || k === 'proposalUrl') (out as any)[k] = t;
+      if (t !== '' || k === 'stateApiUrl') (out as any)[k] = t;
     }
   }
   return out;
@@ -324,26 +312,9 @@ export function toYaml(obj: any): string {
   return out.join('\n') + '\n';
 }
 
-export function manifestPath(base: string, kind: string, name: string): string {
-  const dir = base.replace(/^\/+|\/+$/g, '');
-  const file = `${
-    kind === 'NotificationChannel' ? 'notificationchannel' : 'alertroute'
-  }-${name}.yaml`;
-  return dir ? `${dir}/${file}` : file;
-}
-
-export function proposalBody(
-  kind: string,
-  name: string,
-  yaml: string,
-  base: string,
-  existed: boolean
-) {
-  return {
-    path: manifestPath(base, kind, name),
-    content: yaml,
-    message: `alerting: ${existed ? 'update' : 'add'} ${kind} ${name}`,
-  };
+/** File name suggested for a downloaded manifest. */
+export function manifestFileName(kind: string, name: string): string {
+  return `${kind === 'NotificationChannel' ? 'notificationchannel' : 'alertroute'}-${name}.yaml`;
 }
 
 /* ---------- test send ---------- */

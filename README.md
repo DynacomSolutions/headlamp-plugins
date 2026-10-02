@@ -5,7 +5,7 @@ Plugins for [Headlamp](https://headlamp.dev/), built with
 
 | Plugin | What it does |
 | --- | --- |
-| [`plugins/alerting`](plugins/alerting) | Manage alerting notification channels and routes (custom resources), GitOps first: edits become pull requests via a configurable proposal endpoint; test sends; status page |
+| [`plugins/alerting`](plugins/alerting) | Manage alerting notification channels and routes (custom resources) live from the UI, with YAML copy and download for Git; test sends; status page |
 | [`plugins/disk-health`](plugins/disk-health) | Per-node SMART disk health and disk capacity, on the Node details page, the Nodes list, and a cluster-wide Disks page (needs a Prometheus-compatible query endpoint) |
 | [`plugins/github-runners`](plugins/github-runners) | Actions Runner Controller (ARC) runner dashboard: scale sets, runners, pods, jobs, optional history |
 | [`plugins/sites`](plugins/sites) | Directory of the sites served by Emissary Mappings, folded by host, live, with links to each site and its Mapping resources |

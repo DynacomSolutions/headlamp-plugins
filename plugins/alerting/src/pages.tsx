@@ -11,7 +11,6 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import Link from '@mui/material/Link';
 import MenuItem from '@mui/material/MenuItem';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
@@ -21,7 +20,6 @@ import {
   applyLive,
   deleteLive,
   requestTestSend,
-  submitProposal,
   useResources,
   useSecretKeys,
   useSecretNames,
@@ -35,8 +33,8 @@ import {
   channelResource,
   emptyChannel,
   emptyRoute,
+  manifestFileName,
   parseList,
-  proposalBody,
   ROUTE_KINDS,
   RouteForm,
   routeFromResource,
@@ -81,12 +79,11 @@ function ChangeDialog(props: {
 }) {
   const { settings: s, kind, resource, existing, onClose } = props;
   const yaml = React.useMemo(() => toYaml(resource), [resource]);
-  const body = proposalBody(kind, resource.metadata.name, yaml, s.proposalPath, !!existing);
+  const fileName = manifestFileName(kind, resource.metadata.name);
   const [busy, setBusy] = React.useState(false);
   const [msg, setMsg] = React.useState<{
     severity: 'success' | 'error' | 'info';
     text: string;
-    link?: string;
   } | null>(null);
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -100,12 +97,13 @@ function ChangeDialog(props: {
   };
   return (
     <Dialog open onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle>{s.gitops ? 'Proposed change' : 'Generated manifest'}</DialogTitle>
+      <DialogTitle>
+        {existing ? 'Update' : 'Create'} {kind}
+      </DialogTitle>
       <DialogContent>
         <Typography variant="body2" sx={{ mb: 1 }}>
-          {s.gitops
-            ? `Git is the source of truth. This manifest goes to ${body.path} in the repository; the live resource changes once the pull request is merged and synced.`
-            : 'Review the manifest below.'}
+          Saving writes this resource to the cluster. If the resource is also managed in Git, copy
+          or download the YAML and commit it there too.
         </Typography>
         <Box
           component="pre"
@@ -115,55 +113,23 @@ function ChangeDialog(props: {
         </Box>
         {msg && (
           <Alert severity={msg.severity} sx={{ mt: 1 }}>
-            {msg.text}{' '}
-            {msg.link && (
-              <Link href={msg.link} target="_blank" rel="noopener noreferrer">
-                {msg.link}
-              </Link>
-            )}
-          </Alert>
-        )}
-        {s.gitops && !s.proposalUrl && (
-          <Alert severity="info" sx={{ mt: 1 }}>
-            No proposal endpoint is configured. Copy or download the YAML and commit it to the
-            repository.
+            {msg.text}
           </Alert>
         )}
       </DialogContent>
       <DialogActions>
-        {s.gitops && s.proposalUrl && (
-          <Button
-            variant="contained"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                const link = await submitProposal(s.proposalUrl, body);
-                setMsg({ severity: 'success', text: 'Pull request opened:', link });
-              })
-            }
-          >
-            Open pull request
-          </Button>
-        )}
-        {s.directApply && (
-          <Button
-            color="warning"
-            disabled={busy}
-            onClick={() =>
-              run(async () => {
-                await applyLive(s, kind, resource, existing);
-                setMsg({
-                  severity: 'success',
-                  text: s.gitops
-                    ? 'Applied live. GitOps will revert this unless the change is also merged.'
-                    : 'Applied live.',
-                });
-              })
-            }
-          >
-            Apply live
-          </Button>
-        )}
+        <Button
+          variant="contained"
+          disabled={busy}
+          onClick={() =>
+            run(async () => {
+              await applyLive(s, kind, resource, existing);
+              setMsg({ severity: 'success', text: 'Saved to the cluster.' });
+            })
+          }
+        >
+          Save
+        </Button>
         <Button
           onClick={() =>
             navigator.clipboard
@@ -173,9 +139,7 @@ function ChangeDialog(props: {
         >
           Copy YAML
         </Button>
-        <Button onClick={() => download(body.path.split('/').pop() as string, yaml)}>
-          Download YAML
-        </Button>
+        <Button onClick={() => download(fileName, yaml)}>Download YAML</Button>
         <Button onClick={onClose}>Close</Button>
       </DialogActions>
     </Dialog>
@@ -441,9 +405,7 @@ export function ChannelsPage() {
         </Alert>
       )}
       <Typography variant="body2" sx={{ mb: 1 }}>
-        {settings.gitops
-          ? 'Configuration is managed in Git. Edits here generate a manifest for a pull request. Test sends are ephemeral and applied live.'
-          : 'Edits generate a manifest. Test sends are applied live.'}
+        Edits are written to the cluster. Test sends are applied live as annotations.
       </Typography>
       {list.absent || list.error ? (
         <Missing settings={settings} error={list.error} />
@@ -489,14 +451,14 @@ export function ChannelsPage() {
                   >
                     Edit
                   </Button>
-                  {settings.directApply && (
+                  {
                     <Button
                       size="small"
                       color="error"
                       onClick={() => {
                         if (
                           window.confirm(
-                            `Delete channel ${row.original.metadata.name} from the live cluster?`
+                            `Delete channel ${row.original.metadata.name} from the cluster?`
                           )
                         )
                           deleteLive(
@@ -506,9 +468,9 @@ export function ChannelsPage() {
                           ).catch(e => setNotice(String(e?.message || e)));
                       }}
                     >
-                      Delete live
+                      Delete
                     </Button>
-                  )}
+                  }
                 </Box>
               ),
             },
@@ -728,14 +690,14 @@ export function RoutesPage() {
                   >
                     Edit
                   </Button>
-                  {settings.directApply && (
+                  {
                     <Button
                       size="small"
                       color="error"
                       onClick={() => {
                         if (
                           window.confirm(
-                            `Delete route ${row.original.metadata.name} from the live cluster?`
+                            `Delete route ${row.original.metadata.name} from the cluster?`
                           )
                         )
                           deleteLive(settings, 'AlertRoute', row.original.metadata.name).catch(e =>
@@ -743,9 +705,9 @@ export function RoutesPage() {
                           );
                       }}
                     >
-                      Delete live
+                      Delete
                     </Button>
-                  )}
+                  }
                 </Box>
               ),
             },

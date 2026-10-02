@@ -6,11 +6,10 @@ import {
   DEFAULT_SETTINGS,
   emptyChannel,
   emptyRoute,
-  manifestPath,
+  manifestFileName,
   parseList,
   parseState,
   parseStatePayload,
-  proposalBody,
   resolveEndpoint,
   resolveSettings,
   routeFromResource,
@@ -32,14 +31,17 @@ describe('settings', () => {
     expect(s.version).toBe('v1alpha1');
     expect(s.namespace).toBe('monitoring');
     expect(s.stateApiUrl).toBe('');
-    expect(s.gitops).toBe(true);
-    expect(s.directApply).toBe(false);
+    expect(Object.keys(s).sort()).toEqual(['group', 'namespace', 'stateApiUrl', 'version']);
   });
   it('lets stored values win but ignores blanks for required fields', () => {
-    const s = resolveSettings({ group: ' alerts.example.org ', namespace: '', directApply: true });
+    const s = resolveSettings({
+      group: ' alerts.example.org ',
+      namespace: '',
+      gitops: true,
+    } as any);
     expect(s.group).toBe('alerts.example.org');
     expect(s.namespace).toBe('monitoring');
-    expect(s.directApply).toBe(true);
+    expect('gitops' in s).toBe(false);
   });
 });
 
@@ -173,18 +175,10 @@ describe('YAML generation', () => {
   });
 });
 
-describe('proposals', () => {
-  it('builds the path and message', () => {
-    expect(manifestPath('/clusters/dev/alerting/', 'NotificationChannel', 'a')).toBe(
-      'clusters/dev/alerting/notificationchannel-a.yaml'
-    );
-    expect(manifestPath('', 'AlertRoute', 'r')).toBe('alertroute-r.yaml');
-    const b = proposalBody('AlertRoute', 'r', 'x\n', 'alerting', true);
-    expect(b).toEqual({
-      path: 'alerting/alertroute-r.yaml',
-      content: 'x\n',
-      message: 'alerting: update AlertRoute r',
-    });
+describe('manifest file name', () => {
+  it('names downloads by kind and resource', () => {
+    expect(manifestFileName('NotificationChannel', 'a')).toBe('notificationchannel-a.yaml');
+    expect(manifestFileName('AlertRoute', 'r')).toBe('alertroute-r.yaml');
   });
 });
 

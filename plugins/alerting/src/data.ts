@@ -102,7 +102,7 @@ export function requestTestSend(s: Settings, name: string): Promise<any> {
   });
 }
 
-/** Direct apply (clusters not under GitOps): create or replace the live resource. */
+/** Create or replace the live resource. */
 export async function applyLive(
   s: Settings,
   kind: Kind,
@@ -129,34 +129,6 @@ export async function applyLive(
 
 export function deleteLive(s: Settings, kind: Kind, name: string): Promise<any> {
   return ApiProxy.request(`${collectionPath(s, kind)}/${name}`, { method: 'DELETE' });
-}
-
-/** POST the generated manifest to the proposal endpoint; resolves to the pull request URL. */
-export async function submitProposal(
-  endpoint: string,
-  body: { path: string; content: string; message: string }
-): Promise<string> {
-  const target = resolveEndpoint(endpoint);
-  let res: any;
-  if (target.proxied) {
-    res = await ApiProxy.request(target.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } else {
-    const r = await fetch(target.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error(`Proposal endpoint returned HTTP ${r.status}`);
-    res = await r.json();
-  }
-  const url = res?.prUrl;
-  if (typeof url !== 'string' || !/^https?:\/\//.test(url))
-    throw new Error('Proposal endpoint returned no prUrl');
-  return url;
 }
 
 export interface StateResult extends StatePayload {

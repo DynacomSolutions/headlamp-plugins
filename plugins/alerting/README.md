@@ -4,9 +4,8 @@ A [Headlamp](https://headlamp.dev/) plugin for managing alerting notification
 channels and routes. It adds an **Alerting** sidebar entry with three pages:
 **Channels**, **Routes** and **Status**.
 
-Git is the source of truth for configuration. The UI is another way to produce
-that configuration, so by default it never writes live resources: it generates
-the changed manifest and ships it as a pull request.
+The UI creates, updates and deletes the custom resources live through the
+Kubernetes API. It never opens pull requests.
 
 ## Custom resources
 
@@ -62,29 +61,34 @@ Set under Settings, Plugins, Alerting. Blank fields use the default.
 | CRD version | `v1alpha1` | API version |
 | Namespace | `monitoring` | Namespace of channels, routes and Secrets |
 | State API URL | empty | Empty hides the Status page. `service/<ns>/<name>:<port>/<path>` goes through the cluster API proxy |
-| GitOps mode | on | Edits produce proposals, not live writes |
-| Proposal endpoint | empty | URL accepting a proposal (below); also accepts `service/...` |
-| Repository path | `alerting` | Directory the manifests are written under |
-| Direct apply | off | Also allow writing live resources, for clusters not under GitOps |
 
-## Proposals (GitOps)
+## Git and the UI
 
-Saving an edit opens a review dialog showing the generated YAML. With a proposal
-endpoint configured, **Open pull request** sends
+Custom resources can be managed in Git (GitOps) or live in the UI. Pick one per
+resource:
 
-```json
-POST <proposal endpoint>
-{ "path": "alerting/notificationchannel-phone.yaml", "content": "<yaml>", "message": "alerting: update NotificationChannel phone" }
+- **UI-created resources:** keep them out of Git. Nothing else is needed.
+- **Git-managed resources:** the UI still writes live, so a GitOps tool will
+  see drift and may revert your edit. Either edit in Git instead, or tell the
+  tool to ignore drift in `/spec`. Argo CD example:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+spec:
+  ignoreDifferences:
+    - group: alerting.example.com
+      kind: NotificationChannel
+      jsonPointers:
+        - /spec
+    - group: alerting.example.com
+      kind: AlertRoute
+      jsonPointers:
+        - /spec
 ```
 
-and expects `{ "prUrl": "https://git.example.com/my-org/my-repo/pull/1" }`, which
-is shown as a link. The endpoint owns the repository, branch and credentials.
-Without an endpoint, use **Copy YAML** or **Download YAML** and commit the file
-yourself. Deletions are done in Git. A browser-reachable endpoint needs CORS;
-the `service/...` form avoids that by going through the API server.
-
-**Direct apply** (off by default) adds **Apply live** and **Delete live**. Under
-GitOps the controller will revert such writes.
+To bring a UI edit back into Git, use **Copy YAML** or **Download YAML** in the
+save dialog and commit the file yourself.
 
 ## Test sends
 
@@ -93,7 +97,8 @@ GitOps the controller will revert such writes.
 follows the setting). The row shows pending until the backend sets
 `alerting.example.com/test-handled` to the same value, then shows
 `status.lastResult`. Test sends are ephemeral, not configuration, so they are
-always applied live, even in GitOps mode. Tell Argo CD to ignore them:
+always applied live. If the channel is Git-managed and you do not already ignore `/spec`,
+tell Argo CD to ignore these annotations:
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
