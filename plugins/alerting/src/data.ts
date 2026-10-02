@@ -137,6 +137,9 @@ export function useSecretKeys(
 const collectionPath = (s: Settings, kind: Kind) =>
   `/apis/${s.group}/${s.version}/namespaces/${s.namespace}/${PLURAL[kind]}`;
 
+/** Headlamp's proxy forwards no default content type; the API server rejects bodies without one. */
+export const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
 /** Ephemeral test-send request; always applied live, never part of the Git-managed config. */
 export function requestTestSend(s: Settings, name: string): Promise<any> {
   return ApiProxy.request(`${collectionPath(s, 'NotificationChannel')}/${name}`, {
@@ -161,11 +164,13 @@ export async function applyLive(
     };
     await ApiProxy.request(`${collectionPath(s, kind)}/${name}`, {
       method: 'PUT',
+      headers: JSON_HEADERS,
       body: JSON.stringify(body),
     });
   } else {
     await ApiProxy.request(collectionPath(s, kind), {
       method: 'POST',
+      headers: JSON_HEADERS,
       body: JSON.stringify(resource),
     });
   }
@@ -220,6 +225,7 @@ export async function createSubscription(s: Settings, resource: any): Promise<vo
   try {
     await ApiProxy.request(collectionPath(s, 'PushSubscription'), {
       method: 'POST',
+      headers: JSON_HEADERS,
       body: JSON.stringify(resource),
     });
   } catch (e: any) {
@@ -227,6 +233,7 @@ export async function createSubscription(s: Settings, resource: any): Promise<vo
     await deleteLive(s, 'PushSubscription', resource.metadata.name);
     await ApiProxy.request(collectionPath(s, 'PushSubscription'), {
       method: 'POST',
+      headers: JSON_HEADERS,
       body: JSON.stringify(resource),
     });
   }
