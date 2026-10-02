@@ -18,14 +18,27 @@ export function currentSupport(): PushSupport {
   });
 }
 
+/**
+ * Resolves once the registration has an active worker. navigator.serviceWorker.ready
+ * is not usable here: it only resolves for a registration that controls the current
+ * page, and the dashboard lives outside the plugin directory scope.
+ */
+function whenActive(reg: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
+  if (reg.active) return Promise.resolve(reg);
+  const worker = reg.installing || reg.waiting;
+  if (!worker) return Promise.reject(new Error('The notification service worker did not start.'));
+  return new Promise((resolve, reject) => {
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'activated') resolve(reg);
+      else if (worker.state === 'redundant')
+        reject(new Error('The notification service worker failed to install.'));
+    });
+  });
+}
+
 async function registration(): Promise<ServiceWorkerRegistration> {
-  await navigator.serviceWorker.register(WORKER_URL, { scope: WORKER_SCOPE });
-  return navigator.serviceWorker.ready.then(() =>
-    navigator.serviceWorker.getRegistration(WORKER_SCOPE).then(r => {
-      if (!r) throw new Error('The notification service worker did not register.');
-      return r;
-    })
-  );
+  const reg = await navigator.serviceWorker.register(WORKER_URL, { scope: WORKER_SCOPE });
+  return whenActive(reg);
 }
 
 /** This device's existing subscription, without prompting or registering anything. */
