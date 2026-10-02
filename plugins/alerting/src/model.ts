@@ -17,18 +17,40 @@ export const DEFAULT_SETTINGS: Settings = {
   stateApiUrl: '',
 };
 
-/** Stored values layered over the defaults; empty strings fall back to the default. */
-export function resolveSettings(stored: Partial<Settings> | undefined | null): Settings {
-  const out: Settings = { ...DEFAULT_SETTINGS };
-  for (const [k, v] of Object.entries(stored || {})) {
-    if (v === undefined || v === null) continue;
-    if (!(k in DEFAULT_SETTINGS)) continue;
-    if (typeof v === 'string') {
-      const t = v.trim();
-      if (t !== '' || k === 'stateApiUrl') (out as any)[k] = t;
-    }
+/** Keeps only known string settings from an untrusted object (defaults.json or stored config). */
+export function sanitiseSettings(raw: unknown): Partial<Settings> {
+  const out: Partial<Settings> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(k in DEFAULT_SETTINGS) || typeof v !== 'string') continue;
+    out[k as keyof Settings] = v.trim();
   }
   return out;
+}
+
+/**
+ * Layers, lowest to highest: built-in defaults, deployment defaults
+ * (defaults.json), browser-local overrides. Empty strings fall back to the
+ * layer below, except stateApiUrl where empty is meaningful in the top layer.
+ */
+export function resolveSettings(
+  stored: Partial<Settings> | undefined | null,
+  deployment?: Partial<Settings> | null
+): Settings {
+  const out: Settings = { ...DEFAULT_SETTINGS };
+  const apply = (layer: Partial<Settings>, blankStateApiWins: boolean) => {
+    for (const [k, v] of Object.entries(layer)) {
+      if (v !== '' || (k === 'stateApiUrl' && blankStateApiWins)) (out as any)[k] = v;
+    }
+  };
+  apply(sanitiseSettings(deployment), false);
+  apply(sanitiseSettings(stored), true);
+  return out;
+}
+
+/** True when the Secret list/get failed (for example 403): pickers fall back to free text. */
+export function secretListingFailed(err: unknown): boolean {
+  return err !== null && err !== undefined && err !== false;
 }
 
 export const CHANNEL_TYPES = ['email', 'ntfy', 'pushover', 'webhook'] as const;

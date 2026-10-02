@@ -49,7 +49,9 @@ spec:
 Other channel types: `email.to[]`, `pushover{userKeySecretRef,tokenSecretRef}`,
 `webhook{url,headersSecretRef?}`. Channel `status` carries `lastSendTime`,
 `lastResult` and `lastError`. Secret references are chosen from the Secrets in
-the configured namespace (names and key names only; values are never read).
+the configured namespace (names and key names only; values are never displayed).
+If listing Secrets is forbidden or fails, the pickers become free-text inputs
+for the Secret name and key, so no Secret read access is needed.
 
 ## Settings
 
@@ -61,6 +63,12 @@ Set under Settings, Plugins, Alerting. Blank fields use the default.
 | CRD version | `v1alpha1` | API version |
 | Namespace | `monitoring` | Namespace of channels, routes and Secrets |
 | State API URL | empty | Empty hides the Status page. `service/<ns>/<name>:<port>/<path>` goes through the cluster API proxy |
+
+To preconfigure every browser, ship a `defaults.json` at
+`/plugins/alerting/defaults.json` (next to `main.js` in the plugin directory,
+for example written by an initContainer) using the setting keys `group`,
+`version`, `namespace` and `stateApiUrl`. Values a user saves in the settings
+override it, and it overrides the built-in defaults.
 
 ## Git and the UI
 

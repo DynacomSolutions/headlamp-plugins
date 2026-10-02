@@ -150,12 +150,37 @@ function SecretPicker(props: {
   label: string;
   settings: Settings;
   names: string[];
+  /** false: Secrets cannot be listed, so name and key are typed */
+  listable: boolean;
   value: SecretRef;
   onChange: (v: SecretRef) => void;
   required?: boolean;
 }) {
-  const { label, settings, names, value, onChange, required } = props;
-  const keys = useSecretKeys(settings, value.name);
+  const { label, settings, names, listable, value, onChange, required } = props;
+  const { keys, available: keysAvailable } = useSecretKeys(settings, value.name, listable);
+  if (!listable || !keysAvailable) {
+    return (
+      <Box display="flex" gap={1}>
+        <TextField
+          size="small"
+          fullWidth
+          required={required}
+          label={`${label}: Secret name`}
+          value={value.name}
+          onChange={e => onChange({ ...value, name: e.target.value })}
+        />
+        <TextField
+          size="small"
+          fullWidth
+          required={required}
+          label="Key"
+          disabled={!value.name}
+          value={value.key}
+          onChange={e => onChange({ ...value, key: e.target.value })}
+        />
+      </Box>
+    );
+  }
   return (
     <Box display="flex" gap={1}>
       <TextField
@@ -209,7 +234,7 @@ function ChannelEditor(props: {
 }) {
   const { settings, isNew, onCancel, onDone } = props;
   const [f, setF] = React.useState<ChannelForm>(props.initial);
-  const names = useSecretNames(settings);
+  const { names, available: listable } = useSecretNames(settings);
   const problems = validateChannel(f);
   const up = (patch: Partial<ChannelForm>) => setF(prev => ({ ...prev, ...patch }));
   return (
@@ -277,6 +302,7 @@ function ChannelEditor(props: {
                 label="Token (optional)"
                 settings={settings}
                 names={names}
+                listable={listable}
                 value={f.ntfyTokenSecret}
                 onChange={v => up({ ntfyTokenSecret: v })}
               />
@@ -289,6 +315,7 @@ function ChannelEditor(props: {
                 label="User key"
                 settings={settings}
                 names={names}
+                listable={listable}
                 value={f.pushoverUserKeySecret}
                 onChange={v => up({ pushoverUserKeySecret: v })}
               />
@@ -297,6 +324,7 @@ function ChannelEditor(props: {
                 label="App token"
                 settings={settings}
                 names={names}
+                listable={listable}
                 value={f.pushoverTokenSecret}
                 onChange={v => up({ pushoverTokenSecret: v })}
               />
@@ -314,6 +342,7 @@ function ChannelEditor(props: {
                 label="Headers (optional)"
                 settings={settings}
                 names={names}
+                listable={listable}
                 value={f.webhookHeadersSecret}
                 onChange={v => up({ webhookHeadersSecret: v })}
               />
