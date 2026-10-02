@@ -81,6 +81,17 @@ export interface ChannelForm {
   webpushUrgency: string;
 }
 
+/** Route channel wildcard: every enabled channel, resolved when a message is sent. */
+export const ALL_CHANNELS = '*';
+
+export const routeTargetsAll = (channels: string[]) => channels.includes(ALL_CHANNELS);
+
+/** Human-readable channel list for a route; the wildcard is shown explicitly. */
+export const describeChannels = (channels: string[] | undefined) =>
+  !channels || channels.length === 0 || routeTargetsAll(channels)
+    ? 'All enabled channels'
+    : channels.join(', ');
+
 export interface RouteForm {
   name: string;
   channels: string[];

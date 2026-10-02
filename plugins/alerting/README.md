@@ -95,6 +95,13 @@ for example written by an initContainer) using the setting keys `group`,
 `version`, `namespace` and `stateApiUrl`. Values a user saves in the settings
 override it, and it overrides the built-in defaults.
 
+## Routing to all channels
+
+An `AlertRoute` whose `channels` contains `*` (or is empty) targets every
+`NotificationChannel` with `enabled: true`, resolved when a message is sent, so
+channels created later are included without editing the route. The route editor
+offers this as **All enabled channels** and the list shows it as such.
+
 ## Git and the UI
 
 Custom resources can be managed in Git (GitOps) or live in the UI. Pick one per

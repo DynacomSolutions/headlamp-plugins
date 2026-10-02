@@ -1,9 +1,11 @@
 /// <reference types="@kinvolk/headlamp-plugin" />
 import { describe, expect, it } from 'vitest';
 import {
+  ALL_CHANNELS,
   channelFromResource,
   channelResource,
   DEFAULT_SETTINGS,
+  describeChannels,
   emptyChannel,
   emptyRoute,
   manifestFileName,
@@ -14,6 +16,7 @@ import {
   resolveSettings,
   routeFromResource,
   routeResource,
+  routeTargetsAll,
   secretListingFailed,
   stateSeverity,
   testRequestPatch,
@@ -371,3 +374,18 @@ describe('backend state shape', () => {
 function T0() {
   return '2026-01-01T00:00:00Z';
 }
+
+describe('route wildcard channel', () => {
+  it('round-trips and validates', () => {
+    const f = { ...emptyRoute(), name: 'r', channels: [ALL_CHANNELS] };
+    expect(validateRoute(f)).toEqual([]);
+    expect(routeResource(f, S).spec.channels).toEqual(['*']);
+    expect(routeTargetsAll(routeFromResource(routeResource(f, S)).channels)).toBe(true);
+  });
+  it('describes the wildcard and empty lists clearly', () => {
+    expect(describeChannels(['*'])).toBe('All enabled channels');
+    expect(describeChannels([])).toBe('All enabled channels');
+    expect(describeChannels(undefined)).toBe('All enabled channels');
+    expect(describeChannels(['a', 'b'])).toBe('a, b');
+  });
+});
