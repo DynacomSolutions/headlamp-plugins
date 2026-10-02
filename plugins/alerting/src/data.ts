@@ -5,6 +5,7 @@ import {
   parseStatePayload,
   resolveEndpoint,
   resolveSettings,
+  secretListingFailed,
   Settings,
   StatePayload,
   testRequestPatch,
@@ -12,9 +13,34 @@ import {
 
 export const configStore = new ConfigStore<Partial<Settings>>(CONFIG_KEY);
 
+let defaultsPromise: Promise<Partial<Settings>> | null = null;
+
+/**
+ * Deployment-supplied defaults: an optional defaults.json shipped next to
+ * main.js in the plugin directory (Headlamp serves it as a static file).
+ */
+function loadDefaults(): Promise<Partial<Settings>> {
+  if (!defaultsPromise) {
+    defaultsPromise = fetch(`/plugins/${CONFIG_KEY}/defaults.json`)
+      .then(r => (r.ok ? r.json() : {}))
+      .then(j => (j && typeof j === 'object' ? (j as Partial<Settings>) : {}))
+      .catch(() => ({}));
+  }
+  return defaultsPromise;
+}
+
+/** Browser-local overrides layered over the deployment defaults and built-ins. */
 export function useSettings(): Settings {
   const stored = configStore.useConfig()() as Partial<Settings> | undefined;
-  return React.useMemo(() => resolveSettings(stored), [stored]);
+  const [defaults, setDefaults] = React.useState<Partial<Settings>>({});
+  React.useEffect(() => {
+    let alive = true;
+    loadDefaults().then(d => alive && setDefaults(d));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return React.useMemo(() => resolveSettings(stored, defaults), [stored, defaults]);
 }
 
 type Kind = 'NotificationChannel' | 'AlertRoute';
@@ -58,36 +84,53 @@ export function useResources(kind: Kind, s: Settings): ListState {
   };
 }
 
+export interface SecretNames {
+  names: string[];
+  /** false when listing Secrets failed or was forbidden: use free-text inputs */
+  available: boolean;
+}
+
 /** Names of Secrets in the configured namespace (names only; values are never read). */
-export function useSecretNames(s: Settings): string[] {
-  const [items] = (K8s.ResourceClasses as any).Secret.useList({ namespace: s.namespace });
+export function useSecretNames(s: Settings): SecretNames {
+  const [items, err] = (K8s.ResourceClasses as any).Secret.useList({ namespace: s.namespace });
   return React.useMemo(
-    () =>
-      ((items || []) as any[])
+    () => ({
+      names: ((items || []) as any[])
         .map(i => i.metadata?.name as string)
         .filter(Boolean)
         .sort(),
-    [items]
+      available: !secretListingFailed(err),
+    }),
+    [items, err]
   );
 }
 
-/** Keys of one Secret in the configured namespace (key names only). */
-export function useSecretKeys(s: Settings, name: string): string[] {
-  const [keys, setKeys] = React.useState<string[]>([]);
+/** Keys of one Secret in the configured namespace (key names only; values are discarded). */
+export function useSecretKeys(
+  s: Settings,
+  name: string,
+  enabled = true
+): { keys: string[]; available: boolean } {
+  const [state, setState] = React.useState<{ keys: string[]; available: boolean }>({
+    keys: [],
+    available: true,
+  });
   React.useEffect(() => {
     let alive = true;
-    if (!name) {
-      setKeys([]);
+    if (!name || !enabled) {
+      setState({ keys: [], available: true });
       return;
     }
     ApiProxy.request(`/api/v1/namespaces/${s.namespace}/secrets/${name}`)
-      .then((r: any) => alive && setKeys(Object.keys(r?.data || {}).sort()))
-      .catch(() => alive && setKeys([]));
+      .then(
+        (r: any) => alive && setState({ keys: Object.keys(r?.data || {}).sort(), available: true })
+      )
+      .catch(() => alive && setState({ keys: [], available: false }));
     return () => {
       alive = false;
     };
-  }, [s.namespace, name]);
-  return keys;
+  }, [s.namespace, name, enabled]);
+  return state;
 }
 
 const collectionPath = (s: Settings, kind: Kind) =>

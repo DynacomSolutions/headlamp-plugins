@@ -14,6 +14,7 @@ import {
   resolveSettings,
   routeFromResource,
   routeResource,
+  secretListingFailed,
   stateSeverity,
   testRequestPatch,
   testState,
@@ -42,6 +43,38 @@ describe('settings', () => {
     expect(s.group).toBe('alerts.example.org');
     expect(s.namespace).toBe('monitoring');
     expect('gitops' in s).toBe(false);
+  });
+  it('layers browser overrides over deployment defaults over built-ins', () => {
+    const deployment = {
+      namespace: 'alerts',
+      stateApiUrl: 'service/a/b:80/state',
+      group: 'g.example.com',
+    };
+    const s = resolveSettings({ namespace: 'mine', group: '' }, deployment);
+    expect(s.namespace).toBe('mine');
+    expect(s.group).toBe('g.example.com');
+    expect(s.stateApiUrl).toBe('service/a/b:80/state');
+    expect(s.version).toBe('v1alpha1');
+  });
+  it('lets a stored blank state API URL hide the status page', () => {
+    expect(
+      resolveSettings({ stateApiUrl: '' }, { stateApiUrl: 'https://x.example.com/s' }).stateApiUrl
+    ).toBe('');
+  });
+  it('ignores malformed deployment defaults', () => {
+    expect(resolveSettings(undefined, 'nope' as any)).toEqual(resolveSettings(undefined));
+    expect(resolveSettings(undefined, { namespace: 5, other: 'x' } as any).namespace).toBe(
+      'monitoring'
+    );
+  });
+});
+
+describe('secret listing fallback', () => {
+  it('detects a failed or forbidden listing', () => {
+    expect(secretListingFailed(null)).toBe(false);
+    expect(secretListingFailed(undefined)).toBe(false);
+    expect(secretListingFailed({ status: 403 })).toBe(true);
+    expect(secretListingFailed(new Error('boom'))).toBe(true);
   });
 });
 
