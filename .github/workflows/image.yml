@@ -3,7 +3,6 @@ name: image
 # Builds, scans and publishes one image per plugin. Nothing registry-specific
 # lives in this repo; configure in Settings > Secrets and variables > Actions:
 #   vars.IMAGE_REGISTRY_PREFIX  registry host and path, e.g. registry.example.com/team
-#   vars.IMAGE_RUNNER_LABEL     optional runs-on label (default: ubuntu-latest)
 #   secrets.REGISTRY_HOST       optional, registry host to docker login to
 #   secrets.REGISTRY_USERNAME   optional, login user (skip login if unset)
 #   secrets.REGISTRY_PASSWORD   optional, login password or token
