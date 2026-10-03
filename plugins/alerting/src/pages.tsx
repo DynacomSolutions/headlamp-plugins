@@ -5,12 +5,16 @@ import Alert from '@mui/material/Alert';
 import Autocomplete from '@mui/material/Autocomplete';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
+import FormControl from '@mui/material/FormControl';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import FormGroup from '@mui/material/FormGroup';
+import FormLabel from '@mui/material/FormLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
@@ -28,11 +32,13 @@ import {
   useStateApi,
 } from './data';
 import {
+  ALERT_KIND_LABELS,
   ALL_CHANNELS,
   CHANNEL_TYPES,
   ChannelForm,
   channelFromResource,
   channelResource,
+  describeAlertKinds,
   describeChannels,
   deviceLabel,
   emptyChannel,
@@ -278,6 +284,29 @@ function ChannelEditor(props: {
             }
             label="Enabled"
           />
+          <FormControl required error={f.alertKinds.length === 0} component="fieldset">
+            <FormLabel component="legend">Alert me for</FormLabel>
+            <FormGroup>
+              {ROUTE_KINDS.map(k => (
+                <FormControlLabel
+                  key={k}
+                  control={
+                    <Checkbox
+                      checked={f.alertKinds.includes(k)}
+                      onChange={e =>
+                        up({
+                          alertKinds: e.target.checked
+                            ? [...f.alertKinds, k]
+                            : f.alertKinds.filter(x => x !== k),
+                        })
+                      }
+                    />
+                  }
+                  label={`${ALERT_KIND_LABELS[k]} (${k})`}
+                />
+              ))}
+            </FormGroup>
+          </FormControl>
           {f.type === 'email' && (
             <TextField
               label="Recipients"
@@ -659,6 +688,7 @@ export function ChannelsPage() {
                 </StatusLabel>
               ),
             },
+            { header: 'Alerts', accessorFn: (c: any) => describeAlertKinds(c.spec?.alertKinds) },
             { header: 'Last result', accessorFn: (c: any) => c.status?.lastResult || '' },
             { header: 'Last send', accessorFn: (c: any) => c.status?.lastSendTime || '' },
             { header: 'Last error', accessorFn: (c: any) => c.status?.lastError || '' },

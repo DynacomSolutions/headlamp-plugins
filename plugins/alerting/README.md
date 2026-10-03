@@ -95,6 +95,17 @@ for example written by an initContainer) using the setting keys `group`,
 `version`, `namespace` and `stateApiUrl`. Values a user saves in the settings
 override it, and it overrides the built-in defaults.
 
+## Alert kinds per channel
+
+A `NotificationChannel` may set `spec.alertKinds`, a list drawn from `urgent`
+(outages), `recovery` and `summary` (daily summary). The backend sends a message
+only to channels whose list contains its kind; omitting the field means every
+kind. The channel form has a required **Alert me for** section: nothing is
+pre-selected on a new channel and at least one kind must be ticked. Editing an
+older channel without the field shows all three ticked. The Channels list has an
+**Alerts** column. Enabling web push on a device is unchanged: devices join an
+existing channel and inherit its kinds.
+
 ## Routing to all channels
 
 An `AlertRoute` whose `channels` contains `*` (or is empty) targets every
