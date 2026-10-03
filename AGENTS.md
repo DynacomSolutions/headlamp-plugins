@@ -19,14 +19,18 @@ Use generic placeholders: `example.com`, `my-org/my-repo`, `worker-1`,
 | --- | --- | --- |
 | gitleaks (pinned in `.pre-commit-config.yaml`) | pre-commit, pre-push, CI | secret scan |
 | `scripts/check-identifiers.sh` | pre-commit, pre-push, CI | private IPs, `*.local`/`*.internal`, non-example emails |
-| private deny-list | local only | every regex in an **untracked** deny-list |
+| private deny-list | locally if configured; always in CI | every regex in an **untracked** deny-list |
 
 The deny-list lives in `.identifiers-denylist` (gitignored) or at the path in
 `$IDENTIFIERS_DENYLIST`. One case-insensitive regex per line. It holds the real
 domains, org names, machine names, person names and emails that must never
 appear. **The deny-list must never be committed or pasted into a PR, issue,
 commit message or CI log**, because it would leak the identifiers it exists to
-protect. CI does not have it; CI only runs the generic checks.
+protect. CI enforces the deny-list from a repository secret
+(`IDENTIFIERS_DENYLIST`) and fails closed if it is unavailable; fork PRs cannot
+read secrets, so a maintainer must run the check for them. Locally, point at
+your copy with `IDENTIFIERS_DENYLIST=<path> scripts/check-identifiers.sh --all
+--require-denylist`. Matches are reported as `file:line` only.
 
 ## Workflow
 

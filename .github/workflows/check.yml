@@ -24,8 +24,23 @@ jobs:
           sudo install gitleaks /usr/local/bin/gitleaks
       - name: gitleaks (history)
         run: gitleaks git --no-banner --redact --verbose
-      - name: Generic identifier checks (no private deny-list in CI)
-        run: scripts/check-identifiers.sh --all
+      - name: Identifier checks (generic and private deny-list)
+        env:
+          DENYLIST_CONTENT: ${{ secrets.IDENTIFIERS_DENYLIST }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ -z "${DENYLIST_CONTENT}" ]; then
+            if [ "${IS_FORK_PR}" = "true" ]; then
+              echo "::error::Repository secrets are unavailable to fork PRs, so the private deny-list check cannot run. A maintainer must run scripts/check-identifiers.sh --all --require-denylist locally against this branch before merging."
+            else
+              echo "::error::The IDENTIFIERS_DENYLIST repository secret is missing or empty. Failing closed."
+            fi
+            exit 1
+          fi
+          list="$(mktemp "${RUNNER_TEMP}/denylist.XXXXXX")"
+          trap 'rm -f "${list}"' EXIT
+          printf '%s\n' "${DENYLIST_CONTENT}" > "${list}"
+          IDENTIFIERS_DENYLIST="${list}" scripts/check-identifiers.sh --all --require-denylist
   plugins:
     runs-on: k3s-runners
     needs: generic-checks
