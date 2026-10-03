@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   generic-checks:
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     env:
       GITLEAKS_VERSION: 8.30.1
     steps:
@@ -27,7 +27,7 @@ jobs:
       - name: Generic identifier checks (no private deny-list in CI)
         run: scripts/check-identifiers.sh --all
   plugins:
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     needs: generic-checks
     strategy:
       max-parallel: 1
