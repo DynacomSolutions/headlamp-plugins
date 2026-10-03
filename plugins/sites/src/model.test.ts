@@ -84,7 +84,7 @@ describe('buildSites', () => {
   });
 
   it('keeps a nested suffix host as its own site id', () => {
-    const sites = buildSites([m('dynacom', 'registry-public-root', 'registry.s.example.com', '/', 'registry.infra:5000')]);
+    const sites = buildSites([m('my-namespace', 'registry-public-root', 'registry.s.example.com', '/', 'registry.infra:5000')]);
     expect(sites[0].id).toBe('registry.s');
     expect(sites[0].primaryUrl).toBe('https://registry.s.example.com/');
   });
