@@ -27,7 +27,7 @@ concurrency:
 jobs:
   image:
     name: "image (${{ matrix.plugin }})"
-    runs-on: ${{ vars.IMAGE_RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ vars.IMAGE_RUNNER_LABEL || 'k3s-runners' }}
     strategy:
       max-parallel: 1
       fail-fast: false
