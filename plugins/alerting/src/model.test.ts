@@ -5,6 +5,7 @@ import {
   channelFromResource,
   channelResource,
   DEFAULT_SETTINGS,
+  describeAlertKinds,
   describeChannels,
   emptyChannel,
   emptyRoute,
@@ -14,6 +15,7 @@ import {
   parseStatePayload,
   resolveEndpoint,
   resolveSettings,
+  ROUTE_KINDS,
   routeFromResource,
   routeResource,
   routeTargetsAll,
@@ -85,6 +87,7 @@ describe('YAML generation', () => {
   it('generates an email channel', () => {
     const f = {
       ...emptyChannel(),
+      alertKinds: [...ROUTE_KINDS],
       name: 'ops-mail',
       emailTo: ['oncall@example.com', 'team@example.com'],
     };
@@ -98,6 +101,10 @@ describe('YAML generation', () => {
         'spec:',
         '  type: email',
         '  enabled: true',
+        '  alertKinds:',
+        '    - urgent',
+        '    - recovery',
+        '    - summary',
         '  email:',
         '    to:',
         '      - oncall@example.com',
@@ -108,7 +115,13 @@ describe('YAML generation', () => {
   });
 
   it('generates an ntfy channel with optional fields only when set', () => {
-    const f = { ...emptyChannel(), name: 'phone', type: 'ntfy' as const, ntfyTopic: 'alerts' };
+    const f = {
+      ...emptyChannel(),
+      alertKinds: [...ROUTE_KINDS],
+      name: 'phone',
+      type: 'ntfy' as const,
+      ntfyTopic: 'alerts',
+    };
     const plain = channelResource(f, S).spec.ntfy;
     expect(plain).toEqual({ server: 'https://ntfy.example.com', topic: 'alerts' });
     f.ntfyPriority = '4';
@@ -124,6 +137,7 @@ describe('YAML generation', () => {
   it('generates pushover and webhook channels', () => {
     const p = {
       ...emptyChannel(),
+      alertKinds: [...ROUTE_KINDS],
       name: 'push',
       type: 'pushover' as const,
       pushoverUserKeySecret: { name: 'po', key: 'user' },
@@ -135,6 +149,7 @@ describe('YAML generation', () => {
     });
     const w = {
       ...emptyChannel(),
+      alertKinds: [...ROUTE_KINDS],
       name: 'hook',
       type: 'webhook' as const,
       webhookUrl: 'https://hooks.example.com/x',
@@ -149,7 +164,7 @@ describe('YAML generation', () => {
 
   it('honours configured group, version and namespace', () => {
     const r = channelResource(
-      { ...emptyChannel(), name: 'a', emailTo: ['a@example.com'] },
+      { ...emptyChannel(), alertKinds: [...ROUTE_KINDS], name: 'a', emailTo: ['a@example.com'] },
       {
         ...S,
         group: 'alerts.example.org',
@@ -164,6 +179,7 @@ describe('YAML generation', () => {
   it('round-trips channel and route resources through the form', () => {
     const f = {
       ...emptyChannel(),
+      alertKinds: [...ROUTE_KINDS],
       name: 'phone',
       type: 'ntfy' as const,
       ntfyTopic: 'alerts',
@@ -218,10 +234,49 @@ describe('manifest file name', () => {
   });
 });
 
+describe('channel alert kinds', () => {
+  const base = { ...emptyChannel(), name: 'a', emailTo: ['a@example.com'] };
+
+  it('starts a new channel with nothing chosen and rejects it', () => {
+    expect(emptyChannel().alertKinds).toEqual([]);
+    expect(validateChannel(base)).toEqual(['Choose at least one kind of alert to receive.']);
+    expect(validateChannel({ ...base, alertKinds: ['summary'] })).toEqual([]);
+  });
+
+  it('writes the chosen kinds in canonical order', () => {
+    const r = channelResource({ ...base, alertKinds: ['summary', 'urgent'] }, S);
+    expect(r.spec.alertKinds).toEqual(['urgent', 'summary']);
+  });
+
+  it('treats an omitted alertKinds on an existing channel as every kind', () => {
+    const cr = channelResource({ ...base, alertKinds: ['urgent'] }, S);
+    delete cr.spec.alertKinds;
+    expect(channelFromResource(cr).alertKinds).toEqual([...ROUTE_KINDS]);
+  });
+
+  it('describes kinds for the list', () => {
+    expect(describeAlertKinds(undefined)).toBe('All');
+    expect(describeAlertKinds(['summary', 'urgent'])).toBe('Outages, Daily summary');
+    expect(describeAlertKinds([])).toBe('None');
+  });
+
+  it('shows kinds in the state API channel detail', () => {
+    const p = parseStatePayload({
+      channels: [{ name: 'm', type: 'email', alertKinds: ['summary'] }],
+    });
+    expect(p.channels[0].detail).toBe('email, kinds: summary');
+  });
+});
+
 describe('validation', () => {
   it('requires fields per type', () => {
     expect(validateChannel(emptyChannel()).length).toBeGreaterThan(1);
-    const ok = { ...emptyChannel(), name: 'a', emailTo: ['a@example.com'] };
+    const ok = {
+      ...emptyChannel(),
+      alertKinds: [...ROUTE_KINDS],
+      name: 'a',
+      emailTo: ['a@example.com'],
+    };
     expect(validateChannel(ok)).toEqual([]);
     expect(validateChannel({ ...ok, emailTo: ['nope'] })).toHaveLength(1);
     expect(validateChannel({ ...ok, type: 'pushover' })).toHaveLength(2);

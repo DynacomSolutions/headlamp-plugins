@@ -21,6 +21,7 @@ describe('webpush channel', () => {
   it('round-trips ttl and urgency', () => {
     const f = {
       ...emptyChannel(),
+      alertKinds: ['urgent' as const],
       name: 'push',
       type: 'webpush' as const,
       webpushTtl: '600',
@@ -30,13 +31,19 @@ describe('webpush channel', () => {
     expect(cr.spec).toEqual({
       type: 'webpush',
       enabled: true,
+      alertKinds: ['urgent'],
       webpush: { ttl: 600, urgency: 'high' },
     });
     const back = channelFromResource(cr);
     expect([back.type, back.webpushTtl, back.webpushUrgency]).toEqual(['webpush', '600', 'high']);
   });
   it('emits an empty webpush object and validates ttl', () => {
-    const f = { ...emptyChannel(), name: 'push', type: 'webpush' as const };
+    const f = {
+      ...emptyChannel(),
+      alertKinds: ['urgent' as const],
+      name: 'push',
+      type: 'webpush' as const,
+    };
     expect(channelResource(f, S).spec.webpush).toEqual({});
     expect(validateChannel(f)).toEqual([]);
     expect(validateChannel({ ...f, webpushTtl: 'abc' })).toHaveLength(1);

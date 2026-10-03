@@ -59,6 +59,21 @@ export type ChannelType = (typeof CHANNEL_TYPES)[number];
 export const ROUTE_KINDS = ['urgent', 'recovery', 'summary'] as const;
 export type RouteKind = (typeof ROUTE_KINDS)[number];
 
+/** Labels for the alert kinds a channel can receive, in display order. */
+export const ALERT_KIND_LABELS: Record<RouteKind, string> = {
+  urgent: 'Outages',
+  recovery: 'Recoveries',
+  summary: 'Daily summary',
+};
+
+/** Human-readable kinds for a channel; an omitted list means every kind. */
+export const describeAlertKinds = (kinds: unknown): string =>
+  !Array.isArray(kinds)
+    ? 'All'
+    : ROUTE_KINDS.filter(k => kinds.includes(k))
+        .map(k => ALERT_KIND_LABELS[k])
+        .join(', ') || 'None';
+
 export interface SecretRef {
   name: string;
   key: string;
@@ -79,6 +94,8 @@ export interface ChannelForm {
   webhookHeadersSecret: SecretRef;
   webpushTtl: string;
   webpushUrgency: string;
+  /** Alert kinds this channel receives. New channels start empty: the user must choose. */
+  alertKinds: RouteKind[];
 }
 
 /** Route channel wildcard: every enabled channel, resolved when a message is sent. */
@@ -122,6 +139,7 @@ export function emptyChannel(): ChannelForm {
     webhookHeadersSecret: emptyRef(),
     webpushTtl: '',
     webpushUrgency: '',
+    alertKinds: [],
   };
 }
 
@@ -178,6 +196,10 @@ export function channelFromResource(cr: any): ChannelForm {
     f.webpushTtl = s.webpush.ttl === undefined ? '' : String(s.webpush.ttl);
     f.webpushUrgency = s.webpush.urgency || '';
   }
+  // Omitted alertKinds means every kind, so editing an older channel shows all three ticked.
+  f.alertKinds = Array.isArray(s.alertKinds)
+    ? ROUTE_KINDS.filter(k => s.alertKinds.includes(k))
+    : [...ROUTE_KINDS];
   return f;
 }
 
@@ -203,7 +225,11 @@ export function routeFromResource(cr: any): RouteForm {
 const apiVersion = (s: Settings) => `${s.group}/${s.version}`;
 
 export function channelResource(f: ChannelForm, s: Settings): any {
-  const spec: any = { type: f.type, enabled: f.enabled };
+  const spec: any = {
+    type: f.type,
+    enabled: f.enabled,
+    alertKinds: ROUTE_KINDS.filter(k => f.alertKinds.includes(k)),
+  };
   if (f.type === 'email') spec.email = { to: f.emailTo };
   if (f.type === 'ntfy') {
     const n: any = { server: f.ntfyServer, topic: f.ntfyTopic };
@@ -266,6 +292,7 @@ const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 export function validateChannel(f: ChannelForm): string[] {
   const e: string[] = [];
   if (!f.name || !DNS_LABEL.test(f.name)) e.push('Name must be a lower-case DNS label.');
+  if (f.alertKinds.length === 0) e.push('Choose at least one kind of alert to receive.');
   if (f.type === 'email') {
     if (f.emailTo.length === 0) e.push('At least one recipient is required.');
     else if (f.emailTo.some(a => !/^[^@\s]+@[^@\s]+$/.test(a)))
@@ -500,7 +527,12 @@ export function parseStatePayload(json: any): StatePayload {
         : {
             name: String(c?.name ?? c?.id ?? ''),
             detail:
-              [c?.type, c?.enabled === false ? 'disabled' : undefined, c?.lastResult]
+              [
+                c?.type,
+                c?.enabled === false ? 'disabled' : undefined,
+                Array.isArray(c?.alertKinds) ? `kinds: ${c.alertKinds.join('/')}` : undefined,
+                c?.lastResult,
+              ]
                 .filter(Boolean)
                 .join(', ') || undefined,
           }
