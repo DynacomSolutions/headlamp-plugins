@@ -19,24 +19,31 @@ import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { applyLimits, describeError, useAgentMemory, useChanges, useSettings } from './data';
+import { applyLimits, closeUnit, describeError, useAgentMemory, useChanges, useSettings } from './data';
 import {
   AgentMemoryState,
   alertsByUnit,
+  arrangeRows,
   barGeometry,
+  canClose,
+  changeLabel,
   ChangeRecord,
   checkEdit,
+  closeNeedsForce,
   currentValue,
   editableFields,
   EditField,
   EditForm,
   FIELD_LABELS,
   formatSize,
+  isOrphan,
   MemAlert,
   MemUnit,
   parseSize,
   shortName,
   sizeInput,
+  unitDetail,
+  unitLabel,
   worstSeverity,
 } from './model';
 
@@ -201,7 +208,13 @@ function HostSummary({ state }: { state: AgentMemoryState }) {
   );
 }
 
-function AlertsPanel({ alerts }: { alerts: MemAlert[] }) {
+function AlertsPanel({
+  alerts,
+  labelFor,
+}: {
+  alerts: MemAlert[];
+  labelFor: (unit: string) => string;
+}) {
   if (alerts.length === 0) {
     return (
       <Alert severity="success" sx={{ mb: 2 }}>
@@ -214,7 +227,7 @@ function AlertsPanel({ alerts }: { alerts: MemAlert[] }) {
   const list = (items: MemAlert[]) =>
     items.map(a => (
       <li key={`${a.unit}/${a.reason}`}>
-        <strong>{a.unit === 'host' ? 'Host' : shortName(a.unit)}</strong>: {a.detail}
+        <strong>{a.unit === 'host' ? 'Host' : labelFor(a.unit)}</strong>: {a.detail}
       </li>
     ));
   return (
@@ -292,7 +305,7 @@ function EditDialog({
       const summary = Object.entries(check.changes)
         .map(([k, v]) => `${FIELD_LABELS[k as EditField].split(' (')[0]} ${v}`)
         .join(', ');
-      onApplied(`${shortName(unit.name)}: ${summary} (${persist ? 'persistent' : 'runtime'})`);
+      onApplied(`Applied ${unitLabel(unit)}: ${summary} (${persist ? 'persistent' : 'runtime'})`);
     } catch (e: any) {
       setServerError(describeError(e));
     } finally {
@@ -302,7 +315,7 @@ function EditDialog({
 
   return (
     <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Edit limits: {shortName(unit.name)}</DialogTitle>
+      <DialogTitle>Edit limits: {unitLabel(unit)}</DialogTitle>
       <DialogContent>
         <Box display="flex" flexDirection="column" gap={2} mt={1}>
           <Typography variant="body2" color="text.secondary">
@@ -381,13 +394,106 @@ function EditDialog({
   );
 }
 
+/* ---------- close ---------- */
+
+function CloseDialog({
+  unit: latest,
+  onClose,
+  onClosed,
+}: {
+  /** The unit as of the latest poll; null once it has disappeared. */
+  unit: MemUnit | null;
+  onClose: () => void;
+  onClosed: (name: string, message: string) => void;
+}) {
+  const settings = useSettings();
+  // What the person confirmed is what is sent: keep the state seen at open.
+  const [unit] = React.useState<MemUnit>(() => latest as MemUnit);
+  const gone = latest === null;
+  const changed = latest !== null && latest.orphaned !== unit.orphaned;
+  const [reason, setReason] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+  const [serverError, setServerError] = React.useState<string | null>(null);
+  const live = closeNeedsForce(unit);
+  const label = unitLabel(unit);
+  const submit = async () => {
+    setBusy(true);
+    setServerError(null);
+    try {
+      await closeUnit(settings, { unit: unit.name, force: live, reason });
+      onClosed(unit.name, `${label}: close requested (${unit.procs} process${unit.procs === 1 ? '' : 'es'})`);
+    } catch (e: any) {
+      setServerError(describeError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
+      <DialogTitle>Close {label}</DialogTitle>
+      <DialogContent>
+        <Box display="flex" flexDirection="column" gap={2} mt={1}>
+          {live ? (
+            <Alert severity="error">
+              <strong>{label}</strong>{' '}
+              {unit.orphaned === null
+                ? 'cannot be confirmed as an orphan (the pane lookup is unavailable).'
+                : 'is a live pane.'}{' '}
+              Closing it will terminate the agent session running in it, and any unsaved work in its
+              processes is lost.
+            </Alert>
+          ) : (
+            <Alert severity="info">
+              The pane for this scope no longer exists. Closing it stops the leftover processes and
+              frees {formatSize(unit.current)}.
+            </Alert>
+          )}
+          <Typography variant="body2" color="text.secondary">
+            The scope {unit.name} ({unit.procs} process{unit.procs === 1 ? '' : 'es'}
+            {unit.topProcess ? `, largest: ${unit.topProcess}` : ''}) is stopped through the user
+            manager: its processes receive SIGTERM, then SIGKILL after the stop timeout.
+          </Typography>
+          <TextField
+            label="Reason (required, recorded in the audit log)"
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            size="small"
+            inputProps={{ maxLength: 200 }}
+            fullWidth
+          />
+          {gone && <Alert severity="warning">Unit no longer present.</Alert>}
+          {changed && (
+            <Alert severity="warning">
+              The pane status changed since this dialog opened. Close it and reopen to confirm.
+            </Alert>
+          )}
+          {serverError && <Alert severity="error">{serverError}</Alert>}
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} disabled={busy}>
+          Cancel
+        </Button>
+        <Button
+          variant="contained"
+          color="error"
+          onClick={submit}
+          disabled={busy || gone || changed || reason.trim() === ''}
+        >
+          {busy ? 'Closing...' : live ? 'Terminate session and close' : 'Close scope'}
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 /* ---------- page ---------- */
 
 function ChangesList({ changes }: { changes: ChangeRecord[] }) {
   if (changes.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
-        No limit has been changed since the backend started.
+        No limit has been changed and no scope closed since the backend started.
       </Typography>
     );
   }
@@ -396,7 +502,7 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
       <TableHead>
         <TableRow>
           <TableCell>Time</TableCell>
-          <TableCell>Unit</TableCell>
+          <TableCell>Name</TableCell>
           <TableCell>Change</TableCell>
           <TableCell>Via</TableCell>
           <TableCell>Reason</TableCell>
@@ -406,11 +512,35 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
         {changes.slice(0, 20).map((c, i) => (
           <TableRow key={`${c.time}-${i}`} sx={c.error ? { bgcolor: 'error.light' } : undefined}>
             <TableCell>{new Date(c.time).toLocaleString()}</TableCell>
-            <TableCell>{shortName(c.unit)}</TableCell>
             <TableCell>
-              {Object.keys(c.new)
-                .map(k => `${k.replace('Memory', '')} ${c.old[k] ?? '?'} to ${c.new[k]}`)
-                .join(', ')}
+              <Tooltip title={c.unit}>
+                <span>{changeLabel(c)}</span>
+              </Tooltip>
+            </TableCell>
+            <TableCell>
+              {c.action === 'stop' ? (
+                <Tooltip
+                  title={
+                    <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                      {(c.killed ?? []).map(p => (
+                        <li key={p.pid}>
+                          {p.pid} {p.command} ({formatSize(p.rss)})
+                        </li>
+                      ))}
+                    </Box>
+                  }
+                >
+                  <span>
+                    Closed scope{c.force ? ' (live pane, forced)' : ''}:{' '}
+                    {c.killedTotal ?? c.killed?.length ?? 0} process
+                    {(c.killedTotal ?? c.killed?.length ?? 0) === 1 ? '' : 'es'}
+                  </span>
+                </Tooltip>
+              ) : (
+                Object.keys(c.new)
+                  .map(k => `${k.replace('Memory', '')} ${c.old[k] ?? '?'} to ${c.new[k]}`)
+                  .join(', ')
+              )}
               {c.error ? ` (failed: ${c.error})` : ''}
             </TableCell>
             <TableCell>
@@ -428,21 +558,39 @@ export function AgentMemoryPage(): JSX.Element {
   const settings = useSettings();
   const { state, loading, error, refresh } = useAgentMemory(settings);
   const [filter, setFilter] = React.useState('');
+  const [orphansOnly, setOrphansOnly] = React.useState(false);
   const [editing, setEditing] = React.useState<string | null>(null);
+  const [closing, setClosing] = React.useState<string | null>(null);
+  /** Scopes a close was requested for, with the request time; cleared on disappearance or after 30s. */
+  const [closingUnits, setClosingUnits] = React.useState<Record<string, number>>({});
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (Object.keys(closingUnits).length === 0) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [closingUnits]);
+  const isClosing = (name: string) =>
+    closingUnits[name] !== undefined && now - closingUnits[name] < 30000;
+  React.useEffect(() => {
+    if (!state) return;
+    const present = new Set(state.units.map(u => u.name));
+    setClosingUnits(m => {
+      const next = Object.fromEntries(Object.entries(m).filter(([n]) => present.has(n)));
+      return Object.keys(next).length === Object.keys(m).length ? m : next;
+    });
+  }, [state]);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [version, setVersion] = React.useState(0);
   const changes = useChanges(settings, state !== null, version);
 
   const alerts = state?.alerts ?? [];
   const byUnit = React.useMemo(() => alertsByUnit(alerts), [alerts]);
-  const q = filter.trim().toLowerCase();
-  const rows = (state?.units ?? []).filter(
-    u =>
-      !q ||
-      u.name.toLowerCase().includes(q) ||
-      (u.command ?? '').toLowerCase().includes(q) ||
-      (u.topProcess ?? '').toLowerCase().includes(q)
-  );
+  const rows = arrangeRows(state?.units ?? [], filter, orphansOnly);
+  const orphanCount = (state?.units ?? []).filter(isOrphan).length;
+  const labelFor = (name: string) => {
+    const u = state?.units.find(x => x.name === name);
+    return u ? unitLabel(u) : shortName(name);
+  };
   const unit = state?.units.find(u => u.name === editing) ?? null;
 
   return (
@@ -460,7 +608,7 @@ export function AgentMemoryPage(): JSX.Element {
       )}
       {notice && (
         <Alert severity="success" sx={{ mb: 2 }} onClose={() => setNotice(null)}>
-          Applied {notice}
+          {notice}
         </Alert>
       )}
       {state && (
@@ -471,18 +619,32 @@ export function AgentMemoryPage(): JSX.Element {
             </Alert>
           )}
           <HostSummary state={state} />
-          <AlertsPanel alerts={alerts} />
-          <TextField
-            label="Filter by unit or command"
-            value={filter}
-            onChange={e => setFilter(e.target.value)}
-            size="small"
-            sx={{ mb: 1, minWidth: 280 }}
-          />
+          <AlertsPanel alerts={alerts} labelFor={labelFor} />
+          {state.herdr.enabled && !state.herdr.up && (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Herdr is unreachable, so chat names are not shown and orphaned panes cannot be told
+              from live ones. Scope names are shown instead.
+            </Alert>
+          )}
+          <Box display="flex" gap={2} alignItems="center" flexWrap="wrap" mb={1}>
+            <TextField
+              label="Filter by name, workspace, tab, agent or command"
+              value={filter}
+              onChange={e => setFilter(e.target.value)}
+              size="small"
+              sx={{ minWidth: 340 }}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox checked={orphansOnly} onChange={e => setOrphansOnly(e.target.checked)} />
+              }
+              label={`Orphans only (${orphanCount})`}
+            />
+          </Box>
           <Table size="small">
             <TableHead>
               <TableRow>
-                <TableCell>Unit</TableCell>
+                <TableCell>Name</TableCell>
                 <TableCell>Process</TableCell>
                 <TableCell>Usage</TableCell>
                 <TableCell align="right">Used</TableCell>
@@ -513,14 +675,34 @@ export function AgentMemoryPage(): JSX.Element {
                     }
                   >
                     <TableCell
-                      sx={{ pl: 1 + u.depth * 2, fontWeight: u.kind === 'slice' ? 600 : 400 }}
+                      sx={{ pl: 1 + (isOrphan(u) ? 0 : u.depth) * 2, fontWeight: u.kind === 'slice' ? 600 : 400 }}
                     >
                       <Tooltip title={u.name}>
-                        <span>{shortName(u.name)}</span>
+                        <span>{unitLabel(u)}</span>
                       </Tooltip>{' '}
                       <Typography component="span" variant="caption" color="text.secondary">
                         {u.kind}
                       </Typography>
+                      {isOrphan(u) && (
+                        <Tooltip
+                          title={`${u.orphanReason ?? 'Its Herdr pane no longer exists'}${
+                            u.leaderAlive === true ? '; the leader process is still running' : ''
+                          }`}
+                        >
+                          <Chip
+                            size="small"
+                            color="warning"
+                            label="Orphaned"
+                            sx={{ ml: 1 }}
+                            aria-label={`Orphaned: ${u.name}`}
+                          />
+                        </Tooltip>
+                      )}
+                      {(unitDetail(u) || (u.herdr && unitLabel(u) !== shortName(u.name))) && (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {[unitDetail(u), shortName(u.name)].filter(Boolean).join(' · ')}
+                        </Typography>
+                      )}
                     </TableCell>
                     <TableCell>
                       {u.kind === 'slice' ? (
@@ -554,14 +736,25 @@ export function AgentMemoryPage(): JSX.Element {
                     <TableCell>
                       <AlertBadges alerts={byUnit.get(u.name)} />
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
                       {editable && (
                         <Button
                           size="small"
                           onClick={() => setEditing(u.name)}
-                          aria-label={`Edit limits of ${u.name}`}
+                          aria-label={`Edit limits of ${unitLabel(u)}`}
                         >
                           Edit
+                        </Button>
+                      )}
+                      {state.writable && canClose(u, state) && (
+                        <Button
+                          size="small"
+                          color="error"
+                          disabled={isClosing(u.name)}
+                          onClick={() => setClosing(u.name)}
+                          aria-label={`Close ${unitLabel(u)}`}
+                        >
+                          {isClosing(u.name) ? 'Closing...' : 'Close'}
                         </Button>
                       )}
                     </TableCell>
@@ -582,12 +775,31 @@ export function AgentMemoryPage(): JSX.Element {
           {state.writable && (
             <Box mt={3}>
               <Typography variant="h6" gutterBottom>
-                Recent limit changes
+                Recent changes
               </Typography>
               <ChangesList changes={changes} />
             </Box>
           )}
         </>
+      )}
+      {state && closing && (
+        <CloseDialog
+          key={closing}
+          unit={state.units.find(u => u.name === closing) ?? null}
+          onClose={() => setClosing(null)}
+          onClosed={(name, message) => {
+            setClosing(null);
+            setNotice(message);
+            setClosingUnits(m => ({ ...m, [name]: Date.now() }));
+            setVersion(v => v + 1);
+            refresh();
+            // systemd stops the scope after SIGTERM and possibly SIGKILL: look again shortly.
+            setTimeout(() => {
+              setVersion(v => v + 1);
+              refresh();
+            }, 5000);
+          }}
+        />
       )}
       {state && unit && (
         <EditDialog

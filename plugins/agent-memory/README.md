@@ -15,14 +15,24 @@ The page lists those slices and scopes and, for each:
 - memory pressure (PSI `some` and `full`, 10 second average);
 - the process or command in the scope, when the backend can see it;
 - active alert badges, and a summary of all active alerts at the top;
-- an **Edit** button that opens an editor for the limits.
+- the Herdr chat name as the row label (`workspace / chat title`), with the tab,
+  agent and scope name underneath, when the backend can resolve it;
+- an **Orphaned** badge on a pane scope whose Herdr pane no longer exists, an
+  **Orphans only** filter, and orphans sorted to the top;
+- an **Edit** button that opens an editor for the limits;
+- a **Close** button on pane scopes that stops the scope (SIGTERM, then SIGKILL)
+  after a confirmation: an orphan needs one confirmation, a live pane shows a
+  stronger warning that the agent session will be terminated. A reason is
+  required and is recorded in the audit log.
 
 The editor validates in the browser with the same rules the backend enforces
 (soft not above hard, sane minimum and maximum, a confirmation before a hard
 limit is set below current usage, `MemoryMin` and `MemoryLow` on slices only).
 It can persist a change on a slice instead of applying it to the running unit
 only. Every change is recorded by the backend, with the old and new values and
-an optional reason, and the recent ones are listed under the table.
+an optional reason, and the recent ones (including closed scopes and the
+processes stopped) are listed under the table. The search box matches names,
+workspace, tab, agent and the scope name.
 
 ## Backend
 
@@ -36,6 +46,7 @@ repository.
 | --- | --- | --- |
 | `/api/state` | GET | Units, limits, usage, events, pressure, host memory, active alerts |
 | `/api/changes` | GET | Recent limit changes |
+| `/api/units/stop` | POST | Close a pane scope: `{unit, reason, force?}` (`force` is needed for a live pane); same header and authorisation as `/api/limits` |
 | `/api/limits` | POST | Change limits: `{unit, memoryHigh?, memoryMax?, memorySwapMax?, memoryMin?, memoryLow?, persist?, force?, reason?}`; sizes such as `8G`, `512M`, `infinity`; requires the header `X-Agent-Memory-Write: 1` |
 
 The `/api/state` payload shape is described by the types at the top of
