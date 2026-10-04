@@ -143,6 +143,29 @@ function emptyNode(
   };
 }
 
+/** Label and StatusLabel status for a node, honouring the optional state. */
+export function nodeBadge(node: Pick<NodeStatus, 'ready' | 'state'>): {
+  label: string;
+  status: 'success' | 'warning' | 'error' | '';
+} {
+  switch (node.state) {
+    case 'standby':
+      return { label: 'standby', status: '' };
+    case 'starting':
+      return { label: 'starting', status: 'warning' };
+    case 'busy':
+      return { label: 'busy', status: 'success' };
+    case 'online':
+      return { label: 'online', status: 'success' };
+    case 'offline':
+      return { label: 'offline', status: 'error' };
+    default:
+      return node.ready
+        ? { label: 'ready', status: 'success' }
+        : { label: 'offline', status: 'error' };
+  }
+}
+
 export function summarise(nodes: NodeStatus[], scaleSets: ScaleSetSummary[]): Status['summary'] {
   const starting = nodes.reduce((n, x) => n + x.starting.length, 0);
   const scalePending = scaleSets.reduce((n, s) => n + Number(s.pending || 0), 0);
@@ -150,6 +173,7 @@ export function summarise(nodes: NodeStatus[], scaleSets: ScaleSetSummary[]): St
     running_jobs: nodes.reduce((n, x) => n + x.jobs.length, 0),
     pending_runners: Math.max(starting, scalePending),
     nodes_ready: nodes.filter(n => n.ready).length,
+    nodes_standby: nodes.filter(n => n.state === 'standby').length,
     nodes_total: nodes.length,
   };
 }
@@ -303,7 +327,15 @@ export function mergeEnrichment(local: Status, remote: Status | null, arcPresent
   const nodes = local.nodes.map(n => {
     const remoteNode = remote.nodes.find(r => r.id === n.id);
     if (n.kind === 'external') {
-      return remoteNode ? { ...n, ready: remoteNode.ready, jobs: remoteNode.jobs } : n;
+      return remoteNode
+        ? {
+            ...n,
+            ready: remoteNode.ready,
+            state: remoteNode.state,
+            state_reason: remoteNode.state_reason,
+            jobs: remoteNode.jobs,
+          }
+        : n;
     }
     return {
       ...n,
