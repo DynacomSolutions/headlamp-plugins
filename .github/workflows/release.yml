@@ -1,0 +1,81 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: k3s-runners
+    timeout-minutes: 45
+    strategy:
+      max-parallel: 1
+      fail-fast: false
+      matrix: {plugin: [alerting, disk-health, github-runners, sites]}
+    defaults:
+      run:
+        working-directory: plugins/${{ matrix.plugin }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate strict semver tag
+        working-directory: .
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          node <<'NODE'
+          const tag = process.env.TAG;
+          const semver = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
+          if (!semver.test(tag)) throw new Error(`Invalid release tag: ${tag}`);
+          NODE
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/${{ matrix.plugin }}/package-lock.json
+      - run: npm ci
+      - name: Stage tag version without committing
+        env: {VERSION: ${{ github.ref_name }}}
+        run: |
+          version="${VERSION#v}"
+          node -e 'const fs=require("fs"); for (const file of ["package.json","package-lock.json"]) { const d=JSON.parse(fs.readFileSync(file)); d.version=process.argv[1]; if (d.packages?.[""]) d.packages[""].version=process.argv[1]; fs.writeFileSync(file, JSON.stringify(d,null,2)+"\n"); }' "$version"
+      - run: npm run tsc
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Package native plugin archive
+        run: |
+          npm run package
+          version="${GITHUB_REF_NAME#v}"
+          archive="dist/${{ matrix.plugin }}-${version}.tar.gz"
+          test -f "$archive"
+          test "$(tar -tzf "$archive" | head -1)" = "${{ matrix.plugin }}/"
+          tar -tzf "$archive" | grep -qx "${{ matrix.plugin }}/LICENSE"
+          tar -tzf "$archive" | grep -qx "${{ matrix.plugin }}/main.js"
+          tar -tzf "$archive" | grep -qx "${{ matrix.plugin }}/package.json"
+          if [ "${{ matrix.plugin }}" = alerting ]; then tar -tzf "$archive" | grep -qx "alerting/sw.js"; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.plugin }}
+          path: plugins/${{ matrix.plugin }}/dist/*.tar.gz
+  publish:
+    needs: build
+    runs-on: k3s-runners
+    timeout-minutes: 10
+    permissions: {contents: write}
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: release-*, path: assets, merge-multiple: true}
+      - name: Create checksums
+        working-directory: assets
+        run: |
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 4
+          sha256sum *.tar.gz > SHA256SUMS
+          test "$(wc -l < SHA256SUMS)" -eq 4
+      - name: Publish complete release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: assets/*

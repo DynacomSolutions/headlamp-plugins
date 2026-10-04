@@ -78,12 +78,17 @@ that is exactly the IO path etcd's `fsync`/`fdatasync` calls go through.
 No extra RBAC is needed beyond Services proxy access, which the built-in
 `view` ClusterRole grants.
 
-## How it reaches Headlamp
+## Release installation
 
-Headlamp loads every subdirectory of its `-plugins-dir`. The `Dockerfile`
-here builds the plugin and ships only `dist/` plus `package.json` in a small
-image, intended to run as an initContainer that copies `/plugin` into a shared
-volume mounted at the plugins directory before Headlamp starts.
+Download `disk-health-<version>.tar.gz` and `SHA256SUMS` from the matching
+GitHub Release, verify the archive, and extract it into Headlamp's plugins
+directory.
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+mkdir -p /path/to/headlamp/plugins
+tar -xzf disk-health-0.1.0.tar.gz -C /path/to/headlamp/plugins
+```
 
 ## Local development
 

@@ -5,49 +5,89 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  generic-checks:
+  changes:
     runs-on: k3s-runners
-    env:
-      GITLEAKS_VERSION: 8.30.1
+    outputs:
+      all: ${{ steps.detect.outputs.all }}
+      alerting: ${{ steps.detect.outputs.alerting }}
+      disk-health: ${{ steps.detect.outputs.disk-health }}
+      github-runners: ${{ steps.detect.outputs.github-runners }}
+      sites: ${{ steps.detect.outputs.sites }}
+      matrix: ${{ steps.detect.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Install gitleaks (checksum verified)
+        with: {fetch-depth: 0}
+      - id: detect
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = push ]; then base="${{ github.event.before }}"; else base="${{ github.event.pull_request.base.sha }}"; fi
+          changed="$(git diff --name-only "$base"...HEAD || true)"
+          shared=0
+          while IFS= read -r path; do case "$path" in .github/workflows/*|.pre-commit-config.yaml|Makefile|package.json|package-lock.json|tsconfig.json|scripts/*|LICENSE) shared=1;; esac; done <<< "$changed"
+          echo "all=$([[ "$shared" = 1 || "${{ github.event_name }}" = push ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          for plugin in alerting disk-health github-runners sites; do
+            value=false; if [ "$shared" = 1 ] || [ "${{ github.event_name }}" = push ]; then value=true; fi
+            while IFS= read -r path; do case "$path" in plugins/$plugin/*) value=true;; esac; done <<< "$changed"
+            echo "$plugin=$value" >> "$GITHUB_OUTPUT"
+          done
+          matrix='[]'
+          if [ "$shared" = 1 ] || [ "${{ github.event_name }}" = push ]; then
+            matrix='["alerting","disk-health","github-runners","sites"]'
+          else
+            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(alerting|disk-health|github-runners|sites)\// {print $2}' | sort -u | jq -Rsc 'split("\\n") | map(select(length > 0))')"
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+  generic-checks:
+    runs-on: k3s-runners
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0}
+      - name: Install gitleaks
+        env: {GITLEAKS_VERSION: 8.30.1}
         run: |
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-          curl -fsSL -O "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSL -O "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          curl -fsSL -O "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -O "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
           sha256sum -c --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-          sudo install gitleaks /usr/local/bin/gitleaks
-      - name: gitleaks (history)
-        run: gitleaks git --no-banner --redact --verbose
-      - name: Identifier checks (generic and private deny-list)
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks && sudo install gitleaks /usr/local/bin/gitleaks
+      - run: gitleaks git --no-banner --redact --verbose
+      - name: Identifier checks
         env:
           DENYLIST_CONTENT: ${{ secrets.IDENTIFIERS_DENYLIST }}
           IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
-          if [ -z "${DENYLIST_CONTENT}" ]; then
-            if [ "${IS_FORK_PR}" = "true" ]; then
-              echo "::error::Repository secrets are unavailable to fork PRs, so the private deny-list check cannot run. A maintainer must run scripts/check-identifiers.sh --all --require-denylist locally against this branch before merging."
-            else
-              echo "::error::The IDENTIFIERS_DENYLIST repository secret is missing or empty. Failing closed."
-            fi
+          scripts/check-identifiers.sh --all
+  private-identifiers:
+    needs: changes
+    runs-on: k3s-runners
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Private identifier checks
+        env:
+          DENYLIST_CONTENT: ${{ secrets.IDENTIFIERS_DENYLIST }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ -z "$DENYLIST_CONTENT" ]; then
+            if [ "$IS_FORK_PR" = true ]; then echo "::error::Repository secrets are unavailable to fork pull requests. A maintainer must run scripts/check-identifiers.sh --all --require-denylist locally."; else echo "::error::The IDENTIFIERS_DENYLIST repository secret is missing or empty. Failing closed."; fi
             exit 1
           fi
-          list="$(mktemp "${RUNNER_TEMP}/denylist.XXXXXX")"
-          trap 'rm -f "${list}"' EXIT
-          printf '%s\n' "${DENYLIST_CONTENT}" > "${list}"
-          IDENTIFIERS_DENYLIST="${list}" scripts/check-identifiers.sh --all --require-denylist
-  plugins:
+          list="$(mktemp "${RUNNER_TEMP}/denylist.XXXXXX")"; trap 'rm -f "$list"' EXIT; printf '%s\n' "$DENYLIST_CONTENT" > "$list"
+          IDENTIFIERS_DENYLIST="$list" scripts/check-identifiers.sh --all --require-denylist
+  plugin:
+    needs: [changes, generic-checks, private-identifiers]
+    if: needs.changes.outputs.matrix != '[]'
     runs-on: k3s-runners
-    needs: generic-checks
+    timeout-minutes: 20
     strategy:
       max-parallel: 1
+      fail-fast: false
       matrix:
-        plugin: [alerting, disk-health, github-runners, sites]
+        plugin: ${{ fromJSON(needs.changes.outputs.matrix) }}
     defaults:
       run:
         working-directory: plugins/${{ matrix.plugin }}
@@ -56,9 +96,18 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/${{ matrix.plugin }}/package-lock.json
       - run: npm ci
       - run: npm run tsc
       - run: npm run lint
-      - run: npm run build
       - run: npm test
-        if: matrix.plugin == 'alerting'
+      - run: npm run build
+  gate:
+    if: always()
+    needs: [changes, generic-checks, private-identifiers, plugin]
+    runs-on: k3s-runners
+    timeout-minutes: 5
+    steps:
+      - run: |
+          for result in "${{ needs.changes.result }}" "${{ needs.generic-checks.result }}" "${{ needs.private-identifiers.result }}" "${{ needs.plugin.result }}"; do case "$result" in success|skipped) ;; *) exit 1;; esac; done

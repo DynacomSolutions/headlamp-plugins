@@ -45,6 +45,17 @@ saves in the settings override it.
 
 Read (`get`, `list`, `watch`) on `mappings.getambassador.io` in all namespaces.
 
+## Release installation
+
+Download `sites-<version>.tar.gz` and `SHA256SUMS` from the matching GitHub
+Release, verify the archive, and extract it into Headlamp's plugins directory.
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+mkdir -p /path/to/headlamp/plugins
+tar -xzf sites-0.1.0.tar.gz -C /path/to/headlamp/plugins
+```
+
 ## Development
 
 ```bash
@@ -53,9 +64,3 @@ npm ci
 npm run tsc && npm run lint && npm test
 npm run build       # -> dist/main.js
 ```
-
-The `Dockerfile` ships `/plugin` (`main.js` and `package.json`), intended as a
-Headlamp initContainer that copies it into the shared plugins volume. On a
-shared host bound memory, for example
-`systemd-run --user --scope -p MemoryMax=4G -- npm run build`, and run one build
-at a time.

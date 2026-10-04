@@ -10,9 +10,21 @@ Plugins for [Headlamp](https://headlamp.dev/), built with
 | [`plugins/github-runners`](plugins/github-runners) | Actions Runner Controller (ARC) runner dashboard: scale sets, runners, pods, jobs, optional history |
 | [`plugins/sites`](plugins/sites) | Directory of the sites served by Emissary Mappings, folded by host, live, with links to each site and its Mapping resources |
 
-Each plugin has its own `package.json`, `Dockerfile` and README. The image is
-intended to run as a Headlamp initContainer that copies `/plugin` into the
-shared plugins volume.
+Each plugin is distributed as a versioned GitHub Release archive containing
+the built `main.js`, its `package.json`, and any plugin assets. The alerting
+archive also includes its service worker.
+
+## Installing a release
+
+Download the archive for the plugin and the matching `SHA256SUMS` file from a
+GitHub Release, verify the checksum, and extract the archive into Headlamp's
+plugins directory:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+mkdir -p /path/to/headlamp/plugins
+tar -xzf example-plugin-0.1.0.tar.gz -C /path/to/headlamp/plugins
+```
 
 ## Public-repo rules and local checks
 
@@ -25,9 +37,12 @@ Enforced by deterministic checks:
 - **gitleaks** (pinned rev) on commit, push and in CI.
 - **`scripts/check-identifiers.sh`** fails on private IPs, `*.local` /
   `*.internal` names, and emails other than `@example.com` / `noreply`.
-- An optional **private deny-list** (`.identifiers-denylist`, gitignored, or
-  the path in `$IDENTIFIERS_DENYLIST`) with one regex per line for your real
-  domains and names. It is never committed; CI runs only the generic checks.
+- A **private deny-list** (`.identifiers-denylist`, gitignored, or the path in
+  `$IDENTIFIERS_DENYLIST`) with one regex per line for real domains and names.
+  It is never committed. CI requires its repository secret and fails closed
+  when it is unavailable. Fork pull requests cannot read repository secrets,
+  so a maintainer must run the private check locally for them; generic checks
+  still run in CI.
 
 ```bash
 pipx install pre-commit     # once

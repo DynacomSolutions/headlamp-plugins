@@ -1,6 +1,8 @@
 {
   "name": "disk-health",
   "version": "0.1.0",
+  "license": "MIT",
+  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
   "description": "Headlamp plugin: per-node SMART disk health and disk capacity, sourced from a Prometheus-compatible metrics service",
   "scripts": {
     "start": "headlamp-plugin start",

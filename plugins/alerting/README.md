@@ -194,3 +194,15 @@ per-target `episodes` are still accepted):
 ```bash
 npm ci && npm run tsc && npm run lint && npm test && npm run build
 ```
+
+## Release installation
+
+Download `alerting-<version>.tar.gz` and `SHA256SUMS` from the matching GitHub
+Release, verify the archive, and extract it into Headlamp's plugins directory.
+The archive contains `main.js`, `package.json`, and `sw.js` for web push.
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+mkdir -p /path/to/headlamp/plugins
+tar -xzf alerting-0.1.0.tar.gz -C /path/to/headlamp/plugins
+```

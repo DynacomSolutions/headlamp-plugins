@@ -1,6 +1,8 @@
 {
   "name": "github-runners",
   "version": "0.1.0",
+  "license": "MIT",
+  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
   "description": "Headlamp plugin: GitHub Actions Runner Controller (ARC) runner dashboard",
   "scripts": {
     "start": "headlamp-plugin start",

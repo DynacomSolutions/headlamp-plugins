@@ -71,6 +71,18 @@ of truth for what exists; the endpoint only overlays detail.
 Read (`get`, `list`, `watch`) on `nodes`, `pods`, and the four ARC resources.
 The built-in `view` ClusterRole plus read access to the ARC CRDs is enough.
 
+## Release installation
+
+Download `github-runners-<version>.tar.gz` and `SHA256SUMS` from the matching
+GitHub Release, verify the archive, and extract it into Headlamp's plugins
+directory.
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+mkdir -p /path/to/headlamp/plugins
+tar -xzf github-runners-0.1.0.tar.gz -C /path/to/headlamp/plugins
+```
+
 ## Development
 
 ```bash
@@ -79,9 +91,3 @@ npm ci
 npm run tsc && npm run lint && npm test
 npm run build       # -> dist/main.js
 ```
-
-The `Dockerfile` builds the plugin and ships `/plugin` (`main.js` and
-`package.json`), intended as a Headlamp initContainer that copies it into the
-shared plugins volume. On a shared host bound memory, for example
-`systemd-run --user --scope -p MemoryMax=4G -- npm run build`, and run one
-build at a time.
