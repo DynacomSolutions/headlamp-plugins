@@ -9,7 +9,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     timeout-minutes: 45
     outputs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
@@ -72,7 +72,7 @@ jobs:
           if-no-files-found: error
   publish:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     timeout-minutes: 10
     permissions: {contents: write}
     steps:

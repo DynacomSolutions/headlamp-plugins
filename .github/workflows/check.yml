@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     timeout-minutes: 5
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
@@ -42,7 +42,7 @@ jobs:
           if [ "$matrix" = '[]' ]; then has_changes=false; else has_changes=true; fi
           echo "has_changes=$has_changes" >> "$GITHUB_OUTPUT"
   generic-checks:
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -59,7 +59,7 @@ jobs:
         run: scripts/check-identifiers.sh --all
   private-identifiers:
     needs: changes
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -77,7 +77,7 @@ jobs:
   plugin:
     needs: [changes, generic-checks, private-identifiers]
     if: needs.changes.outputs.matrix != '[]'
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     timeout-minutes: 20
     strategy:
       max-parallel: 1
@@ -102,7 +102,7 @@ jobs:
   gate:
     if: always()
     needs: [changes, generic-checks, private-identifiers, plugin]
-    runs-on: ubuntu-latest
+    runs-on: k3s-runners
     timeout-minutes: 5
     steps:
       - run: |
