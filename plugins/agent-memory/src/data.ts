@@ -136,3 +136,21 @@ export async function applyLimits(s: Settings, u: LimitUpdate): Promise<any> {
     body: JSON.stringify(body),
   });
 }
+
+export interface CloseRequest {
+  unit: string;
+  force: boolean;
+  reason: string;
+}
+
+/**
+ * Stops a pane scope through the backend (systemd StopUnit: SIGTERM, then
+ * SIGKILL after the stop timeout). Same authorisation path as applyLimits.
+ */
+export async function closeUnit(s: Settings, r: CloseRequest): Promise<any> {
+  return ApiProxy.request(backendUrl(s.backend, '/api/units/stop'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Agent-Memory-Write': '1' },
+    body: JSON.stringify({ unit: r.unit, force: r.force, reason: r.reason.trim() }),
+  });
+}

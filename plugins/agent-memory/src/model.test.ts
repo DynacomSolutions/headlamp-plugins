@@ -2,17 +2,24 @@
 import { describe, expect, it } from 'vitest';
 import {
   alertsByUnit,
+  arrangeRows,
   backendUrl,
   barGeometry,
+  canClose,
+  changeLabel,
   checkEdit,
+  closeNeedsForce,
   DEFAULT_SETTINGS,
   formatSize,
+  matchesFilter,
   MemUnit,
   parseSize,
   parseState,
   resolveSettings,
   shortName,
   sizeInput,
+  unitDetail,
+  unitLabel,
   worstSeverity,
 } from './model';
 
@@ -38,6 +45,8 @@ function unit(over: Partial<MemUnit> = {}): MemUnit {
     pressureSome: zero,
     pressureFull: zero,
     procs: 3,
+    orphaned: null,
+    displayName: 'pane-1.scope',
     ...over,
   };
 }
@@ -214,5 +223,77 @@ describe('settings and payload', () => {
     expect(s.units[0].pressureSome.avg10).toBe(0);
     expect(s.writable).toBe(false);
     expect(parseState(null).units).toEqual([]);
+  });
+});
+
+describe('pane names and orphans', () => {
+  const live = unit({
+    name: 'herdr-workload-native-1-2.scope',
+    displayName: 'proj / Fix bug',
+    orphaned: false,
+    herdr: { paneId: 'w1:p1', workspace: 'proj', tab: 'Tasks', title: 'Fix bug', agent: 'claude', agentStatus: 'idle' },
+  });
+  const orphan = unit({ name: 'herdr-workload-native-3-4.scope', displayName: 'herdr-workload-native-3-4.scope', orphaned: true });
+  const unknown = unit({ name: 'herdr-workload-native-5-6.scope', orphaned: null });
+  const slice = unit({ name: 'panes.slice', kind: 'slice', parent: '', displayName: 'panes.slice' });
+
+  it('labels with the chat name, falling back to the short scope name', () => {
+    expect(unitLabel(live)).toBe('proj / Fix bug');
+    expect(unitLabel(orphan)).toBe('pane 3-4');
+    expect(changeLabel({ unit: 'a-workload-native-1.scope' })).toBe('pane 1');
+    expect(changeLabel({ unit: 'x.scope', displayName: 'proj / Fix bug' })).toBe('proj / Fix bug');
+    expect(unitDetail(live)).toBe('tab Tasks · claude idle');
+    expect(unitDetail(orphan)).toBe('');
+  });
+
+  it('search matches names, workspace, tab, agent and the scope name', () => {
+    for (const q of ['fix bug', 'PROJ', 'tasks', 'claude', 'native-1-2', 'w1:p1'])
+      expect(matchesFilter(live, q)).toBe(true);
+    expect(matchesFilter(live, 'nothing like it')).toBe(false);
+    expect(matchesFilter(orphan, 'orphaned')).toBe(true);
+    expect(matchesFilter(live, '')).toBe(true);
+  });
+
+  it('sorts orphans to the top and can show only orphans', () => {
+    const all = [slice, live, unknown, orphan];
+    expect(arrangeRows(all, '', false).map(u => u.name)).toEqual([
+      orphan.name,
+      slice.name,
+      live.name,
+      unknown.name,
+    ]);
+    expect(arrangeRows(all, '', true)).toEqual([orphan]);
+    expect(arrangeRows(all, 'fix', false)).toEqual([live]);
+  });
+
+  it('only closes scopes directly under the panes slice, never protected ones', () => {
+    const st = { panesSlice: 'panes.slice', protected: ['control.slice'] };
+    expect(canClose(orphan, st)).toBe(true);
+    expect(canClose(slice, st)).toBe(false);
+    expect(canClose(unit({ parent: 'control.slice' }), st)).toBe(false);
+    expect(canClose(unit({ parent: 'other.slice' }), st)).toBe(false);
+    expect(canClose(orphan, { panesSlice: '', protected: [] })).toBe(false);
+  });
+
+  it('needs the strong confirmation unless the pane is confirmed gone', () => {
+    expect(closeNeedsForce(orphan)).toBe(false);
+    expect(closeNeedsForce(live)).toBe(true);
+    expect(closeNeedsForce(unknown)).toBe(true);
+  });
+
+  it('parses the new fields and tolerates old backends', () => {
+    const st = parseState({
+      panesSlice: 'panes.slice',
+      herdr: { enabled: true, up: true, panes: 2 },
+      units: [
+        { name: 'a.scope', kind: 'scope', orphaned: true, displayName: 'proj / x' },
+        { name: 'b.scope', kind: 'scope' },
+      ],
+    });
+    expect(st.units[0].orphaned).toBe(true);
+    expect(st.units[1].orphaned).toBeNull();
+    expect(st.units[1].displayName).toBe('b.scope');
+    expect(st.herdr.up).toBe(true);
+    expect(parseState({}).panesSlice).toBe('');
   });
 });

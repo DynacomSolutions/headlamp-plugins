@@ -17,6 +17,18 @@ export interface Pressure {
 /** A byte quantity; null means unlimited ("max" / infinity). */
 export type Limit = number | null;
 
+/** What Herdr knows about the live pane behind a scope. */
+export interface HerdrInfo {
+  paneId: string;
+  workspace?: string;
+  tab?: string;
+  title?: string;
+  agent?: string;
+  agentSession?: string;
+  agentStatus?: string;
+  cwd?: string;
+}
+
 export interface MemUnit {
   name: string;
   kind: 'slice' | 'scope' | 'service';
@@ -37,6 +49,16 @@ export interface MemUnit {
   command?: string;
   topProcess?: string;
   topRss?: number;
+  /** Pane id from the environment of a process in the scope. */
+  paneId?: string;
+  leaderPid?: number;
+  leaderAlive?: boolean;
+  /** true: the pane is gone; false: it is live; null: unknown (for example Herdr unreachable). */
+  orphaned: boolean | null;
+  orphanReason?: string;
+  herdr?: HerdrInfo;
+  /** Human-friendly label; equals the unit name when Herdr has nothing better. */
+  displayName: string;
 }
 
 export interface MemAlert {
@@ -55,6 +77,9 @@ export interface AgentMemoryState {
   policy: { heavyHigh: string; heavyMax: string; heavySwap: string; keepFree: number };
   minLimit: number;
   protected: string[];
+  /** Scopes directly under this slice are the panes and may be closed. */
+  panesSlice: string;
+  herdr: { enabled: boolean; up: boolean; error?: string; panes: number };
   units: MemUnit[];
   alerts: MemAlert[];
 }
@@ -69,6 +94,12 @@ export interface ChangeRecord {
   old: Record<string, string>;
   new: Record<string, string>;
   error?: string;
+  /** "stop" for a closed scope; absent for a limit change. */
+  action?: string;
+  displayName?: string;
+  force?: boolean;
+  killed?: { pid: number; command: string; rss: number }[];
+  killedTotal?: number;
 }
 
 /* ---------- settings ---------- */
@@ -366,11 +397,78 @@ export function shortName(name: string): string {
     .replace(/\.(scope|slice|service)$/, '');
 }
 
+/** The primary row label: the Herdr chat name when known, else the short scope name. */
+export function unitLabel(u: Pick<MemUnit, 'name' | 'displayName'>): string {
+  return u.displayName && u.displayName !== u.name ? u.displayName : shortName(u.name);
+}
+
+/** Label for an audit record, which may predate display names. */
+export function changeLabel(c: Pick<ChangeRecord, 'unit' | 'displayName'>): string {
+  return c.displayName && c.displayName !== c.unit ? c.displayName : shortName(c.unit);
+}
+
+/** Secondary text under the label: tab, agent and its status. */
+export function unitDetail(u: MemUnit): string {
+  const h = u.herdr;
+  if (!h) return '';
+  const agent = h.agent ? `${h.agent}${h.agentStatus ? ` ${h.agentStatus}` : ''}` : '';
+  return [h.tab && h.tab !== h.title ? `tab ${h.tab}` : '', agent].filter(Boolean).join(' · ');
+}
+
+/** Everything a person might type to find a row: label, names, scope, command. */
+export function matchesFilter(u: MemUnit, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const h = u.herdr;
+  return [
+    u.name,
+    u.displayName,
+    u.command,
+    u.topProcess,
+    h?.workspace,
+    h?.tab,
+    h?.title,
+    h?.agent,
+    h?.cwd,
+    h?.paneId,
+    u.paneId,
+    u.orphaned ? 'orphaned' : '',
+  ].some(v => (v ?? '').toLowerCase().includes(q));
+}
+
+export function isOrphan(u: MemUnit): boolean {
+  return u.orphaned === true;
+}
+
+/** Applies the search and the orphans-only filter, and moves orphans to the top (stable otherwise). */
+export function arrangeRows(units: MemUnit[], query: string, orphansOnly: boolean): MemUnit[] {
+  const kept = units.filter(u => (!orphansOnly || isOrphan(u)) && matchesFilter(u, query));
+  return [...kept.filter(isOrphan), ...kept.filter(u => !isOrphan(u))];
+}
+
+/** A scope under the panes slice, other than a protected one, can be closed. */
+export function canClose(u: MemUnit, state: Pick<AgentMemoryState, 'panesSlice' | 'protected'>): boolean {
+  return (
+    u.kind === 'scope' &&
+    state.panesSlice !== '' &&
+    u.parent === state.panesSlice &&
+    !state.protected.includes(u.name) &&
+    !state.protected.includes(u.parent)
+  );
+}
+
+/** A live (or unconfirmed) pane needs the stronger confirmation and force=true. */
+export function closeNeedsForce(u: MemUnit): boolean {
+  return u.orphaned !== true;
+}
+
 /** Parses the backend's JSON, tolerating a missing or partial payload. */
 export function parseState(json: any): AgentMemoryState {
   const zero = { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 };
   const units: MemUnit[] = (Array.isArray(json?.units) ? json.units : []).map((u: any) => ({
     ...u,
+    orphaned: typeof u.orphaned === 'boolean' ? u.orphaned : null,
+    displayName: u.displayName || u.name,
     events: u.events ?? {},
     eventsLocal: u.eventsLocal ?? {},
     pressureSome: u.pressureSome ?? zero,
@@ -391,6 +489,8 @@ export function parseState(json: any): AgentMemoryState {
     },
     minLimit: Number(json?.minLimit ?? 0),
     protected: Array.isArray(json?.protected) ? json.protected : [],
+    panesSlice: String(json?.panesSlice ?? ''),
+    herdr: { enabled: false, up: false, panes: 0, ...(json?.herdr ?? {}) },
     units,
     alerts: Array.isArray(json?.alerts) ? json.alerts : [],
   };
