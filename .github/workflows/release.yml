@@ -22,9 +22,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Validate strict semver tag
         working-directory: .
+        id: tag
         env:
           TAG: ${{ github.ref_name }}
         run: |
+          if [[ "$TAG" == *'-'* ]]; then prerelease=true; else prerelease=false; fi
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           node <<'NODE'
           const tag = process.env.TAG;
           const semver = /^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
@@ -48,19 +51,21 @@ jobs:
       - run: npm run build
       - name: Package native plugin archive
         run: |
-          npm run package
+          npm run package -- . release-assets
           version="${GITHUB_REF_NAME#v}"
-          archive="dist/${{ matrix.plugin }}-${version}.tar.gz"
+          archive="release-assets/${{ matrix.plugin }}-${version}.tar.gz"
           test -f "$archive"
-          test "$(tar -tzf "$archive" | head -1)" = "${{ matrix.plugin }}/"
-          tar -tzf "$archive" | grep -qx "${{ matrix.plugin }}/LICENSE"
-          tar -tzf "$archive" | grep -qx "${{ matrix.plugin }}/main.js"
-          tar -tzf "$archive" | grep -qx "${{ matrix.plugin }}/package.json"
-          if [ "${{ matrix.plugin }}" = alerting ]; then tar -tzf "$archive" | grep -qx "alerting/sw.js"; fi
+          listing="$(tar -tzf "$archive")"
+          grep -qx "${{ matrix.plugin }}/" <<< "$listing"
+          grep -qx "${{ matrix.plugin }}/LICENSE" <<< "$listing"
+          grep -qx "${{ matrix.plugin }}/main.js" <<< "$listing"
+          grep -qx "${{ matrix.plugin }}/package.json" <<< "$listing"
+          if [ "${{ matrix.plugin }}" = alerting ]; then grep -qx "alerting/sw.js" <<< "$listing"; fi
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.plugin }}
-          path: plugins/${{ matrix.plugin }}/dist/*.tar.gz
+          path: plugins/${{ matrix.plugin }}/release-assets/*.tar.gz
+          if-no-files-found: error
   publish:
     needs: build
     runs-on: k3s-runners
@@ -80,3 +85,5 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: assets/*
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

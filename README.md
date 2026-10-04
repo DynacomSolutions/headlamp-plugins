@@ -14,6 +14,14 @@ Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
 
+## Creating a release
+
+Push a strict semantic-version tag such as `v1.2.3` or `v1.2.3-rc.1` to
+create a release. The workflow stages the tag version in each plugin's
+`package.json` and `package-lock.json` in its job workspace without committing
+those changes, then creates and uploads four plugin archives plus
+`SHA256SUMS`. Tags containing a hyphen publish as prereleases.
+
 ## Installing a release
 
 Download the archive for the plugin and the matching `SHA256SUMS` file from a
