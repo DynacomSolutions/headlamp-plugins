@@ -19,7 +19,14 @@ import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { applyLimits, closeUnit, describeError, useAgentMemory, useChanges, useSettings } from './data';
+import {
+  applyLimits,
+  closeUnit,
+  describeError,
+  useAgentMemory,
+  useChanges,
+  useSettings,
+} from './data';
 import {
   AgentMemoryState,
   alertsByUnit,
@@ -46,6 +53,7 @@ import {
   unitLabel,
   worstSeverity,
 } from './model';
+import { Chevron, processSummary, ProcessTree } from './processes';
 
 const LEVEL_COLOUR = {
   ok: 'success.main',
@@ -421,7 +429,10 @@ function CloseDialog({
     setServerError(null);
     try {
       await closeUnit(settings, { unit: unit.name, force: live, reason });
-      onClosed(unit.name, `${label}: close requested (${unit.procs} process${unit.procs === 1 ? '' : 'es'})`);
+      onClosed(
+        unit.name,
+        `${label}: close requested (${unit.procs} process${unit.procs === 1 ? '' : 'es'})`
+      );
     } catch (e: any) {
       setServerError(describeError(e));
     } finally {
@@ -559,6 +570,13 @@ export function AgentMemoryPage(): JSX.Element {
   const { state, loading, error, refresh } = useAgentMemory(settings);
   const [filter, setFilter] = React.useState('');
   const [orphansOnly, setOrphansOnly] = React.useState(false);
+  const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(new Set());
+  const toggleExpanded = (name: string) =>
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (!next.delete(name)) next.add(name);
+      return next;
+    });
   const [editing, setEditing] = React.useState<string | null>(null);
   const [closing, setClosing] = React.useState<string | null>(null);
   /** Scopes a close was requested for, with the request time; cleared on disappearance or after 30s. */
@@ -645,7 +663,6 @@ export function AgentMemoryPage(): JSX.Element {
             <TableHead>
               <TableRow>
                 <TableCell>Name</TableCell>
-                <TableCell>Process</TableCell>
                 <TableCell>Usage</TableCell>
                 <TableCell align="right">Used</TableCell>
                 <TableCell align="right">Soft</TableCell>
@@ -661,109 +678,120 @@ export function AgentMemoryPage(): JSX.Element {
               {rows.map(u => {
                 const sev = worstSeverity(byUnit.get(u.name));
                 const editable = state.writable && (u.kind === 'slice' || u.kind === 'scope');
+                const hasTree = u.kind !== 'slice' && !!u.processes && u.processes.roots.length > 0;
+                const open = hasTree && expanded.has(u.name);
+                const summary = u.kind === 'slice' ? '' : processSummary(u);
                 return (
-                  <TableRow
-                    key={u.name}
-                    hover
-                    sx={
-                      sev
-                        ? {
-                            bgcolor: sev === 'critical' ? 'error.light' : 'warning.light',
-                            '& td': { color: 'text.primary' },
-                          }
-                        : undefined
-                    }
-                  >
-                    <TableCell
-                      sx={{ pl: 1 + (isOrphan(u) ? 0 : u.depth) * 2, fontWeight: u.kind === 'slice' ? 600 : 400 }}
+                  <React.Fragment key={u.name}>
+                    <TableRow
+                      hover
+                      sx={
+                        sev
+                          ? {
+                              bgcolor: sev === 'critical' ? 'error.light' : 'warning.light',
+                              '& td': { color: 'text.primary' },
+                            }
+                          : undefined
+                      }
                     >
-                      <Tooltip title={u.name}>
-                        <span>{unitLabel(u)}</span>
-                      </Tooltip>{' '}
-                      <Typography component="span" variant="caption" color="text.secondary">
-                        {u.kind}
-                      </Typography>
-                      {isOrphan(u) && (
-                        <Tooltip
-                          title={`${u.orphanReason ?? 'Its Herdr pane no longer exists'}${
-                            u.leaderAlive === true ? '; the leader process is still running' : ''
-                          }`}
-                        >
-                          <Chip
-                            size="small"
-                            color="warning"
-                            label="Orphaned"
-                            sx={{ ml: 1 }}
-                            aria-label={`Orphaned: ${u.name}`}
+                      <TableCell
+                        sx={{
+                          pl: 1 + (isOrphan(u) ? 0 : u.depth) * 2,
+                          fontWeight: u.kind === 'slice' ? 600 : 400,
+                        }}
+                      >
+                        {hasTree && (
+                          <Chevron
+                            open={open}
+                            label={`${open ? 'Hide' : 'Show'} processes of ${unitLabel(u)}`}
+                            onToggle={() => toggleExpanded(u.name)}
                           />
-                        </Tooltip>
-                      )}
-                      {(unitDetail(u) || (u.herdr && unitLabel(u) !== shortName(u.name))) && (
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          {[unitDetail(u), shortName(u.name)].filter(Boolean).join(' · ')}
+                        )}
+                        <Tooltip title={u.name}>
+                          <span>{unitLabel(u)}</span>
+                        </Tooltip>{' '}
+                        <Typography component="span" variant="caption" color="text.secondary">
+                          {u.kind}
                         </Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {u.kind === 'slice' ? (
-                        <Typography variant="body2" color="text.secondary">
-                          {u.procs > 0 ? `${u.procs} processes` : '-'}
-                        </Typography>
-                      ) : (
-                        <Tooltip title={u.command || ''}>
-                          <span>
-                            {u.topProcess || '-'}
-                            {u.procs > 1 ? ` (+${u.procs - 1})` : ''}
-                          </span>
-                        </Tooltip>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <UsageBar unit={u} hostTotal={state.host.total} />
-                    </TableCell>
-                    <TableCell align="right">{formatSize(u.current)}</TableCell>
-                    <TableCell align="right">{formatSize(u.high)}</TableCell>
-                    <TableCell align="right">{formatSize(u.max)}</TableCell>
-                    <TableCell align="right">
-                      {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
-                    </TableCell>
-                    <TableCell>
-                      <EventChips unit={u} />
-                    </TableCell>
-                    <TableCell>
-                      <Pressure unit={u} />
-                    </TableCell>
-                    <TableCell>
-                      <AlertBadges alerts={byUnit.get(u.name)} />
-                    </TableCell>
-                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                      {editable && (
-                        <Button
-                          size="small"
-                          onClick={() => setEditing(u.name)}
-                          aria-label={`Edit limits of ${unitLabel(u)}`}
-                        >
-                          Edit
-                        </Button>
-                      )}
-                      {state.writable && canClose(u, state) && (
-                        <Button
-                          size="small"
-                          color="error"
-                          disabled={isClosing(u.name)}
-                          onClick={() => setClosing(u.name)}
-                          aria-label={`Close ${unitLabel(u)}`}
-                        >
-                          {isClosing(u.name) ? 'Closing...' : 'Close'}
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
+                        {isOrphan(u) && (
+                          <Tooltip
+                            title={`${u.orphanReason ?? 'Its Herdr pane no longer exists'}${
+                              u.leaderAlive === true ? '; the leader process is still running' : ''
+                            }`}
+                          >
+                            <Chip
+                              size="small"
+                              color="warning"
+                              label="Orphaned"
+                              sx={{ ml: 1 }}
+                              aria-label={`Orphaned: ${u.name}`}
+                            />
+                          </Tooltip>
+                        )}
+                        {(unitDetail(u) ||
+                          summary ||
+                          (u.herdr && unitLabel(u) !== shortName(u.name))) && (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {[unitDetail(u), shortName(u.name), summary]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <UsageBar unit={u} hostTotal={state.host.total} />
+                      </TableCell>
+                      <TableCell align="right">{formatSize(u.current)}</TableCell>
+                      <TableCell align="right">{formatSize(u.high)}</TableCell>
+                      <TableCell align="right">{formatSize(u.max)}</TableCell>
+                      <TableCell align="right">
+                        {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
+                      </TableCell>
+                      <TableCell>
+                        <EventChips unit={u} />
+                      </TableCell>
+                      <TableCell>
+                        <Pressure unit={u} />
+                      </TableCell>
+                      <TableCell>
+                        <AlertBadges alerts={byUnit.get(u.name)} />
+                      </TableCell>
+                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                        {editable && (
+                          <Button
+                            size="small"
+                            onClick={() => setEditing(u.name)}
+                            aria-label={`Edit limits of ${unitLabel(u)}`}
+                          >
+                            Edit
+                          </Button>
+                        )}
+                        {state.writable && canClose(u, state) && (
+                          <Button
+                            size="small"
+                            color="error"
+                            disabled={isClosing(u.name)}
+                            onClick={() => setClosing(u.name)}
+                            aria-label={`Close ${unitLabel(u)}`}
+                          >
+                            {isClosing(u.name) ? 'Closing...' : 'Close'}
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                    {open && (
+                      <TableRow>
+                        <TableCell colSpan={10} sx={{ pl: 4, bgcolor: 'action.hover' }}>
+                          <ProcessTree unit={u} />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
                 );
               })}
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={11}>
+                  <TableCell colSpan={10}>
                     <Typography variant="body2" color="text.secondary">
                       No units match.
                     </Typography>

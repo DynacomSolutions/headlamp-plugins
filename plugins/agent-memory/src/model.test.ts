@@ -14,13 +14,16 @@ import {
   formatSize,
   matchesFilter,
   MemUnit,
+  parseProcTree,
   parseSize,
   parseState,
+  processCommands,
   resolveSettings,
   shortName,
   sizeInput,
   unitDetail,
   unitLabel,
+  visibleProcesses,
   worstSeverity,
 } from './model';
 
@@ -232,11 +235,27 @@ describe('pane names and orphans', () => {
     name: 'herdr-workload-native-1-2.scope',
     displayName: 'proj / Fix bug',
     orphaned: false,
-    herdr: { paneId: 'w1:p1', workspace: 'proj', tab: 'Tasks', title: 'Fix bug', agent: 'claude', agentStatus: 'idle' },
+    herdr: {
+      paneId: 'w1:p1',
+      workspace: 'proj',
+      tab: 'Tasks',
+      title: 'Fix bug',
+      agent: 'claude',
+      agentStatus: 'idle',
+    },
   });
-  const orphan = unit({ name: 'herdr-workload-native-3-4.scope', displayName: 'herdr-workload-native-3-4.scope', orphaned: true });
+  const orphan = unit({
+    name: 'herdr-workload-native-3-4.scope',
+    displayName: 'herdr-workload-native-3-4.scope',
+    orphaned: true,
+  });
   const unknown = unit({ name: 'herdr-workload-native-5-6.scope', orphaned: null });
-  const slice = unit({ name: 'panes.slice', kind: 'slice', parent: '', displayName: 'panes.slice' });
+  const slice = unit({
+    name: 'panes.slice',
+    kind: 'slice',
+    parent: '',
+    displayName: 'panes.slice',
+  });
 
   it('labels with the chat name, falling back to the short scope name', () => {
     expect(unitLabel(live)).toBe('proj / Fix bug');
@@ -320,5 +339,88 @@ describe('cleanText', () => {
     });
     expect(st.units[0].displayName).toBe('proj / evil');
     expect(st.units[0].herdr?.title).toBe('tx');
+  });
+});
+
+describe('process trees', () => {
+  const raw = {
+    total: 6,
+    shown: 6,
+    roots: [
+      { pid: 9, ppid: 1, command: 'tail -f x', rss: 100, reparented: true },
+      {
+        pid: 10,
+        ppid: 2,
+        command: 'zsh‮\u001b[31m',
+        state: 'S',
+        rss: 10,
+        children: [
+          { pid: 12, ppid: 10, command: 'small', rss: 5 },
+          {
+            pid: 11,
+            ppid: 10,
+            command: 'node',
+            rss: 50,
+            children: [{ pid: 13, ppid: 11, command: 'rg', rss: 500 }],
+          },
+        ],
+      },
+    ],
+  };
+
+  it('cleans text, recomputes subtree totals and orders largest subtree first', () => {
+    const t = parseProcTree(raw)!;
+    expect(t.roots.map(r => r.pid)).toEqual([10, 9]);
+    const zsh = t.roots[0];
+    expect(zsh.command).toBe('zsh[31m');
+    expect(zsh.subtreeRss).toBe(10 + 5 + 50 + 500);
+    expect(zsh.subtreeProcs).toBe(4);
+    expect(zsh.children.map(c => c.pid)).toEqual([11, 12]);
+    expect(t.roots[1].reparented).toBe(true);
+    expect(zsh.reparented).toBe(false);
+  });
+
+  it('tolerates missing or malformed trees', () => {
+    expect(parseProcTree(undefined)).toBeUndefined();
+    expect(parseProcTree({ roots: 'x' })).toBeUndefined();
+    const t = parseProcTree({ roots: [null, { pid: 'a', rss: -5, children: 'no' }] })!;
+    expect(t.roots).toHaveLength(1);
+    expect(t.roots[0].pid).toBe(0);
+    expect(t.roots[0].rss).toBe(0);
+  });
+
+  it('bounds hostile depth', () => {
+    let n: any = { pid: 1, command: 'leaf', rss: 1 };
+    for (let i = 0; i < 500; i++) n = { pid: 2, command: 'x', rss: 1, children: [n] };
+    const t = parseProcTree({ roots: [n] })!;
+    expect(t.shown).toBeLessThanOrEqual(65);
+  });
+
+  it('flattens only the visible rows', () => {
+    const t = parseProcTree(raw)!;
+    expect(visibleProcesses(t, new Set()).map(r => [r.node.pid, r.depth])).toEqual([
+      [10, 0],
+      [11, 1],
+      [13, 2],
+      [12, 1],
+      [9, 0],
+    ]);
+    const rows = visibleProcesses(t, new Set([11]));
+    expect(rows.map(r => r.node.pid)).toEqual([10, 11, 12, 9]);
+    expect(rows[1]).toMatchObject({ hasChildren: true, expanded: false });
+  });
+
+  it('is parsed by parseState and searchable by process command', () => {
+    const st = parseState({
+      units: [
+        { name: 'a.scope', kind: 'scope', processes: raw },
+        { name: 'b.slice', kind: 'slice' },
+      ],
+    });
+    expect(st.units[0].processes?.roots).toHaveLength(2);
+    expect(st.units[1].processes).toBeUndefined();
+    expect(processCommands(st.units[0].processes)).toContain('rg');
+    expect(matchesFilter(st.units[0], 'tail -f')).toBe(true);
+    expect(matchesFilter(st.units[1], 'tail -f')).toBe(false);
   });
 });

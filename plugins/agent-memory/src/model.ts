@@ -29,6 +29,28 @@ export interface HerdrInfo {
   cwd?: string;
 }
 
+/** One process in a scope's tree. */
+export interface ProcNode {
+  pid: number;
+  ppid: number;
+  command: string;
+  state: string;
+  rss: number;
+  /** This process plus all its descendants kept in the tree. */
+  subtreeRss: number;
+  subtreeProcs: number;
+  /** The real parent exited and the process was adopted by init or the user manager. */
+  reparented: boolean;
+  children: ProcNode[];
+}
+
+/** shown < total means the backend truncated the tree. */
+export interface ProcTree {
+  roots: ProcNode[];
+  total: number;
+  shown: number;
+}
+
 export interface MemUnit {
   name: string;
   kind: 'slice' | 'scope' | 'service';
@@ -49,6 +71,8 @@ export interface MemUnit {
   command?: string;
   topProcess?: string;
   topRss?: number;
+  /** The scope's process tree; absent for slices and for backends that predate it. */
+  processes?: ProcTree;
   /** Pane id from the environment of a process in the scope. */
   paneId?: string;
   leaderPid?: number;
@@ -426,6 +450,7 @@ export function matchesFilter(u: MemUnit, query: string): boolean {
     u.displayName,
     u.command,
     u.topProcess,
+    ...processCommands(u.processes),
     h?.workspace,
     h?.tab,
     h?.title,
@@ -448,7 +473,10 @@ export function arrangeRows(units: MemUnit[], query: string, orphansOnly: boolea
 }
 
 /** A scope under the panes slice, other than a protected one, can be closed. */
-export function canClose(u: MemUnit, state: Pick<AgentMemoryState, 'panesSlice' | 'protected'>): boolean {
+export function canClose(
+  u: MemUnit,
+  state: Pick<AgentMemoryState, 'panesSlice' | 'protected'>
+): boolean {
   return (
     u.kind === 'scope' &&
     state.panesSlice !== '' &&
@@ -466,14 +494,105 @@ export function closeNeedsForce(u: MemUnit): boolean {
 const MAX_TEXT = 120;
 
 /** Drops control and bidi override/isolate characters and caps the length, for backend-supplied names. */
-export function cleanText(v: unknown): string {
+export function cleanText(v: unknown, max: number = MAX_TEXT): string {
   const out = String(v ?? '')
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C\uFEFF]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   const chars = Array.from(out);
-  return chars.length > MAX_TEXT ? `${chars.slice(0, MAX_TEXT - 1).join('')}…` : out;
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : out;
+}
+
+const MAX_TREE_NODES = 5000;
+const MAX_TREE_DEPTH = 64;
+const MAX_COMMAND = 160;
+
+function num(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
+ * Parses and validates a backend process tree: text is cleaned, numbers are
+ * coerced, the node count and depth are bounded, and subtree totals are
+ * recomputed so a malformed payload cannot mislead. Children and roots are
+ * ordered largest subtree first.
+ */
+export function parseProcTree(raw: any): ProcTree | undefined {
+  if (!raw || typeof raw !== 'object' || !Array.isArray(raw.roots)) return undefined;
+  let budget = MAX_TREE_NODES;
+  const build = (r: any, depth: number): ProcNode | null => {
+    if (!r || typeof r !== 'object' || budget <= 0) return null;
+    budget--;
+    const node: ProcNode = {
+      pid: num(r.pid),
+      ppid: num(r.ppid),
+      command: cleanText(r.command, MAX_COMMAND),
+      state: cleanText(r.state, 4),
+      rss: num(r.rss),
+      subtreeRss: 0,
+      subtreeProcs: 1,
+      reparented: r.reparented === true,
+      children: [],
+    };
+    node.subtreeRss = node.rss;
+    if (depth < MAX_TREE_DEPTH && Array.isArray(r.children)) {
+      for (const c of r.children) {
+        const child = build(c, depth + 1);
+        if (!child) continue;
+        node.children.push(child);
+        node.subtreeRss += child.subtreeRss;
+        node.subtreeProcs += child.subtreeProcs;
+      }
+      node.children.sort(bySubtree);
+    }
+    return node;
+  };
+  const roots: ProcNode[] = [];
+  for (const r of raw.roots) {
+    const n = build(r, 0);
+    if (n) roots.push(n);
+  }
+  roots.sort(bySubtree);
+  const shown = roots.reduce((a, n) => a + n.subtreeProcs, 0);
+  return { roots, total: Math.max(num(raw.total), shown), shown };
+}
+
+function bySubtree(a: ProcNode, b: ProcNode): number {
+  return b.subtreeRss - a.subtreeRss || a.pid - b.pid;
+}
+
+/** Every command in a tree, for the filter box. */
+export function processCommands(t: ProcTree | undefined): string[] {
+  const out: string[] = [];
+  const walk = (ns: ProcNode[]) =>
+    ns.forEach(n => {
+      out.push(n.command);
+      walk(n.children);
+    });
+  if (t) walk(t.roots);
+  return out;
+}
+
+export interface TreeRow {
+  node: ProcNode;
+  depth: number;
+  hasChildren: boolean;
+  expanded: boolean;
+}
+
+/** The visible rows of a tree, depth first, skipping the children of collapsed pids. */
+export function visibleProcesses(t: ProcTree, collapsed: ReadonlySet<number>): TreeRow[] {
+  const out: TreeRow[] = [];
+  const walk = (ns: ProcNode[], depth: number) =>
+    ns.forEach(n => {
+      const expanded = !collapsed.has(n.pid);
+      out.push({ node: n, depth, hasChildren: n.children.length > 0, expanded });
+      if (expanded) walk(n.children, depth + 1);
+    });
+  walk(t.roots, 0);
+  return out;
 }
 
 function cleanHerdr(h: any): HerdrInfo | undefined {
@@ -492,6 +611,7 @@ export function parseState(json: any): AgentMemoryState {
     orphaned: typeof u.orphaned === 'boolean' ? u.orphaned : null,
     displayName: cleanText(u.displayName) || u.name,
     herdr: cleanHerdr(u.herdr),
+    processes: parseProcTree(u.processes),
     orphanReason: u.orphanReason === undefined ? undefined : cleanText(u.orphanReason),
     events: u.events ?? {},
     eventsLocal: u.eventsLocal ?? {},

@@ -13,7 +13,10 @@ The page lists those slices and scopes and, for each:
 - used, soft, hard and swap figures;
 - the kernel's `memory.events` counters (`high`, `max`, `oom`, `oom_kill`);
 - memory pressure (PSI `some` and `full`, 10 second average);
-- the process or command in the scope, when the backend can see it;
+- an expandable process tree under each pane or agent row, when the backend
+  provides one: indented, with collapsible nodes, the command, PID, RSS and the
+  RSS of each subtree, largest subtree first. A process whose parent exited and
+  was adopted by init or the user manager carries an **Orphaned process** badge;
 - active alert badges, and a summary of all active alerts at the top;
 - the Herdr chat name as the row label (`workspace / chat title`), with the tab,
   agent and scope name underneath, when the backend can resolve it;
@@ -32,7 +35,7 @@ It can persist a change on a slice instead of applying it to the running unit
 only. Every change is recorded by the backend, with the old and new values and
 an optional reason, and the recent ones (including closed scopes and the
 processes stopped) are listed under the table. The search box matches names,
-workspace, tab, agent and the scope name.
+workspace, tab, agent, the scope name and the commands in its process tree.
 
 ## Backend
 
