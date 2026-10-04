@@ -37,7 +37,8 @@ jobs:
           cache-dependency-path: plugins/${{ matrix.plugin }}/package-lock.json
       - run: npm ci
       - name: Stage tag version without committing
-        env: {VERSION: ${{ github.ref_name }}}
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
           version="${VERSION#v}"
           node -e 'const fs=require("fs"); for (const file of ["package.json","package-lock.json"]) { const d=JSON.parse(fs.readFileSync(file)); d.version=process.argv[1]; if (d.packages?.[""]) d.packages[""].version=process.argv[1]; fs.writeFileSync(file, JSON.stringify(d,null,2)+"\n"); }' "$version"
