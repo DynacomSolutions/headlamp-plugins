@@ -28,11 +28,19 @@ export interface Starting {
   started_at?: string | null;
 }
 
+/**
+ * Optional finer-grained state for on-demand nodes (for example a VM runner
+ * that is powered down when idle). `standby` is deliberate and not an error.
+ */
+export type NodeState = 'online' | 'busy' | 'standby' | 'starting' | 'offline';
+
 export interface NodeStatus {
   id: string;
   display_name: string;
   kind: 'kubernetes' | 'external';
   ready: boolean;
+  state?: NodeState;
+  state_reason?: string;
   os: string;
   best_effort?: boolean;
   description?: string;
@@ -59,6 +67,7 @@ export interface Status {
     running_jobs: number;
     pending_runners: number;
     nodes_ready: number;
+    nodes_standby?: number;
     nodes_total: number;
   };
 }

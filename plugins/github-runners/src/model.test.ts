@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildLocalStatus, mergeEnrichment, workflowName, workflowUrl } from './model';
+import { buildLocalStatus, mergeEnrichment, nodeBadge, workflowName, workflowUrl } from './model';
 import type { Status } from './types';
 
 const pod = (name: string, node: string) => ({
@@ -93,5 +93,39 @@ describe('mergeEnrichment', () => {
   });
   it('is a no-op without an endpoint', () => {
     expect(mergeEnrichment(local, null, true)).toBe(local);
+  });
+});
+
+describe('node state', () => {
+  it('shows standby with a neutral colour, not an error', () => {
+    expect(nodeBadge({ ready: false, state: 'standby' })).toEqual({ label: 'standby', status: '' });
+  });
+  it('maps starting, online, busy and offline', () => {
+    expect(nodeBadge({ ready: false, state: 'starting' }).status).toBe('warning');
+    expect(nodeBadge({ ready: true, state: 'online' }).status).toBe('success');
+    expect(nodeBadge({ ready: true, state: 'busy' }).label).toBe('busy');
+    expect(nodeBadge({ ready: false, state: 'offline' }).status).toBe('error');
+  });
+  it('falls back to ready/offline when there is no state', () => {
+    expect(nodeBadge({ ready: true })).toEqual({ label: 'ready', status: 'success' });
+    expect(nodeBadge({ ready: false })).toEqual({ label: 'offline', status: 'error' });
+  });
+  it('carries state and reason from the endpoint onto external nodes and counts standby', () => {
+    const local: Status = {
+      generated_at: '2026-01-01T00:00:00Z',
+      nodes: [
+        { id: 'vm-1', display_name: 'vm-1', kind: 'external', ready: false, os: 'Windows', jobs: [], starting: [] },
+      ],
+      scale_sets: [],
+      summary: { running_jobs: 0, pending_runners: 0, nodes_ready: 0, nodes_total: 1 },
+    };
+    const remote: Status = {
+      ...local,
+      nodes: [{ ...local.nodes[0], state: 'standby', state_reason: 'Halted on purpose' }],
+    };
+    const merged = mergeEnrichment(local, remote, true);
+    expect(merged.nodes[0].state).toBe('standby');
+    expect(merged.nodes[0].state_reason).toBe('Halted on purpose');
+    expect(merged.summary.nodes_standby).toBe(1);
   });
 });

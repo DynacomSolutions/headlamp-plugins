@@ -9,6 +9,7 @@ import MuiLink from '@mui/material/Link';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import TextField from '@mui/material/TextField';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Board, useBoard } from './data';
@@ -18,6 +19,7 @@ import {
   Filters,
   matchesJob,
   matchesStarting,
+  nodeBadge,
   parseTerms,
   repoUrl,
   runUrl,
@@ -115,13 +117,16 @@ function NodeCard({ node, jobs, starting, onHistory }: {
   starting: number;
   onHistory: () => void;
 }) {
+  const badge = nodeBadge(node);
   return (
     <Box sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5, minWidth: 260 }}>
       <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
         <Typography variant="h6">{node.display_name}</Typography>
-        <StatusLabel status={node.ready ? 'success' : 'error'}>
-          {node.ready ? 'ready' : 'offline'}
-        </StatusLabel>
+        <Tooltip title={node.state_reason || ''}>
+          <span>
+            <StatusLabel status={badge.status}>{badge.label}</StatusLabel>
+          </span>
+        </Tooltip>
         {node.best_effort && <StatusLabel status="">best-effort</StatusLabel>}
         <Button size="small" onClick={onHistory}>History</Button>
       </Box>
@@ -129,6 +134,11 @@ function NodeCard({ node, jobs, starting, onHistory }: {
         {node.kind === 'external' ? 'Registered outside Kubernetes' : 'Kubernetes node'} · {node.os}
         {node.description ? ` · ${node.description}` : ''}
       </Typography>
+      {node.state_reason && (
+        <Typography variant="caption" color="text.secondary" display="block">
+          {node.state_reason}
+        </Typography>
+      )}
       <Box display="flex" alignItems="center" gap={1} mt={1}>
         <Marks lit={jobs} total={Math.max(jobs + starting, 5)} />
         <Typography variant="body2">
@@ -570,7 +580,9 @@ export function GitHubRunnersPage() {
         <Stat label="Pending runners" value={status.summary.pending_runners} />
         <Stat
           label="Nodes ready"
-          value={`${status.summary.nodes_ready} / ${status.summary.nodes_total}`}
+          value={`${status.summary.nodes_ready} / ${status.summary.nodes_total}${
+            status.summary.nodes_standby ? ` (${status.summary.nodes_standby} standby)` : ''
+          }`}
         />
         <Stat
           label={remote.status ? 'Enrichment data' : 'Data'}
