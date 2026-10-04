@@ -5,6 +5,7 @@ Plugins for [Headlamp](https://headlamp.dev/), built with
 
 | Plugin | What it does |
 | --- | --- |
+| [`plugins/agent-memory`](plugins/agent-memory) | Memory restrictions of an agent host (systemd slices and per-pane scopes): usage against soft and hard limits, kernel event counters, pressure, active alerts, and in-place editing of the limits through a small backend (needs the agent-memory backend) |
 | [`plugins/alerting`](plugins/alerting) | Manage alerting notification channels and routes (custom resources) live from the UI, with YAML copy and download for Git; test sends; status page |
 | [`plugins/disk-health`](plugins/disk-health) | Per-node SMART disk health and disk capacity, on the Node details page, the Nodes list, and a cluster-wide Disks page (needs a Prometheus-compatible query endpoint) |
 | [`plugins/github-runners`](plugins/github-runners) | Actions Runner Controller (ARC) runner dashboard: scale sets, runners, pods, jobs, optional history |

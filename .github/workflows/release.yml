@@ -9,12 +9,14 @@ concurrency:
   cancel-in-progress: false
 jobs:
   build:
-    runs-on: k3s-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     strategy:
       max-parallel: 1
       fail-fast: false
-      matrix: {plugin: [alerting, disk-health, github-runners, sites]}
+      matrix: {plugin: [agent-memory, alerting, disk-health, github-runners, sites]}
     defaults:
       run:
         working-directory: plugins/${{ matrix.plugin }}
@@ -26,7 +28,9 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if [[ "$TAG" == *'-'* ]]; then prerelease=true; else prerelease=false; fi
+          version="${TAG#v}"
+          version="${version%%+*}"
+          if [[ "$version" == *'-'* ]]; then prerelease=true; else prerelease=false; fi
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           node <<'NODE'
           const tag = process.env.TAG;
@@ -68,7 +72,7 @@ jobs:
           if-no-files-found: error
   publish:
     needs: build
-    runs-on: k3s-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: {contents: write}
     steps:
@@ -77,13 +81,13 @@ jobs:
       - name: Create checksums
         working-directory: assets
         run: |
-          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 4
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 5
           sha256sum *.tar.gz > SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 4
+          test "$(wc -l < SHA256SUMS)" -eq 5
       - name: Publish complete release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           files: assets/*
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ needs.build.outputs.prerelease }}
           fail_on_unmatched_files: true
