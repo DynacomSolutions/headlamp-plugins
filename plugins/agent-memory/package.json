@@ -1,6 +1,8 @@
 {
   "name": "agent-memory",
   "version": "0.1.0",
+  "license": "MIT",
+  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
   "description": "Headlamp plugin: view and live-edit agent host memory limits (systemd slices and scopes), with limit and event alerts",
   "scripts": {
     "start": "headlamp-plugin start",

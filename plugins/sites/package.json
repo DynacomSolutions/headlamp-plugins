@@ -1,6 +1,8 @@
 {
   "name": "sites",
   "version": "0.1.0",
+  "license": "MIT",
+  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
   "description": "Headlamp plugin: directory of the sites served by Emissary Mappings",
   "scripts": {
     "start": "headlamp-plugin start",

@@ -85,5 +85,13 @@ npm test
 npm run build
 ```
 
-The image (`Dockerfile`) is intended to run as a Headlamp initContainer that
-copies `/plugin` into the shared plugins volume, like the other plugins here.
+## Installing a release
+
+Download the versioned archive from a GitHub Release, verify it with the
+matching `SHA256SUMS` file, and extract it into Headlamp's plugins directory:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+mkdir -p /path/to/headlamp/plugins
+tar -xzf agent-memory-0.1.0.tar.gz -C /path/to/headlamp/plugins
+```

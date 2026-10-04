@@ -2,52 +2,88 @@ name: check
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: check-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  generic-checks:
+  changes:
     runs-on: k3s-runners
-    env:
-      GITLEAKS_VERSION: 8.30.1
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+      has_changes: ${{ steps.detect.outputs.has_changes }}
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Install gitleaks (checksum verified)
+        with: {fetch-depth: 0}
+      - id: detect
+        shell: bash
+        run: |
+          event="${{ github.event_name }}"
+          if [ "$event" = pull_request ]; then
+            base="$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)"
+            changed="$(git diff --name-only "$base" HEAD)"
+          else
+            changed=''
+          fi
+          shared=0
+          while IFS= read -r path; do case "$path" in .github/workflows/*|.pre-commit-config.yaml|Makefile|package.json|package-lock.json|tsconfig.json|scripts/*|LICENSE) shared=1;; esac; done <<< "$changed"
+          matrix='[]'
+          if [ "$shared" = 1 ] || [ "$event" != pull_request ]; then
+            matrix='["agent-memory","alerting","disk-health","github-runners","sites"]'
+          else
+            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(agent-memory|alerting|disk-health|github-runners|sites)\// {print $2}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$matrix" = '[]' ]; then has_changes=false; else has_changes=true; fi
+          echo "has_changes=$has_changes" >> "$GITHUB_OUTPUT"
+  generic-checks:
+    runs-on: k3s-runners
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with: {fetch-depth: 0}
+      - name: Install gitleaks
+        env: {GITLEAKS_VERSION: 8.30.1}
         run: |
           base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
-          curl -fsSL -O "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
-          curl -fsSL -O "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          curl -fsSL -O "${base}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -O "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
           sha256sum -c --ignore-missing "gitleaks_${GITLEAKS_VERSION}_checksums.txt"
-          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks
-          sudo install gitleaks /usr/local/bin/gitleaks
-      - name: gitleaks (history)
-        run: gitleaks git --no-banner --redact --verbose
-      - name: Identifier checks (generic and private deny-list)
+          tar -xzf "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" gitleaks && sudo install gitleaks /usr/local/bin/gitleaks
+      - run: gitleaks git --no-banner --redact --verbose
+      - name: Identifier checks
+        run: scripts/check-identifiers.sh --all
+  private-identifiers:
+    needs: changes
+    runs-on: k3s-runners
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Private identifier checks
         env:
-          DENYLIST_CONTENT: ${{ secrets.IDENTIFIERS_DENYLIST }}
+          IDENTIFIERS_DENYLIST: ${{ secrets.IDENTIFIERS_DENYLIST }}
           IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
-          if [ -z "${DENYLIST_CONTENT}" ]; then
-            if [ "${IS_FORK_PR}" = "true" ]; then
-              echo "::error::Repository secrets are unavailable to fork PRs, so the private deny-list check cannot run. A maintainer must run scripts/check-identifiers.sh --all --require-denylist locally against this branch before merging."
-            else
-              echo "::error::The IDENTIFIERS_DENYLIST repository secret is missing or empty. Failing closed."
-            fi
+          if [ -z "$IDENTIFIERS_DENYLIST" ]; then
+            if [ "$IS_FORK_PR" = true ]; then echo "::error::Repository secrets are unavailable to fork pull requests. A maintainer must run scripts/check-identifiers.sh --all --require-denylist locally."; else echo "::error::The IDENTIFIERS_DENYLIST repository secret is missing or empty. Failing closed."; fi
             exit 1
           fi
-          list="$(mktemp "${RUNNER_TEMP}/denylist.XXXXXX")"
-          trap 'rm -f "${list}"' EXIT
-          printf '%s\n' "${DENYLIST_CONTENT}" > "${list}"
-          IDENTIFIERS_DENYLIST="${list}" scripts/check-identifiers.sh --all --require-denylist
-  plugins:
+          list="$(mktemp "${RUNNER_TEMP}/denylist.XXXXXX")"; trap 'rm -f "$list"' EXIT; printf '%s\n' "$IDENTIFIERS_DENYLIST" > "$list"
+          IDENTIFIERS_DENYLIST="$list" scripts/check-identifiers.sh --all --require-denylist
+  plugin:
+    needs: [changes, generic-checks, private-identifiers]
+    if: needs.changes.outputs.matrix != '[]'
     runs-on: k3s-runners
-    needs: generic-checks
+    timeout-minutes: 20
     strategy:
       max-parallel: 1
+      fail-fast: false
       matrix:
-        plugin: [agent-memory, alerting, disk-health, github-runners, sites]
+        plugin: ${{ fromJSON(needs.changes.outputs.matrix) }}
     defaults:
       run:
         working-directory: plugins/${{ matrix.plugin }}
@@ -56,9 +92,26 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/${{ matrix.plugin }}/package-lock.json
       - run: npm ci
       - run: npm run tsc
       - run: npm run lint
-      - run: npm run build
       - run: npm test
-        if: matrix.plugin == 'alerting' || matrix.plugin == 'agent-memory'
+      - run: npm run build
+  gate:
+    if: always()
+    needs: [changes, generic-checks, private-identifiers, plugin]
+    runs-on: k3s-runners
+    timeout-minutes: 5
+    steps:
+      - run: |
+          test "${{ needs.changes.result }}" = success
+          test "${{ needs.generic-checks.result }}" = success
+          test "${{ needs.private-identifiers.result }}" = success
+          plugin_result="${{ needs.plugin.result }}"
+          if [ "${{ needs.changes.outputs.has_changes }}" = true ]; then
+            test "$plugin_result" = success
+          else
+            test "$plugin_result" = skipped
+          fi
