@@ -31,7 +31,7 @@ jobs:
       max-parallel: 1
       fail-fast: false
       matrix:
-        plugin: [alerting, disk-health, github-runners, sites]
+        plugin: [agent-memory, alerting, disk-health, github-runners, sites]
     env:
       PLUGIN_DIR: plugins/${{ matrix.plugin }}
       IMAGE: ${{ vars.IMAGE_REGISTRY_PREFIX }}/headlamp-${{ matrix.plugin }}-plugin
