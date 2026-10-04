@@ -96,4 +96,9 @@ export interface PluginConfig {
   externalWorkerGroup?: string;
   externalWorkerVersion?: string;
   nodeAliases?: string;
+  poolRepos?: string;
+  policyPreferredNodes?: string;
+  policySpillNodes?: string;
+  policyRepoCap?: string | number;
+  policyRepoCaps?: string;
 }
