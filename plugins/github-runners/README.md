@@ -10,6 +10,14 @@ A [Headlamp](https://headlamp.dev/) plugin for
   best-effort external workers), live jobs (job, repository, workflow, run,
   node, runner, scale set, status) and starting runners. Job, repository,
   workflow and run cells link out to github.com.
+- **Capacity**: live, from watched Kubernetes lists and the polled endpoint.
+  Pools (one row per `AutoscalingRunnerSet`: repo or organisation served, cap,
+  running, waiting to start with a short reason such as "not enough CPU",
+  preferred and spill nodes); per-node allocatable CPU and memory split into
+  runner, other and free, with the runners on each node by pool; demand at cap
+  versus capacity, with a warning when demand exceeds it and per starved pool;
+  runners outside the cluster (online/offline, idle/busy, standby with reason);
+  and a policy check (below).
 - **Scale sets**: `AutoscalingRunnerSet` (min/max, current/pending/running/failed,
   phase, GitHub org/repo link) and `EphemeralRunnerSet`.
 - **Runners**: `EphemeralRunner` with phase, reason, node, and the job,
@@ -41,6 +49,17 @@ Settings, Plugins, GitHub Runners:
 | History endpoint | Defaults to the status URL with `status.json` replaced by `history.json` |
 | External worker API group / version | Optional CRD group serving `externalworkers` (a builder registered outside the cluster). Empty disables |
 | Node display names | `id=Label,id2=Label2` |
+| Pool repositories | `pool=owner/repo,pool2=owner/repo2`. Names the repo an organisation-level pool serves (repo-level pools are read from the ARC labels; otherwise the organisation and runner group are shown) |
+| Policy: preferred nodes | Comma-separated node ids every pool must prefer, for example `worker-1,worker-2` |
+| Policy: spill nodes | Comma-separated node ids every pool must be allowed to spill onto, for example `worker-3` |
+| Policy: default repo cap | Maximum total `maxRunners` across all pools serving one repo. Default 3 once any policy setting is present |
+| Policy: repo cap overrides | `my-org/my-repo=32,my-org/other-repo=5` |
+
+The Capacity tab flags a pool when it does not prefer every preferred node, is
+not allowed on every spill node (excluded by a required `NotIn`, or missing from
+a required `In`), prefers a spill node at equal or higher weight than the
+preferred nodes, or its repo's total `maxRunners` exceeds the cap. With no
+policy settings it shows a notice instead.
 
 Expected schema (all fields are optional except those listed):
 
@@ -60,7 +79,8 @@ Expected schema (all fields are optional except those listed):
 To preconfigure every browser, ship a `defaults.json` next to `main.js` in the
 plugin directory (for example written by an initContainer). It uses the same keys
 as the settings (`statusUrl`, `historyUrl`, `externalWorkerGroup`,
-`externalWorkerVersion`, `nodeAliases`); non-empty values a user saves in the
+`externalWorkerVersion`, `nodeAliases`, `poolRepos`, `policyPreferredNodes`,
+`policySpillNodes`, `policyRepoCap`, `policyRepoCaps`); non-empty values a user saves in the
 settings override it.
 
 Data older than 180 seconds is flagged stale. Kubernetes data stays the source

@@ -44,7 +44,7 @@ export function useConfig(): PluginConfig {
   }, []);
   return React.useMemo(() => {
     const out: PluginConfig = { ...defaults };
-    for (const [k, v] of Object.entries(stored)) if (v) (out as Record<string, string>)[k] = v as string;
+    for (const [k, v] of Object.entries(stored)) if (v) (out as Record<string, unknown>)[k] = v;
     return out;
   }, [defaults, stored]);
 }
@@ -188,6 +188,7 @@ export function useExternalWorkers(cfg: PluginConfig): { items: Raw[]; error: st
 }
 
 export interface Board {
+  cfg: PluginConfig;
   loading: boolean;
   arcPresent: boolean;
   status: Status;
@@ -195,6 +196,8 @@ export interface Board {
   remote: Remote;
   lists: Record<'sets' | 'esets' | 'runners' | 'listeners', ListState>;
   pods: Raw[];
+  nodes: Raw[];
+  workers: Raw[];
   errors: string[];
 }
 
@@ -230,6 +233,7 @@ export function useBoard(): Board {
     .map(l => l.error)
     .filter((e): e is string => !!e);
   return {
+    cfg,
     loading: sets.loading || runners.loading,
     arcPresent,
     status,
@@ -237,6 +241,8 @@ export function useBoard(): Board {
     remote,
     lists: { sets, esets, runners, listeners },
     pods: pods.items,
+    nodes: nodes.items,
+    workers: workers.items,
     errors,
   };
 }

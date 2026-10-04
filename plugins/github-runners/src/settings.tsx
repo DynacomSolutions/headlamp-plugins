@@ -55,6 +55,42 @@ export function Settings(props: PluginSettingsDetailsProps) {
         onChange={set('nodeAliases')}
         fullWidth
       />
+      <TextField
+        label="Pool repositories"
+        helperText="Optional pool=owner/repo pairs for organisation-level pools, for example pool-a=my-org/my-repo,pool-b=my-org/other-repo."
+        value={cfg.poolRepos || ''}
+        onChange={set('poolRepos')}
+        fullWidth
+      />
+      <TextField
+        label="Policy: preferred nodes"
+        helperText="Comma-separated node ids every pool must prefer, for example worker-1,worker-2."
+        value={cfg.policyPreferredNodes || ''}
+        onChange={set('policyPreferredNodes')}
+        fullWidth
+      />
+      <TextField
+        label="Policy: spill nodes"
+        helperText="Comma-separated node ids every pool must be allowed to spill onto, for example worker-3."
+        value={cfg.policySpillNodes || ''}
+        onChange={set('policySpillNodes')}
+        fullWidth
+      />
+      <TextField
+        label="Policy: default repo cap"
+        helperText="Maximum total runners (sum of maxRunners over all pools) per repository. Defaults to 3 once any policy is set."
+        value={cfg.policyRepoCap ?? ''}
+        onChange={set('policyRepoCap')}
+        placeholder="3"
+        fullWidth
+      />
+      <TextField
+        label="Policy: repo cap overrides"
+        helperText="Comma-separated owner/repo=cap pairs, for example my-org/my-repo=32."
+        value={cfg.policyRepoCaps || ''}
+        onChange={set('policyRepoCaps')}
+        fullWidth
+      />
     </Box>
   );
 }

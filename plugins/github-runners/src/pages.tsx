@@ -12,6 +12,7 @@ import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { CapacityView } from './capacity-view';
 import { Board, useBoard } from './data';
 import {
   ageSeconds,
@@ -633,6 +634,7 @@ export function GitHubRunnersPage() {
       </Box>
       <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 1 }}>
         <Tab value="overview" label="Overview" />
+        <Tab value="capacity" label="Capacity" />
         <Tab value="scalesets" label="Scale sets" />
         <Tab value="runners" label="Runners" />
         <Tab value="listeners" label="Listeners" />
@@ -648,6 +650,7 @@ export function GitHubRunnersPage() {
           }}
         />
       )}
+      {tab === 'capacity' && <CapacityView board={board} />}
       {tab === 'scalesets' && <ScaleSets board={board} />}
       {tab === 'runners' && <Runners board={board} filters={filters} />}
       {tab === 'listeners' && <Listeners board={board} />}
