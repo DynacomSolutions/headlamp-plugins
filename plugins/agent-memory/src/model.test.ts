@@ -8,6 +8,7 @@ import {
   canClose,
   changeLabel,
   checkEdit,
+  cleanText,
   closeNeedsForce,
   DEFAULT_SETTINGS,
   formatSize,
@@ -295,5 +296,29 @@ describe('pane names and orphans', () => {
     expect(st.units[1].displayName).toBe('b.scope');
     expect(st.herdr.up).toBe(true);
     expect(parseState({}).panesSlice).toBe('');
+  });
+});
+
+describe('cleanText', () => {
+  it('strips control and bidi characters and caps length', () => {
+    expect(cleanText('a\u202Eb\u2066c\u2069d\u0007e\u0085f')).toBe('abcdef');
+    expect(cleanText('  two \n lines ')).toBe('two lines');
+    const long = cleanText('x'.repeat(500));
+    expect(Array.from(long)).toHaveLength(120);
+    expect(long.endsWith('…')).toBe(true);
+  });
+  it('sanitises names in parseState', () => {
+    const st = parseState({
+      units: [
+        {
+          name: 'a.scope',
+          kind: 'scope',
+          displayName: 'proj / ev\u202Eil',
+          herdr: { paneId: 'p', title: 't\u2067x', workspace: 'w' },
+        },
+      ],
+    });
+    expect(st.units[0].displayName).toBe('proj / evil');
+    expect(st.units[0].herdr?.title).toBe('tx');
   });
 });

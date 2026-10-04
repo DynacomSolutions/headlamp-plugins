@@ -397,15 +397,20 @@ function EditDialog({
 /* ---------- close ---------- */
 
 function CloseDialog({
-  unit,
+  unit: latest,
   onClose,
   onClosed,
 }: {
-  unit: MemUnit;
+  /** The unit as of the latest poll; null once it has disappeared. */
+  unit: MemUnit | null;
   onClose: () => void;
-  onClosed: (message: string) => void;
+  onClosed: (name: string, message: string) => void;
 }) {
   const settings = useSettings();
+  // What the person confirmed is what is sent: keep the state seen at open.
+  const [unit] = React.useState<MemUnit>(() => latest as MemUnit);
+  const gone = latest === null;
+  const changed = latest !== null && latest.orphaned !== unit.orphaned;
   const [reason, setReason] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
@@ -416,7 +421,7 @@ function CloseDialog({
     setServerError(null);
     try {
       await closeUnit(settings, { unit: unit.name, force: live, reason });
-      onClosed(`${label}: close requested (${unit.procs} process${unit.procs === 1 ? '' : 'es'})`);
+      onClosed(unit.name, `${label}: close requested (${unit.procs} process${unit.procs === 1 ? '' : 'es'})`);
     } catch (e: any) {
       setServerError(describeError(e));
     } finally {
@@ -456,6 +461,12 @@ function CloseDialog({
             inputProps={{ maxLength: 200 }}
             fullWidth
           />
+          {gone && <Alert severity="warning">Unit no longer present.</Alert>}
+          {changed && (
+            <Alert severity="warning">
+              The pane status changed since this dialog opened. Close it and reopen to confirm.
+            </Alert>
+          )}
           {serverError && <Alert severity="error">{serverError}</Alert>}
         </Box>
       </DialogContent>
@@ -467,7 +478,7 @@ function CloseDialog({
           variant="contained"
           color="error"
           onClick={submit}
-          disabled={busy || reason.trim() === ''}
+          disabled={busy || gone || changed || reason.trim() === ''}
         >
           {busy ? 'Closing...' : live ? 'Terminate session and close' : 'Close scope'}
         </Button>
@@ -509,9 +520,15 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
             <TableCell>
               {c.action === 'stop' ? (
                 <Tooltip
-                  title={(c.killed ?? [])
-                    .map(p => `${p.pid} ${p.command} (${formatSize(p.rss)})`)
-                    .join('\n')}
+                  title={
+                    <Box component="ul" sx={{ m: 0, pl: 2 }}>
+                      {(c.killed ?? []).map(p => (
+                        <li key={p.pid}>
+                          {p.pid} {p.command} ({formatSize(p.rss)})
+                        </li>
+                      ))}
+                    </Box>
+                  }
                 >
                   <span>
                     Closed scope{c.force ? ' (live pane, forced)' : ''}:{' '}
@@ -544,6 +561,24 @@ export function AgentMemoryPage(): JSX.Element {
   const [orphansOnly, setOrphansOnly] = React.useState(false);
   const [editing, setEditing] = React.useState<string | null>(null);
   const [closing, setClosing] = React.useState<string | null>(null);
+  /** Scopes a close was requested for, with the request time; cleared on disappearance or after 30s. */
+  const [closingUnits, setClosingUnits] = React.useState<Record<string, number>>({});
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (Object.keys(closingUnits).length === 0) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [closingUnits]);
+  const isClosing = (name: string) =>
+    closingUnits[name] !== undefined && now - closingUnits[name] < 30000;
+  React.useEffect(() => {
+    if (!state) return;
+    const present = new Set(state.units.map(u => u.name));
+    setClosingUnits(m => {
+      const next = Object.fromEntries(Object.entries(m).filter(([n]) => present.has(n)));
+      return Object.keys(next).length === Object.keys(m).length ? m : next;
+    });
+  }, [state]);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [version, setVersion] = React.useState(0);
   const changes = useChanges(settings, state !== null, version);
@@ -557,7 +592,6 @@ export function AgentMemoryPage(): JSX.Element {
     return u ? unitLabel(u) : shortName(name);
   };
   const unit = state?.units.find(u => u.name === editing) ?? null;
-  const closeTarget = state?.units.find(u => u.name === closing) ?? null;
 
   return (
     <SectionBox title="Agent memory">
@@ -652,7 +686,7 @@ export function AgentMemoryPage(): JSX.Element {
                       {isOrphan(u) && (
                         <Tooltip
                           title={`${u.orphanReason ?? 'Its Herdr pane no longer exists'}${
-                            u.leaderAlive === false ? '' : '; the leader process is still running'
+                            u.leaderAlive === true ? '; the leader process is still running' : ''
                           }`}
                         >
                           <Chip
@@ -716,10 +750,11 @@ export function AgentMemoryPage(): JSX.Element {
                         <Button
                           size="small"
                           color="error"
+                          disabled={isClosing(u.name)}
                           onClick={() => setClosing(u.name)}
                           aria-label={`Close ${unitLabel(u)}`}
                         >
-                          Close
+                          {isClosing(u.name) ? 'Closing...' : 'Close'}
                         </Button>
                       )}
                     </TableCell>
@@ -747,15 +782,22 @@ export function AgentMemoryPage(): JSX.Element {
           )}
         </>
       )}
-      {state && closeTarget && (
+      {state && closing && (
         <CloseDialog
-          unit={closeTarget}
+          key={closing}
+          unit={state.units.find(u => u.name === closing) ?? null}
           onClose={() => setClosing(null)}
-          onClosed={message => {
+          onClosed={(name, message) => {
             setClosing(null);
             setNotice(message);
+            setClosingUnits(m => ({ ...m, [name]: Date.now() }));
             setVersion(v => v + 1);
             refresh();
+            // systemd stops the scope after SIGTERM and possibly SIGKILL: look again shortly.
+            setTimeout(() => {
+              setVersion(v => v + 1);
+              refresh();
+            }, 5000);
           }}
         />
       )}

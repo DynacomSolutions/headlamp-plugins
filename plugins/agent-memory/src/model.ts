@@ -404,7 +404,8 @@ export function unitLabel(u: Pick<MemUnit, 'name' | 'displayName'>): string {
 
 /** Label for an audit record, which may predate display names. */
 export function changeLabel(c: Pick<ChangeRecord, 'unit' | 'displayName'>): string {
-  return c.displayName && c.displayName !== c.unit ? c.displayName : shortName(c.unit);
+  const d = cleanText(c.displayName);
+  return d && d !== c.unit ? d : shortName(c.unit);
 }
 
 /** Secondary text under the label: tab, agent and its status. */
@@ -462,13 +463,36 @@ export function closeNeedsForce(u: MemUnit): boolean {
   return u.orphaned !== true;
 }
 
+const MAX_TEXT = 120;
+
+/** Drops control and bidi override/isolate characters and caps the length, for backend-supplied names. */
+export function cleanText(v: unknown): string {
+  const out = String(v ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C\uFEFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const chars = Array.from(out);
+  return chars.length > MAX_TEXT ? `${chars.slice(0, MAX_TEXT - 1).join('')}…` : out;
+}
+
+function cleanHerdr(h: any): HerdrInfo | undefined {
+  if (!h || typeof h !== 'object') return undefined;
+  const o: any = { paneId: cleanText(h.paneId) };
+  for (const k of ['workspace', 'tab', 'title', 'agent', 'agentSession', 'agentStatus', 'cwd'])
+    if (h[k] !== undefined) o[k] = cleanText(h[k]);
+  return o as HerdrInfo;
+}
+
 /** Parses the backend's JSON, tolerating a missing or partial payload. */
 export function parseState(json: any): AgentMemoryState {
   const zero = { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 };
   const units: MemUnit[] = (Array.isArray(json?.units) ? json.units : []).map((u: any) => ({
     ...u,
     orphaned: typeof u.orphaned === 'boolean' ? u.orphaned : null,
-    displayName: u.displayName || u.name,
+    displayName: cleanText(u.displayName) || u.name,
+    herdr: cleanHerdr(u.herdr),
+    orphanReason: u.orphanReason === undefined ? undefined : cleanText(u.orphanReason),
     events: u.events ?? {},
     eventsLocal: u.eventsLocal ?? {},
     pressureSome: u.pressureSome ?? zero,
