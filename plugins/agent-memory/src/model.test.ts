@@ -12,6 +12,8 @@ import {
   closeNeedsForce,
   DEFAULT_SETTINGS,
   formatSize,
+  formatSpan,
+  formatStall,
   matchesFilter,
   MemUnit,
   parseProcTree,
@@ -21,9 +23,11 @@ import {
   resolveSettings,
   shortName,
   sizeInput,
+  stallLevel,
   unitDetail,
   unitLabel,
   visibleProcesses,
+  windowedEvent,
   worstSeverity,
 } from './model';
 
@@ -422,5 +426,53 @@ describe('process trees', () => {
     expect(processCommands(st.units[0].processes)).toContain('rg');
     expect(matchesFilter(st.units[0], 'tail -f')).toBe(true);
     expect(matchesFilter(st.units[1], 'tail -f')).toBe(false);
+  });
+});
+
+describe('windowed events and stall time', () => {
+  const win = (events: Record<string, number>, fullUs = 0) =>
+    unit({
+      eventsLocal: { high: 147740, max: 270917, oom: 0, oom_kill: 2 },
+      pressureFull: { ...zero, totalUs: 9e12 },
+      eventsWindow: { windowSeconds: 600, partial: false, reset: false, events },
+      pressureWindow: { windowSeconds: 600, partial: false, reset: false, someUs: fullUs, fullUs },
+    });
+
+  it('does not highlight a unit with old lifetime events and none in the window', () => {
+    const u = win({ high: 0, max: 0, oom: 0, oom_kill: 0 });
+    for (const k of ['high', 'max', 'oom', 'oom_kill']) {
+      expect(windowedEvent(u, k)).toEqual({ n: 0, active: false });
+    }
+    expect(stallLevel(u)).toBe('default');
+  });
+
+  it('highlights from the window only', () => {
+    const u = win({ high: 3, max: 1240 }, 12e6);
+    expect(windowedEvent(u, 'max')).toEqual({ n: 1240, active: true });
+    expect(stallLevel(u)).toBe('error');
+  });
+
+  it('parses the window fields and tolerates their absence', () => {
+    const st = parseState({
+      units: [
+        {
+          name: 'a',
+          eventsWindow: { windowSeconds: 30, partial: true, events: { max: 4 } },
+          pressureWindow: { fullUs: 2e6 },
+        },
+        { name: 'b' },
+      ],
+    });
+    expect(st.units[0].eventsWindow?.events.max).toBe(4);
+    expect(st.units[0].pressureWindow?.fullUs).toBe(2e6);
+    expect(st.units[1].eventsWindow).toBeUndefined();
+  });
+
+  it('formats spans and stall time', () => {
+    expect(formatSpan(600)).toBe('10 min');
+    expect(formatSpan(45)).toBe('45 s');
+    expect(formatStall(0)).toBe('0 s');
+    expect(formatStall(3.4e6)).toBe('3.4 s');
+    expect(formatStall(150e6)).toBe('2.5 min');
   });
 });

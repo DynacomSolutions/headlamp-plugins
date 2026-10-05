@@ -41,16 +41,21 @@ import {
   editableFields,
   EditField,
   EditForm,
+  EVENT_LABELS,
   FIELD_LABELS,
   formatSize,
+  formatSpan,
+  formatStall,
   isOrphan,
   MemAlert,
   MemUnit,
   parseSize,
   shortName,
   sizeInput,
+  stallLevel,
   unitDetail,
   unitLabel,
+  windowedEvent,
   worstSeverity,
 } from './model';
 import { Chevron, processSummary, ProcessTree } from './processes';
@@ -119,54 +124,94 @@ function UsageBar({ unit, hostTotal }: { unit: MemUnit; hostTotal: number }) {
   );
 }
 
+const EVENT_ITEMS: [string, boolean][] = [
+  ['high', false],
+  ['max', true],
+  ['oom', true],
+  ['oom_kill', true],
+];
+
+/**
+ * Event counts over the recent window. Only the windowed count drives the
+ * colour; the lifetime total is secondary text in the tooltip.
+ */
 function EventChips({ unit }: { unit: MemUnit }) {
-  const items: [string, string, boolean][] = [
-    ['high', 'soft-limit throttles (memory.events high)', false],
-    ['max', 'hard-limit hits (memory.events max)', true],
-    ['oom', 'OOM events', true],
-    ['oom_kill', 'processes killed by the OOM killer', true],
-  ];
+  const w = unit.eventsWindow;
+  const span = w ? formatSpan(w.windowSeconds) : '';
   return (
     <Box display="flex" gap={0.5} flexWrap="wrap">
-      {items.map(([key, title, severe]) => {
-        const n = unit.eventsLocal[key] ?? 0;
+      {EVENT_ITEMS.map(([key, severe]) => {
+        const { n, active } = windowedEvent(unit, key);
+        const total = unit.eventsLocal[key] ?? 0;
+        const title = w
+          ? `${EVENT_LABELS[key]}: ${n.toLocaleString()} in the last ${span}${
+              w.partial ? ' (this unit is newer than the window)' : ''
+            }. Cumulative since the cgroup was created: ${total.toLocaleString()} events.`
+          : `${
+              EVENT_LABELS[key]
+            }: ${total.toLocaleString()} cumulative events since the cgroup was created (the backend does not report a recent window).`;
         return (
-          <Tooltip key={key} title={`${title}: ${n}`}>
+          <Tooltip key={key} title={title}>
             <Chip
               size="small"
-              variant={n > 0 ? 'filled' : 'outlined'}
-              color={n > 0 ? (severe ? 'error' : 'warning') : 'default'}
-              label={`${key.replace('_', ' ')} ${n}`}
+              variant={active ? 'filled' : 'outlined'}
+              color={active ? (severe ? 'error' : 'warning') : 'default'}
+              label={
+                w
+                  ? `${key.replace('_', ' ')} ${n.toLocaleString()} events`
+                  : `${key.replace('_', ' ')} ${total.toLocaleString()} total`
+              }
             />
           </Tooltip>
         );
       })}
+      <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
+        {w ? `in last ${span}${w.partial ? ' (partial)' : ''}` : 'cumulative'}
+      </Typography>
     </Box>
   );
 }
 
-function pressureColour(v: number): 'default' | 'warning' | 'error' {
-  return v >= 25 ? 'error' : v >= 5 ? 'warning' : 'default';
-}
-
+/** Stall time over the window, with the lifetime total and averages secondary. */
 function Pressure({ unit }: { unit: MemUnit }) {
-  const some = unit.pressureSome.avg10;
-  const full = unit.pressureFull.avg10;
+  const w = unit.pressureWindow;
+  const span = w ? formatSpan(w.windowSeconds) : '';
+  const level = stallLevel(unit);
+  const title = `Time fully stalled on memory (PSI full): every task waiting for memory at once. ${
+    w
+      ? `${formatStall(w.fullUs)} in the last ${span}; time with some task stalled: ${formatStall(
+          w.someUs
+        )}. `
+      : ''
+  }Cumulative since the cgroup was created: ${formatStall(
+    unit.pressureFull.totalUs
+  )} full, ${formatStall(
+    unit.pressureSome.totalUs
+  )} some. Averages: full ${unit.pressureFull.avg10.toFixed(
+    1
+  )}% over 10 s, ${unit.pressureFull.avg60.toFixed(1)}% over 60 s.`;
   return (
-    <Tooltip title="Memory pressure (PSI), 10 second average: share of time some or all tasks were stalled waiting for memory">
-      <Box display="flex" gap={0.5}>
+    <Tooltip title={title}>
+      <Box display="flex" gap={0.5} flexWrap="wrap">
         <Chip
           size="small"
-          variant="outlined"
-          color={pressureColour(some)}
-          label={`some ${some.toFixed(1)}%`}
+          variant={level === 'default' ? 'outlined' : 'filled'}
+          color={level}
+          label={`fully stalled ${
+            w ? formatStall(w.fullUs) : formatStall(unit.pressureFull.totalUs) + ' total'
+          }`}
         />
         <Chip
           size="small"
           variant="outlined"
-          color={pressureColour(full)}
-          label={`full ${full.toFixed(1)}%`}
+          label={`some ${
+            w ? formatStall(w.someUs) : formatStall(unit.pressureSome.totalUs) + ' total'
+          }`}
         />
+        <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
+          {w ? `in last ${span}${w.partial ? ' (partial)' : ''}` : 'cumulative'} · now{' '}
+          {unit.pressureFull.avg10.toFixed(1)}% full
+        </Typography>
       </Box>
     </Tooltip>
   );
@@ -668,8 +713,8 @@ export function AgentMemoryPage(): JSX.Element {
                 <TableCell align="right">Soft</TableCell>
                 <TableCell align="right">Hard</TableCell>
                 <TableCell align="right">Swap</TableCell>
-                <TableCell>Events</TableCell>
-                <TableCell>Pressure</TableCell>
+                <TableCell>Events (recent window)</TableCell>
+                <TableCell>Memory stall time</TableCell>
                 <TableCell>Alerts</TableCell>
                 <TableCell />
               </TableRow>

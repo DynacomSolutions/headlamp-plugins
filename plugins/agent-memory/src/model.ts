@@ -14,6 +14,24 @@ export interface Pressure {
   totalUs: number;
 }
 
+/** Events inside the backend's recent window (a delta of the lifetime counters). */
+export interface EventsWindow {
+  /** Span actually covered; shorter than the configured window for a new or reset unit. */
+  windowSeconds: number;
+  partial: boolean;
+  reset: boolean;
+  events: Record<string, number>;
+}
+
+/** Memory stall time inside the recent window, in microseconds. */
+export interface PressureWindow {
+  windowSeconds: number;
+  partial: boolean;
+  reset: boolean;
+  someUs: number;
+  fullUs: number;
+}
+
 /** A byte quantity; null means unlimited ("max" / infinity). */
 export type Limit = number | null;
 
@@ -67,6 +85,9 @@ export interface MemUnit {
   eventsLocal: Record<string, number>;
   pressureSome: Pressure;
   pressureFull: Pressure;
+  /** Absent for backends that predate the windowed fields. */
+  eventsWindow?: EventsWindow;
+  pressureWindow?: PressureWindow;
   procs: number;
   command?: string;
   topProcess?: string;
@@ -603,6 +624,75 @@ function cleanHerdr(h: any): HerdrInfo | undefined {
   return o as HerdrInfo;
 }
 
+function parseEventsWindow(w: any): EventsWindow | undefined {
+  if (!w || typeof w !== 'object') return undefined;
+  const events: Record<string, number> = {};
+  for (const [k, v] of Object.entries(w.events ?? {})) events[k] = num(v);
+  return {
+    windowSeconds: num(w.windowSeconds),
+    partial: Boolean(w.partial),
+    reset: Boolean(w.reset),
+    events,
+  };
+}
+
+function parsePressureWindow(w: any): PressureWindow | undefined {
+  if (!w || typeof w !== 'object') return undefined;
+  return {
+    windowSeconds: num(w.windowSeconds),
+    partial: Boolean(w.partial),
+    reset: Boolean(w.reset),
+    someUs: num(w.someUs),
+    fullUs: num(w.fullUs),
+  };
+}
+
+/** "10 min", "45 s", "1 h 5 min": a span in seconds, for window labels. */
+export function formatSpan(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return m % 60 === 0 ? `${h} h` : `${h} h ${m % 60} min`;
+}
+
+/** Stall time from microseconds: "0 s", "3.4 s", "2.5 min", "1.2 h". */
+export function formatStall(us: number): string {
+  const s = us / 1e6;
+  if (s < 0.05) return '0 s';
+  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`;
+  if (s < 3600) return `${(s / 60).toFixed(1)} min`;
+  return `${(s / 3600).toFixed(1)} h`;
+}
+
+export const EVENT_LABELS: Record<string, string> = {
+  high: 'soft-limit events',
+  max: 'hard-limit events',
+  oom: 'OOM events',
+  oom_kill: 'OOM kill events',
+};
+
+/**
+ * Events of one kind in the window, formatted for a badge, plus whether it
+ * should be highlighted. Highlighting depends only on the windowed count, never
+ * on the lifetime total.
+ */
+export function windowedEvent(unit: MemUnit, key: string): { n: number; active: boolean } {
+  const n = unit.eventsWindow?.events[key] ?? 0;
+  return { n, active: n > 0 };
+}
+
+/** Seconds of full stall in the window that turns the stall badge amber. */
+export const STALL_WARN_SECONDS = 1;
+export const STALL_CRIT_SECONDS = 10;
+
+/** Colour of the full-stall badge from the windowed stall time only. */
+export function stallLevel(unit: MemUnit): 'default' | 'warning' | 'error' {
+  const s = (unit.pressureWindow?.fullUs ?? 0) / 1e6;
+  return s >= STALL_CRIT_SECONDS ? 'error' : s >= STALL_WARN_SECONDS ? 'warning' : 'default';
+}
+
 /** Parses the backend's JSON, tolerating a missing or partial payload. */
 export function parseState(json: any): AgentMemoryState {
   const zero = { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 };
@@ -617,6 +707,8 @@ export function parseState(json: any): AgentMemoryState {
     eventsLocal: u.eventsLocal ?? {},
     pressureSome: u.pressureSome ?? zero,
     pressureFull: u.pressureFull ?? zero,
+    eventsWindow: parseEventsWindow(u.eventsWindow),
+    pressureWindow: parsePressureWindow(u.pressureWindow),
   }));
   return {
     node: String(json?.node ?? ''),
