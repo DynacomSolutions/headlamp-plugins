@@ -120,7 +120,7 @@ export interface AgentWarning {
   displayName: string;
   paneId: string;
   agent: string;
-  /** Limit types reached: soft-limit, hard-limit, stall, swap (or test). */
+  /** Limit types reached: soft-limit, hard-limit, stall (or test). */
   types: string[];
   message: string;
   sent: boolean;

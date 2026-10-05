@@ -267,7 +267,7 @@ function WarningsPanel({ state }: { state: AgentMemoryState }) {
   const interval = p.intervalSeconds ? formatSpan(p.intervalSeconds) : '30 min';
   const rule = `Panes are prompted when they reach a limit: soft or hard limit events in the window, full stall time of ${
     p.stallSeconds ?? 10
-  } s, or swap near its limit; at most one per pane and limit type every ${interval}.`;
+  } s (a full swap cap alone does not warn); at most one per pane and limit type every ${interval}.`;
   if (!p.enabled) {
     return (
       <Alert severity="info" sx={{ mb: 2 }}>
