@@ -113,6 +113,32 @@ export interface MemAlert {
   detail: string;
 }
 
+/** A memory warning the backend prompted a pane's agent with (or tried to). */
+export interface AgentWarning {
+  time: string;
+  unit: string;
+  displayName: string;
+  paneId: string;
+  agent: string;
+  /** Limit types reached: soft-limit, hard-limit, stall, swap (or test). */
+  types: string[];
+  message: string;
+  sent: boolean;
+  test: boolean;
+  error: string;
+}
+
+/** Warnings older than this are not shown. */
+export const WARNING_MAX_AGE_MS = 24 * 3600 * 1000;
+
+export interface WarningPolicy {
+  enabled: boolean;
+  intervalSeconds?: number;
+  stallSeconds?: number;
+  swapRatio?: number;
+  windowSeconds?: number;
+}
+
 export interface AgentMemoryState {
   node: string;
   sampled: number;
@@ -127,6 +153,9 @@ export interface AgentMemoryState {
   herdr: { enabled: boolean; up: boolean; error?: string; panes: number };
   units: MemUnit[];
   alerts: MemAlert[];
+  /** Agent warnings from the last 24 hours, newest first. */
+  warnings: AgentWarning[];
+  warningPolicy: WarningPolicy;
 }
 
 export interface ChangeRecord {
@@ -693,6 +722,30 @@ export function stallLevel(unit: MemUnit): 'default' | 'warning' | 'error' {
   return s >= STALL_CRIT_SECONDS ? 'error' : s >= STALL_WARN_SECONDS ? 'warning' : 'default';
 }
 
+/** Cleans the backend's warning list and keeps only the last 24 hours, newest first. */
+export function parseWarnings(list: any, nowMs: number): AgentWarning[] {
+  if (!Array.isArray(list)) return [];
+  const out: AgentWarning[] = [];
+  for (const w of list) {
+    if (!w || typeof w !== 'object') continue;
+    const at = Date.parse(String(w.time ?? ''));
+    if (!Number.isFinite(at) || nowMs - at > WARNING_MAX_AGE_MS) continue;
+    out.push({
+      time: new Date(at).toISOString(),
+      unit: cleanText(w.unit),
+      displayName: cleanText(w.displayName) || cleanText(w.unit),
+      paneId: cleanText(w.paneId),
+      agent: cleanText(w.agent),
+      types: Array.isArray(w.types) ? w.types.map((t: unknown) => cleanText(t)) : [],
+      message: cleanText(w.message),
+      sent: Boolean(w.sent),
+      test: Boolean(w.test),
+      error: cleanText(w.error),
+    });
+  }
+  return out.sort((a, b) => Date.parse(b.time) - Date.parse(a.time));
+}
+
 /** Parses the backend's JSON, tolerating a missing or partial payload. */
 export function parseState(json: any): AgentMemoryState {
   const zero = { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 };
@@ -729,5 +782,7 @@ export function parseState(json: any): AgentMemoryState {
     herdr: { enabled: false, up: false, panes: 0, ...(json?.herdr ?? {}) },
     units,
     alerts: Array.isArray(json?.alerts) ? json.alerts : [],
+    warnings: parseWarnings(json?.warnings, Number(json?.sampled ?? 0) * 1000 || Date.now()),
+    warningPolicy: { enabled: false, ...(json?.warningPolicy ?? {}) },
   };
 }

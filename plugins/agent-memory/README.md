@@ -12,6 +12,7 @@ The page lists those slices and scopes and, for each:
 - a usage bar with the soft limit (amber line) and hard limit (red line);
 - used, soft, hard and swap figures;
 - the kernel's `memory.events` counts (`high`, `max`, `oom`, `oom_kill`) as events over a recent window (for example the last 10 minutes), with the cumulative total in the tooltip. Badges are coloured from the windowed count only, so a unit that has been quiet for a full window clears on its own;
+- the warnings the backend has sent to agents in the last 24 hours (older ones drop off), with delivery result;
 - memory stall time (PSI `full` and `some`) over the same window, with the cumulative total and 10 and 60 second averages in the tooltip;
 - an expandable process tree under each pane or agent row, when the backend
   provides one: indented, with collapsible nodes, the command, PID, RSS and the
