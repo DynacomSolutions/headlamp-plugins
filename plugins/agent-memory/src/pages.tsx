@@ -261,6 +261,77 @@ function HostSummary({ state }: { state: AgentMemoryState }) {
   );
 }
 
+/** Warnings the backend sent to agents in the last 24 hours; older ones drop off. */
+function WarningsPanel({ state }: { state: AgentMemoryState }) {
+  const { warnings, warningPolicy: p } = state;
+  const interval = p.intervalSeconds ? formatSpan(p.intervalSeconds) : '30 min';
+  const rule = `Panes are prompted when they reach a limit: soft or hard limit events in the window, full stall time of ${
+    p.stallSeconds ?? 10
+  } s, or swap near its limit; at most one per pane and limit type every ${interval}.`;
+  if (!p.enabled) {
+    return (
+      <Alert severity="info" sx={{ mb: 2 }}>
+        Agent warnings are switched off on the backend.
+      </Alert>
+    );
+  }
+  return (
+    <Box mb={2}>
+      <Typography variant="subtitle2">Warnings sent to agents (last 24 hours)</Typography>
+      <Typography variant="caption" color="text.secondary" display="block">
+        {rule}
+      </Typography>
+      {warnings.length === 0 ? (
+        <Typography variant="body2" color="text.secondary">
+          None.
+        </Typography>
+      ) : (
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Time</TableCell>
+              <TableCell>Pane</TableCell>
+              <TableCell>Reached</TableCell>
+              <TableCell>Result</TableCell>
+              <TableCell>Message</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {warnings.map(w => (
+              <TableRow key={`${w.time}/${w.unit}/${w.types.join(',')}`}>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  {new Date(w.time).toLocaleString()}
+                </TableCell>
+                <TableCell>
+                  <Tooltip title={w.unit}>
+                    <span>{w.displayName}</span>
+                  </Tooltip>
+                  {w.agent && (
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {w.agent}
+                    </Typography>
+                  )}
+                </TableCell>
+                <TableCell>{w.types.join(', ')}</TableCell>
+                <TableCell>
+                  {w.sent ? (
+                    <Chip size="small" color="success" label={w.test ? 'Test sent' : 'Sent'} />
+                  ) : (
+                    <Tooltip title={w.error}>
+                      <Chip size="small" color="warning" label="Not delivered" />
+                    </Tooltip>
+                  )}
+                </TableCell>
+                <TableCell>{w.message}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+    </Box>
+  );
+}
+
 function AlertsPanel({
   alerts,
   labelFor,
@@ -683,6 +754,7 @@ export function AgentMemoryPage(): JSX.Element {
           )}
           <HostSummary state={state} />
           <AlertsPanel alerts={alerts} labelFor={labelFor} />
+          <WarningsPanel state={state} />
           {state.herdr.enabled && !state.herdr.up && (
             <Alert severity="info" sx={{ mb: 2 }}>
               Herdr is unreachable, so chat names are not shown and orphaned panes cannot be told

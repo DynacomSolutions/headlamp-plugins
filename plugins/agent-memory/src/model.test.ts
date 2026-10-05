@@ -19,6 +19,7 @@ import {
   parseProcTree,
   parseSize,
   parseState,
+  parseWarnings,
   processCommands,
   resolveSettings,
   shortName,
@@ -474,5 +475,40 @@ describe('windowed events and stall time', () => {
     expect(formatStall(0)).toBe('0 s');
     expect(formatStall(3.4e6)).toBe('3.4 s');
     expect(formatStall(150e6)).toBe('2.5 min');
+  });
+});
+
+describe('agent warnings', () => {
+  const now = Date.parse('2026-10-05T12:00:00Z');
+  const w = (time: string, over: object = {}) => ({
+    time,
+    unit: 'a.scope',
+    displayName: 'proj / chat',
+    paneId: 'w1:p1',
+    agent: 'claude',
+    types: ['hard-limit'],
+    message: 'm',
+    sent: true,
+    ...over,
+  });
+
+  it('keeps the last 24 hours, newest first, and drops older warnings', () => {
+    const out = parseWarnings(
+      [
+        w('2026-10-05T10:00:00Z'),
+        w('2026-10-04T11:59:00Z'),
+        w('2026-10-05T11:00:00Z', { sent: false, error: 'agent_blocked' }),
+      ],
+      now
+    );
+    expect(out.map(x => x.time)).toEqual(['2026-10-05T11:00:00.000Z', '2026-10-05T10:00:00.000Z']);
+    expect(out[0].sent).toBe(false);
+  });
+
+  it('tolerates a missing or malformed list', () => {
+    expect(parseWarnings(undefined, now)).toEqual([]);
+    expect(parseWarnings([null, { time: 'nope' }], now)).toEqual([]);
+    expect(parseState({}).warnings).toEqual([]);
+    expect(parseState({}).warningPolicy.enabled).toBe(false);
   });
 });
