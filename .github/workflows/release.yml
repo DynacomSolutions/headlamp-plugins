@@ -91,23 +91,41 @@ jobs:
           files: assets/*
           prerelease: ${{ needs.build.outputs.prerelease }}
           fail_on_unmatched_files: true
-      # Event-driven trigger for the cluster repository's release pin. The hourly cron there is only a backstop.
-      # Needs a secret CLUSTER_DISPATCH_TOKEN (fine-grained token with Contents: write on the cluster repository)
-      # and a variable CLUSTER_DISPATCH_REPO (owner/name of that repository);
-      # without it this step is skipped and the backstop picks the release up.
-      - name: Notify cluster release pin
+      # Event-driven trigger for the cluster release gate; its hourly cron is only a backstop.
+      # Mints a downscoped GitHub App token (contents: write on the cluster repository only). Needs
+      # variable DYNACOM_OPS_APP_ID and secret DYNACOM_OPS_APP_PRIVATE_KEY; without them the steps
+      # log a notice and skip, and the backstop applies. Failures never fail the release.
+      - name: Check dispatch credentials
+        id: dispatch_creds
         if: needs.build.outputs.prerelease != 'true'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.CLUSTER_DISPATCH_TOKEN }}
-          # Target repository (owner/name) comes from a variable: the identifier check rejects hard-coded names.
-          TARGET_REPO: ${{ vars.CLUSTER_DISPATCH_REPO }}
-          TAG: ${{ github.ref_name }}
+          APP_ID: ${{ vars.DYNACOM_OPS_APP_ID }}
+          APP_KEY: ${{ secrets.DYNACOM_OPS_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "$GH_TOKEN" ] || [ -z "$TARGET_REPO" ]; then
-            echo "::notice::CLUSTER_DISPATCH_TOKEN or CLUSTER_DISPATCH_REPO is not set; relying on the hourly backstop."
-            exit 0
+          if [ -n "$APP_ID" ] && [ -n "$APP_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::DYNACOM_OPS_APP_ID or DYNACOM_OPS_APP_PRIVATE_KEY is not set; relying on the hourly backstop."
           fi
-          gh api "repos/$TARGET_REPO/dispatches" \
+      - name: Mint cluster dispatch token
+        id: dispatch_token
+        if: steps.dispatch_creds.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.DYNACOM_OPS_APP_ID }}
+          private-key: ${{ secrets.DYNACOM_OPS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: .cluster
+          permission-contents: write
+      - name: Notify cluster release gate
+        if: steps.dispatch_token.outputs.token != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.dispatch_token.outputs.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY_OWNER}/.cluster/dispatches" \
             -f event_type=headlamp-plugins-released \
-            -f "client_payload[tag]=$TAG"
+            -f "client_payload[tag]=$RELEASE_TAG"
