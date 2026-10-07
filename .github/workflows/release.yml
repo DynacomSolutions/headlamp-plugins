@@ -91,3 +91,20 @@ jobs:
           files: assets/*
           prerelease: ${{ needs.build.outputs.prerelease }}
           fail_on_unmatched_files: true
+      # Event-driven trigger for the cluster repository's release pin. The hourly cron there is only a backstop.
+      # Needs a secret CLUSTER_DISPATCH_TOKEN (fine-grained token with Contents: write on the cluster repository);
+      # without it this step is skipped and the backstop picks the release up.
+      - name: Notify cluster release pin
+        if: needs.build.outputs.prerelease != 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.CLUSTER_DISPATCH_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::CLUSTER_DISPATCH_TOKEN is not set; relying on the hourly backstop."
+            exit 0
+          fi
+          gh api repos/DynacomSolutions/.cluster/dispatches \
+            -f event_type=headlamp-plugins-released \
+            -f "client_payload[tag]=$TAG"
