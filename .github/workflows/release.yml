@@ -91,3 +91,41 @@ jobs:
           files: assets/*
           prerelease: ${{ needs.build.outputs.prerelease }}
           fail_on_unmatched_files: true
+      # Event-driven trigger for the cluster release gate; its hourly cron is only a backstop.
+      # Mints a downscoped GitHub App token (contents: write on the cluster repository only). Needs
+      # variable OPS_APP_ID and secret OPS_APP_PRIVATE_KEY; without them the steps
+      # log a notice and skip, and the backstop applies. Failures never fail the release.
+      - name: Check dispatch credentials
+        id: dispatch_creds
+        if: needs.build.outputs.prerelease != 'true'
+        continue-on-error: true
+        env:
+          APP_ID: ${{ vars.OPS_APP_ID }}
+          APP_KEY: ${{ secrets.OPS_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "$APP_ID" ] && [ -n "$APP_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::OPS_APP_ID or OPS_APP_PRIVATE_KEY is not set; relying on the hourly backstop."
+          fi
+      - name: Mint cluster dispatch token
+        id: dispatch_token
+        if: steps.dispatch_creds.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.OPS_APP_ID }}
+          private-key: ${{ secrets.OPS_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: .cluster
+          permission-contents: write
+      - name: Notify cluster release gate
+        if: steps.dispatch_token.outputs.token != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.dispatch_token.outputs.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh api "repos/${GITHUB_REPOSITORY_OWNER}/.cluster/dispatches" \
+            -f event_type=headlamp-plugins-released \
+            -f "client_payload[tag]=$RELEASE_TAG"
