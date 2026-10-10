@@ -458,6 +458,11 @@ export function alertsByUnit(alerts: MemAlert[]): Map<string, MemAlert[]> {
   return out;
 }
 
+/** Soft-limit (`high`) events are routine kernel reclaim, so they never show as an alert. */
+export function visibleAlerts(alerts: MemAlert[]): MemAlert[] {
+  return alerts.filter(a => a.reason !== 'high-events');
+}
+
 export function worstSeverity(alerts: MemAlert[] | undefined): 'critical' | 'warning' | null {
   if (!alerts || alerts.length === 0) return null;
   return alerts.some(a => a.severity === 'critical') ? 'critical' : 'warning';

@@ -27,6 +27,7 @@ import {
   stallLevel,
   unitDetail,
   unitLabel,
+  visibleAlerts,
   visibleProcesses,
   windowedEvent,
   worstSeverity,
@@ -190,6 +191,11 @@ describe('alerts and names', () => {
     expect(worstSeverity(by.get('a'))).toBe('critical');
     expect(worstSeverity(by.get('b'))).toBe('warning');
     expect(worstSeverity(undefined)).toBeNull();
+  });
+  it('ignores soft-limit high events', () => {
+    const hi = { unit: 'c', severity: 'warning' as const, reason: 'high-events', detail: '' };
+    expect(visibleAlerts([...alerts, hi])).toEqual(alerts);
+    expect(worstSeverity(alertsByUnit(visibleAlerts([hi])).get('c'))).toBeNull();
   });
   it('shortens scope names', () => {
     expect(shortName('agent-workload-native-12-345.scope')).toBe('pane 12-345');

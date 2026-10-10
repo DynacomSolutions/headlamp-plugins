@@ -55,6 +55,7 @@ import {
   stallLevel,
   unitDetail,
   unitLabel,
+  visibleAlerts,
   windowedEvent,
   worstSeverity,
 } from './model';
@@ -141,7 +142,9 @@ function EventChips({ unit }: { unit: MemUnit }) {
   return (
     <Box display="flex" gap={0.5} flexWrap="wrap">
       {EVENT_ITEMS.map(([key, severe]) => {
-        const { n, active } = windowedEvent(unit, key);
+        const { n, active: windowActive } = windowedEvent(unit, key);
+        // Soft-limit (`high`) events are routine kernel reclaim: show, never colour.
+        const active = windowActive && key !== 'high';
         const total = unit.eventsLocal[key] ?? 0;
         const title = w
           ? `${EVENT_LABELS[key]}: ${n.toLocaleString()} in the last ${span}${
@@ -717,7 +720,7 @@ export function AgentMemoryPage(): JSX.Element {
   const [version, setVersion] = React.useState(0);
   const changes = useChanges(settings, state !== null, version);
 
-  const alerts = state?.alerts ?? [];
+  const alerts = React.useMemo(() => visibleAlerts(state?.alerts ?? []), [state]);
   const byUnit = React.useMemo(() => alertsByUnit(alerts), [alerts]);
   const rows = arrangeRows(state?.units ?? [], filter, orphansOnly);
   const orphanCount = (state?.units ?? []).filter(isOrphan).length;
