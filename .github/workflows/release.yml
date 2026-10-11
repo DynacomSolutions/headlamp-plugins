@@ -16,7 +16,7 @@ jobs:
     strategy:
       max-parallel: 1
       fail-fast: false
-      matrix: {plugin: [agent-memory, alerting, disk-health, github-runners, sites]}
+      matrix: {plugin: [agent-memory, alerting, disk-health, github-runners, sites, updates]}
     defaults:
       run:
         working-directory: plugins/${{ matrix.plugin }}
@@ -81,9 +81,9 @@ jobs:
       - name: Create checksums
         working-directory: assets
         run: |
-          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 5
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 6
           sha256sum *.tar.gz > SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 5
+          test "$(wc -l < SHA256SUMS)" -eq 6
       - name: Publish complete release
         uses: softprops/action-gh-release@v2
         with:
