@@ -1,8 +1,8 @@
 # headlamp-plugins
 
-Five plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
+Six plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
 spot slow disks, see where CI jobs are running, find application URLs, manage
-notifications, and understand agent memory pressure.
+notifications, understand agent memory pressure, and track component updates.
 
 Built with `@kinvolk/headlamp-plugin` (TypeScript + React). Install the plugins
 you need; each has its own release archive and configuration.
@@ -14,6 +14,7 @@ you need; each has its own release archive and configuration.
 | [Sites](#sites) | Find an application's URL and the Mappings behind it | [Hostname suffixes and access](plugins/sites/README.md) |
 | [Alerting](#alerting) | Configure notification channels, routes and test delivery | [CRDs, web push and GitOps](plugins/alerting/README.md) |
 | [Agent memory](#agent-memory) | Inspect memory limits, swap, pressure and recent kernel events | [Backend and permissions](plugins/agent-memory/README.md) |
+| [Updates](#updates) | See which components have updates and what blocks them | [Data source and URLs](plugins/updates/README.md) |
 
 ## A tour of the plugins
 
@@ -129,17 +130,30 @@ with confirmation. This plugin requires the separate agent-memory backend;
 it does not derive host cgroup data from Kubernetes metrics. See the
 [backend setup and access guide](plugins/agent-memory/README.md).
 
+### Updates
+
+See which cluster components have a newer release, which updates are blocked
+and by what, and whether any node runs a different Kubernetes version from the
+server.
+
+**Example:** a new k3s release is out but marked **Blocked**. Open the component
+to see that a dependency does not yet support it, which version it needs, and a
+link to the source. Filters and sorting live in the URL, so a view can be shared.
+
+Needs read access to the `version-tracker-report` ConfigMap. See the
+[data source guide](plugins/updates/README.md).
+
 Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
-The release contains five plugin archives and five checksum lines.
+The release contains six plugin archives and six checksum lines.
 
 ## Creating a release
 
 Push a strict semantic-version tag such as `v1.2.3` or `v1.2.3-rc.1` to
 create a release. The workflow stages the tag version in each plugin's
 `package.json` and `package-lock.json` in its job workspace without committing
-those changes, then creates and uploads five plugin archives plus
+those changes, then creates and uploads six plugin archives plus
 `SHA256SUMS`. Tags containing a hyphen publish as prereleases.
 
 ## Installing a release
