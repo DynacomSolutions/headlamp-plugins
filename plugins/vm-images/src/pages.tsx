@@ -174,7 +174,7 @@ function TagTable({ repo, now, counts }: { repo: Repo; now: number; counts: Map<
                 <span>{formatRelative(t.created, now)}</span>
               </Tooltip>
             </TableCell>
-            <TableCell>{t.platforms.join(', ') || '-'}</TableCell>
+            <TableCell>{t.platforms.join(', ') || 'unknown'}</TableCell>
             <TableCell>{counts.get(`${repo.name}:${t.tag}`) ?? 0}</TableCell>
           </TableRow>
         ))}
@@ -203,7 +203,7 @@ function RepoRow({ repo, now, counts }: { repo: Repo; now: number; counts: Map<s
         <TableCell>{formatSize(repoSize(repo))}</TableCell>
         <TableCell>
           {created === null ? (
-            '-'
+            'unknown'
           ) : (
             <Tooltip title={new Date(created).toISOString()}>
               <span>{formatRelative(new Date(created).toISOString(), now)}</span>

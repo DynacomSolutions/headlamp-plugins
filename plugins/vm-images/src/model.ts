@@ -132,9 +132,9 @@ export function shortDigest(digest: string | null | undefined): string {
 }
 
 export function formatRelative(iso: string | null | undefined, now: number): string {
-  if (!iso) return '-';
+  if (!iso) return 'unknown';
   const t = Date.parse(iso);
-  if (Number.isNaN(t)) return '-';
+  if (Number.isNaN(t)) return 'unknown';
   const s = Math.max(0, Math.round((now - t) / 1000));
   if (s < 60) return 'just now';
   const units: [string, number][] = [

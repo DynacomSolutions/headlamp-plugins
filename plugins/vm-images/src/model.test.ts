@@ -73,8 +73,8 @@ describe('formatting', () => {
     const now = Date.parse('2026-10-15T08:00:00Z');
     expect(formatRelative('2026-10-15T07:57:00Z', now)).toBe('3 minutes ago');
     expect(formatRelative('2026-10-14T08:00:00Z', now)).toBe('1 day ago');
-    expect(formatRelative('nope', now)).toBe('-');
-    expect(formatRelative(null, now)).toBe('-');
+    expect(formatRelative('nope', now)).toBe('unknown');
+    expect(formatRelative(null, now)).toBe('unknown');
   });
 });
 
@@ -224,5 +224,18 @@ describe('KubeVirt rows', () => {
       { volume: 'ci', kind: 'containerDisk', ref: 'example.com/vm/x:1', capacity: '-', storageClass: '-' },
       { volume: 'cloud', kind: 'other', ref: '-', capacity: '-', storageClass: '-' },
     ]);
+  });
+});
+
+describe('empty-config artefacts', () => {
+  it('keeps repos with null created and no platforms', () => {
+    const c = parseCatalogue({
+      repositories: [
+        { name: 'macos-vz/x', tags: [{ tag: '1', configMediaType: 'application/vnd.oci.empty.v1+json', created: null, platforms: [] }] },
+      ],
+    });
+    expect(isVmRepo(c.repositories[0], ['macos-vz/'])).toBe(true);
+    expect(lastCreated(c.repositories[0])).toBeNull();
+    expect(formatRelative(c.repositories[0].tags[0].created, 0)).toBe('unknown');
   });
 });
