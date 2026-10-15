@@ -182,46 +182,78 @@ describe('projectOf', () => {
 });
 
 describe('buildProjectTree', () => {
-  const job = (runner: string, set: string, repo = 'my-org/shop') => ({
-    key: runner, name: 'build', repository: repo, workflow: 'ci.yml', workflow_ref: '',
-    runner_name: runner, scale_set: set, status: 'in_progress',
+  const T0 = '2026-01-01T00:00:00Z';
+  const job = (runner: string, o: Record<string, unknown> = {}) => ({
+    key: runner, name: `build-${runner}`, repository: 'my-org/shop', workflow: 'ci.yml', workflow_ref: '',
+    run_id: 1, run_url: 'https://github.com/my-org/shop/actions/runs/1',
+    runner_name: runner, scale_set: 'ci-shop-main', status: 'in_progress', started_at: T0, ...o,
   });
-  const n = (id: string, jobs: any[], starting: any[]) => ({
+  const st = (runner: string, o: Record<string, unknown> = {}) => ({
+    name: runner, runner_name: runner, scale_set: 'ci-shop', phase: 'Pending', started_at: T0, ...o,
+  });
+  const n = (id: string, jobs: any[], starting: any[] = []) => ({
     id, display_name: id, kind: 'kubernetes' as const, ready: true, os: 'linux', jobs, starting,
   });
-  const status = {
-    nodes: [
-      n('worker-1', [job('r1', 'ci-shop-main')], [
-        { name: 'r2', runner_name: 'r2', scale_set: 'ci-shop', phase: 'Running' },
-      ]),
-      n('worker-2', [], [{ name: 'r3', runner_name: 'r3', scale_set: 'ci-shop', phase: 'Pending' }]),
-    ],
-    scale_sets: [
-      { name: 'ci-shop' }, { name: 'ci-shop-main' }, { name: 'ci-docs-main' },
-    ],
-  };
   const none = { nodes: [], scaleSets: [], terms: [] };
   const cfg = { projectStripPrefixes: 'ci-' };
+  const tree = (nodes: any[], f = none, c: any = cfg) => buildProjectTree({ nodes }, c, f);
 
-  it('merges -main into its project and aggregates', () => {
-    const tree = buildProjectTree(status, cfg);
-    expect(tree.map(p => p.name)).toEqual(['docs', 'shop']);
-    const shop = tree[1];
-    expect(shop.sets.map(s => s.name)).toEqual(['ci-shop', 'ci-shop-main']);
-    expect([shop.running, shop.idle, shop.pending]).toEqual([1, 1, 1]);
-    expect(tree[0]).toMatchObject({ running: 0, idle: 0, pending: 0 });
+  it('groups by repository with the owner stripped', () => {
+    const t = tree([n('worker-1', [job('r1'), job('r2', { repository: 'my-org/docs', run_id: 2 })])]);
+    expect(t.map(p => p.name).sort()).toEqual(['docs', 'shop']);
   });
-  it('honours a custom suffix list', () => {
-    const tree = buildProjectTree(status, { ...cfg, projectStripSuffixes: '' });
-    expect(tree.map(p => p.name)).toEqual(['docs-main', 'shop', 'shop-main']);
+  it('falls back to the scale set when a job has no repository', () => {
+    const t = tree([n('worker-1', [job('r1', { repository: '', run_id: null })])]);
+    expect(t.map(p => p.name)).toEqual(['shop']);
+    expect(tree([n('worker-1', [job('r1', { repository: '', run_id: null })])], none, { ...cfg, projectStripSuffixes: '' })[0].name).toBe('shop-main');
+  });
+  it('groups several jobs of one run', () => {
+    const t = tree([n('worker-1', [job('r1'), job('r2')]), n('worker-2', [job('r3')])]);
+    expect(t).toHaveLength(1);
+    expect(t[0].runs).toHaveLength(1);
+    expect(t[0].runs[0]).toMatchObject({ label: 'ci.yml', url: 'https://github.com/my-org/shop/actions/runs/1' });
+    expect(t[0].runs[0].jobs.map(j => j.job.runner_name)).toEqual(['r1', 'r2', 'r3']);
+    expect(t[0].running).toBe(3);
+  });
+  it('keeps two runs of one repository apart', () => {
+    const t = tree([n('worker-1', [job('r1'), job('r2', { run_id: 2 })])]);
+    expect(t[0].runs).toHaveLength(2);
+  });
+  it('lists starting runners as waiting, and drops idle ones', () => {
+    const t = tree([n('worker-1', [job('r1')], [st('r2'), st('r3', { phase: 'Running' })])]);
+    expect(t[0].waiting.map(w => w.runner_name)).toEqual(['r2', 'r3']);
+    expect([t[0].running, t[0].pending]).toEqual([1, 2]);
+  });
+  it('excludes runners that only exist as scale-set capacity', () => {
+    expect(tree([n('worker-1', [], [])])).toEqual([]);
+  });
+  it('sorts by most work then oldest', () => {
+    const t = tree([
+      n('worker-1', [
+        job('a1', { repository: 'my-org/alpha', run_id: 5, started_at: '2026-01-01T00:10:00Z' }),
+        job('b1', { repository: 'my-org/beta', run_id: 6, started_at: '2026-01-01T00:05:00Z' }),
+        job('s1', { run_id: 7, started_at: '2026-01-01T00:20:00Z' }),
+        job('s2', { run_id: 7, started_at: '2026-01-01T00:30:00Z' }),
+        job('s3', { run_id: 8, started_at: '2026-01-01T00:01:00Z' }),
+      ]),
+    ]);
+    expect(t.map(p => p.name)).toEqual(['shop', 'beta', 'alpha']);
+    expect(t[0].runs.map(r => r.key.split('|')[2])).toEqual(['7', '8']);
+    expect(t[0].runs[0].oldest).toBe('2026-01-01T00:20:00Z');
   });
   it('prunes by node, scale set and search', () => {
-    expect(buildProjectTree(status, cfg, { ...none, nodes: ['worker-2'] })[0].sets[0].runners.map(r => r.name)).toEqual(['r3']);
-    const bySet = buildProjectTree(status, cfg, { ...none, scaleSets: ['ci-shop-main'] });
-    expect(bySet).toHaveLength(1);
-    expect(bySet[0].sets.map(s => s.name)).toEqual(['ci-shop-main']);
-    const byTerm = buildProjectTree(status, cfg, { ...none, terms: ['r3'] });
-    expect(byTerm.map(p => p.name)).toEqual(['shop']);
-    expect(byTerm[0].sets.map(s => s.name)).toEqual(['ci-shop']);
+    const nodes = [
+      n('worker-1', [job('r1')], [st('r2')]),
+      n('worker-2', [job('r3', { scale_set: 'ci-other', repository: 'my-org/docs', run_id: 2 })]),
+    ];
+    expect(tree(nodes, { ...none, nodes: ['worker-2'] }).map(p => p.name)).toEqual(['docs']);
+    const bySet = tree(nodes, { ...none, scaleSets: ['ci-shop'] });
+    expect(bySet[0].runs).toHaveLength(0);
+    expect(bySet[0].waiting).toHaveLength(1);
+    expect(tree(nodes, { ...none, terms: ['r3'] }).map(p => p.name)).toEqual(['docs']);
+    expect(tree(nodes, { ...none, terms: ['nomatch'] })).toEqual([]);
+  });
+  it('is empty with no live work', () => {
+    expect(tree([])).toEqual([]);
   });
 });

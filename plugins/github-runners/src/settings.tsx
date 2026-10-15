@@ -94,14 +94,14 @@ export function Settings(props: PluginSettingsDetailsProps) {
       />
       <TextField
         label="Project: strip prefixes"
-        helperText="Comma-separated. At most one is removed from a scale set name to get its project, for example ci-."
+        helperText="Comma-separated. At most one is removed from a scale set name to get the project of a job without a repository, or of a starting runner, for example ci-."
         value={cfg.projectStripPrefixes || ''}
         onChange={set('projectStripPrefixes')}
         fullWidth
       />
       <TextField
         label="Project: strip suffixes"
-        helperText="Comma-separated. Removed repeatedly from the end of the scale set name. Defaults to -main,-runners."
+        helperText="Comma-separated. Removed repeatedly from the end of the scale set name used as the project fallback. Defaults to -main,-runners."
         value={cfg.projectStripSuffixes ?? DEFAULT_STRIP_SUFFIXES}
         onChange={set('projectStripSuffixes')}
         fullWidth

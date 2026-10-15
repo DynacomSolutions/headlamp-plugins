@@ -486,77 +486,107 @@ export function projectOf(name: string, prefixes: string[], suffixes: string[]):
   return out || name;
 }
 
-export interface TreeRunner {
-  name: string;
-  state: 'running' | 'idle' | 'pending';
-  job?: Job;
+export interface TreeStart {
+  runner_name: string;
   node: string;
+  scale_set: string;
+  phase?: string;
   started_at?: string | null;
 }
 
-export interface TreeSet {
-  name: string;
-  runners: TreeRunner[];
+export interface TreeRun {
+  key: string;
+  label: string;
+  url: string | null;
+  jobs: { job: Job; node: string }[];
+  /** Oldest job start time (ISO), if any job has one. */
+  oldest: string | null;
 }
 
 export interface TreeProject {
   name: string;
-  sets: TreeSet[];
+  runs: TreeRun[];
+  /** Runners that have started but are not yet on a job. */
+  waiting: TreeStart[];
   running: number;
-  idle: number;
   pending: number;
 }
 
+const startMs = (iso_?: string | null): number => {
+  const t = iso_ ? Date.parse(iso_) : NaN;
+  return Number.isNaN(t) ? Infinity : t;
+};
+const oldestOf = (xs: (string | null | undefined)[]): string | null =>
+  xs.reduce<string | null>((a, x) => (x && startMs(x) < startMs(a) ? x : a), null);
+
+/** Live work only: running jobs grouped by repository and run, plus runners still starting. */
 export function buildProjectTree(
-  status: Pick<Status, 'nodes' | 'scale_sets'>,
+  status: Pick<Status, 'nodes'>,
   cfg: Pick<PluginConfig, 'projectStripPrefixes' | 'projectStripSuffixes'>,
   f: Filters = { nodes: [], scaleSets: [], terms: [] }
 ): TreeProject[] {
   const prefixes = parseList(cfg.projectStripPrefixes);
   const suffixes = parseList(cfg.projectStripSuffixes ?? DEFAULT_STRIP_SUFFIXES);
-  const filtering = !!(f.nodes.length || f.scaleSets.length || f.terms.length);
-  const sets = new Map<string, TreeSet>();
-  const set = (n: string) => {
-    const name = n || 'unassigned';
-    if (!sets.has(name)) sets.set(name, { name, runners: [] });
-    return sets.get(name)!;
+  const projects = new Map<string, TreeProject>();
+  const project = (name: string) => {
+    let p = projects.get(name);
+    if (!p) projects.set(name, (p = { name, runs: [], waiting: [], running: 0, pending: 0 }));
+    return p;
   };
-  for (const s of status.scale_sets) {
-    if (!f.scaleSets.length || f.scaleSets.includes(s.name)) set(s.name);
-  }
+  const runs = new Map<string, TreeRun>();
   for (const node of status.nodes) {
     if (f.nodes.length && !f.nodes.includes(node.id)) continue;
     for (const job of node.jobs) {
       if (!matchesJob(job, node, f)) continue;
-      set(job.scale_set).runners.push({
-        name: job.runner_name,
-        state: 'running',
-        job,
-        node: node.display_name,
-        started_at: job.started_at,
-      });
+      const p = project(
+        job.repository
+          ? job.repository.split('/').pop() || job.repository
+          : projectOf(job.scale_set, prefixes, suffixes)
+      );
+      const key = `${p.name}|${job.repository}|${job.run_id ?? job.key}`;
+      let run = runs.get(key);
+      if (!run) {
+        runs.set(
+          key,
+          (run = {
+            key,
+            label: job.workflow || workflowName(job.workflow_ref) || 'Workflow run',
+            url: job.run_url || runUrl(job.repository, job.run_id),
+            jobs: [],
+            oldest: null,
+          })
+        );
+        p.runs.push(run);
+      }
+      run.jobs.push({ job, node: node.display_name });
+      run.oldest = oldestOf([run.oldest, job.started_at]);
+      p.running += 1;
     }
     for (const st of node.starting) {
       if (!matchesStarting(st, node, f)) continue;
-      set(st.scale_set).runners.push({
-        name: st.runner_name,
-        state: st.phase === 'Running' ? 'idle' : 'pending',
+      const p = project(projectOf(st.scale_set, prefixes, suffixes));
+      p.waiting.push({
+        runner_name: st.runner_name,
         node: node.display_name,
+        scale_set: st.scale_set,
+        phase: st.phase,
         started_at: st.started_at,
       });
+      p.pending += 1;
     }
   }
-  const projects = new Map<string, TreeProject>();
-  for (const s of sets.values()) {
-    if (filtering && !s.runners.length) continue;
-    s.runners.sort((a, b) => a.name.localeCompare(b.name));
-    const pn = projectOf(s.name, prefixes, suffixes);
-    let p = projects.get(pn);
-    if (!p) projects.set(pn, (p = { name: pn, sets: [], running: 0, idle: 0, pending: 0 }));
-    p.sets.push(s);
-    for (const r of s.runners) p[r.state] += 1;
-  }
+  const byAge = (a?: string | null, b?: string | null) => startMs(a) - startMs(b);
   const out = Array.from(projects.values());
-  for (const p of out) p.sets.sort((a, b) => a.name.localeCompare(b.name));
-  return out.sort((a, b) => a.name.localeCompare(b.name));
+  for (const p of out) {
+    for (const r of p.runs) r.jobs.sort((a, b) => a.job.name.localeCompare(b.job.name));
+    p.runs.sort((a, b) => b.jobs.length - a.jobs.length || byAge(a.oldest, b.oldest) || a.label.localeCompare(b.label));
+    p.waiting.sort((a, b) => byAge(a.started_at, b.started_at) || a.runner_name.localeCompare(b.runner_name));
+  }
+  const oldestProject = (p: TreeProject) => oldestOf([...p.runs.map(r => r.oldest), ...p.waiting.map(w => w.started_at)]);
+  return out.sort(
+    (a, b) =>
+      b.running + b.pending - (a.running + a.pending) ||
+      byAge(oldestProject(a), oldestProject(b)) ||
+      a.name.localeCompare(b.name)
+  );
 }

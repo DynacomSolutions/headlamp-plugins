@@ -50,14 +50,24 @@ set names, or repeated). Example: `/github-runners/history?node=worker-1&q=shop`
 
 ## Overview project tree
 
-The Overview starts with a tree: project, then scale set, then runner rows
-(state, current job with repository and workflow links, node, age). A scale set
-belongs to the project named by its name with the configured prefix and suffixes
-stripped, so `ci-shop` and `ci-shop-main` both land in `shop` with prefix `ci-`.
-Each project shows its scale-set count and running, idle and pending runners.
-Projects with running or pending work start expanded; the rest start collapsed.
-Search and the node and scale-set filters prune the tree. Expand state is not
-kept in the URL.
+The Overview starts with a tree of live work only: project, then workflow run,
+then job rows. Idle runners are not listed, and projects without live work are
+hidden; with nothing running or pending the tree shows "No live jobs".
+
+- Project: the repository name without its owner (`my-org/shop` becomes `shop`).
+  A job without a repository, and a starting runner, use the scale set name with
+  the configured prefix and suffixes stripped, so `ci-shop` and `ci-shop-main`
+  both land in `shop` with prefix `ci-`.
+- Workflow run: one per repository and run id, labelled with the workflow name
+  and linked to the run. Runners that are starting but not yet on a job sit in a
+  "Waiting for runner" group under their project.
+- Rows: job name (linked), runner, node, scale set, status and age; starting
+  runners show runner, node, scale set, phase and age.
+
+Projects show running jobs, pending runners and workflow runs; runs show their
+job count and oldest start. The busiest come first, then the oldest. Everything
+starts expanded. Search and the node and scale-set filters prune the tree.
+Expand state is not kept in the URL.
 
 ## Optional: status endpoint (enrichment and history)
 
@@ -78,8 +88,8 @@ Settings, Plugins, GitHub Runners:
 | Policy: spill nodes | Comma-separated node ids every pool must be allowed to spill onto, for example `worker-3` |
 | Policy: default repo cap | Maximum total `maxRunners` across all pools serving one repo. Default 3 once any policy setting is present |
 | Policy: repo cap overrides | `my-org/my-repo=32,my-org/other-repo=5` |
-| Project: strip prefixes | Comma-separated, empty by default. At most one is removed from a scale set name to get its project, for example `ci-` |
-| Project: strip suffixes | Comma-separated, default `-main,-runners`. Removed repeatedly from the end of the name. If nothing would be left, the original name is the project |
+| Project: strip prefixes | Comma-separated, empty by default. At most one is removed from a scale set name to get the project of a job without a repository or of a starting runner, for example `ci-` |
+| Project: strip suffixes | Comma-separated, default `-main,-runners`. Removed repeatedly from the end of the name. Only used for that fallback. If nothing would be left, the original name is the project |
 
 The Capacity tab flags a pool when it does not prefer every preferred node, is
 not allowed on every spill node (excluded by a required `NotIn`, or missing from
