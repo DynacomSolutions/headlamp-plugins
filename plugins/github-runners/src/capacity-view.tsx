@@ -172,31 +172,26 @@ function NodesTable({ cap }: { cap: Capacity }) {
 }
 
 function DemandBox({ cap }: { cap: Capacity }) {
-  const { demand, capacity, short } = cap.demand;
+  const { demand, capacity } = cap.demand;
   const starved = cap.pools.filter(p => p.starved);
+  const pressured = cap.pools.filter(p => p.pressure && !p.starved);
   const rows = [
-    { resource: 'CPU', demand: formatCpu(demand.cpu), capacity: formatCpu(capacity.cpu), short: short.cpu },
+    { resource: 'CPU', demand: formatCpu(demand.cpu), capacity: formatCpu(capacity.cpu) },
     {
       resource: 'Memory',
       demand: formatMemory(demand.memory),
       capacity: formatMemory(capacity.memory),
-      short: short.memory,
     },
   ];
   return (
-    <SectionBox title="Demand versus capacity">
-      {short.cpu && (
-        <Alert severity="warning" sx={{ m: 1 }}>
-          Demand at cap ({formatCpu(demand.cpu)}) exceeds the CPU the pools can use (
-          {formatCpu(capacity.cpu)}). Runners may be left waiting at full load.
+    <SectionBox title="Theoretical demand versus capacity">
+      {pressured.map(p => (
+        <Alert key={p.name} severity="warning" sx={{ m: 1 }}>
+          Pool {p.name} is under pressure: {p.running} running of {p.cap} allowed,{' '}
+          {p.pending} waiting to start{p.queued ? `, ${p.queued} queued` : ''}
+          {p.pendingReason ? ` (${p.pendingReason})` : ''}.
         </Alert>
-      )}
-      {short.memory && (
-        <Alert severity="warning" sx={{ m: 1 }}>
-          Demand at cap ({formatMemory(demand.memory)}) exceeds the memory the pools can use (
-          {formatMemory(capacity.memory)}). Runners may be left waiting at full load.
-        </Alert>
-      )}
+      ))}
       {starved.map(p => (
         <Alert key={p.name} severity="error" sx={{ m: 1 }}>
           Pool {p.name} is starved: {p.pending} waiting to start and none running
@@ -207,20 +202,13 @@ function DemandBox({ cap }: { cap: Capacity }) {
         data={rows}
         columns={[
           { header: 'Resource', accessorFn: (r: any) => r.resource },
-          { header: 'Demand at cap', accessorFn: (r: any) => r.demand },
+          { header: 'Theoretical demand if every pool hit its cap', accessorFn: (r: any) => r.demand },
           { header: 'Capacity', accessorFn: (r: any) => r.capacity },
-          {
-            header: 'Result',
-            accessorFn: (r: any) => (r.short ? 'short' : 'enough'),
-            Cell: ({ row }: any) => (
-              <StatusLabel status={row.original.short ? 'error' : 'success'}>
-                {row.original.short ? 'demand exceeds capacity' : 'enough'}
-              </StatusLabel>
-            ),
-          },
         ]}
       />
       <Typography variant="caption" color="text.secondary" display="block" sx={{ p: 1 }}>
+        Information only: every pool reaching its cap at once is unlikely. Warnings above appear
+        only when a pool at its cap has work waiting, or runners are Pending for lack of capacity.
         Demand is each pool&apos;s cap multiplied by its per-runner requests. Capacity is the
         allocatable resources of every node a pool can run on, minus what non-runner pods request.
       </Typography>
