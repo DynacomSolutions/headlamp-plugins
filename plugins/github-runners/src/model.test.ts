@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLocalStatus,
+  buildProjectTree,
   mergeEnrichment,
   nodeBadge,
+  projectOf,
   tabFromParam,
   tabPath,
   viewFromSearch,
@@ -163,5 +165,63 @@ describe('URL helpers', () => {
       nodes: ['a', 'b', 'c'],
       sets: ['x'],
     });
+  });
+});
+
+describe('projectOf', () => {
+  it('strips one prefix and repeated suffixes', () => {
+    expect(projectOf('ci-shop', ['ci-'], ['-main'])).toBe('shop');
+    expect(projectOf('ci-shop-main', ['ci-'], ['-main', '-runners'])).toBe('shop');
+    expect(projectOf('shop-runners-main', [], ['-main', '-runners'])).toBe('shop');
+    expect(projectOf('ci-ci-shop', ['ci-'], [])).toBe('ci-shop');
+  });
+  it('keeps the original name when nothing is left', () => {
+    expect(projectOf('ci-', ['ci-'], [])).toBe('ci-');
+    expect(projectOf('-main', [], ['-main'])).toBe('-main');
+  });
+});
+
+describe('buildProjectTree', () => {
+  const job = (runner: string, set: string, repo = 'my-org/shop') => ({
+    key: runner, name: 'build', repository: repo, workflow: 'ci.yml', workflow_ref: '',
+    runner_name: runner, scale_set: set, status: 'in_progress',
+  });
+  const n = (id: string, jobs: any[], starting: any[]) => ({
+    id, display_name: id, kind: 'kubernetes' as const, ready: true, os: 'linux', jobs, starting,
+  });
+  const status = {
+    nodes: [
+      n('worker-1', [job('r1', 'ci-shop-main')], [
+        { name: 'r2', runner_name: 'r2', scale_set: 'ci-shop', phase: 'Running' },
+      ]),
+      n('worker-2', [], [{ name: 'r3', runner_name: 'r3', scale_set: 'ci-shop', phase: 'Pending' }]),
+    ],
+    scale_sets: [
+      { name: 'ci-shop' }, { name: 'ci-shop-main' }, { name: 'ci-docs-main' },
+    ],
+  };
+  const none = { nodes: [], scaleSets: [], terms: [] };
+  const cfg = { projectStripPrefixes: 'ci-' };
+
+  it('merges -main into its project and aggregates', () => {
+    const tree = buildProjectTree(status, cfg);
+    expect(tree.map(p => p.name)).toEqual(['docs', 'shop']);
+    const shop = tree[1];
+    expect(shop.sets.map(s => s.name)).toEqual(['ci-shop', 'ci-shop-main']);
+    expect([shop.running, shop.idle, shop.pending]).toEqual([1, 1, 1]);
+    expect(tree[0]).toMatchObject({ running: 0, idle: 0, pending: 0 });
+  });
+  it('honours a custom suffix list', () => {
+    const tree = buildProjectTree(status, { ...cfg, projectStripSuffixes: '' });
+    expect(tree.map(p => p.name)).toEqual(['docs-main', 'shop', 'shop-main']);
+  });
+  it('prunes by node, scale set and search', () => {
+    expect(buildProjectTree(status, cfg, { ...none, nodes: ['worker-2'] })[0].sets[0].runners.map(r => r.name)).toEqual(['r3']);
+    const bySet = buildProjectTree(status, cfg, { ...none, scaleSets: ['ci-shop-main'] });
+    expect(bySet).toHaveLength(1);
+    expect(bySet[0].sets.map(s => s.name)).toEqual(['ci-shop-main']);
+    const byTerm = buildProjectTree(status, cfg, { ...none, terms: ['r3'] });
+    expect(byTerm.map(p => p.name)).toEqual(['shop']);
+    expect(byTerm[0].sets.map(s => s.name)).toEqual(['ci-shop']);
   });
 });

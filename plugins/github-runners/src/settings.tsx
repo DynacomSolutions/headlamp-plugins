@@ -4,6 +4,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { useConfig } from './data';
+import { DEFAULT_STRIP_SUFFIXES } from './model';
 import type { PluginConfig } from './types';
 
 export function Settings(props: PluginSettingsDetailsProps) {
@@ -89,6 +90,20 @@ export function Settings(props: PluginSettingsDetailsProps) {
         helperText="Comma-separated owner/repo=cap pairs, for example my-org/my-repo=32."
         value={cfg.policyRepoCaps || ''}
         onChange={set('policyRepoCaps')}
+        fullWidth
+      />
+      <TextField
+        label="Project: strip prefixes"
+        helperText="Comma-separated. At most one is removed from a scale set name to get its project, for example ci-."
+        value={cfg.projectStripPrefixes || ''}
+        onChange={set('projectStripPrefixes')}
+        fullWidth
+      />
+      <TextField
+        label="Project: strip suffixes"
+        helperText="Comma-separated. Removed repeatedly from the end of the scale set name. Defaults to -main,-runners."
+        value={cfg.projectStripSuffixes ?? DEFAULT_STRIP_SUFFIXES}
+        onChange={set('projectStripSuffixes')}
         fullWidth
       />
     </Box>

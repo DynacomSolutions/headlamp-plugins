@@ -101,4 +101,6 @@ export interface PluginConfig {
   policySpillNodes?: string;
   policyRepoCap?: string | number;
   policyRepoCaps?: string;
+  projectStripPrefixes?: string;
+  projectStripSuffixes?: string;
 }

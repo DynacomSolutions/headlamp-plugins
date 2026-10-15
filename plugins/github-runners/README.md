@@ -48,6 +48,17 @@ the URL alone reproduces the view and tab switches keep it: `q` (search),
 `node` (comma-separated node ids, or repeated) and `set` (comma-separated scale
 set names, or repeated). Example: `/github-runners/history?node=worker-1&q=shop`.
 
+## Overview project tree
+
+The Overview starts with a tree: project, then scale set, then runner rows
+(state, current job with repository and workflow links, node, age). A scale set
+belongs to the project named by its name with the configured prefix and suffixes
+stripped, so `ci-shop` and `ci-shop-main` both land in `shop` with prefix `ci-`.
+Each project shows its scale-set count and running, idle and pending runners.
+Projects with running or pending work start expanded; the rest start collapsed.
+Search and the node and scale-set filters prune the tree. Expand state is not
+kept in the URL.
+
 ## Optional: status endpoint (enrichment and history)
 
 Everything above works from Kubernetes objects alone. To add GitHub-side detail
@@ -67,6 +78,8 @@ Settings, Plugins, GitHub Runners:
 | Policy: spill nodes | Comma-separated node ids every pool must be allowed to spill onto, for example `worker-3` |
 | Policy: default repo cap | Maximum total `maxRunners` across all pools serving one repo. Default 3 once any policy setting is present |
 | Policy: repo cap overrides | `my-org/my-repo=32,my-org/other-repo=5` |
+| Project: strip prefixes | Comma-separated, empty by default. At most one is removed from a scale set name to get its project, for example `ci-` |
+| Project: strip suffixes | Comma-separated, default `-main,-runners`. Removed repeatedly from the end of the name. If nothing would be left, the original name is the project |
 
 The Capacity tab flags a pool when it does not prefer every preferred node, is
 not allowed on every spill node (excluded by a required `NotIn`, or missing from
@@ -93,7 +106,8 @@ To preconfigure every browser, ship a `defaults.json` next to `main.js` in the
 plugin directory (for example written by an initContainer). It uses the same keys
 as the settings (`statusUrl`, `historyUrl`, `externalWorkerGroup`,
 `externalWorkerVersion`, `nodeAliases`, `poolRepos`, `policyPreferredNodes`,
-`policySpillNodes`, `policyRepoCap`, `policyRepoCaps`); non-empty values a user saves in the
+`policySpillNodes`, `policyRepoCap`, `policyRepoCaps`, `projectStripPrefixes`,
+`projectStripSuffixes`); non-empty values a user saves in the
 settings override it.
 
 Data older than 180 seconds is flagged stale. Kubernetes data stays the source

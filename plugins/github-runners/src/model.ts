@@ -464,3 +464,99 @@ export function viewToSearch(v: ViewState): string {
   const s = sp.toString();
   return s ? `?${s}` : '';
 }
+
+/* ---------------------------------------------------------- Project tree */
+
+export const DEFAULT_STRIP_SUFFIXES = '-main,-runners';
+
+export function parseList(text?: string): string[] {
+  return (text || '').split(',').map(x => x.trim()).filter(Boolean);
+}
+
+/** Strip at most one prefix, then repeatedly strip suffixes; fall back to the name if nothing is left. */
+export function projectOf(name: string, prefixes: string[], suffixes: string[]): string {
+  let out = name;
+  const pre = prefixes.find(p => out.startsWith(p) && out.length > p.length);
+  if (pre) out = out.slice(pre.length);
+  for (let hit = true; hit; ) {
+    const suf = suffixes.find(x => out.endsWith(x) && out.length > x.length);
+    hit = !!suf;
+    if (suf) out = out.slice(0, -suf.length);
+  }
+  return out || name;
+}
+
+export interface TreeRunner {
+  name: string;
+  state: 'running' | 'idle' | 'pending';
+  job?: Job;
+  node: string;
+  started_at?: string | null;
+}
+
+export interface TreeSet {
+  name: string;
+  runners: TreeRunner[];
+}
+
+export interface TreeProject {
+  name: string;
+  sets: TreeSet[];
+  running: number;
+  idle: number;
+  pending: number;
+}
+
+export function buildProjectTree(
+  status: Pick<Status, 'nodes' | 'scale_sets'>,
+  cfg: Pick<PluginConfig, 'projectStripPrefixes' | 'projectStripSuffixes'>,
+  f: Filters = { nodes: [], scaleSets: [], terms: [] }
+): TreeProject[] {
+  const prefixes = parseList(cfg.projectStripPrefixes);
+  const suffixes = parseList(cfg.projectStripSuffixes ?? DEFAULT_STRIP_SUFFIXES);
+  const filtering = !!(f.nodes.length || f.scaleSets.length || f.terms.length);
+  const sets = new Map<string, TreeSet>();
+  const set = (n: string) => {
+    const name = n || 'unassigned';
+    if (!sets.has(name)) sets.set(name, { name, runners: [] });
+    return sets.get(name)!;
+  };
+  for (const s of status.scale_sets) {
+    if (!f.scaleSets.length || f.scaleSets.includes(s.name)) set(s.name);
+  }
+  for (const node of status.nodes) {
+    if (f.nodes.length && !f.nodes.includes(node.id)) continue;
+    for (const job of node.jobs) {
+      if (!matchesJob(job, node, f)) continue;
+      set(job.scale_set).runners.push({
+        name: job.runner_name,
+        state: 'running',
+        job,
+        node: node.display_name,
+        started_at: job.started_at,
+      });
+    }
+    for (const st of node.starting) {
+      if (!matchesStarting(st, node, f)) continue;
+      set(st.scale_set).runners.push({
+        name: st.runner_name,
+        state: st.phase === 'Running' ? 'idle' : 'pending',
+        node: node.display_name,
+        started_at: st.started_at,
+      });
+    }
+  }
+  const projects = new Map<string, TreeProject>();
+  for (const s of sets.values()) {
+    if (filtering && !s.runners.length) continue;
+    s.runners.sort((a, b) => a.name.localeCompare(b.name));
+    const pn = projectOf(s.name, prefixes, suffixes);
+    let p = projects.get(pn);
+    if (!p) projects.set(pn, (p = { name: pn, sets: [], running: 0, idle: 0, pending: 0 }));
+    p.sets.push(s);
+    for (const r of s.runners) p[r.state] += 1;
+  }
+  const out = Array.from(projects.values());
+  for (const p of out) p.sets.sort((a, b) => a.name.localeCompare(b.name));
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}

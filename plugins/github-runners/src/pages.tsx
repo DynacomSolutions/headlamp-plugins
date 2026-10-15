@@ -14,10 +14,11 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { useHistory, useLocation, useParams } from 'react-router-dom';
 import { CapacityView } from './capacity-view';
-import { Board, useBoard } from './data';
+import { Board, useBoard, useConfig } from './data';
 import {
   ageSeconds,
   ago,
+  buildProjectTree,
   Filters,
   matchesJob,
   matchesStarting,
@@ -29,6 +30,8 @@ import {
   Tab as TabId,
   tabFromParam,
   tabPath,
+  TreeProject,
+  TreeRunner,
   viewFromSearch,
   viewToSearch,
   workflowUrl,
@@ -157,6 +160,118 @@ function NodeCard({ node, jobs, starting, onHistory }: {
   );
 }
 
+function runnerState(r: TreeRunner): [HLStatus, string] {
+  if (r.state === 'running') return ['warning', 'running'];
+  if (r.state === 'idle') return ['success', 'idle'];
+  return ['warning', 'pending'];
+}
+
+function Toggle({ open, onClick, label, children }: {
+  open: boolean;
+  onClick: () => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      size="small"
+      onClick={onClick}
+      aria-expanded={open}
+      aria-label={`${open ? 'Collapse' : 'Expand'} ${label}`}
+      sx={{ textTransform: 'none', justifyContent: 'flex-start', minWidth: 0 }}
+    >
+      {open ? '\u25BE' : '\u25B8'}&nbsp;{children}
+    </Button>
+  );
+}
+
+function ProjectTree({ projects }: { projects: TreeProject[] }) {
+  // Explicit user choices; otherwise projects with running or pending work start open.
+  const [open, setOpen] = React.useState<Record<string, boolean>>({});
+  const isOpen = (key: string, dflt: boolean) => open[key] ?? dflt;
+  const flip = (key: string, dflt: boolean) => setOpen(o => ({ ...o, [key]: !(o[key] ?? dflt) }));
+  if (!projects.length) return <Empty text="No projects match the current filters." />;
+  return (
+    <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 1 }}>
+      {projects.map(p => {
+        const pk = `p:${p.name}`;
+        const busy = p.running + p.pending > 0;
+        const pOpen = isOpen(pk, busy);
+        return (
+          <li key={pk}>
+            <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
+              <Toggle open={pOpen} onClick={() => flip(pk, busy)} label={`project ${p.name}`}>
+                <b>{p.name}</b>
+              </Toggle>
+              <Typography variant="body2" color="text.secondary">
+                {p.sets.length} scale set{p.sets.length === 1 ? '' : 's'} · {p.running} running ·{' '}
+                {p.idle} idle · {p.pending} pending
+              </Typography>
+              <Marks lit={p.running} total={Math.max(p.running + p.idle + p.pending, 1)} />
+            </Box>
+            {pOpen && (
+              <Box component="ul" sx={{ listStyle: 'none', m: 0, pl: 3 }}>
+                {p.sets.map(s => {
+                  const sk = `s:${s.name}`;
+                  const sOpen = isOpen(sk, false);
+                  return (
+                    <li key={sk}>
+                      <Toggle open={sOpen} onClick={() => flip(sk, false)} label={`scale set ${s.name}`}>
+                        {s.name}{' '}
+                        <Typography component="span" variant="caption" color="text.secondary">
+                          ({s.runners.length} runner{s.runners.length === 1 ? '' : 's'})
+                        </Typography>
+                      </Toggle>
+                      {sOpen && (
+                        <Box component="ul" sx={{ listStyle: 'none', m: 0, pl: 3 }}>
+                          {s.runners.length === 0 && (
+                            <Typography variant="body2" color="text.secondary">
+                              No runners.
+                            </Typography>
+                          )}
+                          {s.runners.map(r => {
+                            const [st, label] = runnerState(r);
+                            const secs = ageSeconds(r.started_at);
+                            return (
+                              <Box
+                                component="li"
+                                key={r.name}
+                                display="flex"
+                                gap={1.5}
+                                alignItems="center"
+                                flexWrap="wrap"
+                              >
+                                <span>{r.name}</span>
+                                <StatusLabel status={st}>{label}</StatusLabel>
+                                {r.job && (
+                                  <Typography variant="body2" component="span">
+                                    <Ext href={r.job.url}>{r.job.name || 'Job'}</Ext>
+                                    {' · '}
+                                    <Ext href={repoUrl(r.job.repository)}>{r.job.repository || '-'}</Ext>
+                                    {' · '}
+                                    <Ext href={workflowUrl(r.job.workflow_ref)}>{r.job.workflow || '-'}</Ext>
+                                  </Typography>
+                                )}
+                                <Typography variant="caption" color="text.secondary">
+                                  {r.node} · {secs === null ? '-' : ago(secs).replace(' ago', '')}
+                                </Typography>
+                              </Box>
+                            );
+                          })}
+                        </Box>
+                      )}
+                    </li>
+                  );
+                })}
+              </Box>
+            )}
+          </li>
+        );
+      })}
+    </Box>
+  );
+}
+
 function jobColumns(nodes: Record<string, NodeStatus>) {
   return [
     {
@@ -222,8 +337,13 @@ function Overview({ board, filters, onNode }: {
   }
   const allJobs = shown.flatMap(s => s.jobs);
   const allStarting = shown.flatMap(s => s.starting.map(x => ({ ...x, node: s.node })));
+  const cfg = useConfig();
+  const projects = React.useMemo(() => buildProjectTree(status, cfg, filters), [status, cfg, filters]);
   return (
     <>
+      <SectionBox title="Projects">
+        <ProjectTree projects={projects} />
+      </SectionBox>
       <SectionBox title="Nodes">
         {shown.length === 0 ? (
           <Empty text="No nodes match the current filters." />
