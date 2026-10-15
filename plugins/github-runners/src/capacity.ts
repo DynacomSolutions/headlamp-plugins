@@ -137,7 +137,36 @@ export interface Placement {
   preferred: { node: string; weight: number }[];
   /** True when required affinity or nodeSelector limits which hostnames are allowed. */
   restricted: boolean;
-  canRunOn: (node: string) => boolean;
+  /** Hostname rules always apply. Pass the node object to also check taints, nodeSelector and label affinity. */
+  canRunOn: (node: string, nodeObj?: Raw) => boolean;
+}
+
+function tolerates(tol: Raw, taint: Raw): boolean {
+  if (tol?.effect && tol.effect !== taint.effect) return false;
+  if (!tol?.key) return tol?.operator === 'Exists';
+  if (tol.key !== taint.key) return false;
+  return tol.operator === 'Exists' || (tol.value ?? '') === (taint.value ?? '');
+}
+
+function labelExprOk(e: Raw, labels: Raw): boolean {
+  const has = e.key in labels;
+  const values: string[] = e.values || [];
+  if (e.operator === 'In') return has && values.includes(labels[e.key]);
+  if (e.operator === 'NotIn') return !has || !values.includes(labels[e.key]);
+  if (e.operator === 'Exists') return has;
+  if (e.operator === 'DoesNotExist') return !has;
+  return true;
+}
+
+/** Taints, nodeSelector labels; required-affinity label expressions are checked per term in placementOf. */
+function nodeAdmits(spec: Raw | undefined, node: Raw): boolean {
+  const tolerations: Raw[] = spec?.tolerations || [];
+  for (const t of node?.spec?.taints || []) {
+    if (t.effect !== 'NoSchedule' && t.effect !== 'NoExecute') continue;
+    if (!tolerations.some(tol => tolerates(tol, t))) return false;
+  }
+  const labels = node?.metadata?.labels || {};
+  return Object.entries(spec?.nodeSelector || {}).every(([k, v]) => k === HOSTNAME || labels[k] === v);
 }
 
 function hostnameExprs(term: Raw): Raw[] {
@@ -161,16 +190,19 @@ export function placementOf(spec: Raw | undefined): Placement {
   // A term with no hostname expression allows every hostname, so only constrain when all terms do.
   const requiredRestricts = terms.length > 0 && termConstrains.every(Boolean);
   const pinned: string | undefined = spec?.nodeSelector?.[HOSTNAME];
-  const canRunOn = (node: string): boolean => {
+  const canRunOn = (node: string, nodeObj?: Raw): boolean => {
     if (pinned && pinned !== node) return false;
+    if (nodeObj && !nodeAdmits(spec, nodeObj)) return false;
     if (terms.length === 0) return true;
+    const labels = nodeObj?.metadata?.labels || {};
     return terms.some(t =>
       hostnameExprs(t).every(e => {
         const values: string[] = e.values || [];
         if (e.operator === 'In') return values.includes(node);
         if (e.operator === 'NotIn') return !values.includes(node);
         return true;
-      })
+      }) &&
+      (!nodeObj || (t?.matchExpressions || []).filter((e: Raw) => e?.key !== HOSTNAME).every((e: Raw) => labelExprOk(e, labels)))
     );
   };
   const notInUsed = terms.some(t => hostnameExprs(t).some(e => e.operator === 'NotIn'));
@@ -342,6 +374,7 @@ export function buildCapacity(input: CapacityInput): Capacity {
   const poolRepos = parsePairs(cfg.poolRepos);
   const k8sNodes = input.nodes.filter(n => meta(n).name);
   const nodeIds = k8sNodes.map(n => meta(n).name as string);
+  const nodeById = new Map(k8sNodes.map(n => [meta(n).name as string, n]));
 
   const podsByPool = new Map<string, Raw[]>();
   for (const p of input.pods) {
@@ -379,7 +412,7 @@ export function buildCapacity(input: CapacityInput): Capacity {
         }
       }
       const preferredIds = placement.preferred.map(p => p.node).filter((n, i, a) => a.indexOf(n) === i);
-      const spillIds = nodeIds.filter(n => placement.canRunOn(n) && !preferredIds.includes(n));
+      const spillIds = nodeIds.filter(n => placement.canRunOn(n, nodeById.get(n)) && !preferredIds.includes(n));
       const serves = poolServes(s, name, poolRepos);
       return {
         name,
@@ -478,7 +511,7 @@ export function buildCapacity(input: CapacityInput): Capacity {
   for (const u of usage.values()) {
     const node = k8sNodes.find(n => meta(n).name === u.id);
     if (node?.spec?.unschedulable) continue;
-    if (!pools.some(p => p.placement.canRunOn(u.id))) continue;
+    if (!pools.some(p => p.placement.canRunOn(u.id, node))) continue;
     capacity.cpu += Math.max(0, u.allocatable.cpu - u.other.cpu);
     capacity.memory += Math.max(0, u.allocatable.memory - u.other.memory);
   }
