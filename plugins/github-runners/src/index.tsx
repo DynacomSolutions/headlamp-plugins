@@ -12,7 +12,7 @@ registerSidebarEntry({
 });
 
 registerRoute({
-  path: '/github-runners',
+  path: '/github-runners/:tab?',
   sidebar: 'github-runners',
   name: 'github-runners',
   exact: true,
