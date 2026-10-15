@@ -12,6 +12,7 @@ import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { useHistory, useLocation, useParams } from 'react-router-dom';
 import { CapacityView } from './capacity-view';
 import { Board, useBoard } from './data';
 import {
@@ -25,6 +26,11 @@ import {
   repoUrl,
   runUrl,
   STALE_AFTER_S,
+  Tab as TabId,
+  tabFromParam,
+  tabPath,
+  viewFromSearch,
+  viewToSearch,
   workflowUrl,
 } from './model';
 import type { Job, NodeStatus, Raw } from './types';
@@ -530,10 +536,19 @@ function HistoryView({ board, filters }: { board: Board; filters: Filters }) {
 
 export function GitHubRunnersPage() {
   const board = useBoard();
-  const [tab, setTab] = React.useState('overview');
-  const [q, setQ] = React.useState('');
-  const [nodeSel, setNodeSel] = React.useState<string[]>([]);
-  const [setSel, setSetSel] = React.useState<string[]>([]);
+  const history = useHistory();
+  const location = useLocation();
+  const params = useParams<{ tab?: string }>();
+  const tab = tabFromParam(params.tab);
+  const view = React.useMemo(() => viewFromSearch(location.search), [location.search]);
+  const q = view.q;
+  const nodeSel = view.nodes;
+  const setSel = view.sets;
+  // Filters replace the history entry; tabs push so back and forward work.
+  const setView = (patch: Partial<typeof view>) =>
+    history.replace({ pathname: location.pathname, search: viewToSearch({ ...view, ...patch }) });
+  const setTab = (t: TabId, search = location.search) =>
+    history.push({ pathname: tabPath(location.pathname, t), search });
   const [, setTick] = React.useState(0);
   React.useEffect(() => {
     const t = setInterval(() => setTick(x => x + 1), 1000);
@@ -541,9 +556,12 @@ export function GitHubRunnersPage() {
   }, []);
   const hasConfig = board.remote.configured;
 
-  const filters: Filters = { nodes: nodeSel, scaleSets: setSel, terms: parseTerms(q) };
-  const toggle = (list: string[], set: (v: string[]) => void, v: string) =>
-    set(list.includes(v) ? list.filter(x => x !== v) : [...list, v]);
+  const filters: Filters = React.useMemo(
+    () => ({ nodes: nodeSel, scaleSets: setSel, terms: parseTerms(q) }),
+    [nodeSel, setSel, q]
+  );
+  const toggle = (list: string[], key: 'nodes' | 'sets', v: string) =>
+    setView({ [key]: list.includes(v) ? list.filter(x => x !== v) : [...list, v] });
 
   const { status, remote } = board;
   const generated = remote.status ? remote.status.generated_at : status.generated_at;
@@ -597,7 +615,7 @@ export function GitHubRunnersPage() {
           size="small"
           label="Search"
           value={q}
-          onChange={e => setQ(e.target.value)}
+          onChange={e => setView({ q: e.target.value })}
           sx={{ minWidth: 240 }}
         />
         {status.nodes.map(n => (
@@ -606,7 +624,7 @@ export function GitHubRunnersPage() {
             size="small"
             label={n.display_name}
             color={nodeSel.includes(n.id) ? 'primary' : 'default'}
-            onClick={() => toggle(nodeSel, setNodeSel, n.id)}
+            onClick={() => toggle(nodeSel, 'nodes', n.id)}
           />
         ))}
         {status.scale_sets.map(s => (
@@ -616,23 +634,19 @@ export function GitHubRunnersPage() {
             variant="outlined"
             label={s.name}
             color={setSel.includes(s.name) ? 'primary' : 'default'}
-            onClick={() => toggle(setSel, setSetSel, s.name)}
+            onClick={() => toggle(setSel, 'sets', s.name)}
           />
         ))}
         {(q || nodeSel.length > 0 || setSel.length > 0) && (
           <Button
             size="small"
-            onClick={() => {
-              setQ('');
-              setNodeSel([]);
-              setSetSel([]);
-            }}
+            onClick={() => setView({ q: '', nodes: [], sets: [] })}
           >
             Clear filters
           </Button>
         )}
       </Box>
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 1 }}>
+      <Tabs value={tab} onChange={(_, v) => setTab(v as TabId)} sx={{ mb: 1 }}>
         <Tab value="overview" label="Overview" />
         <Tab value="capacity" label="Capacity" />
         <Tab value="scalesets" label="Scale sets" />
@@ -645,8 +659,7 @@ export function GitHubRunnersPage() {
           board={board}
           filters={filters}
           onNode={id => {
-            setNodeSel([id]);
-            setTab('history');
+            setTab('history', viewToSearch({ ...view, nodes: [id] }));
           }}
         />
       )}

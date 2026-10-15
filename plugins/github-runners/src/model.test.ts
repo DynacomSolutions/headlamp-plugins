@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { buildLocalStatus, mergeEnrichment, nodeBadge, workflowName, workflowUrl } from './model';
+import {
+  buildLocalStatus,
+  mergeEnrichment,
+  nodeBadge,
+  tabFromParam,
+  tabPath,
+  viewFromSearch,
+  viewToSearch,
+  workflowName,
+  workflowUrl,
+} from './model';
 import type { Status } from './types';
 
 const pod = (name: string, node: string) => ({
@@ -127,5 +137,31 @@ describe('node state', () => {
     expect(merged.nodes[0].state).toBe('standby');
     expect(merged.nodes[0].state_reason).toBe('Halted on purpose');
     expect(merged.summary.nodes_standby).toBe(1);
+  });
+});
+
+describe('URL helpers', () => {
+  it('falls back to overview for unknown tabs', () => {
+    expect(tabFromParam('capacity')).toBe('capacity');
+    expect(tabFromParam('nope')).toBe('overview');
+    expect(tabFromParam(undefined)).toBe('overview');
+  });
+  it('builds tab paths relative to the current location', () => {
+    expect(tabPath('/c/dev/github-runners', 'runners')).toBe('/c/dev/github-runners/runners');
+    expect(tabPath('/c/dev/github-runners/runners', 'history')).toBe('/c/dev/github-runners/history');
+    expect(tabPath('/c/dev/github-runners/history', 'overview')).toBe('/c/dev/github-runners');
+    expect(tabPath('/github-runners/', 'capacity')).toBe('/github-runners/capacity');
+  });
+  it('round-trips the view', () => {
+    const v = { q: 'ci shop', nodes: ['worker-1', 'worker-2'], sets: ['ci-shop-main'] };
+    expect(viewFromSearch(viewToSearch(v))).toEqual(v);
+    expect(viewToSearch({ q: '', nodes: [], sets: [] })).toBe('');
+  });
+  it('accepts repeated and comma-separated params', () => {
+    expect(viewFromSearch('?node=a&node=b,c&node=a&set=x')).toEqual({
+      q: '',
+      nodes: ['a', 'b', 'c'],
+      sets: ['x'],
+    });
   });
 });

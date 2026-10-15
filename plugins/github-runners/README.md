@@ -35,6 +35,19 @@ The plugin makes **no GitHub API calls** and the browser never holds a token.
 If the ARC CRDs are absent, each tab shows an explanatory notice instead of
 failing; nodes and the rest of the page still load.
 
+## URL scheme
+
+Tabs are path segments, opened with history push so back and forward work:
+`/github-runners` (overview), `/github-runners/capacity`, `/github-runners/scalesets`,
+`/github-runners/runners`, `/github-runners/listeners`, `/github-runners/history`.
+Headlamp's cluster prefix (`/c/<cluster>/...`) is kept. An unknown tab shows the
+overview.
+
+Filters live in the query string and are written with history replace, so
+the URL alone reproduces the view and tab switches keep it: `q` (search),
+`node` (comma-separated node ids, or repeated) and `set` (comma-separated scale
+set names, or repeated). Example: `/github-runners/history?node=worker-1&q=shop`.
+
 ## Optional: status endpoint (enrichment and history)
 
 Everything above works from Kubernetes objects alone. To add GitHub-side detail

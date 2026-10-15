@@ -420,3 +420,47 @@ export function isHistory(x: any): x is History {
 export function isStatus(x: any): x is Status {
   return !!x && Array.isArray(x.nodes) && typeof x.generated_at === 'string';
 }
+
+/* ------------------------------------------------------------------ URL */
+
+export const TABS = ['overview', 'capacity', 'scalesets', 'runners', 'listeners', 'history'] as const;
+export type Tab = (typeof TABS)[number];
+
+/** Unknown or missing tab segments fall back to the overview. */
+export function tabFromParam(p?: string | null): Tab {
+  return (TABS as readonly string[]).includes(p || '') ? (p as Tab) : 'overview';
+}
+
+/** Path of a tab, relative to the page's current location so any cluster prefix is kept. */
+export function tabPath(pathname: string, tab: Tab): string {
+  const parts = pathname.split('/').filter(Boolean);
+  if (parts.length && (TABS as readonly string[]).includes(parts[parts.length - 1])) parts.pop();
+  if (tab !== 'overview') parts.push(tab);
+  return '/' + parts.join('/');
+}
+
+export interface ViewState {
+  q: string;
+  nodes: string[];
+  sets: string[];
+}
+
+function listParam(sp: URLSearchParams, key: string): string[] {
+  return Array.from(
+    new Set(sp.getAll(key).flatMap(v => v.split(',')).map(v => v.trim()).filter(Boolean))
+  );
+}
+
+export function viewFromSearch(search: string): ViewState {
+  const sp = new URLSearchParams(search);
+  return { q: sp.get('q') || '', nodes: listParam(sp, 'node'), sets: listParam(sp, 'set') };
+}
+
+export function viewToSearch(v: ViewState): string {
+  const sp = new URLSearchParams();
+  if (v.q) sp.set('q', v.q);
+  if (v.nodes.length) sp.set('node', v.nodes.join(','));
+  if (v.sets.length) sp.set('set', v.sets.join(','));
+  const s = sp.toString();
+  return s ? `?${s}` : '';
+}
