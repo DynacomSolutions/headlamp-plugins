@@ -299,7 +299,6 @@ export interface NodeUsage {
 export interface Demand {
   demand: Resources;
   capacity: Resources;
-  short: { cpu: boolean; memory: boolean };
 }
 
 export interface ExternalRow {
@@ -531,11 +530,7 @@ export function buildCapacity(input: CapacityInput): Capacity {
   return {
     pools,
     nodes,
-    demand: {
-      demand,
-      capacity,
-      short: { cpu: demand.cpu > capacity.cpu, memory: demand.memory > capacity.memory },
-    },
+    demand: { demand, capacity },
     external: externalRows(input.status?.nodes || [], input.externalWorkers),
     policy,
     violationCount: pools.filter(p => p.violations.length > 0).length,

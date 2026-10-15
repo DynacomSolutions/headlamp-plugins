@@ -252,7 +252,6 @@ describe('buildCapacity', () => {
   it('computes demand and capacity', () => {
     expect(cap.demand.demand.cpu).toBe(6);
     expect(cap.demand.capacity.cpu).toBeCloseTo(4 - 0.5 + 4 + 8);
-    expect(cap.demand.short.cpu).toBe(false);
   });
   it('warns on real pressure only', () => {
     // pool-a: 0 running, 1 pending for CPU, cap 4: pressure through lack of capacity
@@ -310,7 +309,6 @@ describe('buildCapacity', () => {
   it('copes with no data', () => {
     const c = buildCapacity({ nodes: [], pods: [], runners: [], scaleSets: [], externalWorkers: [], status: null, cfg: {} });
     expect(c.pools).toEqual([]);
-    expect(c.demand.short).toEqual({ cpu: false, memory: false });
   });
 });
 
