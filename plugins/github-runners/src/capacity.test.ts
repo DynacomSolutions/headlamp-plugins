@@ -117,9 +117,9 @@ describe('placementOf', () => {
 describe('placement taints and labels', () => {
   const mac = {
     metadata: { name: 'mac', labels: { 'kubernetes.io/os': 'darwin' } },
-    spec: { taints: [{ effect: 'NoSchedule', key: 'dynacom.dev/mac', value: 'true' }] },
+    spec: { taints: [{ effect: 'NoSchedule', key: 'example.com/mac', value: 'true' }] },
   };
-  const tol = { key: 'dynacom.dev/mac', operator: 'Equal', value: 'true', effect: 'NoSchedule' };
+  const tol = { key: 'example.com/mac', operator: 'Equal', value: 'true', effect: 'NoSchedule' };
   it('excludes a tainted node without a toleration', () => {
     expect(placementOf({ nodeSelector: { 'kubernetes.io/os': 'linux' } }).canRunOn('mac', mac)).toBe(false);
     expect(placementOf({}).canRunOn('mac', mac)).toBe(false);
