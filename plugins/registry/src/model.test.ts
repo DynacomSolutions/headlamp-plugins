@@ -58,8 +58,8 @@ describe('formatting', () => {
     const now = Date.parse('2026-10-15T08:00:00Z');
     expect(formatRelative('2026-10-15T07:57:00Z', now)).toBe('3 minutes ago');
     expect(formatRelative('2026-10-14T08:00:00Z', now)).toBe('1 day ago');
-    expect(formatRelative('nope', now)).toBe('-');
-    expect(formatRelative(null, now)).toBe('-');
+    expect(formatRelative('nope', now)).toBe('unknown');
+    expect(formatRelative(null, now)).toBe('unknown');
   });
 });
 

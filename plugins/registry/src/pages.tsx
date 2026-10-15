@@ -64,7 +64,7 @@ export function TagTable({ tags, now }: { tags: Repo['tags']; now: number }) {
                 <span>{formatRelative(t.created, now)}</span>
               </Tooltip>
             </TableCell>
-            <TableCell>{t.platforms.join(', ') || '-'}</TableCell>
+            <TableCell>{t.platforms.join(', ') || 'unknown'}</TableCell>
           </TableRow>
         ))}
       </TableBody>
@@ -92,7 +92,7 @@ function RepoRow({ repo, now }: { repo: Repo; now: number }) {
         <TableCell>{formatSize(repoSize(repo))}</TableCell>
         <TableCell>
           {created === null ? (
-            '-'
+            'unknown'
           ) : (
             <Tooltip title={new Date(created).toISOString()}>
               <span>{formatRelative(new Date(created).toISOString(), now)}</span>
