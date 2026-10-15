@@ -76,14 +76,18 @@ jobs:
     timeout-minutes: 10
     permissions: {contents: write}
     steps:
+      - uses: actions/checkout@v7
+        with: {sparse-checkout: plugins, sparse-checkout-cone-mode: false}
       - uses: actions/download-artifact@v4
         with: {pattern: release-*, path: assets, merge-multiple: true}
       - name: Create checksums
         working-directory: assets
         run: |
-          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq 6
+          expected="$(find ../plugins -mindepth 2 -maxdepth 2 -name package.json | wc -l)"
+          test "$expected" -gt 0
+          test "$(find . -maxdepth 1 -name '*.tar.gz' | wc -l)" -eq "$expected"
           sha256sum *.tar.gz > SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 6
+          test "$(wc -l < SHA256SUMS)" -eq "$expected"
       - name: Publish complete release
         uses: softprops/action-gh-release@v2
         with:
