@@ -14,7 +14,11 @@ a **VM images** sidebar entry with one read-only page and three sections.
 2. **Registry VM images**: repositories from the catalogue backend that match
    the configured name prefixes, or whose tags have a VM artefact media type
    (`artifactType` or `configMediaType` mentioning kubevirt, containerDisk,
-   qcow2, vmdk or a `vm` segment). Expandable rows show tag, short digest (with a
+   qcow2, vmdk or a `vm` segment). Repositories are grouped as a tree by project, then kind (`pr`, `buildcache`, `ci`, `charts`, `mirror` become
+   sub-folders; plain images sit directly under the project); a project with one
+   repository is a single row, folders start collapsed and show count, size and
+   latest created time, and a search opens the folders that hold a match.
+   Expandable rows show tag, short digest (with a
    copy button), size, created (relative, absolute in the tooltip), platforms and
    an **In use by** count. Search by name and sort by name, size or last created.
 3. **In use**: images used by pods on virtual-kubelet nodes and by KubeVirt
@@ -46,6 +50,7 @@ Settings are layered: the browser's plugin settings, then an optional
 | `service` | `registry-catalog` | Backend Service name |
 | `port` | `80` | Service port |
 | `namePrefixes` | `macos-vz/,containerdisks/,vm/` | Comma-separated repository prefixes treated as VM images |
+| `kindPrefixes` | `pr,buildcache,ci,charts,mirror` | First path segments that mark a repository kind in the tree |
 | `refreshSeconds` | `60` | Refresh interval, 5 to 600 |
 
 ## Access (RBAC)

@@ -6,6 +6,15 @@ is read-only.
 
 ## What it shows
 
+- Repositories are grouped as a tree: project, then kind, then repository. A
+  project is found from the repository names (`shop-api`, `pr/12/shop-api`,
+  `buildcache/my-org/shop/api` and `charts/shop` all belong to `shop`). Plain
+  images sit directly under the project (`shop-api` shows as `api`); other kinds
+  (`pr`, `buildcache`, `ci`, `charts`, `mirror`) become sub-folders. A project
+  with one repository is a single row. Folders start collapsed and show the
+  repository count, total size and latest created time; a search opens the
+  folders that hold a match and hides the rest. Folder toggles are buttons with
+  `aria-expanded`.
 - Repositories with tag count, total size (sum of tag sizes; layers shared
   between tags are counted once per tag) and last created time.
 - Expandable rows with one line per tag: tag, short digest with a **Copy**
@@ -58,6 +67,7 @@ Settings are layered: the browser's plugin settings, then an optional
 | `namespace` | `registry` | Namespace of the backend Service |
 | `service` | `registry-catalog` | Backend Service name |
 | `port` | `80` | Service port |
+| `kindPrefixes` | `pr,buildcache,ci,charts,mirror` | First path segments that mark a repository kind |
 | `refreshSeconds` | `60` | Refresh interval, 5 to 600 |
 
 ## Access (RBAC)

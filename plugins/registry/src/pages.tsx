@@ -18,16 +18,19 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { useCatalogue, useSettings } from './data';
 import {
-  filterRepos,
+  aggregate,
+  buildProjectTree,
+  folderIds,
   formatRelative,
   formatSize,
-  lastCreated,
+  parseKindPrefixes,
+  pruneTree,
   Repo,
-  repoSize,
   shortDigest,
   SortKey,
-  sortRepos,
   sortTags,
+  sortTree,
+  TreeNode,
 } from './model';
 
 export function TagTable({ tags, now }: { tags: Repo['tags']; now: number }) {
@@ -72,36 +75,82 @@ export function TagTable({ tags, now }: { tags: Repo['tags']; now: number }) {
   );
 }
 
-function RepoRow({ repo, now }: { repo: Repo; now: number }) {
+const indent = (depth: number) => ({ pl: 1 + depth * 3 });
+
+function Created({ ms, now }: { ms: number | null; now: number }) {
+  if (ms === null) return <>unknown</>;
+  const iso = new Date(ms).toISOString();
+  return (
+    <Tooltip title={iso}>
+      <span>{formatRelative(iso, now)}</span>
+    </Tooltip>
+  );
+}
+
+function FolderRow({
+  node,
+  depth,
+  open,
+  onToggle,
+  now,
+}: {
+  node: TreeNode;
+  depth: number;
+  open: boolean;
+  onToggle: () => void;
+  now: number;
+}) {
+  const agg = aggregate(node);
+  return (
+    <TableRow hover>
+      <TableCell sx={indent(depth)}>
+        <Button
+          size="small"
+          color="inherit"
+          aria-expanded={open}
+          aria-label={`${open ? 'Collapse' : 'Expand'} ${node.label}`}
+          onClick={onToggle}
+        >
+          {open ? '▾' : '▸'} {node.label}
+        </Button>
+      </TableCell>
+      <TableCell>{agg.count} repositories</TableCell>
+      <TableCell>{agg.count ? formatSize(agg.sizeBytes) : 'unknown'}</TableCell>
+      <TableCell>
+        <Created ms={agg.created} now={now} />
+      </TableCell>
+    </TableRow>
+  );
+}
+
+function RepoRow({ node, depth, now }: { node: TreeNode; depth: number; now: number }) {
+  const repo = node.repo as Repo;
   const [open, setOpen] = React.useState(false);
-  const created = lastCreated(repo);
+  const agg = aggregate(node);
   return (
     <>
       <TableRow hover>
-        <TableCell padding="checkbox">
+        <TableCell sx={indent(depth)}>
           <IconButton
             size="small"
+            aria-expanded={open}
             aria-label={`${open ? 'Collapse' : 'Expand'} ${repo.name}`}
             onClick={() => setOpen(o => !o)}
           >
             {open ? '▾' : '▸'}
           </IconButton>
+          <Tooltip title={repo.name}>
+            <span>{node.label}</span>
+          </Tooltip>
         </TableCell>
-        <TableCell>{repo.name}</TableCell>
         <TableCell>{repo.tags.length}</TableCell>
-        <TableCell>{formatSize(repoSize(repo))}</TableCell>
+        <TableCell>{formatSize(agg.sizeBytes)}</TableCell>
         <TableCell>
-          {created === null ? (
-            'unknown'
-          ) : (
-            <Tooltip title={new Date(created).toISOString()}>
-              <span>{formatRelative(new Date(created).toISOString(), now)}</span>
-            </Tooltip>
-          )}
+          <Created ms={agg.created} now={now} />
         </TableCell>
       </TableRow>
       <TableRow>
-        <TableCell colSpan={5} sx={{ py: 0 }}>
+        <TableCell colSpan={4} sx={{ py: 0 }}>
           <Collapse in={open} unmountOnExit>
             <Box m={1}>
               {repo.tags.length ? <TagTable tags={repo.tags} now={now} /> : 'No tags'}
@@ -109,6 +158,37 @@ function RepoRow({ repo, now }: { repo: Repo; now: number }) {
           </Collapse>
         </TableCell>
       </TableRow>
+    </>
+  );
+}
+
+function TreeRows({
+  nodes,
+  depth,
+  open,
+  toggle,
+  now,
+}: {
+  nodes: TreeNode[];
+  depth: number;
+  open: Set<string>;
+  toggle: (id: string) => void;
+  now: number;
+}) {
+  return (
+    <>
+      {nodes.map(n =>
+        n.repo ? (
+          <RepoRow key={n.id} node={n} depth={depth} now={now} />
+        ) : (
+          <React.Fragment key={n.id}>
+            <FolderRow node={n} depth={depth} open={open.has(n.id)} onToggle={() => toggle(n.id)} now={now} />
+            {open.has(n.id) && (
+              <TreeRows nodes={n.children} depth={depth + 1} open={open} toggle={toggle} now={now} />
+            )}
+          </React.Fragment>
+        )
+      )}
     </>
   );
 }
@@ -126,10 +206,27 @@ export function RegistryPage() {
     const t = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(t);
   }, [catalogue]);
-  const rows = React.useMemo(
-    () => sortRepos(filterRepos(catalogue?.repositories ?? [], query), sort.key, sort.desc),
-    [catalogue, query, sort]
+  const [open, setOpen] = React.useState<Set<string>>(new Set());
+  const tree = React.useMemo(
+    () => buildProjectTree(catalogue?.repositories ?? [], parseKindPrefixes(settings.kindPrefixes)),
+    [catalogue, settings.kindPrefixes]
   );
+  const rows = React.useMemo(
+    () => sortTree(pruneTree(tree, query), sort.key, sort.desc),
+    [tree, query, sort]
+  );
+  const matches = React.useMemo(() => rows.reduce((n, r) => n + aggregate(r).count, 0), [rows]);
+  const toggle = (id: string) =>
+    setOpen(o => {
+      const next = new Set(o);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  // A search opens every folder that holds a match; clearing it collapses all again.
+  const search = (q: string) => {
+    setQuery(q);
+    setOpen(new Set(q.trim() ? folderIds(pruneTree(tree, q)) : []));
+  };
   const head = (key: SortKey, label: string) => (
     <TableCell sortDirection={sort.key === key ? (sort.desc ? 'desc' : 'asc') : false}>
       <TableSortLabel
@@ -148,7 +245,7 @@ export function RegistryPage() {
           size="small"
           label="Search repositories"
           value={query}
-          onChange={e => setQuery(e.target.value)}
+          onChange={e => search(e.target.value)}
         />
         <Button onClick={refresh}>Refresh</Button>
         {catalogue?.generatedAt && (
@@ -158,14 +255,14 @@ export function RegistryPage() {
             </Typography>
           </Tooltip>
         )}
-        {catalogue && <Chip size="small" label={`${rows.length} of ${catalogue.repositories.length}`} />}
+        {catalogue && <Chip size="small" label={`${matches} of ${catalogue.repositories.length}`} />}
       </Box>
       {error && <Alert severity="error">Could not load the catalogue: {error}</Alert>}
       {catalogue?.error && (
         <Alert severity="warning">Backend reports an error (showing cached data): {catalogue.error}</Alert>
       )}
       {loading && <CircularProgress aria-label="Loading" />}
-      {!loading && catalogue && rows.length === 0 && (
+      {!loading && catalogue && matches === 0 && (
         <Typography>
           {catalogue.repositories.length ? 'No repositories match the search.' : 'The registry has no repositories.'}
         </Typography>
@@ -174,17 +271,14 @@ export function RegistryPage() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" />
               {head('name', 'Repository')}
-              <TableCell>Tags</TableCell>
+              <TableCell>Tags / repositories</TableCell>
               {head('size', 'Total size')}
               {head('created', 'Last created')}
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map(r => (
-              <RepoRow key={r.name} repo={r} now={now} />
-            ))}
+            <TreeRows nodes={rows} depth={0} open={open} toggle={toggle} now={now} />
           </TableBody>
         </Table>
       )}

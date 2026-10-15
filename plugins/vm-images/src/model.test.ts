@@ -1,13 +1,16 @@
 /// <reference types="@kinvolk/headlamp-plugin" />
 import { describe, expect, it } from 'vitest';
 import {
+  aggregate,
   backendUrl,
+  buildProjectTree,
   cronRow,
   dataVolumeRow,
   DEFAULT_SETTINGS,
   describeSource,
   digestOfImageId,
   filterRepos,
+  folderIds,
   formatRelative,
   formatSize,
   groupUsages,
@@ -17,13 +20,18 @@ import {
   matchImage,
   parseCatalogue,
   parseImageRef,
+  parseKindPrefixes,
   parsePrefixes,
   podUsages,
+  pruneTree,
+  Repo,
   repoSize,
   resolveSettings,
   shortDigest,
   sortRepos,
   sortTags,
+  sortTree,
+  TreeNode,
   usageCounts,
   virtualKubeletNodes,
   vmRows,
@@ -237,5 +245,84 @@ describe('empty-config artefacts', () => {
     expect(isVmRepo(c.repositories[0], ['macos-vz/'])).toBe(true);
     expect(lastCreated(c.repositories[0])).toBeNull();
     expect(formatRelative(c.repositories[0].tags[0].created, 0)).toBe('unknown');
+  });
+});
+
+describe('buildProjectTree', () => {
+  const mk = (name: string, size: number | null = null, created: string | null = null): Repo => ({
+    name,
+    tags: [{ tag: 'v1', digest: null, mediaType: null, artifactType: null, configMediaType: null, sizeBytes: size, created, platforms: [] }],
+  });
+  const kinds = parseKindPrefixes(undefined);
+  const repos = [
+    mk('shop-api', 100, '2026-10-01T00:00:00Z'),
+    mk('shop-ui', 50, '2026-10-05T00:00:00Z'),
+    mk('shop'),
+    mk('pr/12/shop-api', 10, '2026-09-01T00:00:00Z'),
+    mk('buildcache/my-org/shop/api'),
+    mk('charts/shop'),
+    mk('ci/shop-runtime'),
+    mk('vendor/tool', 5),
+    mk('lonely-thing'),
+  ];
+  const tree = buildProjectTree(repos, kinds);
+  const shop = tree.find(n => n.id === 'p:shop')!;
+  const ids = (n: TreeNode): string[] => (n.repo ? [n.repo.name] : n.children.flatMap(ids));
+
+  it('maps the four examples to one project', () => {
+    expect(ids(shop).sort()).toEqual(
+      ['buildcache/my-org/shop/api', 'charts/shop', 'ci/shop-runtime', 'pr/12/shop-api', 'shop', 'shop-api', 'shop-ui'].sort()
+    );
+    expect(tree.find(n => n.id === 'p:my-org')).toBeUndefined();
+  });
+  it('places images directly under the project with the prefix stripped', () => {
+    const leaves = shop.children.filter(c => c.repo).map(c => c.label);
+    expect(leaves.sort()).toEqual(['api', 'shop', 'ui']);
+    const folders = shop.children.filter(c => !c.repo).map(c => c.label);
+    expect(folders.sort()).toEqual(['buildcache', 'charts', 'ci', 'pr']);
+    expect(shop.children.find(c => c.label === 'pr')!.children[0].label).toBe('12/shop-api');
+  });
+  it('renders a single-repo project as one row with the full name', () => {
+    const one = tree.find(n => n.id === 'r:lonely-thing')!;
+    expect(one.repo?.name).toBe('lonely-thing');
+    expect(one.children).toEqual([]);
+    expect(tree.find(n => n.id === 'r:vendor/tool')).toBeDefined();
+  });
+  it('aggregates count, size and newest created; missing stays null', () => {
+    expect(aggregate(shop)).toEqual({ count: 7, sizeBytes: 160, created: Date.parse('2026-10-05T00:00:00Z') });
+    const empty = aggregate(tree.find(n => n.id === 'r:lonely-thing')!);
+    expect(empty.created).toBeNull();
+  });
+  it('prunes to matches and lists folders to open', () => {
+    const pruned = pruneTree(tree, ' PR/12 ');
+    expect(pruned).toHaveLength(1);
+    expect(ids(pruned[0])).toEqual(['pr/12/shop-api']);
+    expect(folderIds(pruned)).toEqual(['p:shop', 'p:shop/k:pr']);
+    expect(pruneTree(tree, 'zzz')).toEqual([]);
+    expect(pruneTree(tree, '')).toBe(tree);
+  });
+  it('sorts each level with images before kind folders', () => {
+    const sorted = sortTree(tree, 'name', false);
+    const s = sorted.find(n => n.id === 'p:shop')!;
+    expect(s.children.map(c => c.label)).toEqual(['api', 'shop', 'ui', 'buildcache', 'charts', 'ci', 'pr']);
+    const bySize = sortTree(tree, 'size', true);
+    expect(bySize[0].id).toBe('p:shop');
+  });
+});
+
+describe('buildProjectTree kind-word projects', () => {
+  const mk = (name: string): Repo => ({ name, tags: [] });
+  const project = (names: string[], target: string) => {
+    const tree = buildProjectTree(names.map(mk), parseKindPrefixes(undefined));
+    return tree.find(n => (n.repo ? false : JSON.stringify(n).includes(`"${target}"`)))?.id;
+  };
+  const base = ['shop-api', 'shop-ui', 'ci-buildx-smoke-123', 'ci-buildx-smoke-124'];
+  it('prefers named projects over kind words', () => {
+    expect(project([...base, 'pr/ci-runtime/shop-ci-runtime'], 'pr/ci-runtime/shop-ci-runtime')).toBe('p:shop');
+    expect(project([...base, 'pr/ci/main-health/shop-api'], 'pr/ci/main-health/shop-api')).toBe('p:shop');
+  });
+  it('keeps the kind-word project when nothing else matches', () => {
+    expect(project(base, 'ci-buildx-smoke-123')).toBe('p:ci');
+    expect(project([...base, 'pr/cluster/ci-buildx-smoke-9'], 'pr/cluster/ci-buildx-smoke-9')).toBe('p:ci');
   });
 });

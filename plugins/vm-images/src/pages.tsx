@@ -30,22 +30,25 @@ import {
   useVirtualMachines,
 } from './data';
 import {
+  aggregate,
+  buildProjectTree,
   cronRow,
   dataSourceRow,
   dataVolumeRow,
-  filterRepos,
+  folderIds,
   formatRelative,
   formatSize,
   groupUsages,
-  lastCreated,
+  parseKindPrefixes,
   parsePrefixes,
   podUsages,
+  pruneTree,
   Repo,
-  repoSize,
   shortDigest,
   SortKey,
-  sortRepos,
   sortTags,
+  sortTree,
+  TreeNode,
   usageCounts,
   virtualKubeletNodes,
   vmRepos,
@@ -183,37 +186,101 @@ function TagTable({ repo, now, counts }: { repo: Repo; now: number; counts: Map<
   );
 }
 
-function RepoRow({ repo, now, counts }: { repo: Repo; now: number; counts: Map<string, number> }) {
+const indent = (depth: number) => ({ pl: 1 + depth * 3 });
+
+function Created({ ms, now }: { ms: number | null; now: number }) {
+  if (ms === null) return <>unknown</>;
+  const iso = new Date(ms).toISOString();
+  return (
+    <Tooltip title={iso}>
+      <span>{formatRelative(iso, now)}</span>
+    </Tooltip>
+  );
+}
+
+/** Sum of the in-use counts of the repositories under a node. */
+function inUse(n: TreeNode, counts: Map<string, number>): number {
+  return n.repo ? counts.get(n.repo.name) ?? 0 : n.children.reduce((t, c) => t + inUse(c, counts), 0);
+}
+
+function FolderRow({
+  node,
+  depth,
+  open,
+  onToggle,
+  now,
+  counts,
+}: {
+  node: TreeNode;
+  depth: number;
+  open: boolean;
+  onToggle: () => void;
+  now: number;
+  counts: Map<string, number>;
+}) {
+  const agg = aggregate(node);
+  return (
+    <TableRow hover>
+      <TableCell sx={indent(depth)}>
+        <Button
+          size="small"
+          color="inherit"
+          aria-expanded={open}
+          aria-label={`${open ? 'Collapse' : 'Expand'} ${node.label}`}
+          onClick={onToggle}
+        >
+          {open ? '▾' : '▸'} {node.label}
+        </Button>
+      </TableCell>
+      <TableCell>{agg.count} repositories</TableCell>
+      <TableCell>{agg.count ? formatSize(agg.sizeBytes) : 'unknown'}</TableCell>
+      <TableCell>
+        <Created ms={agg.created} now={now} />
+      </TableCell>
+      <TableCell>{inUse(node, counts)}</TableCell>
+    </TableRow>
+  );
+}
+
+function RepoRow({
+  node,
+  depth,
+  now,
+  counts,
+}: {
+  node: TreeNode;
+  depth: number;
+  now: number;
+  counts: Map<string, number>;
+}) {
+  const repo = node.repo as Repo;
   const [open, setOpen] = React.useState(false);
-  const created = lastCreated(repo);
+  const agg = aggregate(node);
   return (
     <>
       <TableRow hover>
-        <TableCell padding="checkbox">
+        <TableCell sx={indent(depth)}>
           <IconButton
             size="small"
+            aria-expanded={open}
             aria-label={`${open ? 'Collapse' : 'Expand'} ${repo.name}`}
             onClick={() => setOpen(o => !o)}
           >
             {open ? '▾' : '▸'}
           </IconButton>
+          <Tooltip title={repo.name}>
+            <span>{node.label}</span>
+          </Tooltip>
         </TableCell>
-        <TableCell>{repo.name}</TableCell>
         <TableCell>{repo.tags.length}</TableCell>
-        <TableCell>{formatSize(repoSize(repo))}</TableCell>
+        <TableCell>{formatSize(agg.sizeBytes)}</TableCell>
         <TableCell>
-          {created === null ? (
-            'unknown'
-          ) : (
-            <Tooltip title={new Date(created).toISOString()}>
-              <span>{formatRelative(new Date(created).toISOString(), now)}</span>
-            </Tooltip>
-          )}
+          <Created ms={agg.created} now={now} />
         </TableCell>
         <TableCell>{counts.get(repo.name) ?? 0}</TableCell>
       </TableRow>
       <TableRow>
-        <TableCell colSpan={6} sx={{ py: 0 }}>
+        <TableCell colSpan={5} sx={{ py: 0 }}>
           <Collapse in={open} unmountOnExit>
             <Box m={1}>{repo.tags.length ? <TagTable repo={repo} now={now} counts={counts} /> : 'No tags'}</Box>
           </Collapse>
@@ -223,21 +290,73 @@ function RepoRow({ repo, now, counts }: { repo: Repo; now: number; counts: Map<s
   );
 }
 
+function TreeRows({
+  nodes,
+  depth,
+  open,
+  toggle,
+  now,
+  counts,
+}: {
+  nodes: TreeNode[];
+  depth: number;
+  open: Set<string>;
+  toggle: (id: string) => void;
+  now: number;
+  counts: Map<string, number>;
+}) {
+  return (
+    <>
+      {nodes.map(n =>
+        n.repo ? (
+          <RepoRow key={n.id} node={n} depth={depth} now={now} counts={counts} />
+        ) : (
+          <React.Fragment key={n.id}>
+            <FolderRow
+              node={n}
+              depth={depth}
+              open={open.has(n.id)}
+              onToggle={() => toggle(n.id)}
+              now={now}
+              counts={counts}
+            />
+            {open.has(n.id) && (
+              <TreeRows nodes={n.children} depth={depth + 1} open={open} toggle={toggle} now={now} counts={counts} />
+            )}
+          </React.Fragment>
+        )
+      )}
+    </>
+  );
+}
+
 function RegistryImages({
   repos,
   counts,
   now,
+  kindPrefixes,
 }: {
   repos: Repo[];
   counts: Map<string, number>;
   now: number;
+  kindPrefixes: string;
 }) {
   const [query, setQuery] = React.useState('');
   const [sort, setSort] = React.useState<{ key: SortKey; desc: boolean }>({ key: 'name', desc: false });
-  const rows = React.useMemo(
-    () => sortRepos(filterRepos(repos, query), sort.key, sort.desc),
-    [repos, query, sort]
-  );
+  const [open, setOpen] = React.useState<Set<string>>(new Set());
+  const tree = React.useMemo(() => buildProjectTree(repos, parseKindPrefixes(kindPrefixes)), [repos, kindPrefixes]);
+  const rows = React.useMemo(() => sortTree(pruneTree(tree, query), sort.key, sort.desc), [tree, query, sort]);
+  const toggle = (id: string) =>
+    setOpen(o => {
+      const next = new Set(o);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  // A search opens every folder that holds a match; clearing it collapses all again.
+  const search = (q: string) => {
+    setQuery(q);
+    setOpen(new Set(q.trim() ? folderIds(pruneTree(tree, q)) : []));
+  };
   const head = (key: SortKey, label: string) => (
     <TableCell sortDirection={sort.key === key ? (sort.desc ? 'desc' : 'asc') : false}>
       <TableSortLabel
@@ -251,25 +370,22 @@ function RegistryImages({
   );
   return (
     <>
-      <TextField size="small" label="Search VM images" value={query} onChange={e => setQuery(e.target.value)} />
+      <TextField size="small" label="Search VM images" value={query} onChange={e => search(e.target.value)} />
       {rows.length === 0 ? (
         <Typography>{repos.length ? 'No VM images match the search.' : 'No VM images in the registry.'}</Typography>
       ) : (
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" />
               {head('name', 'Repository')}
-              <TableCell>Tags</TableCell>
+              <TableCell>Tags / repositories</TableCell>
               {head('size', 'Total size')}
               {head('created', 'Last created')}
               <TableCell>In use by</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map(r => (
-              <RepoRow key={r.name} repo={r} now={now} counts={counts} />
-            ))}
+            <TreeRows nodes={rows} depth={0} open={open} toggle={toggle} now={now} counts={counts} />
           </TableBody>
         </Table>
       )}
@@ -323,7 +439,14 @@ export function VmImagesPage() {
           <Alert severity="warning">Backend reports an error (showing cached data): {catalogue.error}</Alert>
         )}
         {loading && <CircularProgress aria-label="Loading" />}
-        {catalogue && <RegistryImages repos={repos} counts={counts} now={now} />}
+        {catalogue && (
+          <RegistryImages
+            repos={repos}
+            counts={counts}
+            now={now}
+            kindPrefixes={settings.kindPrefixes}
+          />
+        )}
       </SectionBox>
       <SectionBox title="In use">
         {(pods.error || nodes.error) && <Alert severity="error">{pods.error || nodes.error}</Alert>}

@@ -11,6 +11,8 @@ export interface Settings {
   port: string;
   /** Comma-separated repository name prefixes that count as VM images. */
   namePrefixes: string;
+  /** Comma-separated first path segments that mark a repository kind (pr, charts, ...). */
+  kindPrefixes: string;
   /** Seconds between refreshes. */
   refreshSeconds: number;
 }
@@ -20,6 +22,7 @@ export const DEFAULT_SETTINGS: Settings = {
   service: 'registry-catalog',
   port: '80',
   namePrefixes: 'macos-vz/,containerdisks/,vm/',
+  kindPrefixes: 'pr,buildcache,ci,charts,mirror',
   refreshSeconds: 60,
 };
 
@@ -41,6 +44,7 @@ export function resolveSettings(
     service: String(pick('service')).trim(),
     port: String(pick('port')).trim(),
     namePrefixes: String(pick('namePrefixes')).trim(),
+    kindPrefixes: String(pick('kindPrefixes')).trim(),
     refreshSeconds: Number.isFinite(refresh) ? Math.min(600, Math.max(5, refresh)) : 60,
   };
 }
@@ -503,4 +507,148 @@ export function vmRows(vms: J[], pvcs: J[]): VmRow[] {
       return { ...m, state: String(vm?.status?.printableStatus ?? '-'), disks };
     })
     .sort((a, b) => `${a.namespace}/${a.name}`.localeCompare(`${b.namespace}/${b.name}`));
+}
+
+/* ---------- project tree ---------- */
+
+export const IMAGES_KIND = 'images';
+
+/** Splits a comma-separated list; falls back to the defaults when empty. */
+export function parseKindPrefixes(list: string | undefined): string[] {
+  const out = (list ?? '')
+    .split(',')
+    .map(p => p.trim())
+    .filter(Boolean);
+  return out.length ? out : DEFAULT_SETTINGS.kindPrefixes.split(',');
+}
+
+export interface TreeNode {
+  /** Stable unique id, used for expansion state and React keys. */
+  id: string;
+  label: string;
+  /** Present on repository leaves only. */
+  repo?: Repo;
+  /** Folder children; empty on leaves. */
+  children: TreeNode[];
+}
+
+export interface Aggregate {
+  count: number;
+  sizeBytes: number;
+  created: number | null;
+}
+
+/** Kind, and the path segments after the kind prefix, of a repository name. */
+function splitName(name: string, kinds: string[]): { kind: string; segs: string[] } {
+  const segs = name.split('/');
+  if (segs.length > 1 && kinds.includes(segs[0])) return { kind: segs[0], segs: segs.slice(1) };
+  return { kind: IMAGES_KIND, segs };
+}
+
+/**
+ * Project of a repository: first segment that is, or starts (before a dash) with, a known project.
+ * Projects named like a kind prefix (for example `ci`) only count when no other project matches.
+ */
+function projectOf(segs: string[], known: Set<string>, kinds: string[], fallback: string): string {
+  for (const allowKind of [false, true]) {
+    for (const s of segs) {
+      for (const c of [s, s.split('-')[0]]) {
+        if (known.has(c) && (allowKind || !kinds.includes(c))) return c;
+      }
+    }
+  }
+  return segs[0] || fallback;
+}
+
+/** Groups repositories as project, then kind, then repository. Unsorted. */
+export function buildProjectTree(repos: Repo[], kindPrefixes: string[]): TreeNode[] {
+  const known = new Set<string>();
+  for (const r of repos) {
+    const i = r.name.indexOf('/');
+    if (i < 0) known.add(r.name.split('-')[0]);
+    else if (!kindPrefixes.includes(r.name.slice(0, i))) known.add(r.name.slice(0, i));
+  }
+  const byProject = new Map<string, { images: TreeNode[]; kinds: Map<string, TreeNode[]>; n: number }>();
+  for (const r of repos) {
+    const { kind, segs } = splitName(r.name, kindPrefixes);
+    const project = projectOf(segs, known, kindPrefixes, r.name);
+    let p = byProject.get(project);
+    if (!p) byProject.set(project, (p = { images: [], kinds: new Map(), n: 0 }));
+    p.n++;
+    const leaf = (label: string): TreeNode => ({ id: `r:${r.name}`, label, repo: r, children: [] });
+    if (kind === IMAGES_KIND) {
+      const rest = [`${project}-`, `${project}/`].find(x => r.name.startsWith(x));
+      p.images.push(leaf(rest ? r.name.slice(rest.length) || r.name : r.name));
+    } else {
+      const list = p.kinds.get(kind) ?? [];
+      list.push(leaf(segs.join('/')));
+      p.kinds.set(kind, list);
+    }
+  }
+  return [...byProject].map(([project, p]): TreeNode => {
+    if (p.n === 1) {
+      const only = p.images[0] ?? [...p.kinds.values()][0][0];
+      return { ...only, label: only.repo!.name };
+    }
+    return {
+      id: `p:${project}`,
+      label: project,
+      children: [
+        ...p.images,
+        ...[...p.kinds].map(([kind, children]) => ({ id: `p:${project}/k:${kind}`, label: kind, children })),
+      ],
+    };
+  });
+}
+
+/** Count, total size and newest created time over the leaves of a node. */
+export function aggregate(n: TreeNode): Aggregate {
+  if (n.repo) return { count: 1, sizeBytes: repoSize(n.repo), created: lastCreated(n.repo) };
+  return n.children.map(aggregate).reduce(
+    (a, b) => ({
+      count: a.count + b.count,
+      sizeBytes: a.sizeBytes + b.sizeBytes,
+      created: a.created === null ? b.created : b.created === null ? a.created : Math.max(a.created, b.created),
+    }),
+    { count: 0, sizeBytes: 0, created: null as number | null }
+  );
+}
+
+/** Keeps the leaves whose full name matches and the folders that contain them. */
+export function pruneTree(nodes: TreeNode[], query: string): TreeNode[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return nodes;
+  const walk = (n: TreeNode): TreeNode | null => {
+    if (n.repo) return n.repo.name.toLowerCase().includes(q) ? n : null;
+    const children = n.children.map(walk).filter((c): c is TreeNode => c !== null);
+    return children.length ? { ...n, children } : null;
+  };
+  return nodes.map(walk).filter((n): n is TreeNode => n !== null);
+}
+
+/** Sorts every level. Inside a project folder, image leaves stay before the kind folders. */
+export function sortTree(nodes: TreeNode[], key: SortKey, desc: boolean, imagesFirst = false): TreeNode[] {
+  const val = (n: TreeNode): number | string | null => {
+    if (key === 'name') return n.label;
+    const a = aggregate(n);
+    return key === 'size' ? a.sizeBytes : a.created;
+  };
+  const cmp = (a: TreeNode, b: TreeNode): number => {
+    if (imagesFirst && !a.repo !== !b.repo) return a.repo ? -1 : 1;
+    const x = val(a);
+    const y = val(b);
+    if (x === null && y === null) return a.label.localeCompare(b.label);
+    if (x === null) return 1;
+    if (y === null) return -1;
+    const c = typeof x === 'string' ? x.localeCompare(y as string) : (x as number) - (y as number);
+    return (desc ? -c : c) || a.label.localeCompare(b.label);
+  };
+  return [...nodes].sort(cmp).map(n =>
+    n.repo ? n : { ...n, children: sortTree(n.children, key, desc, n.id.startsWith('p:') && !n.id.includes('/k:')) }
+  );
+}
+
+/** Ids of every folder in the tree. */
+export function folderIds(nodes: TreeNode[]): string[] {
+  return nodes.flatMap(n => (n.repo ? [] : [n.id, ...folderIds(n.children)]));
 }
