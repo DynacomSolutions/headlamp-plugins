@@ -114,6 +114,45 @@ describe('placementOf', () => {
   });
 });
 
+describe('placement taints and labels', () => {
+  const mac = {
+    metadata: { name: 'mac', labels: { 'kubernetes.io/os': 'darwin' } },
+    spec: { taints: [{ effect: 'NoSchedule', key: 'dynacom.dev/mac', value: 'true' }] },
+  };
+  const tol = { key: 'dynacom.dev/mac', operator: 'Equal', value: 'true', effect: 'NoSchedule' };
+  it('excludes a tainted node without a toleration', () => {
+    expect(placementOf({ nodeSelector: { 'kubernetes.io/os': 'linux' } }).canRunOn('mac', mac)).toBe(false);
+    expect(placementOf({}).canRunOn('mac', mac)).toBe(false);
+  });
+  it('includes it when tolerated and the selector matches', () => {
+    const p = placementOf({ tolerations: [tol], nodeSelector: { 'kubernetes.io/os': 'darwin' } });
+    expect(p.canRunOn('mac', mac)).toBe(true);
+  });
+  it('excludes on nodeSelector or affinity label mismatch', () => {
+    expect(placementOf({ tolerations: [tol], nodeSelector: { 'kubernetes.io/os': 'linux' } }).canRunOn('mac', mac)).toBe(false);
+    const aff = (operator: string) => ({
+      tolerations: [tol],
+      affinity: { nodeAffinity: { requiredDuringSchedulingIgnoredDuringExecution: { nodeSelectorTerms: [
+        { matchExpressions: [{ key: 'kubernetes.io/os', operator, values: ['linux'] }] },
+      ] } } },
+    });
+    expect(placementOf(aff('In')).canRunOn('mac', mac)).toBe(false);
+    expect(placementOf(aff('NotIn')).canRunOn('mac', mac)).toBe(true);
+  });
+  it('lets an Exists toleration with an empty key tolerate everything', () => {
+    expect(placementOf({ tolerations: [{ operator: 'Exists' }] }).canRunOn('mac', mac)).toBe(true);
+  });
+  it('keeps tainted nodes out of buildCapacity spill', () => {
+    const c = buildCapacity({
+      nodes: [node('worker-1', '4', '16Gi'), { ...mac, status: node('x', '4', '16Gi').status }],
+      pods: [], runners: [], externalWorkers: [], status: null, cfg: {},
+      scaleSets: [ars('lin', {}, 1, tmpl('1', '1Gi')), ars('osx', {}, 1, tmpl('1', '1Gi', { tolerations: [tol] }))],
+    });
+    expect(c.pools.find(p => p.name === 'lin')!.spill).toEqual(['worker-1']);
+    expect(c.pools.find(p => p.name === 'osx')!.spill).toEqual(['worker-1', 'mac']);
+  });
+});
+
 describe('parsePolicy', () => {
   it('is unconfigured by default and defaults the cap to 3', () => {
     expect(parsePolicy({}).configured).toBe(false);
