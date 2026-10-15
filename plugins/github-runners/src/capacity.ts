@@ -273,6 +273,10 @@ export interface PoolRow {
   perRunner: Resources;
   placement: Placement;
   starved: boolean;
+  /** Jobs the polled status reports as queued for this pool. */
+  queued: number;
+  /** Real pressure: waiting work at the cap, or runner pods Pending for lack of capacity. */
+  pressure: boolean;
   violations: string[];
 }
 
@@ -295,7 +299,6 @@ export interface NodeUsage {
 export interface Demand {
   demand: Resources;
   capacity: Resources;
-  short: { cpu: boolean; memory: boolean };
 }
 
 export interface ExternalRow {
@@ -413,13 +416,19 @@ export function buildCapacity(input: CapacityInput): Capacity {
       }
       const preferredIds = placement.preferred.map(p => p.node).filter((n, i, a) => a.indexOf(n) === i);
       const spillIds = nodeIds.filter(n => placement.canRunOn(n, nodeById.get(n)) && !preferredIds.includes(n));
+      const queued = (input.status?.nodes || [])
+        .flatMap(n => n.jobs)
+        .filter(j => j.scale_set === name && j.status === 'queued').length;
+      const cap = Number(s.spec?.maxRunners) || 0;
+      const noRoom = /not enough|node pod limit/.test(reasons.join(', '));
+      const atCap = cap > 0 && running + pending >= cap;
       const serves = poolServes(s, name, poolRepos);
       return {
         name,
         namespace: meta(s).namespace || '',
         serves: serves.text,
         repo: serves.repo,
-        cap: Number(s.spec?.maxRunners) || 0,
+        cap,
         running,
         pending,
         pendingReason: reasons.join(', '),
@@ -429,6 +438,8 @@ export function buildCapacity(input: CapacityInput): Capacity {
         perRunner: specRequests(spec),
         placement,
         starved: pending > 0 && running === 0,
+        queued,
+        pressure: (atCap && (pending > 0 || queued > 0)) || (pending > 0 && noRoom),
         violations: [] as string[],
       };
     })
@@ -519,11 +530,7 @@ export function buildCapacity(input: CapacityInput): Capacity {
   return {
     pools,
     nodes,
-    demand: {
-      demand,
-      capacity,
-      short: { cpu: demand.cpu > capacity.cpu, memory: demand.memory > capacity.memory },
-    },
+    demand: { demand, capacity },
     external: externalRows(input.status?.nodes || [], input.externalWorkers),
     policy,
     violationCount: pools.filter(p => p.violations.length > 0).length,

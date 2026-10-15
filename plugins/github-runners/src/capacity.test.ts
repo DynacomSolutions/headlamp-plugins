@@ -252,7 +252,28 @@ describe('buildCapacity', () => {
   it('computes demand and capacity', () => {
     expect(cap.demand.demand.cpu).toBe(6);
     expect(cap.demand.capacity.cpu).toBeCloseTo(4 - 0.5 + 4 + 8);
-    expect(cap.demand.short.cpu).toBe(false);
+  });
+  it('warns on real pressure only', () => {
+    // pool-a: 0 running, 1 pending for CPU, cap 4: pressure through lack of capacity
+    expect(a.pressure).toBe(true);
+    // pool-b: idle at cap 2: worst case alone is not pressure
+    expect(b.pressure).toBe(false);
+    const job = (scale_set: string, status: string) => ({ scale_set, status } as any);
+    const st = (jobs: any[]) => ({ nodes: [{ kind: 'kubernetes', jobs }] } as any);
+    const full = buildCapacity({
+      ...input,
+      pods: [rpod('r1', 'pool-b', undefined, 'Pending'), rpod('r2', 'pool-b', undefined, 'Pending')],
+      status: st([job('pool-b', 'queued')]),
+    });
+    const fb = full.pools.find(p => p.name === 'pool-b')!;
+    expect(fb.queued).toBe(1);
+    expect(fb.pressure).toBe(true);
+    const roomy = buildCapacity({
+      ...input,
+      pods: [rpod('r1', 'pool-b', undefined, 'Pending')],
+      status: st([job('pool-b', 'queued')]),
+    });
+    expect(roomy.pools.find(p => p.name === 'pool-b')!.pressure).toBe(false);
   });
   it('flags policy violations', () => {
     expect(a.violations.some(v => v.includes('does not prefer worker-2'))).toBe(true);
@@ -288,7 +309,6 @@ describe('buildCapacity', () => {
   it('copes with no data', () => {
     const c = buildCapacity({ nodes: [], pods: [], runners: [], scaleSets: [], externalWorkers: [], status: null, cfg: {} });
     expect(c.pools).toEqual([]);
-    expect(c.demand.short).toEqual({ cpu: false, memory: false });
   });
 });
 
