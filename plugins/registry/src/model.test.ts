@@ -170,3 +170,20 @@ describe('buildProjectTree', () => {
     expect(bySize[0].id).toBe('p:shop');
   });
 });
+
+describe('buildProjectTree kind-word projects', () => {
+  const mk = (name: string): Repo => ({ name, tags: [] });
+  const project = (names: string[], target: string) => {
+    const tree = buildProjectTree(names.map(mk), parseKindPrefixes(undefined));
+    return tree.find(n => (n.repo ? false : JSON.stringify(n).includes(`"${target}"`)))?.id;
+  };
+  const base = ['shop-api', 'shop-ui', 'ci-buildx-smoke-123', 'ci-buildx-smoke-124'];
+  it('prefers named projects over kind words', () => {
+    expect(project([...base, 'pr/ci-runtime/shop-ci-runtime'], 'pr/ci-runtime/shop-ci-runtime')).toBe('p:shop');
+    expect(project([...base, 'pr/ci/main-health/shop-api'], 'pr/ci/main-health/shop-api')).toBe('p:shop');
+  });
+  it('keeps the kind-word project when nothing else matches', () => {
+    expect(project(base, 'ci-buildx-smoke-123')).toBe('p:ci');
+    expect(project([...base, 'pr/cluster/ci-buildx-smoke-9'], 'pr/cluster/ci-buildx-smoke-9')).toBe('p:ci');
+  });
+});
