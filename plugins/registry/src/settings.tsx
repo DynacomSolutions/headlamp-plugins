@@ -9,6 +9,11 @@ const FIELDS: { key: keyof SettingsShape; label: string; help: string }[] = [
   { key: 'namespace', label: 'Backend namespace', help: 'Namespace of the catalogue Service.' },
   { key: 'service', label: 'Backend service', help: 'Name of the catalogue Service.' },
   { key: 'port', label: 'Backend port', help: 'Service port number or name.' },
+  {
+    key: 'kindPrefixes',
+    label: 'Repository kind prefixes',
+    help: 'Comma-separated first path segments (for example pr, charts) shown as kind folders under each project.',
+  },
   { key: 'refreshSeconds', label: 'Refresh interval (seconds)', help: 'Between 5 and 600.' },
 ];
 
