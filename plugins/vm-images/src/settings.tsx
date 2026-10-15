@@ -14,6 +14,11 @@ const FIELDS: { key: keyof SettingsShape; label: string; help: string }[] = [
     label: 'VM image name prefixes',
     help: 'Comma-separated repository prefixes treated as VM images. Repositories with VM artefact media types are included too.',
   },
+  {
+    key: 'kindPrefixes',
+    label: 'Repository kind prefixes',
+    help: 'Comma-separated first path segments (for example pr, charts) shown as kind folders under each project.',
+  },
   { key: 'refreshSeconds', label: 'Refresh interval (seconds)', help: 'Between 5 and 600.' },
 ];
 
