@@ -545,12 +545,17 @@ function splitName(name: string, kinds: string[]): { kind: string; segs: string[
   return { kind: IMAGES_KIND, segs };
 }
 
-/** Project of a repository: first segment that is, or starts (before a dash) with, a known project. */
-function projectOf(segs: string[], known: Set<string>, fallback: string): string {
-  for (const s of segs) {
-    if (known.has(s)) return s;
-    const head = s.split('-')[0];
-    if (known.has(head)) return head;
+/**
+ * Project of a repository: first segment that is, or starts (before a dash) with, a known project.
+ * Projects named like a kind prefix (for example `ci`) only count when no other project matches.
+ */
+function projectOf(segs: string[], known: Set<string>, kinds: string[], fallback: string): string {
+  for (const allowKind of [false, true]) {
+    for (const s of segs) {
+      for (const c of [s, s.split('-')[0]]) {
+        if (known.has(c) && (allowKind || !kinds.includes(c))) return c;
+      }
+    }
   }
   return segs[0] || fallback;
 }
@@ -566,7 +571,7 @@ export function buildProjectTree(repos: Repo[], kindPrefixes: string[]): TreeNod
   const byProject = new Map<string, { images: TreeNode[]; kinds: Map<string, TreeNode[]>; n: number }>();
   for (const r of repos) {
     const { kind, segs } = splitName(r.name, kindPrefixes);
-    const project = projectOf(segs, known, r.name);
+    const project = projectOf(segs, known, kindPrefixes, r.name);
     let p = byProject.get(project);
     if (!p) byProject.set(project, (p = { images: [], kinds: new Map(), n: 0 }));
     p.n++;
