@@ -244,7 +244,8 @@ function LiveJobsTable({ jobs, nodes, cfg }: {
       },
     ];
   }, [nodes, cfg]);
-  return <Table data={jobs} columns={columns as any} enableGrouping initialState={LIVE_INITIAL_STATE as any} />;
+  return <Table data={jobs} columns={columns as any} enableGrouping initialState={LIVE_INITIAL_STATE as any}
+    positionToolbarAlertBanner="none" enableColumnDragging={false} defaultColumn={{ enableGrouping: false } as any} />;
 }
 
 function jobColumns(nodes: Record<string, NodeStatus>) {
