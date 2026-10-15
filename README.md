@@ -1,8 +1,8 @@
 # headlamp-plugins
 
-Seven plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
+Eight plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
 spot slow disks, see where CI jobs are running, find application URLs, manage
-notifications, understand agent memory pressure, track component updates, and browse container registry contents.
+notifications, understand agent memory pressure, track component updates, browse container registry contents, and track VM images.
 
 Built with `@kinvolk/headlamp-plugin` (TypeScript + React). Install the plugins
 you need; each has its own release archive and configuration.
@@ -16,6 +16,7 @@ you need; each has its own release archive and configuration.
 | [Agent memory](#agent-memory) | Inspect memory limits, swap, pressure and recent kernel events | [Backend and permissions](plugins/agent-memory/README.md) |
 | [Updates](#updates) | See which components have updates and what blocks them | [Data source and URLs](plugins/updates/README.md) |
 | [Registry](#registry) | Browse registry repositories, tags, digests and sizes | [Backend and settings](plugins/registry/README.md) |
+| [VM images](#vm-images) | See KubeVirt disks, VM images in the registry and what uses them | [Backend, settings and RBAC](plugins/vm-images/README.md) |
 
 ## A tour of the plugins
 
@@ -156,17 +157,31 @@ repository, sort by size, expand the row and compare the tags.
 Needs a read-only catalogue backend, reached through the Kubernetes service
 proxy. See the [backend and settings guide](plugins/registry/README.md).
 
+### VM images
+
+KubeVirt disks (DataSources, DataImportCrons, DataVolumes and each VM's
+volumes), the VM images in the registry, and which pods on virtual-kubelet
+nodes and which KubeVirt VMs use each image.
+
+**Example:** before pruning an old image, expand its repository to see the
+**In use by** count, then check the **In use** table for the pods or VMs and
+nodes that still run it.
+
+Needs read access to the KubeVirt and CDI CRDs, PVCs, pods and nodes; the
+registry sections also need the catalogue backend. See the
+[setup guide](plugins/vm-images/README.md).
+
 Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
-The release contains seven plugin archives and seven checksum lines.
+The release contains eight plugin archives and eight checksum lines.
 
 ## Creating a release
 
 Push a strict semantic-version tag such as `v1.2.3` or `v1.2.3-rc.1` to
 create a release. The workflow stages the tag version in each plugin's
 `package.json` and `package-lock.json` in its job workspace without committing
-those changes, then creates and uploads seven plugin archives plus
+those changes, then creates and uploads eight plugin archives plus
 `SHA256SUMS`. Tags containing a hyphen publish as prereleases.
 
 ## Installing a release
