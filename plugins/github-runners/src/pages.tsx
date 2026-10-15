@@ -18,11 +18,12 @@ import { Board, useBoard, useConfig } from './data';
 import {
   ageSeconds,
   ago,
-  buildProjectTree,
   Filters,
+  jobProject,
   matchesJob,
   matchesStarting,
   nodeBadge,
+  oldestOf,
   parseTerms,
   repoUrl,
   runUrl,
@@ -30,9 +31,9 @@ import {
   Tab as TabId,
   tabFromParam,
   tabPath,
-  TreeProject,
   viewFromSearch,
   viewToSearch,
+  workflowName,
   workflowUrl,
 } from './model';
 import type { Job, NodeStatus, Raw } from './types';
@@ -178,98 +179,72 @@ function Toggle({ open, onClick, label, children }: {
   );
 }
 
-function ProjectTree({ projects }: { projects: TreeProject[] }) {
-  // Explicit user choices; everything starts open because the tree is live.
-  const [open, setOpen] = React.useState<Record<string, boolean>>({});
-  const isOpen = (key: string) => open[key] ?? true;
-  const flip = (key: string) => setOpen(o => ({ ...o, [key]: !(o[key] ?? true) }));
-  if (!projects.length) {
-    return (
-      <Typography variant="body2" color="text.secondary" sx={{ p: 1 }}>
-        No live jobs
-      </Typography>
+const plural = (c: number, w: string) => `${c} ${w}${c === 1 ? '' : 's'}`;
+const ageOf = (iso_?: string | null) => {
+  const secs = ageSeconds(iso_);
+  return secs === null ? '-' : ago(secs);
+};
+
+// Everything starts expanded because the table is live; new groups open too.
+const LIVE_INITIAL_STATE = {
+  grouping: ['project', 'run'],
+  expanded: true as const,
+  // Headlamp lays out only its own columns, so hide MRT's extra expand column.
+  columnVisibility: { 'mrt-row-expand': false },
+};
+
+/** Live jobs grouped by project, then workflow run, using Headlamp Table's native MRT grouping. */
+function LiveJobsTable({ jobs, nodes, cfg }: {
+  jobs: Job[];
+  nodes: Record<string, NodeStatus>;
+  cfg: ReturnType<typeof useConfig>;
+}) {
+  const columns = React.useMemo(() => {
+    const groupLabel = (row: any, label: React.ReactNode, kind: string) => (
+      <Toggle open={row.getIsExpanded()} onClick={() => row.toggleExpanded()} label={`${kind} ${row.groupingValue}`}>
+        {label} <Typography component="span" variant="caption" color="text.secondary">
+          ({plural(row.getLeafRows().length, 'job')})
+        </Typography>
+      </Toggle>
     );
-  }
-  const age = (iso_?: string | null) => {
-    const secs = ageSeconds(iso_);
-    return secs === null ? '-' : ago(secs);
-  };
-  const row = (key: string, cells: React.ReactNode[]) => (
-    <Box component="li" key={key} display="flex" gap={1.5} alignItems="center" flexWrap="wrap">
-      {cells.map((c, i) => (
-        <React.Fragment key={i}>{c}</React.Fragment>
-      ))}
-    </Box>
-  );
-  const muted = (t: string) => (
-    <Typography variant="caption" color="text.secondary">
-      {t}
-    </Typography>
-  );
-  const group = (key: string, label: string, summary: string, body: React.ReactNode, title: React.ReactNode) => (
-    <li key={key}>
-      <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
-        <Toggle open={isOpen(key)} onClick={() => flip(key)} label={label}>
-          {title}
-        </Toggle>
-        {muted(summary)}
-      </Box>
-      {isOpen(key) && (
-        <Box component="ul" sx={{ listStyle: 'none', m: 0, pl: 3 }}>
-          {body}
-        </Box>
-      )}
-    </li>
-  );
-  const n = (c: number, w: string) => `${c} ${w}${c === 1 ? '' : 's'}`;
-  return (
-    <Box component="ul" sx={{ listStyle: 'none', m: 0, p: 1 }}>
-      {projects.map(p => {
-        const pk = `p:${p.name}`;
-        return group(
-          pk,
-          `project ${p.name}`,
-          `${p.running} running · ${p.pending} pending · ${n(p.runs.length, 'workflow run')}`,
-          <>
-            {p.runs.map(r => {
-              const rk = `r:${p.name}|${r.key}`;
-              return group(
-                rk,
-                `workflow run ${r.label}`,
-                `${n(r.jobs.length, 'job')} · oldest started ${age(r.oldest)}`,
-                r.jobs.map(({ job, node }) => {
-                  const [st, label] = jobStatus(job);
-                  return row(job.key, [
-                    <Ext href={job.url}>{job.name || 'Job'}</Ext>,
-                    muted(`${job.runner_name} · ${node} · ${job.scale_set}`),
-                    <StatusLabel status={st}>{label}</StatusLabel>,
-                    muted(age(job.started_at)),
-                  ]);
-                }),
-                <Ext href={r.url}>{r.label}</Ext>
-              );
-            })}
-            {p.waiting.length > 0 &&
-              group(
-                `w:${p.name}`,
-                `waiting for runner in ${p.name}`,
-                n(p.waiting.length, 'runner'),
-                p.waiting.map(w =>
-                  row(`${w.node}|${w.runner_name}`, [
-                    <span>{w.runner_name}</span>,
-                    muted(`${w.node} · ${w.scale_set}`),
-                    <StatusLabel status="warning">{w.phase || 'Pending'}</StatusLabel>,
-                    muted(age(w.started_at)),
-                  ])
-                ),
-                'Waiting for runner'
-              )}
-          </>,
-          <b>{p.name}</b>
-        );
-      })}
-    </Box>
-  );
+    return [
+      {
+        id: 'project',
+        header: 'Project',
+        accessorFn: (j: Job) => jobProject(j, cfg),
+        Cell: () => null,
+        GroupedCell: ({ row }: any) => groupLabel(row, <b>{row.groupingValue}</b>, 'project'),
+      },
+      {
+        id: 'run',
+        header: 'Workflow run',
+        // Repository plus run id keeps two runs of one workflow apart.
+        accessorFn: (j: Job) => `${j.repository}|${j.run_id ?? j.key}`,
+        Cell: () => null,
+        GroupedCell: ({ row }: any) => {
+          const j: Job = row.original;
+          return groupLabel(
+            row,
+            <Ext href={j.run_url || runUrl(j.repository, j.run_id)}>
+              {j.workflow || workflowName(j.workflow_ref) || 'Workflow run'}
+            </Ext>,
+            'workflow run'
+          );
+        },
+      },
+      ...jobColumns(nodes),
+      {
+        id: 'started',
+        header: 'Age',
+        accessorFn: (j: Job) => j.started_at ?? '',
+        aggregationFn: (_id: string, leaves: any[]) => oldestOf(leaves.map(l => l.original.started_at)) ?? '',
+        Cell: ({ row }: any) => ageOf(row.original.started_at),
+        // Group rows show the oldest start among their jobs.
+        AggregatedCell: ({ cell }: any) => ageOf(cell.getValue()),
+      },
+    ];
+  }, [nodes, cfg]);
+  return <Table data={jobs} columns={columns as any} enableGrouping initialState={LIVE_INITIAL_STATE as any} />;
 }
 
 function jobColumns(nodes: Record<string, NodeStatus>) {
@@ -338,12 +313,8 @@ function Overview({ board, filters, onNode }: {
   const allJobs = shown.flatMap(s => s.jobs);
   const allStarting = shown.flatMap(s => s.starting.map(x => ({ ...x, node: s.node })));
   const cfg = useConfig();
-  const projects = React.useMemo(() => buildProjectTree(status, cfg, filters), [status, cfg, filters]);
   return (
     <>
-      <SectionBox title="Projects">
-        <ProjectTree projects={projects} />
-      </SectionBox>
       <SectionBox title="Nodes">
         {shown.length === 0 ? (
           <Empty text="No nodes match the current filters." />
@@ -365,7 +336,7 @@ function Overview({ board, filters, onNode }: {
         {allJobs.length === 0 ? (
           <Empty text="No jobs are running." />
         ) : (
-          <Table data={allJobs} columns={jobColumns(nodesById) as any} />
+          <LiveJobsTable jobs={allJobs} nodes={nodesById} cfg={cfg} />
         )}
       </SectionBox>
       {allStarting.length > 0 && (

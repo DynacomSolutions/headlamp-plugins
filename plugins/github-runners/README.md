@@ -48,26 +48,20 @@ the URL alone reproduces the view and tab switches keep it: `q` (search),
 `node` (comma-separated node ids, or repeated) and `set` (comma-separated scale
 set names, or repeated). Example: `/github-runners/history?node=worker-1&q=shop`.
 
-## Overview project tree
+## Overview live jobs table
 
-The Overview starts with a tree of live work only: project, then workflow run,
-then job rows. Idle runners are not listed, and projects without live work are
-hidden; with nothing running or pending the tree shows "No live jobs".
+The Overview's "Live jobs" table is grouped in two levels: project, then
+workflow run, with the jobs as rows. Idle runners are not listed.
 
 - Project: the repository name without its owner (`my-org/shop` becomes `shop`).
-  A job without a repository, and a starting runner, use the scale set name with
-  the configured prefix and suffixes stripped, so `ci-shop` and `ci-shop-main`
-  both land in `shop` with prefix `ci-`.
+  A job without a repository uses the scale set name with the configured prefix
+  and suffixes stripped, so `ci-shop` and `ci-shop-main` both land in `shop`
+  with prefix `ci-`.
 - Workflow run: one per repository and run id, labelled with the workflow name
-  and linked to the run. Runners that are starting but not yet on a job sit in a
-  "Waiting for runner" group under their project.
-- Rows: job name (linked), runner, node, scale set, status and age; starting
-  runners show runner, node, scale set, phase and age.
-
-Projects show running jobs, pending runners and workflow runs; runs show their
-job count and oldest start. The busiest come first, then the oldest. Everything
-starts expanded. Search and the node and scale-set filters prune the tree.
-Expand state is not kept in the URL.
+  and linked to the run.
+- Group rows show the number of jobs and the age of the oldest job start.
+- Everything starts expanded. Search and the node and scale-set filters apply
+  to the job rows. Expand state is not kept in the URL.
 
 ## Optional: status endpoint (enrichment and history)
 
