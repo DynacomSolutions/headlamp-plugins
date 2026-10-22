@@ -115,7 +115,7 @@ describe('collapseVmRunners', () => {
   });
   const job = (key: string) => ({
     key, name: key, repository: 'o/r', workflow: 'ci', workflow_ref: '', runner_name: key,
-    scale_set: 'windows-vm', node_id: 'hq1', status: 'in_progress',
+    scale_set: 'windows-vm', node_id: 'node-a', status: 'in_progress',
   });
   const wrap = (nodes: Status['nodes']): Status => ({
     generated_at: '', nodes, scale_sets: [],
@@ -131,11 +131,11 @@ describe('collapseVmRunners', () => {
         reg('windows-vm-runner-a', [job('a')]),
         reg('windows-vm-runner-b', [job('b')]),
         reg('windows-vm-runner-c'),
-        reg('dynacom-dev-windows'),
+        reg('lab-windows'),
       ])
     );
-    expect(out.nodes.map(n => n.id).sort()).toEqual(['dynacom-dev-windows', 'windows-vm-hq1']);
-    expect(out.nodes.find(n => n.id === 'windows-vm-hq1')!.jobs).toHaveLength(2);
+    expect(out.nodes.map(n => n.id).sort()).toEqual(['lab-windows', 'windows-vm-node-a']);
+    expect(out.nodes.find(n => n.id === 'windows-vm-node-a')!.jobs).toHaveLength(2);
   });
 });
 
