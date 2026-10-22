@@ -310,14 +310,46 @@ const OVERLAY: (keyof Job)[] = [
   'completed_at',
 ];
 
+const VM_RUNNER = /^windows-vm-runner-/;
+
+/**
+ * The scanner reports every ephemeral windows-vm GitHub registration as an
+ * external node. Fold them into one `windows-vm-<k8s node>` row per machine,
+ * carrying the jobs of all its registrations; idle or offline registrations
+ * add nothing. A job without node_id lands on `windows-vm-unknown`.
+ */
+export function collapseVmRunners(remote: Status): Status {
+  const vms = new Map<string, NodeStatus>();
+  const nodes: NodeStatus[] = [];
+  for (const n of remote.nodes) {
+    if (n.kind !== 'external' || !VM_RUNNER.test(n.id)) {
+      nodes.push(n);
+      continue;
+    }
+    for (const job of n.jobs) {
+      const id = `windows-vm-${job.node_id || 'unknown'}`;
+      let vm = vms.get(id);
+      if (!vm) {
+        vm = { id, display_name: id, kind: 'external', ready: true, state: 'busy', os: n.os, jobs: [], starting: [] };
+        vms.set(id, vm);
+        nodes.push(vm);
+      }
+      vm.jobs.push(job);
+    }
+  }
+  const ordered = sortNodes(nodes);
+  return { ...remote, nodes: ordered, summary: summarise(ordered, remote.scale_sets) };
+}
+
 /**
  * Overlay scanner enrichment (job URLs, GitHub-side status, external runners)
  * on the Kubernetes-derived status. Kubernetes stays the source of truth for
  * what exists; the endpoint only adds detail. With no ARC data at all the
  * endpoint's status is used as-is.
  */
-export function mergeEnrichment(local: Status, remote: Status | null, arcPresent: boolean): Status {
-  if (!remote) return local;
+export function mergeEnrichment(local: Status, rawRemote: Status | null, arcPresent: boolean): Status {
+  if (!rawRemote) return local;
+  const remote = collapseVmRunners(rawRemote);
   if (!arcPresent && local.nodes.every(n => !n.jobs.length && !n.starting.length)) {
     return remote;
   }

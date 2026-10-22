@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLocalStatus,
+  collapseVmRunners,
   jobProject,
   mergeEnrichment,
   nodeBadge,
@@ -105,6 +106,36 @@ describe('mergeEnrichment', () => {
   });
   it('is a no-op without an endpoint', () => {
     expect(mergeEnrichment(local, null, true)).toBe(local);
+  });
+});
+
+describe('collapseVmRunners', () => {
+  const reg = (id: string, jobs: Status['nodes'][0]['jobs'] = []) => ({
+    id, display_name: id, kind: 'external' as const, ready: false, os: 'Windows', jobs, starting: [],
+  });
+  const job = (key: string) => ({
+    key, name: key, repository: 'o/r', workflow: 'ci', workflow_ref: '', runner_name: key,
+    scale_set: 'windows-vm', node_id: 'node-a', status: 'in_progress',
+  });
+  const wrap = (nodes: Status['nodes']): Status => ({
+    generated_at: '', nodes, scale_sets: [],
+    summary: { running_jobs: 0, pending_runners: 0, nodes_ready: 0, nodes_total: nodes.length },
+  });
+  it('drops offline idle registrations', () => {
+    const out = collapseVmRunners(wrap(Array.from({ length: 190 }, (_, i) => reg(`windows-vm-runner-${i}`))));
+    expect(out.nodes).toHaveLength(0);
+  });
+  it('folds busy registrations into one row per k8s node and keeps real external hosts', () => {
+    const out = collapseVmRunners(
+      wrap([
+        reg('windows-vm-runner-a', [job('a')]),
+        reg('windows-vm-runner-b', [job('b')]),
+        reg('windows-vm-runner-c'),
+        reg('lab-windows'),
+      ])
+    );
+    expect(out.nodes.map(n => n.id).sort()).toEqual(['lab-windows', 'windows-vm-node-a']);
+    expect(out.nodes.find(n => n.id === 'windows-vm-node-a')!.jobs).toHaveLength(2);
   });
 });
 
