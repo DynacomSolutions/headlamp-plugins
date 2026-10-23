@@ -1,8 +1,8 @@
 # headlamp-plugins
 
-Eight plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
+Nine plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
 spot slow disks, see where CI jobs are running, find application URLs, manage
-notifications, understand agent memory pressure, track component updates, browse container registry contents, and track VM images.
+notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, and watch server temperatures and power.
 
 Built with `@kinvolk/headlamp-plugin` (TypeScript + React). Install the plugins
 you need; each has its own release archive and configuration.
@@ -17,6 +17,7 @@ you need; each has its own release archive and configuration.
 | [Updates](#updates) | See which components have updates and what blocks them | [Data source and URLs](plugins/updates/README.md) |
 | [Registry](#registry) | Browse registry repositories, tags, digests and sizes | [Backend and settings](plugins/registry/README.md) |
 | [VM images](#vm-images) | See KubeVirt disks, VM images in the registry and what uses them | [Backend, settings and RBAC](plugins/vm-images/README.md) |
+| [Node hardware](#node-hardware) | See server temperatures and estimated power draw per node | [Queries and metrics](plugins/node-hardware/README.md) |
 
 ## A tour of the plugins
 
@@ -171,17 +172,30 @@ Needs read access to the KubeVirt and CDI CRDs, PVCs, pods and nodes; the
 registry sections also need the catalogue backend. See the
 [setup guide](plugins/vm-images/README.md).
 
+### Node hardware
+
+CPU temperature and estimated power draw for every node in the Nodes list,
+with every temperature sensor and a power breakdown on the node details page.
+
+**Example:** `worker-1` feels slow under load. In the Nodes list, check
+whether its **Temp** is amber or red compared with the other nodes, then open
+it to see which sensor is hot and how much power the CPU and GPU draw.
+
+Needs a Prometheus-compatible query endpoint with node-exporter hwmon (and
+optionally RAPL) metrics. Power is an estimate, not wall power. See the
+[setup guide](plugins/node-hardware/README.md).
+
 Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
-The release contains eight plugin archives and eight checksum lines.
+The release contains nine plugin archives and nine checksum lines.
 
 ## Creating a release
 
 Push a strict semantic-version tag such as `v1.2.3` or `v1.2.3-rc.1` to
 create a release. The workflow stages the tag version in each plugin's
 `package.json` and `package-lock.json` in its job workspace without committing
-those changes, then creates and uploads eight plugin archives plus
+those changes, then creates and uploads nine plugin archives plus
 `SHA256SUMS`. Tags containing a hyphen publish as prereleases.
 
 ## Installing a release

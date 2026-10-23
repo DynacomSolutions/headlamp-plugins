@@ -34,9 +34,9 @@ jobs:
           while IFS= read -r path; do case "$path" in .github/workflows/*|.pre-commit-config.yaml|Makefile|package.json|package-lock.json|tsconfig.json|scripts/*|LICENSE) shared=1;; esac; done <<< "$changed"
           matrix='[]'
           if [ "$shared" = 1 ] || [ "$event" != pull_request ]; then
-            matrix='["agent-memory","alerting","disk-health","github-runners","registry","sites","updates","vm-images"]'
+            matrix='["agent-memory","alerting","disk-health","github-runners","node-hardware","registry","sites","updates","vm-images"]'
           else
-            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(agent-memory|alerting|disk-health|github-runners|registry|sites|updates|vm-images)\// {print $2}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
+            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(agent-memory|alerting|disk-health|github-runners|node-hardware|registry|sites|updates|vm-images)\// {print $2}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           if [ "$matrix" = '[]' ]; then has_changes=false; else has_changes=true; fi

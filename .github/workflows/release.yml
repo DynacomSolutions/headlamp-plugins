@@ -16,7 +16,7 @@ jobs:
     strategy:
       max-parallel: 1
       fail-fast: false
-      matrix: {plugin: [agent-memory, alerting, disk-health, github-runners, registry, sites, updates, vm-images]}
+      matrix: {plugin: [agent-memory, alerting, disk-health, github-runners, node-hardware, registry, sites, updates, vm-images]}
     defaults:
       run:
         working-directory: plugins/${{ matrix.plugin }}
