@@ -310,32 +310,74 @@ const OVERLAY: (keyof Job)[] = [
   'completed_at',
 ];
 
-const VM_RUNNER = /^windows-vm-runner-/;
+// ARC names ephemeral registrations `<scale-set>-<hash>-runner-<hash>`.
+const EPHEMERAL = /-runner-[a-z0-9]+$/;
+// VM runners are `<kind>-vm-runner-<hash>`; the VM, not the registration, is the machine.
+const VM_PREFIX = /^(.+-vm)-runner-/;
+// Persistent registrations sharing one machine are `<machine>-<n>`.
+const SLOT = /^(.+)-\d+$/;
 
 /**
- * The scanner reports every ephemeral windows-vm GitHub registration as an
- * external node. Fold them into one `windows-vm-<k8s node>` row per machine,
- * carrying the jobs of all its registrations; idle or offline registrations
- * add nothing. A job without node_id lands on `windows-vm-unknown`.
+ * The scanner reports every GitHub registration as an external node. A
+ * registration is not a machine, so fold them into one row per machine:
+ * - ephemeral registrations go to the Kubernetes node their job ran on, or to
+ *   `<kind>-vm-<node>` for VM runners; idle or offline ones add nothing;
+ * - persistent registrations numbered `<machine>-<n>` merge into `<machine>`.
+ * Each row lists its jobs and the pools that contributed them. A job without
+ * node_id lands on `unknown`.
  */
-export function collapseVmRunners(remote: Status): Status {
-  const vms = new Map<string, NodeStatus>();
+export function collapseRunners(remote: Status): Status {
+  const rows = new Map<string, NodeStatus>();
+  const pools = new Map<string, Set<string>>();
   const nodes: NodeStatus[] = [];
+  const row = (id: string, kind: NodeStatus['kind'], n: NodeStatus): NodeStatus => {
+    let r = rows.get(id);
+    if (!r) {
+      r = { id, display_name: id, kind, ready: false, os: n.os, jobs: [], starting: [] };
+      rows.set(id, r);
+      pools.set(id, new Set());
+      nodes.push(r);
+    }
+    return r;
+  };
+  const known = new Set(remote.nodes.map(n => n.id));
+  const slots = new Map<string, number>();
   for (const n of remote.nodes) {
-    if (n.kind !== 'external' || !VM_RUNNER.test(n.id)) {
+    const m = n.kind === 'external' && !EPHEMERAL.test(n.id) && SLOT.exec(n.id)?.[1];
+    if (m) slots.set(m, (slots.get(m) || 0) + 1);
+  }
+  for (const n of remote.nodes) {
+    if (n.kind !== 'external') {
       nodes.push(n);
-      continue;
-    }
-    for (const job of n.jobs) {
-      const id = `windows-vm-${job.node_id || 'unknown'}`;
-      let vm = vms.get(id);
-      if (!vm) {
-        vm = { id, display_name: id, kind: 'external', ready: true, state: 'busy', os: n.os, jobs: [], starting: [] };
-        vms.set(id, vm);
-        nodes.push(vm);
+      rows.set(n.id, n);
+      pools.set(n.id, new Set());
+    } else if (EPHEMERAL.test(n.id)) {
+      const vm = VM_PREFIX.exec(n.id)?.[1];
+      for (const job of n.jobs) {
+        const node = job.node_id || 'unknown';
+        const r = vm ? row(`${vm}-${node}`, 'external', n) : row(node, 'kubernetes', n);
+        r.ready = true;
+        if (r.kind === 'external') r.state = 'busy';
+        r.jobs.push(job);
+        if (job.scale_set) pools.get(r.id)!.add(job.scale_set);
       }
-      vm.jobs.push(job);
+    } else {
+      const machine = SLOT.exec(n.id)?.[1];
+      // shortcut: a lone `<name>-<n>` stays as is, since it may be a real machine name
+      if (!machine || (slots.get(machine)! < 2 && !known.has(machine))) {
+        nodes.push(n);
+        continue;
+      }
+      const r = row(machine, 'external', n);
+      r.ready ||= n.ready;
+      r.state = r.jobs.length || n.jobs.length ? 'busy' : n.state;
+      r.state_reason ??= n.state_reason;
+      r.jobs.push(...n.jobs);
     }
+  }
+  for (const [id, set] of pools) {
+    const r = rows.get(id)!;
+    if (set.size) r.description = `Pools: ${[...set].sort().join(', ')}`;
   }
   const ordered = sortNodes(nodes);
   return { ...remote, nodes: ordered, summary: summarise(ordered, remote.scale_sets) };
@@ -349,7 +391,7 @@ export function collapseVmRunners(remote: Status): Status {
  */
 export function mergeEnrichment(local: Status, rawRemote: Status | null, arcPresent: boolean): Status {
   if (!rawRemote) return local;
-  const remote = collapseVmRunners(rawRemote);
+  const remote = collapseRunners(rawRemote);
   if (!arcPresent && local.nodes.every(n => !n.jobs.length && !n.starting.length)) {
     return remote;
   }

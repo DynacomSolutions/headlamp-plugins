@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLocalStatus,
-  collapseVmRunners,
+  collapseRunners,
   jobProject,
   mergeEnrichment,
   nodeBadge,
@@ -109,33 +109,59 @@ describe('mergeEnrichment', () => {
   });
 });
 
-describe('collapseVmRunners', () => {
-  const reg = (id: string, jobs: Status['nodes'][0]['jobs'] = []) => ({
-    id, display_name: id, kind: 'external' as const, ready: false, os: 'Windows', jobs, starting: [],
+describe('collapseRunners', () => {
+  const reg = (id: string, jobs: Status['nodes'][0]['jobs'] = [], ready = false) => ({
+    id, display_name: id, kind: 'external' as const, ready, os: 'Windows', jobs, starting: [],
   });
-  const job = (key: string) => ({
+  const job = (key: string, scale_set = 'pool-a', node_id = 'node-a') => ({
     key, name: key, repository: 'o/r', workflow: 'ci', workflow_ref: '', runner_name: key,
-    scale_set: 'windows-vm', node_id: 'node-a', status: 'in_progress',
+    scale_set, node_id, status: 'in_progress',
   });
   const wrap = (nodes: Status['nodes']): Status => ({
     generated_at: '', nodes, scale_sets: [],
     summary: { running_jobs: 0, pending_runners: 0, nodes_ready: 0, nodes_total: nodes.length },
   });
-  it('drops offline idle registrations', () => {
-    const out = collapseVmRunners(wrap(Array.from({ length: 190 }, (_, i) => reg(`windows-vm-runner-${i}`))));
+  it('drops offline idle ephemeral registrations', () => {
+    const out = collapseRunners(
+      wrap([
+        ...Array.from({ length: 190 }, (_, i) => reg(`windows-vm-runner-${i}`)),
+        ...Array.from({ length: 50 }, (_, i) => reg(`some-org-runners-x${i}-runner-q${i}`)),
+      ])
+    );
     expect(out.nodes).toHaveLength(0);
   });
-  it('folds busy registrations into one row per k8s node and keeps real external hosts', () => {
-    const out = collapseVmRunners(
+  it('folds N ephemeral registrations of any pool into one row per node with the job count', () => {
+    const out = collapseRunners(
+      wrap([
+        reg('org-one-runners-abc-runner-aaaaa', [job('a', 'pool-a')]),
+        reg('org-two-runners-def-runner-bbbbb', [job('b', 'pool-b')]),
+        reg('org-two-runners-def-runner-ccccc', [job('c', 'pool-b')]),
+        reg('org-two-runners-def-runner-ddddd'),
+        reg('org-two-runners-def-runner-eeeee', [job('e', 'pool-b', 'node-b')]),
+      ])
+    );
+    expect(out.nodes.map(n => n.id)).toEqual(['node-a', 'node-b']);
+    const a = out.nodes[0];
+    expect(a.jobs).toHaveLength(3);
+    expect(a.description).toBe('Pools: pool-a, pool-b');
+    expect(out.summary.running_jobs).toBe(4);
+  });
+  it('folds VM runners to the VM and numbered persistent slots to their machine', () => {
+    const out = collapseRunners(
       wrap([
         reg('windows-vm-runner-a', [job('a')]),
         reg('windows-vm-runner-b', [job('b')]),
-        reg('windows-vm-runner-c'),
+        reg('machine-1', [job('c')], true),
+        reg('machine-2', [], true),
+        reg('machine-3'),
         reg('lab-windows'),
       ])
     );
-    expect(out.nodes.map(n => n.id).sort()).toEqual(['lab-windows', 'windows-vm-node-a']);
+    expect(out.nodes.map(n => n.id).sort()).toEqual(['lab-windows', 'machine', 'windows-vm-node-a']);
     expect(out.nodes.find(n => n.id === 'windows-vm-node-a')!.jobs).toHaveLength(2);
+    const m = out.nodes.find(n => n.id === 'machine')!;
+    expect(m.jobs).toHaveLength(1);
+    expect(m.ready).toBe(true);
   });
 });
 
