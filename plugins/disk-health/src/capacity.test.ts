@@ -16,7 +16,17 @@ const sample = (labels: Record<string, string>, value: number): MetricSample => 
 
 describe('isCountableFstype', () => {
   it('excludes pseudo and network filesystems', () => {
-    for (const fstype of ['tmpfs', 'overlay', 'squashfs', 'nsfs', 'ramfs', 'devtmpfs', 'fuse.sshfs', 'nfs4', 'cifs']) {
+    for (const fstype of [
+      'tmpfs',
+      'overlay',
+      'squashfs',
+      'nsfs',
+      'ramfs',
+      'devtmpfs',
+      'fuse.sshfs',
+      'nfs4',
+      'cifs',
+    ]) {
       expect(isCountableFstype(fstype)).toBe(false);
     }
   });
@@ -39,21 +49,37 @@ describe('capacityQueries', () => {
 
 describe('mergeFsSamples', () => {
   it('joins size and avail samples by (node, device, mountpoint)', () => {
-    const size = [sample({ node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4' }, 1000)];
-    const avail = [sample({ node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4' }, 400)];
+    const size = [
+      sample({ node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4' }, 1000),
+    ];
+    const avail = [
+      sample({ node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4' }, 400),
+    ];
     const merged = mergeFsSamples(size, avail);
     expect(merged).toEqual([
-      { node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4', sizeBytes: 1000, availBytes: 400 },
+      {
+        node: 'n1',
+        device: '/dev/sda1',
+        mountpoint: '/',
+        fstype: 'ext4',
+        sizeBytes: 1000,
+        availBytes: 400,
+        readOnly: false,
+      },
     ]);
   });
 
   it('drops excluded fstypes even if the caller forgot to filter in PromQL', () => {
-    const size = [sample({ node: 'n1', device: 'tmpfs', mountpoint: '/run', fstype: 'tmpfs' }, 1000)];
+    const size = [
+      sample({ node: 'n1', device: 'tmpfs', mountpoint: '/run', fstype: 'tmpfs' }, 1000),
+    ];
     expect(mergeFsSamples(size, [])).toEqual([]);
   });
 
   it('defaults avail to 0 when no matching avail sample exists', () => {
-    const size = [sample({ node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4' }, 1000)];
+    const size = [
+      sample({ node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4' }, 1000),
+    ];
     const merged = mergeFsSamples(size, []);
     expect(merged[0].availBytes).toBe(0);
   });
@@ -62,9 +88,23 @@ describe('mergeFsSamples', () => {
 describe('aggregateNodeCapacity', () => {
   it('dedupes bind mounts of the same device by taking the max per device', () => {
     const samples = [
-      { node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4', sizeBytes: 1000, availBytes: 200 },
+      {
+        node: 'n1',
+        device: '/dev/sda1',
+        mountpoint: '/',
+        fstype: 'ext4',
+        sizeBytes: 1000,
+        availBytes: 200,
+      },
       // Bind mount of the same device at a second mountpoint: must not double-count.
-      { node: 'n1', device: '/dev/sda1', mountpoint: '/mnt/bind', fstype: 'ext4', sizeBytes: 1000, availBytes: 200 },
+      {
+        node: 'n1',
+        device: '/dev/sda1',
+        mountpoint: '/mnt/bind',
+        fstype: 'ext4',
+        sizeBytes: 1000,
+        availBytes: 200,
+      },
     ];
     const result = aggregateNodeCapacity(samples);
     const n1 = result.get('n1')!;
@@ -76,8 +116,22 @@ describe('aggregateNodeCapacity', () => {
 
   it('sums distinct devices on the same node', () => {
     const samples = [
-      { node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4', sizeBytes: 1000, availBytes: 300 },
-      { node: 'n1', device: '/dev/sdb1', mountpoint: '/data', fstype: 'ext4', sizeBytes: 2000, availBytes: 500 },
+      {
+        node: 'n1',
+        device: '/dev/sda1',
+        mountpoint: '/',
+        fstype: 'ext4',
+        sizeBytes: 1000,
+        availBytes: 300,
+      },
+      {
+        node: 'n1',
+        device: '/dev/sdb1',
+        mountpoint: '/data',
+        fstype: 'ext4',
+        sizeBytes: 2000,
+        availBytes: 500,
+      },
     ];
     const result = aggregateNodeCapacity(samples);
     const n1 = result.get('n1')!;
@@ -88,8 +142,22 @@ describe('aggregateNodeCapacity', () => {
 
   it('keeps nodes independent', () => {
     const samples = [
-      { node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4', sizeBytes: 1000, availBytes: 300 },
-      { node: 'n2', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4', sizeBytes: 5000, availBytes: 1000 },
+      {
+        node: 'n1',
+        device: '/dev/sda1',
+        mountpoint: '/',
+        fstype: 'ext4',
+        sizeBytes: 1000,
+        availBytes: 300,
+      },
+      {
+        node: 'n2',
+        device: '/dev/sda1',
+        mountpoint: '/',
+        fstype: 'ext4',
+        sizeBytes: 5000,
+        availBytes: 1000,
+      },
     ];
     const result = aggregateNodeCapacity(samples);
     expect(result.get('n1')!.totalBytes).toBe(1000);
@@ -98,8 +166,22 @@ describe('aggregateNodeCapacity', () => {
 
   it('computes per-filesystem used bytes and percentage, sorted by mountpoint', () => {
     const samples = [
-      { node: 'n1', device: '/dev/sdb1', mountpoint: '/data', fstype: 'ext4', sizeBytes: 2000, availBytes: 500 },
-      { node: 'n1', device: '/dev/sda1', mountpoint: '/', fstype: 'ext4', sizeBytes: 1000, availBytes: 300 },
+      {
+        node: 'n1',
+        device: '/dev/sdb1',
+        mountpoint: '/data',
+        fstype: 'ext4',
+        sizeBytes: 2000,
+        availBytes: 500,
+      },
+      {
+        node: 'n1',
+        device: '/dev/sda1',
+        mountpoint: '/',
+        fstype: 'ext4',
+        sizeBytes: 1000,
+        availBytes: 300,
+      },
     ];
     const result = aggregateNodeCapacity(samples);
     const [root, data] = result.get('n1')!.filesystems;
@@ -108,6 +190,60 @@ describe('aggregateNodeCapacity', () => {
     expect(root.percentUsed).toBeCloseTo(70);
     expect(data.mountpoint).toBe('/data');
     expect(data.usedBytes).toBe(1500);
+  });
+});
+
+describe('aggregateNodeCapacity on macOS (APFS)', () => {
+  const fs = (
+    device: string,
+    mountpoint: string,
+    size: number,
+    avail: number,
+    readOnly = false
+  ) => ({
+    node: 'mac',
+    device,
+    mountpoint,
+    fstype: 'apfs',
+    sizeBytes: size,
+    availBytes: avail,
+    readOnly,
+  });
+
+  it('counts each container once and skips read-only disk images', () => {
+    const G = 1e9;
+    const samples = [
+      fs('/dev/disk3s1s1', '/', 494.4 * G, 92.7 * G, true),
+      fs('/dev/disk3s2', '/System/Volumes/Preboot', 494.4 * G, 91.1 * G),
+      fs('/dev/disk3s4', '/System/Volumes/Update', 494.4 * G, 91.1 * G),
+      fs('/dev/disk3s5', '/System/Volumes/Data', 494.4 * G, 91.1 * G),
+      fs('/dev/disk3s6', '/System/Volumes/VM', 494.4 * G, 91.1 * G),
+      fs('/dev/disk1s1', '/System/Volumes/iSCPreboot', 0.5 * G, 0.5 * G),
+      fs('/dev/disk1s2', '/System/Volumes/xarts', 0.5 * G, 0.5 * G),
+      fs('/dev/disk1s3', '/System/Volumes/Hardware', 0.5 * G, 0.5 * G),
+      fs('/dev/disk7s1', '/Library/Developer/CoreSimulator/a', 8.7 * G, 1 * G, true),
+      fs('/dev/disk9s1', '/Library/Developer/CoreSimulator/b', 18.1 * G, 1 * G, true),
+      fs('/dev/disk13s1', '/System/Volumes/Cryptexes', 2.3 * G, 1 * G, true),
+    ];
+    const mac = aggregateNodeCapacity(samples).get('mac')!;
+    expect(mac.totalBytes).toBeCloseTo(494.9 * G, -3);
+    expect(mac.availBytes).toBeCloseTo(93.2 * G, -3);
+    expect(mac.filesystems).toHaveLength(samples.length);
+  });
+
+  it('never skips a read-only non-APFS filesystem', () => {
+    const samples = [
+      {
+        node: 'n1',
+        device: '/dev/sda1',
+        mountpoint: '/',
+        fstype: 'ext4',
+        sizeBytes: 1000,
+        availBytes: 200,
+        readOnly: true,
+      },
+    ];
+    expect(aggregateNodeCapacity(samples).get('n1')!.totalBytes).toBe(1000);
   });
 });
 

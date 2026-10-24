@@ -6,7 +6,9 @@
  *
  * The dedupe-by-device logic below exists because a single physical/logical
  * device can be bind-mounted at more than one mountpoint; counting every
- * mountpoint would double-count its capacity.
+ * mountpoint would double-count its capacity. APFS volumes each report the
+ * whole container, so on APFS the key is the container (/dev/diskN) and
+ * containers whose volumes are all read-only (mounted disk images) are skipped.
  */
 import { MetricSample, numberFromValue, queryMetrics } from './metrics';
 
@@ -21,6 +23,8 @@ export interface FsSample {
   fstype: string;
   sizeBytes: number;
   availBytes: number;
+  /** node_filesystem_readonly; false when the series is missing. */
+  readOnly?: boolean;
 }
 
 /** One row of the per-filesystem breakdown table. */
@@ -52,11 +56,16 @@ export function isCountableFstype(fstype: string): boolean {
  * applied in PromQL too (belt-and-braces with isCountableFstype, which
  * exists so the exclusion logic itself is unit-testable).
  */
-export function capacityQueries(): { sizeQuery: string; availQuery: string } {
+export function capacityQueries(): {
+  sizeQuery: string;
+  availQuery: string;
+  readOnlyQuery: string;
+} {
   const sel = `{fstype!~"${EXCLUDED_FSTYPES}"}`;
   return {
     sizeQuery: `max by (node, device, mountpoint, fstype) (node_filesystem_size_bytes${sel})`,
     availQuery: `max by (node, device, mountpoint, fstype) (node_filesystem_avail_bytes${sel})`,
+    readOnlyQuery: `max by (node, device, mountpoint, fstype) (node_filesystem_readonly${sel})`,
   };
 }
 
@@ -65,7 +74,11 @@ function sampleKey(labels: Record<string, string>): string {
 }
 
 /** Merges the raw size/avail samples into one FsSample per (node, device, mountpoint). */
-export function mergeFsSamples(sizeSamples: MetricSample[], availSamples: MetricSample[]): FsSample[] {
+export function mergeFsSamples(
+  sizeSamples: MetricSample[],
+  availSamples: MetricSample[],
+  readOnlySamples: MetricSample[] = []
+): FsSample[] {
   const byKey = new Map<string, FsSample>();
 
   for (const sample of sizeSamples) {
@@ -77,7 +90,15 @@ export function mergeFsSamples(sizeSamples: MetricSample[], availSamples: Metric
     if (sizeBytes === undefined) {
       continue;
     }
-    byKey.set(sampleKey(sample.metric), { node, device, mountpoint, fstype, sizeBytes, availBytes: 0 });
+    byKey.set(sampleKey(sample.metric), {
+      node,
+      device,
+      mountpoint,
+      fstype,
+      sizeBytes,
+      availBytes: 0,
+      readOnly: false,
+    });
   }
 
   for (const sample of availSamples) {
@@ -88,13 +109,21 @@ export function mergeFsSamples(sizeSamples: MetricSample[], availSamples: Metric
     existing.availBytes = numberFromValue(sample) ?? 0;
   }
 
+  for (const sample of readOnlySamples) {
+    const existing = byKey.get(sampleKey(sample.metric));
+    if (existing) {
+      existing.readOnly = numberFromValue(sample) === 1;
+    }
+  }
+
   return Array.from(byKey.values());
 }
 
 /**
  * Aggregates raw filesystem samples into one NodeCapacity per node:
- * - total = sum over distinct devices of max(size) for that device
- * - avail = sum over distinct devices of max(avail) for that device
+ * - total = sum over distinct devices (APFS: containers) of max(size) for that key
+ * - avail = sum over distinct devices (APFS: containers) of max(avail) for that key
+ * - APFS containers with only read-only volumes (mounted disk images) are skipped
  * - used  = total - avail
  * plus the full (non-deduped) per-filesystem breakdown, sorted by mountpoint.
  */
@@ -108,19 +137,29 @@ export function aggregateNodeCapacity(samples: FsSample[]): Map<string, NodeCapa
 
   const result = new Map<string, NodeCapacity>();
   for (const [node, nodeSamples] of byNode) {
-    const maxByDevice = new Map<string, { size: number; avail: number }>();
+    const maxByDevice = new Map<string, { size: number; avail: number; skip: boolean }>();
     for (const s of nodeSamples) {
-      const existing = maxByDevice.get(s.device);
+      const key =
+        s.fstype === 'apfs' ? s.device.match(/^(\/dev\/disk\d+)s\d+/)?.[1] ?? s.device : s.device;
+      const existing = maxByDevice.get(key);
       if (!existing) {
-        maxByDevice.set(s.device, { size: s.sizeBytes, avail: s.availBytes });
+        maxByDevice.set(key, {
+          size: s.sizeBytes,
+          avail: s.availBytes,
+          skip: s.fstype === 'apfs' && !!s.readOnly,
+        });
       } else {
+        existing.skip = existing.skip && !!s.readOnly;
         existing.size = Math.max(existing.size, s.sizeBytes);
         existing.avail = Math.max(existing.avail, s.availBytes);
       }
     }
     let totalBytes = 0;
     let availBytes = 0;
-    for (const { size, avail } of maxByDevice.values()) {
+    for (const { size, avail, skip } of maxByDevice.values()) {
+      if (skip) {
+        continue;
+      }
       totalBytes += size;
       availBytes += avail;
     }
@@ -144,11 +183,15 @@ export function aggregateNodeCapacity(samples: FsSample[]): Map<string, NodeCapa
   return result;
 }
 
-/** Fetches and aggregates node disk-capacity figures for every node, in one batch of two queries. */
+/** Fetches and aggregates node disk-capacity figures for every node, in one batch of three queries. */
 export async function fetchNodeCapacity(): Promise<Map<string, NodeCapacity>> {
-  const { sizeQuery, availQuery } = capacityQueries();
-  const [sizeSamples, availSamples] = await Promise.all([queryMetrics(sizeQuery), queryMetrics(availQuery)]);
-  return aggregateNodeCapacity(mergeFsSamples(sizeSamples, availSamples));
+  const { sizeQuery, availQuery, readOnlyQuery } = capacityQueries();
+  const [sizeSamples, availSamples, readOnlySamples] = await Promise.all([
+    queryMetrics(sizeQuery),
+    queryMetrics(availQuery),
+    queryMetrics(readOnlyQuery),
+  ]);
+  return aggregateNodeCapacity(mergeFsSamples(sizeSamples, availSamples, readOnlySamples));
 }
 
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
