@@ -51,7 +51,9 @@ Disk-capacity figures come from the host filesystem collector's
 `src/capacity.ts`). Pseudo and network filesystems (`tmpfs`, `overlay`,
 `squashfs`, `nsfs`, `ramfs`, `devtmpfs`, `fuse.*`, `nfs*`, `cifs`) are
 excluded, and figures are deduped by `(node, device)` so a device that is
-bind-mounted at more than one mountpoint is only counted once. The Nodes
+bind-mounted at more than one mountpoint is only counted once (on macOS,
+APFS volumes are deduped per container and read-only disk-image containers
+are skipped). The Nodes
 list column polls once for the whole table (not once per row) and refreshes
 every 60 seconds.
 
