@@ -25,7 +25,19 @@ export interface MetricSample {
  * /api/v1/namespaces/<ns>/services/<name>:<port>/proxy/... path the
  * bundled Prometheus plugin uses for its own Service-backed queries.
  */
-export async function queryMetrics(promql: string): Promise<MetricSample[]> {
+export function queryMetrics(promql: string): Promise<MetricSample[]> {
+  // Callers asking for the same query while one is in flight share its request.
+  let pending = inFlight.get(promql);
+  if (!pending) {
+    pending = fetchQuery(promql).finally(() => inFlight.delete(promql));
+    inFlight.set(promql, pending);
+  }
+  return pending;
+}
+
+const inFlight = new Map<string, Promise<MetricSample[]>>();
+
+async function fetchQuery(promql: string): Promise<MetricSample[]> {
   const params = new URLSearchParams({ query: promql });
   const url =
     `/api/v1/namespaces/${VM_NAMESPACE}/services/${VM_SERVICE}:${VM_PORT}` +
