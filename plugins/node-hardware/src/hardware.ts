@@ -21,6 +21,7 @@ export const QUERIES = {
   dramW: 'sum by (node) (rate(node_rapl_dram_joules_total[5m]))',
   macPower: '{__name__=~"node_mac_power_.+"}',
   battery: '{__name__=~"node_mac_battery_.+"}',
+  thermalPressure: 'node_mac_thermal_pressure_level',
   gpuW: 'sum by (node) (node_hwmon_power_average_watt * on (node, chip) group_left (chip_name) node_hwmon_chip_names{chip_name=~"amdgpu|nouveau|i915|xe"})',
 };
 
@@ -214,15 +215,43 @@ export function batterySeverity(b: Battery): Severity {
   return h !== undefined && h < 80 ? 'warn' : 'ok';
 }
 
+const THERMAL_PRESSURE_NAMES = ['Nominal', 'Moderate', 'Heavy', 'Trapping', 'Sleeping'];
+
+/** Display name for a macOS thermal pressure level (0 nominal .. 4 sleeping). */
+export function thermalPressureName(level: number): string {
+  return THERMAL_PRESSURE_NAMES[level] ?? `Unknown (${level})`;
+}
+
+/** Parses node_mac_thermal_pressure_level into one level per node. */
+export function buildThermalPressure(samples: MetricSample[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const s of samples) {
+    const v = numberFromValue(s);
+    if (v !== undefined && s.metric.node) {
+      result.set(s.metric.node, v);
+    }
+  }
+  return result;
+}
+
+/** Green when nominal, amber when moderate, red from heavy upwards (macOS is throttling). */
+export function thermalSeverity(level: number): Severity {
+  if (level >= 2) {
+    return 'crit';
+  }
+  return level >= 1 ? 'warn' : 'ok';
+}
+
 export interface Hardware {
   sensors: TempSensor[];
   power: Map<string, NodePower>;
   batteries: Map<string, Battery>;
+  thermalPressure: Map<string, number>;
 }
 
 export async function fetchHardware(): Promise<Hardware> {
-  const [temps, labels, chipNames, maxes, crits, packageW, dramW, gpuW, macPower, battery] = await Promise.all(
-    [QUERIES.temp, QUERIES.label, QUERIES.chipNames, QUERIES.max, QUERIES.crit, QUERIES.packageW, QUERIES.dramW, QUERIES.gpuW, QUERIES.macPower, QUERIES.battery].map(
+  const [temps, labels, chipNames, maxes, crits, packageW, dramW, gpuW, macPower, battery, thermal] = await Promise.all(
+    [QUERIES.temp, QUERIES.label, QUERIES.chipNames, QUERIES.max, QUERIES.crit, QUERIES.packageW, QUERIES.dramW, QUERIES.gpuW, QUERIES.macPower, QUERIES.battery, QUERIES.thermalPressure].map(
       queryMetrics,
     ),
   );
@@ -230,5 +259,6 @@ export async function fetchHardware(): Promise<Hardware> {
     sensors: buildSensors(temps, labels, chipNames, maxes, crits),
     power: buildPower(packageW, dramW, gpuW, macPower),
     batteries: buildBatteries(battery),
+    thermalPressure: buildThermalPressure(thermal),
   };
 }

@@ -15,7 +15,7 @@ export interface HardwareSnapshot extends Hardware {
   error: string | null;
 }
 
-const empty = (): HardwareSnapshot => ({ sensors: [], power: new Map(), batteries: new Map(), loading: true, error: null });
+const empty = (): HardwareSnapshot => ({ sensors: [], power: new Map(), batteries: new Map(), thermalPressure: new Map(), loading: true, error: null });
 
 let snapshot: HardwareSnapshot = empty();
 const listeners = new Set<() => void>();
