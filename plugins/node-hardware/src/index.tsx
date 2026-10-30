@@ -16,7 +16,7 @@ import TableRow from '@mui/material/TableRow';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Battery, batteryHealthPct, batterySeverity, columnPower, pickCpuTemps, Severity, tempSeverity } from './hardware';
+import { Battery, batteryHealthPct, batterySeverity, columnPower, pickCpuTemps, Severity, tempSeverity, thermalPressureName, thermalSeverity } from './hardware';
 import { getHardwareSnapshot, startHardwarePolling, useHardware } from './hardwareStore';
 
 const SEVERITY_COLOUR: Record<Severity, string | undefined> = {
@@ -137,7 +137,7 @@ function BatteryTable({ b }: { b: Battery }): JSX.Element {
 }
 
 function HardwareSection({ nodeName }: { nodeName: string }): JSX.Element {
-  const { sensors, power, batteries, loading, error } = useHardware();
+  const { sensors, power, batteries, thermalPressure, loading, error } = useHardware();
 
   if (loading) {
     return <CircularProgress size={24} />;
@@ -152,7 +152,8 @@ function HardwareSection({ nodeName }: { nodeName: string }): JSX.Element {
   const mine = sensors.filter(s => s.node === nodeName);
   const p = power.get(nodeName);
   const b = batteries.get(nodeName);
-  if (mine.length === 0 && !p && !b) {
+  const thermal = thermalPressure.get(nodeName);
+  if (mine.length === 0 && !p && !b && thermal === undefined) {
     return (
       <Alert severity="info">
         No hardware sensor metrics found for node {nodeName} yet. Check that the node exporter hwmon
@@ -222,6 +223,14 @@ function HardwareSection({ nodeName }: { nodeName: string }): JSX.Element {
             <TableRow>
               <TableCell>ANE</TableCell>
               <TableCell align="right">{fmtW(p.aneW)}</TableCell>
+            </TableRow>
+          )}
+          {thermal !== undefined && (
+            <TableRow>
+              <TableCell>Thermal pressure</TableCell>
+              <TableCell align="right" sx={{ color: SEVERITY_COLOUR[thermalSeverity(thermal)] }}>
+                {thermalPressureName(thermal)}
+              </TableCell>
             </TableRow>
           )}
         </TableBody>

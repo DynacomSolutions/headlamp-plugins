@@ -45,6 +45,8 @@ queries, joined in code:
 - Mac battery: `{__name__=~"node_mac_battery_.+"}` (cycle count, design cycle
   count, design / max / current capacity in mAh, temperature, voltage, signed
   current, and the 0/1 flags external connected, charging, permanent failure).
+- Mac thermal pressure: `node_mac_thermal_pressure_level` (macOS's own throttling
+  signal: 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping).
 
 The RAPL series may not exist in your cluster yet (they need the node-exporter
 `rapl` collector and readable energy counters); the plugin then shows "-".
@@ -62,6 +64,9 @@ cluster's Mac node provisioning, not of this plugin. For such a node:
   for the node: health (max / design capacity, amber below 80 %, red below
   60 % or on permanent failure), cycles, charge, temperature, voltage,
   current, power source, charging and permanent failure.
+- A "Thermal pressure" row (Nominal, Moderate, Heavy, Trapping or Sleeping)
+  appears in the power table only when the series exists for the node: green
+  when nominal, amber when moderate, red from heavy upwards.
 
 No extra RBAC is needed beyond Services proxy access, which the built-in
 `view` ClusterRole grants.

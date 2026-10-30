@@ -4,8 +4,11 @@ import {
   buildBatteries,
   buildPower,
   buildSensors,
+  buildThermalPressure,
   columnPower, pickCpuTemps,
   tempSeverity,
+  thermalPressureName,
+  thermalSeverity,
   totalPowerW,
 } from './hardware';
 import type { MetricSample } from './metrics';
@@ -107,6 +110,23 @@ describe('buildBatteries / batterySeverity', () => {
   });
   it('is ok when capacities are unknown', () => {
     expect(batterySeverity({})).toBe('ok');
+  });
+});
+
+describe('thermal pressure', () => {
+  it('parses one level per node and skips samples without a node', () => {
+    const levels = buildThermalPressure([
+      mac('node_mac_thermal_pressure_level', 2),
+      sample({ __name__: 'node_mac_thermal_pressure_level' }, 1),
+    ]);
+    expect([...levels]).toEqual([['mac-1', 2]]);
+  });
+  it('is ok at 0, amber at 1, red from 2', () => {
+    expect([0, 1, 2, 3, 4].map(thermalSeverity)).toEqual(['ok', 'warn', 'crit', 'crit', 'crit']);
+  });
+  it('names the levels', () => {
+    expect([0, 1, 2, 3, 4].map(thermalPressureName)).toEqual(['Nominal', 'Moderate', 'Heavy', 'Trapping', 'Sleeping']);
+    expect(thermalPressureName(9)).toBe('Unknown (9)');
   });
 });
 
