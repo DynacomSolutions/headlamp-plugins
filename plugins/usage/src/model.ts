@@ -100,8 +100,9 @@ export function coverageCaption(c: Coverage): string | null {
   if (!c.partial) {
     return null;
   }
-  const days = Math.round((c.coveredSeconds / 86400) * 10) / 10;
-  return `Recorded data starts ${ICT.format(new Date(c.startSec * 1000))} ICT, so this view covers ${days} ${days === 1 ? 'day' : 'days'}`;
+  const hours = Math.max(1, Math.round(c.coveredSeconds / 3600));
+  const span = hours < 48 ? `${hours} ${hours === 1 ? 'hour' : 'hours'}` : `${Math.floor(hours / 24)} days`;
+  return `Recorded data starts ${ICT.format(new Date(c.startSec * 1000))} ICT, so this view covers ${span}`;
 }
 
 /**

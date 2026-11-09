@@ -284,11 +284,21 @@ describe('coverage of recorded data', () => {
     expect(c.coveredSeconds).toBe(3 * day);
     expect(coverageCaption(c)).toMatch(/^Recorded data starts \d{2} \w{3} \d{4}, \d{2}:\d{2} ICT, so this view covers 3 days$/);
   });
-  it('writes the start in ICT (UTC+7) and a singular day', () => {
+  it('writes the start in ICT (UTC+7) and hours below 48h', () => {
     // 2026-11-09 17:00 UTC is 2026-11-10 00:00 ICT.
     const start = Date.UTC(2026, 10, 9, 17, 0) / 1000;
     const c = coverageFor(start + 3600, start + 86400, start + 86400 + 100, 30 * day);
-    expect(coverageCaption(c)).toBe('Recorded data starts 10 Nov 2026, 00:00 ICT, so this view covers 1 day');
+    expect(coverageCaption(c)).toBe('Recorded data starts 10 Nov 2026, 00:00 ICT, so this view covers 24 hours');
+  });
+  it.each([
+    [3600, '1 hour'],
+    [5 * 3600, '5 hours'],
+    [47 * 3600, '47 hours'],
+    [48 * 3600, '2 days'],
+    [3 * 86400, '3 days'],
+  ])('words %i covered seconds as %s', (coveredSeconds, span) => {
+    const c = { startSec: now - coveredSeconds, coveredSeconds, partial: true };
+    expect(coverageCaption(c)).toMatch(new RegExp(`so this view covers ${span}$`));
   });
   it('never reports less than an hour of coverage', () => {
     expect(coverageFor(now, now, now, 7 * day).coveredSeconds).toBe(3600);
