@@ -137,20 +137,22 @@ export async function applyLimits(s: Settings, u: LimitUpdate): Promise<any> {
   });
 }
 
-export interface CloseRequest {
-  unit: string;
+export interface DefaultsUpdate {
+  changes: Partial<Record<'memoryHigh' | 'memoryMax', string>>;
   force: boolean;
   reason: string;
 }
 
 /**
- * Stops a pane scope through the backend (systemd StopUnit: SIGTERM, then
- * SIGKILL after the stop timeout). Same authorisation path as applyLimits.
+ * Changes the per-agent default (50-agent-cap.conf, then daemon-reload on the
+ * host). Same authorisation path as applyLimits.
  */
-export async function closeUnit(s: Settings, r: CloseRequest): Promise<any> {
-  return ApiProxy.request(backendUrl(s.backend, '/api/units/stop'), {
+export async function applyDefaults(s: Settings, u: DefaultsUpdate): Promise<any> {
+  const body: Record<string, unknown> = { ...u.changes, force: u.force };
+  if (u.reason.trim()) body.reason = u.reason.trim();
+  return ApiProxy.request(backendUrl(s.backend, '/api/defaults'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Agent-Memory-Write': '1' },
-    body: JSON.stringify({ unit: r.unit, force: r.force, reason: r.reason.trim() }),
+    body: JSON.stringify(body),
   });
 }

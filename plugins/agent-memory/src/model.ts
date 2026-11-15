@@ -35,16 +35,18 @@ export interface PressureWindow {
 /** A byte quantity; null means unlimited ("max" / infinity). */
 export type Limit = number | null;
 
-/** What Herdr knows about the live pane behind a scope. */
-export interface HerdrInfo {
-  paneId: string;
-  workspace?: string;
-  tab?: string;
-  title?: string;
-  agent?: string;
-  agentSession?: string;
-  agentStatus?: string;
+/** The T3 Code agent session in a t3code-<provider>-<id>.scope. */
+export interface AgentInfo {
+  provider: string;
+  id: string;
+  /** T3CODE_THREAD_ID: the T3 thread the session belongs to. */
+  threadId?: string;
+  /** The agent CLI session (claude --resume=<id> or --session-id=<id>). */
+  sessionId?: string;
+  /** true when the session was resumed (--resume). */
+  resumed?: boolean;
   cwd?: string;
+  pid?: number;
 }
 
 /** One process in a scope's tree. */
@@ -94,15 +96,11 @@ export interface MemUnit {
   topRss?: number;
   /** The scope's process tree; absent for slices and for backends that predate it. */
   processes?: ProcTree;
-  /** Pane id from the environment of a process in the scope. */
-  paneId?: string;
-  leaderPid?: number;
-  leaderAlive?: boolean;
-  /** true: the pane is gone; false: it is live; null: unknown (for example Herdr unreachable). */
-  orphaned: boolean | null;
-  orphanReason?: string;
-  herdr?: HerdrInfo;
-  /** Human-friendly label; equals the unit name when Herdr has nothing better. */
+  /** memory.peak: the highest usage seen since the cgroup was created. */
+  peak?: number;
+  /** The T3 agent behind an agent scope; absent for slices. */
+  agent?: AgentInfo;
+  /** Human-friendly label ("claude · .cluster · 32a684cb"); the unit name for slices. */
   displayName: string;
 }
 
@@ -118,7 +116,7 @@ export interface AgentWarning {
   time: string;
   unit: string;
   displayName: string;
-  paneId: string;
+  threadId: string;
   agent: string;
   /** Limit types reached: hard-limit, oom-kill, stall (or test). */
   types: string[];
@@ -147,14 +145,43 @@ export interface AgentMemoryState {
   policy: { heavyHigh: string; heavyMax: string; heavySwap: string; keepFree: number };
   minLimit: number;
   protected: string[];
-  /** Scopes directly under this slice are the panes and may be closed. */
-  panesSlice: string;
-  herdr: { enabled: boolean; up: boolean; error?: string; panes: number };
+  /** The host-level slice of every T3 agent; its limits are persisted. */
+  agentSlice: string;
+  t3: { agentSlice: string; agents: number };
+  /** The per-agent default drop-in; null when the backend has no editor for it. */
+  agentDefault: AgentDefault | null;
+  /** Limits set on single agents from this page: unit to property to value. */
+  overrides: Record<string, Record<string, string>>;
+  /** The node's pods by QoS class; null when the backend does not read them. */
+  pods: PodMemory | null;
   units: MemUnit[];
   alerts: MemAlert[];
   /** Agent warnings from the last 24 hours, newest first. */
   warnings: AgentWarning[];
   warningPolicy: WarningPolicy;
+}
+
+/** 50-agent-cap.conf: the default cap of every agent. undefined: not set; null: infinity. */
+export interface AgentDefault {
+  file: string;
+  memoryHigh?: Limit;
+  memoryMax?: Limit;
+  error?: string;
+}
+
+export interface PodClass {
+  class: 'guaranteed' | 'burstable' | 'besteffort' | string;
+  pods: number;
+  current: number;
+  anon: number;
+  file: number;
+}
+
+export interface PodMemory {
+  current: number;
+  max: Limit;
+  classes: PodClass[];
+  error?: string;
 }
 
 export interface ChangeRecord {
@@ -167,12 +194,10 @@ export interface ChangeRecord {
   old: Record<string, string>;
   new: Record<string, string>;
   error?: string;
-  /** "stop" for a closed scope; absent for a limit change. */
+  /** "default" for a change of the per-agent default; absent for a limit change. */
   action?: string;
   displayName?: string;
   force?: boolean;
-  killed?: { pid: number; command: string; rss: number }[];
-  killedTotal?: number;
 }
 
 /* ---------- settings ---------- */
@@ -330,6 +355,8 @@ export interface EditContext {
   minLimit: number;
   hostTotal: number;
   protectedUnits: string[];
+  /** The only editable slice; empty allows any. */
+  agentSlice?: string;
 }
 
 /** Mirrors the backend rules so the dialog can explain a problem before sending. */
@@ -362,6 +389,8 @@ export function checkEdit(
   }
   if (persist && unit.kind !== 'slice')
     errors.push('Only slices can be persisted; scopes are transient.');
+  if (unit.kind === 'slice' && ctx.agentSlice && unit.name !== ctx.agentSlice)
+    errors.push(`Only ${ctx.agentSlice} and the agents can be edited; ${unit.name} belongs to T3.`);
   if (ctx.protectedUnits.includes(unit.name)) {
     for (const f of ['memoryHigh', 'memoryMax', 'memorySwapMax'] as EditField[]) {
       if (parsed[f] !== undefined && parsed[f] !== null) {
@@ -410,6 +439,59 @@ export function checkEdit(
   }
   const newMax = parsed.memoryMax;
   const belowCurrent = typeof newMax === 'number' && newMax < unit.current;
+  return { changes, errors, belowCurrent };
+}
+
+export type DefaultField = 'memoryHigh' | 'memoryMax';
+export type DefaultForm = Partial<Record<DefaultField, string>>;
+
+/**
+ * Mirrors the backend's rules for POST /api/defaults. belowCurrent lists the
+ * running agents (without their own limit) whose usage is above the new hard
+ * limit: the daemon-reload applies the default to them too.
+ */
+export function checkDefaults(
+  current: AgentDefault,
+  form: DefaultForm,
+  ctx: Pick<EditContext, 'minLimit' | 'hostTotal'>,
+  agents: MemUnit[],
+  overrides: Record<string, Record<string, string>>
+): { changes: DefaultForm; errors: string[]; belowCurrent: MemUnit[] } {
+  const errors: string[] = [];
+  const parsed: Partial<Record<DefaultField, Limit>> = {};
+  const changes: DefaultForm = {};
+  for (const f of ['memoryHigh', 'memoryMax'] as DefaultField[]) {
+    const raw = form[f];
+    if (raw === undefined) continue;
+    const v = parseSize(raw);
+    if (v === undefined) {
+      errors.push(`${FIELD_LABELS[f]}: "${raw}" is not a size (use for example 64G or infinity)`);
+      continue;
+    }
+    if (v === current[f]) continue;
+    if (typeof v === 'number' && v < ctx.minLimit)
+      errors.push(`${FIELD_LABELS[f]} must be at least ${formatSize(ctx.minLimit)}.`);
+    if (typeof v === 'number' && ctx.hostTotal > 0 && v > ctx.hostTotal)
+      errors.push(`${FIELD_LABELS[f]} exceeds the host memory (${formatSize(ctx.hostTotal)}).`);
+    parsed[f] = v;
+    changes[f] = raw.trim();
+  }
+  if (errors.length) return { changes, errors, belowCurrent: [] };
+  if (Object.keys(parsed).length === 0)
+    return { changes, errors: ['Nothing has changed.'], belowCurrent: [] };
+  const eff = (f: DefaultField): Limit =>
+    f in parsed ? (parsed[f] as Limit) : current[f] === undefined ? null : (current[f] as Limit);
+  const high = eff('memoryHigh');
+  const max = eff('memoryMax');
+  if (max !== null && (high === null || high > max))
+    errors.push(
+      `The soft limit (${formatSize(high)}) must not exceed the hard limit (${formatSize(max)}).`
+    );
+  const newMax = parsed.memoryMax;
+  const belowCurrent =
+    typeof newMax === 'number'
+      ? agents.filter(u => !overrides[u.name]?.MemoryMax && u.current > newMax)
+      : [];
   return { changes, errors, belowCurrent };
 }
 
@@ -468,14 +550,12 @@ export function worstSeverity(alerts: MemAlert[] | undefined): 'critical' | 'war
   return alerts.some(a => a.severity === 'critical') ? 'critical' : 'warning';
 }
 
-/** "pane-12.scope" style names are long; show the part a person recognises. */
+/** "t3code-claude-9e2d894e.scope" style names are long; show the part a person recognises. */
 export function shortName(name: string): string {
-  return name
-    .replace(/^[a-z0-9]+-workload-native-/, 'pane ')
-    .replace(/\.(scope|slice|service)$/, '');
+  return name.replace(/^t3code-([a-z0-9]+)-/, '$1 ').replace(/\.(scope|slice|service)$/, '');
 }
 
-/** The primary row label: the Herdr chat name when known, else the short scope name. */
+/** The primary row label: provider, cwd and session when known, else the short unit name. */
 export function unitLabel(u: Pick<MemUnit, 'name' | 'displayName'>): string {
   return u.displayName && u.displayName !== u.name ? u.displayName : shortName(u.name);
 }
@@ -486,63 +566,54 @@ export function changeLabel(c: Pick<ChangeRecord, 'unit' | 'displayName'>): stri
   return d && d !== c.unit ? d : shortName(c.unit);
 }
 
-/** Secondary text under the label: tab, agent and its status. */
+/** Secondary text under the label: session (resumed or new), T3 thread and agent pid. */
 export function unitDetail(u: MemUnit): string {
-  const h = u.herdr;
-  if (!h) return '';
-  const agent = h.agent ? `${h.agent}${h.agentStatus ? ` ${h.agentStatus}` : ''}` : '';
-  return [h.tab && h.tab !== h.title ? `tab ${h.tab}` : '', agent].filter(Boolean).join(' · ');
+  const a = u.agent;
+  if (!a) return '';
+  return [
+    a.sessionId ? `${a.resumed ? 'resumed' : 'session'} ${a.sessionId}` : '',
+    a.threadId ? `thread ${a.threadId}` : '',
+    a.pid ? `pid ${a.pid}` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
-/** Everything a person might type to find a row: label, names, scope, command. */
+/** Everything a person might type to find a row: label, names, session, cwd, command. */
 export function matchesFilter(u: MemUnit, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const h = u.herdr;
+  const a = u.agent;
   return [
     u.name,
     u.displayName,
     u.command,
     u.topProcess,
     ...processCommands(u.processes),
-    h?.workspace,
-    h?.tab,
-    h?.title,
-    h?.agent,
-    h?.cwd,
-    h?.paneId,
-    u.paneId,
-    u.orphaned ? 'orphaned' : '',
+    a?.provider,
+    a?.sessionId,
+    a?.threadId,
+    a?.cwd,
   ].some(v => (v ?? '').toLowerCase().includes(q));
 }
 
-export function isOrphan(u: MemUnit): boolean {
-  return u.orphaned === true;
+export function isAgent(u: MemUnit): boolean {
+  return u.kind === 'scope' && !!u.agent;
 }
 
-/** Applies the search and the orphans-only filter, and moves orphans to the top (stable otherwise). */
-export function arrangeRows(units: MemUnit[], query: string, orphansOnly: boolean): MemUnit[] {
-  const kept = units.filter(u => (!orphansOnly || isOrphan(u)) && matchesFilter(u, query));
-  return [...kept.filter(isOrphan), ...kept.filter(u => !isOrphan(u))];
+/** Applies the search; the order is the backend's (parents before children). */
+export function arrangeRows(units: MemUnit[], query: string): MemUnit[] {
+  return units.filter(u => matchesFilter(u, query));
 }
 
-/** A scope under the panes slice, other than a protected one, can be closed. */
-export function canClose(
+/** Whether the page can edit this unit: the agents slice (persisted) or an agent scope (live). */
+export function canEdit(
   u: MemUnit,
-  state: Pick<AgentMemoryState, 'panesSlice' | 'protected'>
+  state: Pick<AgentMemoryState, 'agentSlice' | 'writable'>
 ): boolean {
-  return (
-    u.kind === 'scope' &&
-    state.panesSlice !== '' &&
-    u.parent === state.panesSlice &&
-    !state.protected.includes(u.name) &&
-    !state.protected.includes(u.parent)
-  );
-}
-
-/** A live (or unconfirmed) pane needs the stronger confirmation and force=true. */
-export function closeNeedsForce(u: MemUnit): boolean {
-  return u.orphaned !== true;
+  if (!state.writable) return false;
+  if (u.kind === 'scope') return true;
+  return u.kind === 'slice' && (!state.agentSlice || u.name === state.agentSlice);
 }
 
 const MAX_TEXT = 120;
@@ -649,12 +720,59 @@ export function visibleProcesses(t: ProcTree, collapsed: ReadonlySet<number>): T
   return out;
 }
 
-function cleanHerdr(h: any): HerdrInfo | undefined {
-  if (!h || typeof h !== 'object') return undefined;
-  const o: any = { paneId: cleanText(h.paneId) };
-  for (const k of ['workspace', 'tab', 'title', 'agent', 'agentSession', 'agentStatus', 'cwd'])
-    if (h[k] !== undefined) o[k] = cleanText(h[k]);
-  return o as HerdrInfo;
+function cleanAgent(a: any): AgentInfo | undefined {
+  if (!a || typeof a !== 'object') return undefined;
+  const o: AgentInfo = { provider: cleanText(a.provider), id: cleanText(a.id) };
+  if (a.threadId !== undefined) o.threadId = cleanText(a.threadId);
+  if (a.sessionId !== undefined) o.sessionId = cleanText(a.sessionId);
+  if (a.cwd !== undefined) o.cwd = cleanText(a.cwd, 300);
+  if (a.resumed !== undefined) o.resumed = Boolean(a.resumed);
+  if (a.pid !== undefined) o.pid = num(a.pid);
+  return o;
+}
+
+function limitOrUndefined(v: unknown): Limit | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function parseDefault(d: any): AgentDefault | null {
+  if (!d || typeof d !== 'object') return null;
+  const out: AgentDefault = { file: cleanText(d.file, 300) };
+  if ('memoryHigh' in d) out.memoryHigh = limitOrUndefined(d.memoryHigh);
+  if ('memoryMax' in d) out.memoryMax = limitOrUndefined(d.memoryMax);
+  if (d.error) out.error = cleanText(d.error, 300);
+  return out;
+}
+
+function parsePods(p: any): PodMemory | null {
+  if (!p || typeof p !== 'object') return null;
+  return {
+    current: num(p.current),
+    max: p.max === null || p.max === undefined ? null : num(p.max),
+    classes: (Array.isArray(p.classes) ? p.classes : []).map((c: any) => ({
+      class: cleanText(c?.class),
+      pods: num(c?.pods),
+      current: num(c?.current),
+      anon: num(c?.anon),
+      file: num(c?.file),
+    })),
+    error: p.error ? cleanText(p.error) : undefined,
+  };
+}
+
+function parseOverrides(o: any): Record<string, Record<string, string>> {
+  const out: Record<string, Record<string, string>> = {};
+  if (!o || typeof o !== 'object') return out;
+  for (const [unit, props] of Object.entries(o)) {
+    if (!props || typeof props !== 'object') continue;
+    out[cleanText(unit)] = Object.fromEntries(
+      Object.entries(props as Record<string, unknown>).map(([k, v]) => [cleanText(k), cleanText(v)])
+    );
+  }
+  return out;
 }
 
 function parseEventsWindow(w: any): EventsWindow | undefined {
@@ -738,7 +856,7 @@ export function parseWarnings(list: any, nowMs: number): AgentWarning[] {
       time: new Date(at).toISOString(),
       unit: cleanText(w.unit),
       displayName: cleanText(w.displayName) || cleanText(w.unit),
-      paneId: cleanText(w.paneId),
+      threadId: cleanText(w.threadId),
       agent: cleanText(w.agent),
       types: Array.isArray(w.types) ? w.types.map((t: unknown) => cleanText(t)) : [],
       message: cleanText(w.message),
@@ -755,11 +873,9 @@ export function parseState(json: any): AgentMemoryState {
   const zero = { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 };
   const units: MemUnit[] = (Array.isArray(json?.units) ? json.units : []).map((u: any) => ({
     ...u,
-    orphaned: typeof u.orphaned === 'boolean' ? u.orphaned : null,
     displayName: cleanText(u.displayName) || u.name,
-    herdr: cleanHerdr(u.herdr),
+    agent: cleanAgent(u.agent),
     processes: parseProcTree(u.processes),
-    orphanReason: u.orphanReason === undefined ? undefined : cleanText(u.orphanReason),
     events: u.events ?? {},
     eventsLocal: u.eventsLocal ?? {},
     pressureSome: u.pressureSome ?? zero,
@@ -782,8 +898,11 @@ export function parseState(json: any): AgentMemoryState {
     },
     minLimit: Number(json?.minLimit ?? 0),
     protected: Array.isArray(json?.protected) ? json.protected : [],
-    panesSlice: String(json?.panesSlice ?? ''),
-    herdr: { enabled: false, up: false, panes: 0, ...(json?.herdr ?? {}) },
+    agentSlice: String(json?.agentSlice ?? ''),
+    t3: { agentSlice: '', agents: 0, ...(json?.t3 ?? {}) },
+    agentDefault: parseDefault(json?.agentDefault),
+    overrides: parseOverrides(json?.overrides),
+    pods: parsePods(json?.pods),
     units,
     alerts: Array.isArray(json?.alerts) ? json.alerts : [],
     warnings: parseWarnings(json?.warnings, Number(json?.sampled ?? 0) * 1000 || Date.now()),

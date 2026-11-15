@@ -20,24 +20,26 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import {
+  applyDefaults,
   applyLimits,
-  closeUnit,
   describeError,
   useAgentMemory,
   useChanges,
   useSettings,
 } from './data';
 import {
+  AgentDefault,
   AgentMemoryState,
   alertsByUnit,
   arrangeRows,
   barGeometry,
-  canClose,
+  canEdit,
   changeLabel,
   ChangeRecord,
+  checkDefaults,
   checkEdit,
-  closeNeedsForce,
   currentValue,
+  DefaultForm,
   editableFields,
   EditField,
   EditForm,
@@ -46,7 +48,7 @@ import {
   formatSize,
   formatSpan,
   formatStall,
-  isOrphan,
+  isAgent,
   MemAlert,
   MemUnit,
   parseSize,
@@ -249,6 +251,7 @@ function HostSummary({ state }: { state: AgentMemoryState }) {
   return (
     <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={2}>
       <Chip label={`Host ${state.node || 'unknown'}`} />
+      <Chip label={`${state.t3.agents} T3 agent${state.t3.agents === 1 ? '' : 's'}`} />
       <Chip
         color={low ? 'warning' : 'default'}
         label={`${formatSize(available)} of ${formatSize(total)} available (${(free * 100).toFixed(
@@ -268,9 +271,9 @@ function HostSummary({ state }: { state: AgentMemoryState }) {
 function WarningsPanel({ state }: { state: AgentMemoryState }) {
   const { warnings, warningPolicy: p } = state;
   const interval = p.intervalSeconds ? formatSpan(p.intervalSeconds) : '30 min';
-  const rule = `Panes are prompted only for a real memory problem in the window: hard-limit events, OOM kills, or full stall time of ${
+  const rule = `Agents are told only about a real memory problem in the window: hard-limit or soft-limit events, OOM kills, or full stall time of ${
     p.stallSeconds ?? 10
-  } s. Soft-limit events alone and swap use never warn. At most one per pane and type every ${interval}.`;
+  } s near the limit. Swap use never warns. At most one per agent and type every ${interval}.`;
   if (!p.enabled) {
     return (
       <Alert severity="info" sx={{ mb: 2 }}>
@@ -293,7 +296,7 @@ function WarningsPanel({ state }: { state: AgentMemoryState }) {
           <TableHead>
             <TableRow>
               <TableCell>Time</TableCell>
-              <TableCell>Pane</TableCell>
+              <TableCell>Agent</TableCell>
               <TableCell>Reached</TableCell>
               <TableCell>Result</TableCell>
               <TableCell>Message</TableCell>
@@ -395,7 +398,8 @@ function EditDialog({
   const [form, setForm] = React.useState<EditForm>(() =>
     Object.fromEntries(fields.map(f => [f, sizeInput(currentValue(unit, f) as number | null)]))
   );
-  const [persist, setPersist] = React.useState(persistDefault);
+  // Slices are always persisted by the backend; scopes are transient.
+  const persist = unit.kind === 'slice' && persistDefault;
   const [force, setForce] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const [busy, setBusy] = React.useState(false);
@@ -405,6 +409,7 @@ function EditDialog({
     minLimit: state.minLimit,
     hostTotal: state.host.total,
     protectedUnits: state.protected,
+    agentSlice: state.agentSlice,
   };
   const check = checkEdit(unit, form, persist, ctx);
   const canSubmit = check.errors.length === 0 && (!check.belowCurrent || force) && !busy;
@@ -432,7 +437,11 @@ function EditDialog({
       const summary = Object.entries(check.changes)
         .map(([k, v]) => `${FIELD_LABELS[k as EditField].split(' (')[0]} ${v}`)
         .join(', ');
-      onApplied(`Applied ${unitLabel(unit)}: ${summary} (${persist ? 'persistent' : 'runtime'})`);
+      onApplied(
+        `Applied ${unitLabel(unit)}: ${summary} (${
+          unit.kind === 'slice' ? 'persistent' : 'this agent, until it ends'
+        })`
+      );
     } catch (e: any) {
       setServerError(describeError(e));
     } finally {
@@ -448,8 +457,21 @@ function EditDialog({
           <Typography variant="body2" color="text.secondary">
             Currently {formatSize(unit.current)} in use. Sizes accept K, M, G and T (binary) or
             &quot;infinity&quot;. Changes apply to the running unit straight away.
-            {unit.kind === 'scope' && ' New panes still start with the host default.'}
           </Typography>
+          {unit.kind === 'slice' ? (
+            <Alert severity="info">
+              Saved persistently: systemd writes{' '}
+              <code>~/.config/systemd/user.control/{unit.name}.d/50-MemoryHigh.conf</code> and{' '}
+              <code>50-MemoryMax.conf</code>, which override T3&apos;s own runtime values. This is
+              the limit for all agents together.
+            </Alert>
+          ) : (
+            <Alert severity="info">
+              Only this agent, until it ends. New agents start with the default for every agent. A
+              daemon-reload on the host resets this to the default; a default change made on this
+              page puts it back.
+            </Alert>
+          )}
           {unit.kind !== 'slice' && (
             <Box>
               <Button size="small" onClick={preset}>
@@ -475,12 +497,6 @@ function EditDialog({
               />
             );
           })}
-          {unit.kind === 'slice' && (
-            <FormControlLabel
-              control={<Checkbox checked={persist} onChange={e => setPersist(e.target.checked)} />}
-              label="Persist across restarts of the user manager (otherwise runtime only)"
-            />
-          )}
           <TextField
             label="Reason (recorded in the audit log)"
             value={reason}
@@ -521,36 +537,50 @@ function EditDialog({
   );
 }
 
-/* ---------- close ---------- */
+/* ---------- per-agent default ---------- */
 
-function CloseDialog({
-  unit: latest,
+function DefaultsDialog({
+  current,
+  state,
   onClose,
-  onClosed,
+  onApplied,
 }: {
-  /** The unit as of the latest poll; null once it has disappeared. */
-  unit: MemUnit | null;
+  current: AgentDefault;
+  state: AgentMemoryState;
   onClose: () => void;
-  onClosed: (name: string, message: string) => void;
+  onApplied: (message: string) => void;
 }) {
   const settings = useSettings();
-  // What the person confirmed is what is sent: keep the state seen at open.
-  const [unit] = React.useState<MemUnit>(() => latest as MemUnit);
-  const gone = latest === null;
-  const changed = latest !== null && latest.orphaned !== unit.orphaned;
+  const [form, setForm] = React.useState<DefaultForm>(() => ({
+    memoryHigh: current.memoryHigh === undefined ? '' : sizeInput(current.memoryHigh),
+    memoryMax: current.memoryMax === undefined ? '' : sizeInput(current.memoryMax),
+  }));
+  const [force, setForce] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
-  const live = closeNeedsForce(unit);
-  const label = unitLabel(unit);
+  const agents = state.units.filter(isAgent);
+  const check = checkDefaults(
+    current,
+    form,
+    { minLimit: state.minLimit, hostTotal: state.host.total },
+    agents,
+    state.overrides
+  );
+  const canSubmit =
+    check.errors.length === 0 && (check.belowCurrent.length === 0 || force) && !busy;
   const submit = async () => {
     setBusy(true);
     setServerError(null);
     try {
-      await closeUnit(settings, { unit: unit.name, force: live, reason });
-      onClosed(
-        unit.name,
-        `${label}: close requested (${unit.procs} process${unit.procs === 1 ? '' : 'es'})`
+      const res = await applyDefaults(settings, { changes: check.changes, force, reason });
+      const again = Array.isArray(res?.reapplied) ? res.reapplied.length : 0;
+      onApplied(
+        `Default for every agent: ${Object.entries(check.changes)
+          .map(([k, v]) => `${FIELD_LABELS[k as EditField].split(' (')[0]} ${v}`)
+          .join(', ')}. Saved and applied to running agents${
+          again ? `; ${again} agent limit${again === 1 ? '' : 's'} set here re-applied` : ''
+        }.`
       );
     } catch (e: any) {
       setServerError(describeError(e));
@@ -560,41 +590,59 @@ function CloseDialog({
   };
   return (
     <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Close {label}</DialogTitle>
+      <DialogTitle>Default limit for every agent</DialogTitle>
       <DialogContent>
         <Box display="flex" flexDirection="column" gap={2} mt={1}>
-          {live ? (
-            <Alert severity="error">
-              <strong>{label}</strong>{' '}
-              {unit.orphaned === null
-                ? 'cannot be confirmed as an orphan (the pane lookup is unavailable).'
-                : 'is a live pane.'}{' '}
-              Closing it will terminate the agent session running in it, and any unsaved work in its
-              processes is lost.
-            </Alert>
-          ) : (
-            <Alert severity="info">
-              The pane for this scope no longer exists. Closing it stops the leftover processes and
-              frees {formatSize(unit.current)}.
-            </Alert>
-          )}
           <Typography variant="body2" color="text.secondary">
-            The scope {unit.name} ({unit.procs} process{unit.procs === 1 ? '' : 'es'}
-            {unit.topProcess ? `, largest: ${unit.topProcess}` : ''}) is stopped through the user
-            manager: its processes receive SIGTERM, then SIGKILL after the stop timeout.
+            Saved in <code>{current.file}</code>, then the host&apos;s systemd user manager reloads
+            (daemon-reload). New agents start with this, and running agents get it too, except those
+            with a limit of their own set on this page. Nothing is restarted.
           </Typography>
+          {(['memoryHigh', 'memoryMax'] as const).map(f => {
+            const parsed = parseSize(form[f] ?? '');
+            return (
+              <TextField
+                key={f}
+                label={FIELD_LABELS[f]}
+                value={form[f] ?? ''}
+                onChange={e => setForm(prev => ({ ...prev, [f]: e.target.value }))}
+                helperText={`Currently ${
+                  current[f] === undefined ? 'not set' : formatSize(current[f] as number | null)
+                }${
+                  parsed !== undefined && parsed !== null ? `; new value ${formatSize(parsed)}` : ''
+                }`}
+                error={!!form[f] && parsed === undefined}
+                size="small"
+                fullWidth
+              />
+            );
+          })}
           <TextField
-            label="Reason (required, recorded in the audit log)"
+            label="Reason (recorded in the file and the audit log)"
             value={reason}
             onChange={e => setReason(e.target.value)}
             size="small"
-            inputProps={{ maxLength: 200 }}
+            inputProps={{ maxLength: 160 }}
             fullWidth
           />
-          {gone && <Alert severity="warning">Unit no longer present.</Alert>}
-          {changed && (
+          {check.errors.map(msg => (
+            <Alert key={msg} severity="error">
+              {msg}
+            </Alert>
+          ))}
+          {check.belowCurrent.length > 0 && check.errors.length === 0 && (
             <Alert severity="warning">
-              The pane status changed since this dialog opened. Close it and reopen to confirm.
+              <Box>
+                The new hard limit is below the usage of{' '}
+                {check.belowCurrent
+                  .map(u => `${unitLabel(u)} (${formatSize(u.current)})`)
+                  .join(', ')}
+                . The kernel will kill processes in those agents to meet it.
+              </Box>
+              <FormControlLabel
+                control={<Checkbox checked={force} onChange={e => setForce(e.target.checked)} />}
+                label="I understand, apply it anyway"
+              />
             </Alert>
           )}
           {serverError && <Alert severity="error">{serverError}</Alert>}
@@ -604,16 +652,69 @@ function CloseDialog({
         <Button onClick={onClose} disabled={busy}>
           Cancel
         </Button>
-        <Button
-          variant="contained"
-          color="error"
-          onClick={submit}
-          disabled={busy || gone || changed || reason.trim() === ''}
-        >
-          {busy ? 'Closing...' : live ? 'Terminate session and close' : 'Close scope'}
+        <Button variant="contained" onClick={submit} disabled={!canSubmit}>
+          {busy ? 'Applying...' : 'Apply'}
         </Button>
       </DialogActions>
     </Dialog>
+  );
+}
+
+function DefaultsPanel({ state, onEdit }: { state: AgentMemoryState; onEdit: () => void }) {
+  const d = state.agentDefault;
+  if (!d) return null;
+  return (
+    <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={2}>
+      <Typography variant="subtitle2">Default for every agent:</Typography>
+      <Chip
+        label={`soft ${d.memoryHigh === undefined ? 'not set' : formatSize(d.memoryHigh)}, hard ${
+          d.memoryMax === undefined ? 'not set' : formatSize(d.memoryMax)
+        }`}
+      />
+      <Tooltip title={d.file}>
+        <Typography variant="caption" color="text.secondary">
+          {d.file.split('/').slice(-2).join('/')}
+        </Typography>
+      </Tooltip>
+      {d.error && <Chip color="warning" label={`Unreadable: ${d.error}`} />}
+      {state.writable && !d.error && (
+        <Button size="small" onClick={onEdit} aria-label="Edit the default limit for every agent">
+          Edit default
+        </Button>
+      )}
+    </Box>
+  );
+}
+
+const QOS_LABEL: Record<string, string> = {
+  guaranteed: 'Guaranteed',
+  burstable: 'Burstable',
+  besteffort: 'BestEffort',
+};
+
+/** Memory of the node's Kubernetes pods by QoS class, next to the agents. */
+function PodsPanel({ state }: { state: AgentMemoryState }) {
+  const p = state.pods;
+  if (!p || p.error) return null;
+  return (
+    <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={2}>
+      <Typography variant="subtitle2">
+        Pods on {state.node || 'this node'}: {formatSize(p.current)} of {formatSize(p.max)}
+      </Typography>
+      {p.classes.map(c => (
+        <Tooltip
+          key={c.class}
+          title={`programs ${formatSize(c.anon)}, page cache ${formatSize(c.file)}`}
+        >
+          <Chip
+            variant="outlined"
+            label={`${QOS_LABEL[c.class] ?? c.class}: ${formatSize(c.current)} (${c.pods} pod${
+              c.pods === 1 ? '' : 's'
+            })`}
+          />
+        </Tooltip>
+      ))}
+    </Box>
   );
 }
 
@@ -623,7 +724,7 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
   if (changes.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
-        No limit has been changed and no scope closed since the backend started.
+        No limit has been changed since the backend started.
       </Typography>
     );
   }
@@ -648,33 +749,14 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
               </Tooltip>
             </TableCell>
             <TableCell>
-              {c.action === 'stop' ? (
-                <Tooltip
-                  title={
-                    <Box component="ul" sx={{ m: 0, pl: 2 }}>
-                      {(c.killed ?? []).map(p => (
-                        <li key={p.pid}>
-                          {p.pid} {p.command} ({formatSize(p.rss)})
-                        </li>
-                      ))}
-                    </Box>
-                  }
-                >
-                  <span>
-                    Closed scope{c.force ? ' (live pane, forced)' : ''}:{' '}
-                    {c.killedTotal ?? c.killed?.length ?? 0} process
-                    {(c.killedTotal ?? c.killed?.length ?? 0) === 1 ? '' : 'es'}
-                  </span>
-                </Tooltip>
-              ) : (
-                Object.keys(c.new)
-                  .map(k => `${k.replace('Memory', '')} ${c.old[k] ?? '?'} to ${c.new[k]}`)
-                  .join(', ')
-              )}
+              {c.action === 'default' ? 'Default for every agent: ' : ''}
+              {Object.keys(c.new)
+                .map(k => `${k.replace('Memory', '')} ${c.old[k] ?? '?'} to ${c.new[k]}`)
+                .join(', ')}
               {c.error ? ` (failed: ${c.error})` : ''}
             </TableCell>
             <TableCell>
-              {c.method}, {c.runtime ? 'runtime' : 'persistent'}
+              {c.method}, {c.runtime ? 'this agent' : 'persistent'}
             </TableCell>
             <TableCell>{c.reason || '-'}</TableCell>
           </TableRow>
@@ -688,7 +770,6 @@ export function AgentMemoryPage(): JSX.Element {
   const settings = useSettings();
   const { state, loading, error, refresh } = useAgentMemory(settings);
   const [filter, setFilter] = React.useState('');
-  const [orphansOnly, setOrphansOnly] = React.useState(false);
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(new Set());
   const toggleExpanded = (name: string) =>
     setExpanded(prev => {
@@ -697,33 +778,14 @@ export function AgentMemoryPage(): JSX.Element {
       return next;
     });
   const [editing, setEditing] = React.useState<string | null>(null);
-  const [closing, setClosing] = React.useState<string | null>(null);
-  /** Scopes a close was requested for, with the request time; cleared on disappearance or after 30s. */
-  const [closingUnits, setClosingUnits] = React.useState<Record<string, number>>({});
-  const [now, setNow] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    if (Object.keys(closingUnits).length === 0) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [closingUnits]);
-  const isClosing = (name: string) =>
-    closingUnits[name] !== undefined && now - closingUnits[name] < 30000;
-  React.useEffect(() => {
-    if (!state) return;
-    const present = new Set(state.units.map(u => u.name));
-    setClosingUnits(m => {
-      const next = Object.fromEntries(Object.entries(m).filter(([n]) => present.has(n)));
-      return Object.keys(next).length === Object.keys(m).length ? m : next;
-    });
-  }, [state]);
+  const [editingDefault, setEditingDefault] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [version, setVersion] = React.useState(0);
   const changes = useChanges(settings, state !== null, version);
 
   const alerts = React.useMemo(() => visibleAlerts(state?.alerts ?? []), [state]);
   const byUnit = React.useMemo(() => alertsByUnit(alerts), [alerts]);
-  const rows = arrangeRows(state?.units ?? [], filter, orphansOnly);
-  const orphanCount = (state?.units ?? []).filter(isOrphan).length;
+  const rows = arrangeRows(state?.units ?? [], filter);
   const labelFor = (name: string) => {
     const u = state?.units.find(x => x.name === name);
     return u ? unitLabel(u) : shortName(name);
@@ -733,9 +795,10 @@ export function AgentMemoryPage(): JSX.Element {
   return (
     <SectionBox title="Agent memory">
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Memory restrictions of the agent host&apos;s slices and per-pane scopes. The bar fills with
-        current usage; the amber line is the soft limit (memory.high, where the kernel starts
-        throttling) and the red line is the hard limit (memory.max, where it kills).
+        Memory limits of the T3 Code agents on the agent host: the slice that holds all of them and
+        one scope per agent session. The bar fills with current usage; the amber line is the soft
+        limit (memory.high, where the kernel starts throttling) and the red line is the hard limit
+        (memory.max, where it kills).
       </Typography>
       {loading && !state && <CircularProgress size={24} />}
       {error && (
@@ -756,27 +819,17 @@ export function AgentMemoryPage(): JSX.Element {
             </Alert>
           )}
           <HostSummary state={state} />
+          <DefaultsPanel state={state} onEdit={() => setEditingDefault(true)} />
+          <PodsPanel state={state} />
           <AlertsPanel alerts={alerts} labelFor={labelFor} />
           <WarningsPanel state={state} />
-          {state.herdr.enabled && !state.herdr.up && (
-            <Alert severity="info" sx={{ mb: 2 }}>
-              Herdr is unreachable, so chat names are not shown and orphaned panes cannot be told
-              from live ones. Scope names are shown instead.
-            </Alert>
-          )}
           <Box display="flex" gap={2} alignItems="center" flexWrap="wrap" mb={1}>
             <TextField
-              label="Filter by name, workspace, tab, agent or command"
+              label="Filter by name, session, thread, directory or command"
               value={filter}
               onChange={e => setFilter(e.target.value)}
               size="small"
               sx={{ minWidth: 340 }}
-            />
-            <FormControlLabel
-              control={
-                <Checkbox checked={orphansOnly} onChange={e => setOrphansOnly(e.target.checked)} />
-              }
-              label={`Orphans only (${orphanCount})`}
             />
           </Box>
           <Table size="small">
@@ -785,9 +838,11 @@ export function AgentMemoryPage(): JSX.Element {
                 <TableCell>Name</TableCell>
                 <TableCell>Usage</TableCell>
                 <TableCell align="right">Used</TableCell>
+                <TableCell align="right">Peak</TableCell>
                 <TableCell align="right">Soft</TableCell>
                 <TableCell align="right">Hard</TableCell>
                 <TableCell align="right">Swap</TableCell>
+                <TableCell align="right">OOM kills (total)</TableCell>
                 <TableCell>Events (recent window)</TableCell>
                 <TableCell>Memory stall time</TableCell>
                 <TableCell>Alerts</TableCell>
@@ -797,7 +852,8 @@ export function AgentMemoryPage(): JSX.Element {
             <TableBody>
               {rows.map(u => {
                 const sev = worstSeverity(byUnit.get(u.name));
-                const editable = state.writable && (u.kind === 'slice' || u.kind === 'scope');
+                const editable = canEdit(u, state);
+                const own = state.overrides[u.name];
                 const hasTree = u.kind !== 'slice' && !!u.processes && u.processes.roots.length > 0;
                 const open = hasTree && expanded.has(u.name);
                 const summary = u.kind === 'slice' ? '' : processSummary(u);
@@ -816,7 +872,7 @@ export function AgentMemoryPage(): JSX.Element {
                     >
                       <TableCell
                         sx={{
-                          pl: 1 + (isOrphan(u) ? 0 : u.depth) * 2,
+                          pl: 1 + u.depth * 2,
                           fontWeight: u.kind === 'slice' ? 600 : 400,
                         }}
                       >
@@ -833,26 +889,23 @@ export function AgentMemoryPage(): JSX.Element {
                         <Typography component="span" variant="caption" color="text.secondary">
                           {u.kind}
                         </Typography>
-                        {isOrphan(u) && (
+                        {own && (
                           <Tooltip
-                            title={`${u.orphanReason ?? 'Its Herdr pane no longer exists'}${
-                              u.leaderAlive === true ? '; the leader process is still running' : ''
-                            }`}
+                            title={`Set on this page: ${Object.entries(own)
+                              .map(([k, v]) => `${k} ${v}`)
+                              .join(
+                                ', '
+                              )}. The default does not apply to this agent until it ends.`}
                           >
-                            <Chip
-                              size="small"
-                              color="warning"
-                              label="Orphaned"
-                              sx={{ ml: 1 }}
-                              aria-label={`Orphaned: ${u.name}`}
-                            />
+                            <Chip size="small" label="Own limit" sx={{ ml: 1 }} />
                           </Tooltip>
                         )}
-                        {(unitDetail(u) ||
-                          summary ||
-                          (u.herdr && unitLabel(u) !== shortName(u.name))) && (
+                        {u.name === state.agentSlice && (
+                          <Chip size="small" variant="outlined" label="All agents" sx={{ ml: 1 }} />
+                        )}
+                        {(unitDetail(u) || summary || u.agent) && (
                           <Typography variant="caption" color="text.secondary" display="block">
-                            {[unitDetail(u), shortName(u.name), summary]
+                            {[unitDetail(u), u.agent?.cwd, shortName(u.name), summary]
                               .filter(Boolean)
                               .join(' · ')}
                           </Typography>
@@ -862,11 +915,13 @@ export function AgentMemoryPage(): JSX.Element {
                         <UsageBar unit={u} hostTotal={state.host.total} />
                       </TableCell>
                       <TableCell align="right">{formatSize(u.current)}</TableCell>
+                      <TableCell align="right">{u.peak ? formatSize(u.peak) : '-'}</TableCell>
                       <TableCell align="right">{formatSize(u.high)}</TableCell>
                       <TableCell align="right">{formatSize(u.max)}</TableCell>
                       <TableCell align="right">
                         {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
                       </TableCell>
+                      <TableCell align="right">{u.events?.oom_kill ?? 0}</TableCell>
                       <TableCell>
                         <EventChips unit={u} />
                       </TableCell>
@@ -886,22 +941,11 @@ export function AgentMemoryPage(): JSX.Element {
                             Edit
                           </Button>
                         )}
-                        {state.writable && canClose(u, state) && (
-                          <Button
-                            size="small"
-                            color="error"
-                            disabled={isClosing(u.name)}
-                            onClick={() => setClosing(u.name)}
-                            aria-label={`Close ${unitLabel(u)}`}
-                          >
-                            {isClosing(u.name) ? 'Closing...' : 'Close'}
-                          </Button>
-                        )}
                       </TableCell>
                     </TableRow>
                     {open && (
                       <TableRow>
-                        <TableCell colSpan={10} sx={{ pl: 4, bgcolor: 'action.hover' }}>
+                        <TableCell colSpan={12} sx={{ pl: 4, bgcolor: 'action.hover' }}>
                           <ProcessTree unit={u} />
                         </TableCell>
                       </TableRow>
@@ -911,7 +955,7 @@ export function AgentMemoryPage(): JSX.Element {
               })}
               {rows.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={10}>
+                  <TableCell colSpan={12}>
                     <Typography variant="body2" color="text.secondary">
                       No units match.
                     </Typography>
@@ -930,22 +974,16 @@ export function AgentMemoryPage(): JSX.Element {
           )}
         </>
       )}
-      {state && closing && (
-        <CloseDialog
-          key={closing}
-          unit={state.units.find(u => u.name === closing) ?? null}
-          onClose={() => setClosing(null)}
-          onClosed={(name, message) => {
-            setClosing(null);
+      {state && editingDefault && state.agentDefault && (
+        <DefaultsDialog
+          current={state.agentDefault}
+          state={state}
+          onClose={() => setEditingDefault(false)}
+          onApplied={message => {
+            setEditingDefault(false);
             setNotice(message);
-            setClosingUnits(m => ({ ...m, [name]: Date.now() }));
             setVersion(v => v + 1);
             refresh();
-            // systemd stops the scope after SIGTERM and possibly SIGKILL: look again shortly.
-            setTimeout(() => {
-              setVersion(v => v + 1);
-              refresh();
-            }, 5000);
           }}
         />
       )}
@@ -953,7 +991,7 @@ export function AgentMemoryPage(): JSX.Element {
         <EditDialog
           unit={unit}
           state={state}
-          persistDefault={false}
+          persistDefault
           onClose={() => setEditing(null)}
           onApplied={message => {
             setEditing(null);
