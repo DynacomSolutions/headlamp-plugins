@@ -5,11 +5,11 @@ import {
   arrangeRows,
   backendUrl,
   barGeometry,
-  canClose,
+  canEdit,
   changeLabel,
+  checkDefaults,
   checkEdit,
   cleanText,
-  closeNeedsForce,
   DEFAULT_SETTINGS,
   formatSize,
   formatSpan,
@@ -55,7 +55,6 @@ function unit(over: Partial<MemUnit> = {}): MemUnit {
     pressureSome: zero,
     pressureFull: zero,
     procs: 3,
-    orphaned: null,
     displayName: 'pane-1.scope',
     ...over,
   };
@@ -198,7 +197,7 @@ describe('alerts and names', () => {
     expect(worstSeverity(alertsByUnit(visibleAlerts([hi])).get('c'))).toBeNull();
   });
   it('shortens scope names', () => {
-    expect(shortName('agent-workload-native-12-345.scope')).toBe('pane 12-345');
+    expect(shortName('t3code-claude-9e2d894e.scope')).toBe('claude 9e2d894e');
     expect(shortName('panes.slice')).toBe('panes');
   });
 });
@@ -241,91 +240,137 @@ describe('settings and payload', () => {
   });
 });
 
-describe('pane names and orphans', () => {
-  const live = unit({
-    name: 'herdr-workload-native-1-2.scope',
-    displayName: 'proj / Fix bug',
-    orphaned: false,
-    herdr: {
-      paneId: 'w1:p1',
-      workspace: 'proj',
-      tab: 'Tasks',
-      title: 'Fix bug',
-      agent: 'claude',
-      agentStatus: 'idle',
+describe('T3 agents', () => {
+  const agent = unit({
+    name: 't3code-claude-9e2d894e.scope',
+    parent: 'app-t3code-agents-efeffeed54ea.slice',
+    displayName: 'claude · .cluster · 32a684cb',
+    agent: {
+      provider: 'claude',
+      id: '9e2d894e',
+      threadId: '273f3474-ede1',
+      sessionId: '32a684cb-0521',
+      resumed: true,
+      cwd: '/home/u/repos/.cluster',
+      pid: 11950,
     },
   });
-  const orphan = unit({
-    name: 'herdr-workload-native-3-4.scope',
-    displayName: 'herdr-workload-native-3-4.scope',
-    orphaned: true,
-  });
-  const unknown = unit({ name: 'herdr-workload-native-5-6.scope', orphaned: null });
-  const slice = unit({
-    name: 'panes.slice',
+  const bare = unit({ name: 't3code-codex-77aa.scope', displayName: 't3code-codex-77aa.scope' });
+  const host = unit({
+    name: 'app-t3code-agents.slice',
     kind: 'slice',
     parent: '',
-    displayName: 'panes.slice',
+    displayName: 'app-t3code-agents.slice',
+  });
+  const inner = unit({
+    name: 'app-t3code-agents-efeffeed54ea.slice',
+    kind: 'slice',
+    displayName: 'app-t3code-agents-efeffeed54ea.slice',
   });
 
-  it('labels with the chat name, falling back to the short scope name', () => {
-    expect(unitLabel(live)).toBe('proj / Fix bug');
-    expect(unitLabel(orphan)).toBe('pane 3-4');
-    expect(changeLabel({ unit: 'a-workload-native-1.scope' })).toBe('pane 1');
-    expect(changeLabel({ unit: 'x.scope', displayName: 'proj / Fix bug' })).toBe('proj / Fix bug');
-    expect(unitDetail(live)).toBe('tab Tasks · claude idle');
-    expect(unitDetail(orphan)).toBe('');
+  it('labels with provider, cwd and session, falling back to the short scope name', () => {
+    expect(unitLabel(agent)).toBe('claude · .cluster · 32a684cb');
+    expect(unitLabel(bare)).toBe('codex 77aa');
+    expect(changeLabel({ unit: 't3code-claude-1.scope' })).toBe('claude 1');
+    expect(changeLabel({ unit: 'x.scope', displayName: 'claude · a · b' })).toBe('claude · a · b');
+    expect(unitDetail(agent)).toBe('resumed 32a684cb-0521 · thread 273f3474-ede1 · pid 11950');
+    expect(unitDetail(host)).toBe('');
   });
 
-  it('search matches names, workspace, tab, agent and the scope name', () => {
-    for (const q of ['fix bug', 'PROJ', 'tasks', 'claude', 'native-1-2', 'w1:p1'])
-      expect(matchesFilter(live, q)).toBe(true);
-    expect(matchesFilter(live, 'nothing like it')).toBe(false);
-    expect(matchesFilter(orphan, 'orphaned')).toBe(true);
-    expect(matchesFilter(live, '')).toBe(true);
+  it('search matches session, thread, cwd, provider and the scope name', () => {
+    for (const q of ['32a684cb', '273F3474', '/repos/.cluster', 'claude', '9e2d894e'])
+      expect(matchesFilter(agent, q)).toBe(true);
+    expect(matchesFilter(agent, 'nothing like it')).toBe(false);
+    expect(arrangeRows([host, agent, bare], 'cluster')).toEqual([agent]);
+    expect(arrangeRows([host, agent, bare], '')).toHaveLength(3);
   });
 
-  it('sorts orphans to the top and can show only orphans', () => {
-    const all = [slice, live, unknown, orphan];
-    expect(arrangeRows(all, '', false).map(u => u.name)).toEqual([
-      orphan.name,
-      slice.name,
-      live.name,
-      unknown.name,
-    ]);
-    expect(arrangeRows(all, '', true)).toEqual([orphan]);
-    expect(arrangeRows(all, 'fix', false)).toEqual([live]);
+  it('edits only the agents slice and agent scopes', () => {
+    const st = { agentSlice: 'app-t3code-agents.slice', writable: true };
+    expect(canEdit(host, st)).toBe(true);
+    expect(canEdit(agent, st)).toBe(true);
+    expect(canEdit(inner, st)).toBe(false);
+    expect(canEdit(agent, { ...st, writable: false })).toBe(false);
+    const c = checkEdit(inner, { memoryMax: '100G' }, true, { ...ctx, agentSlice: st.agentSlice });
+    expect(c.errors.join(' ')).toMatch(/belongs to T3/);
   });
 
-  it('only closes scopes directly under the panes slice, never protected ones', () => {
-    const st = { panesSlice: 'panes.slice', protected: ['control.slice'] };
-    expect(canClose(orphan, st)).toBe(true);
-    expect(canClose(slice, st)).toBe(false);
-    expect(canClose(unit({ parent: 'control.slice' }), st)).toBe(false);
-    expect(canClose(unit({ parent: 'other.slice' }), st)).toBe(false);
-    expect(canClose(orphan, { panesSlice: '', protected: [] })).toBe(false);
+  it('checks the per-agent default like the backend', () => {
+    const cur = { file: '/x/50-agent-cap.conf', memoryHigh: 60 * G, memoryMax: 64 * G };
+    const base = { minLimit: 256 * M, hostTotal: 256 * G };
+    expect(
+      checkDefaults(cur, { memoryHigh: '60G', memoryMax: '64G' }, base, [], {}).errors
+    ).toEqual(['Nothing has changed.']);
+    expect(checkDefaults(cur, { memoryHigh: '70G' }, base, [], {}).errors.join(' ')).toMatch(
+      /must not exceed/
+    );
+    expect(
+      checkDefaults(cur, { memoryMax: '100M', memoryHigh: '100M' }, base, [], {}).errors
+    ).toHaveLength(2);
+    const ok = checkDefaults(cur, { memoryHigh: '40G', memoryMax: '48G' }, base, [agent], {});
+    expect(ok.errors).toEqual([]);
+    expect(ok.changes).toEqual({ memoryHigh: '40G', memoryMax: '48G' });
+    const heavy = unit({ ...agent, current: 50 * G });
+    expect(
+      checkDefaults(cur, { memoryHigh: '40G', memoryMax: '48G' }, base, [heavy], {}).belowCurrent
+    ).toEqual([heavy]);
+    // An agent with its own hard limit keeps it, so it is not at risk.
+    expect(
+      checkDefaults(cur, { memoryHigh: '40G', memoryMax: '48G' }, base, [heavy], {
+        [heavy.name]: { MemoryMax: '60G' },
+      }).belowCurrent
+    ).toEqual([]);
   });
 
-  it('needs the strong confirmation unless the pane is confirmed gone', () => {
-    expect(closeNeedsForce(orphan)).toBe(false);
-    expect(closeNeedsForce(live)).toBe(true);
-    expect(closeNeedsForce(unknown)).toBe(true);
-  });
-
-  it('parses the new fields and tolerates old backends', () => {
+  it('parses agents, the default, overrides and pods, and tolerates old backends', () => {
     const st = parseState({
-      panesSlice: 'panes.slice',
-      herdr: { enabled: true, up: true, panes: 2 },
+      agentSlice: 'app-t3code-agents.slice',
+      t3: { agentSlice: 'app-t3code-agents.slice', agents: 1 },
+      agentDefault: { file: '/x/50-agent-cap.conf', memoryHigh: 60 * G, memoryMax: null },
+      overrides: { 't3code-claude-1.scope': { MemoryMax: '24G' } },
+      pods: {
+        current: 700,
+        max: 1000,
+        classes: [{ class: 'burstable', pods: 2, current: 500, anon: 300, file: 200 }],
+      },
       units: [
-        { name: 'a.scope', kind: 'scope', orphaned: true, displayName: 'proj / x' },
-        { name: 'b.scope', kind: 'scope' },
+        {
+          name: 't3code-claude-1.scope',
+          kind: 'scope',
+          peak: 9,
+          agent: { provider: 'claude', id: '1', sessionId: 's\u202E1', resumed: 1 },
+        },
+        { name: 'b.slice', kind: 'slice' },
       ],
     });
-    expect(st.units[0].orphaned).toBe(true);
-    expect(st.units[1].orphaned).toBeNull();
-    expect(st.units[1].displayName).toBe('b.scope');
-    expect(st.herdr.up).toBe(true);
-    expect(parseState({}).panesSlice).toBe('');
+    expect(st.units[0].agent).toEqual({
+      provider: 'claude',
+      id: '1',
+      sessionId: 's1',
+      resumed: true,
+    });
+    expect(st.units[0].peak).toBe(9);
+    expect(st.units[1].agent).toBeUndefined();
+    expect(st.units[1].displayName).toBe('b.slice');
+    expect(st.t3.agents).toBe(1);
+    expect(st.agentDefault).toEqual({
+      file: '/x/50-agent-cap.conf',
+      memoryHigh: 60 * G,
+      memoryMax: null,
+    });
+    expect(st.overrides['t3code-claude-1.scope'].MemoryMax).toBe('24G');
+    expect(st.pods?.classes[0]).toEqual({
+      class: 'burstable',
+      pods: 2,
+      current: 500,
+      anon: 300,
+      file: 200,
+    });
+    const old = parseState({});
+    expect(old.agentSlice).toBe('');
+    expect(old.agentDefault).toBeNull();
+    expect(old.pods).toBeNull();
+    expect(old.overrides).toEqual({});
   });
 });
 
@@ -344,12 +389,12 @@ describe('cleanText', () => {
           name: 'a.scope',
           kind: 'scope',
           displayName: 'proj / ev\u202Eil',
-          herdr: { paneId: 'p', title: 't\u2067x', workspace: 'w' },
+          agent: { provider: 'claude', id: '1', cwd: '/t\u2067x' },
         },
       ],
     });
     expect(st.units[0].displayName).toBe('proj / evil');
-    expect(st.units[0].herdr?.title).toBe('tx');
+    expect(st.units[0].agent?.cwd).toBe('/tx');
   });
 });
 
@@ -490,7 +535,7 @@ describe('agent warnings', () => {
     time,
     unit: 'a.scope',
     displayName: 'proj / chat',
-    paneId: 'w1:p1',
+    threadId: '273f3474',
     agent: 'claude',
     types: ['hard-limit'],
     message: 'm',

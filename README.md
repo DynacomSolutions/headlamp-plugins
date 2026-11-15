@@ -13,7 +13,7 @@ you need; each has its own release archive and configuration.
 | [GitHub Runners](#github-runners) | See runner capacity, active jobs and ARC resources together | [Resources and optional enrichment](plugins/github-runners/README.md) |
 | [Sites](#sites) | Find an application's URL and the Mappings behind it | [Hostname suffixes and access](plugins/sites/README.md) |
 | [Alerting](#alerting) | Configure notification channels, routes and test delivery | [CRDs, web push and GitOps](plugins/alerting/README.md) |
-| [Agent memory](#agent-memory) | Inspect memory limits, swap, pressure and recent kernel events | [Backend and permissions](plugins/agent-memory/README.md) |
+| [Agent memory](#agent-memory) | Inspect and set T3 agent memory limits, pressure and recent kernel events | [Backend and permissions](plugins/agent-memory/README.md) |
 | [Updates](#updates) | See which components have updates and what blocks them | [Data source and URLs](plugins/updates/README.md) |
 | [Registry](#registry) | Browse registry repositories, tags, digests and sizes | [Backend and settings](plugins/registry/README.md) |
 | [VM images](#vm-images) | See KubeVirt disks, VM images in the registry and what uses them | [Backend, settings and RBAC](plugins/vm-images/README.md) |
@@ -117,20 +117,21 @@ Secret references are shown by name and key, without displaying their values.
 
 ### Agent memory
 
-See systemd slices and per-pane scopes alongside their soft and hard memory
-limits. Usage bars, swap, recent kernel events and pressure stall information
+See the T3 Code agents slice and each agent session's scope alongside their
+soft and hard memory limits, the default limit for every agent, and the node's
+pod memory by QoS class. Usage bars, swap, recent kernel events and pressure stall information
 help explain whether a task is merely using memory or being throttled.
 
 ![Agent memory dashboard with host headroom, anonymised task warnings, usage bars, memory limits and recent event counters](docs/screenshots/agent-memory.png)
 
-**Example:** an agent task slows down during a build. Filter by workspace or
-command and compare usage with `memory.high` and `memory.max`. Check recent
-`high`, `max`, `oom` and `oom kill` events together with stall time. The amber
-marker is the soft limit; the red marker is the hard limit. An orphan filter
-helps find scopes that no longer belong to an active pane.
+**Example:** an agent slows down during a build. Filter by directory, session
+or command and compare usage and peak with `memory.high` and `memory.max`.
+Check recent `high`, `max`, `oom` and `oom kill` events together with stall
+time. The amber marker is the soft limit; the red marker is the hard limit.
 
-With write access, **Edit** changes limits and **Close** terminates a scope,
-with confirmation. This plugin requires the separate agent-memory backend;
+With write access, **Edit** changes the limit for all agents (saved
+persistently) or for one agent (until it ends), and **Edit default** changes
+the default for every agent. This plugin requires the separate agent-memory backend;
 it does not derive host cgroup data from Kubernetes metrics. See the
 [backend setup and access guide](plugins/agent-memory/README.md).
 
