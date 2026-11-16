@@ -30,6 +30,7 @@ import {
   parseWarnings,
   processCommands,
   processCount,
+  processTotal,
   raisedTitle,
   resolveSettings,
   safeUrl,
@@ -38,6 +39,7 @@ import {
   stallLevel,
   swapText,
   threadName,
+  TREE_COLUMN_WIDTHS,
   unitDetail,
   unitLabel,
   visibleAlerts,
@@ -969,5 +971,20 @@ describe('describeChange', () => {
       describeChange({ ...base, action: 'default', new: { MemoryMax: '24G' }, error: 'x' })
     ).toBe('Default for every agent: Max ? to 24G (failed: x)');
     expect(describeChange({ ...base, new: null })).toBe('-');
+  });
+});
+
+describe('process chevron and column widths', () => {
+  it('counts processes from the tree total or the plain count', () => {
+    expect(processTotal(unit({ procs: 2, processes: undefined }))).toBe(2);
+    expect(processTotal(unit({ procs: 0, processes: { roots: [], total: 3, shown: 0 } }))).toBe(3);
+    expect(processTotal(unit({ kind: 'slice', procs: 5 }))).toBe(0);
+    expect(processTotal(unit({ procs: 0, processes: undefined }))).toBe(0);
+  });
+
+  it('keeps the fixed table within 1440 px with a 420 px name column', () => {
+    expect(TREE_COLUMN_WIDTHS[0]).toBe(420);
+    expect(TREE_COLUMN_WIDTHS.length).toBe(12);
+    expect(TREE_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1440);
   });
 });

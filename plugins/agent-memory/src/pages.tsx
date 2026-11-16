@@ -64,6 +64,7 @@ import {
   Orchestrator,
   orchestratorAgents,
   parseSize,
+  processTotal,
   ProjectGroup,
   raisedTitle,
   shortName,
@@ -71,6 +72,7 @@ import {
   stallLevel,
   swapText,
   threadName,
+  TREE_COLUMN_WIDTHS,
   unitDetail,
   unitLabel,
   visibleAlerts,
@@ -1015,9 +1017,9 @@ function UnitRow({
   const sev = worstSeverity(byUnit.get(u.name));
   const editable = canEdit(u, state);
   const own = state.overrides[u.name] ?? o?.overrides[u.name];
-  const hasProcs = u.kind !== 'slice' && !!u.processes && u.processes.roots.length > 0;
+  const hasProcs = processTotal(u) > 0;
   const open = hasProcs && expanded.has(u.name);
-  const summary = u.kind === 'slice' ? '' : processSummary(u);
+  const summary = processSummary(u);
   const agent = isAgent(u);
   const label = agent ? threadName(u) : unitLabel(u);
   const fullLabel = agent ? agentLabel(u) : label;
@@ -1106,7 +1108,9 @@ function UnitRow({
         <TableCell align="right">{formatSize(u.high)}</TableCell>
         <TableCell align="right">{formatSize(u.max)}</TableCell>
         <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
-          {swapText(u)}
+          <Tooltip title={`Swap used / limit: ${swapText(u)}`}>
+            <span>{swapText(u)}</span>
+          </Tooltip>
         </TableCell>
         <TableCell align="right">{u.events?.oom_kill ?? 0}</TableCell>
         <TableCell>
@@ -1174,11 +1178,19 @@ function AgentTree({
       size="small"
       aria-label="Agent memory tree"
       sx={{
+        tableLayout: 'fixed',
+        width: '100%',
+        minWidth: TREE_COLUMN_WIDTHS.reduce((a, b) => a + b, 0),
         '& th': { px: 1, whiteSpace: 'nowrap' },
-        '& td': { px: 1 },
+        '& td': { px: 1, overflow: 'hidden', textOverflow: 'ellipsis' },
         '& td:first-of-type': { px: 0 },
       }}
     >
+      <colgroup>
+        {TREE_COLUMN_WIDTHS.map((w, i) => (
+          <col key={i} style={{ width: w }} />
+        ))}
+      </colgroup>
       <TableHead>
         <TableRow>
           <TableCell>Name</TableCell>
