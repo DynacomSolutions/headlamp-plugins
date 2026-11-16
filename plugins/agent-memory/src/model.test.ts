@@ -842,6 +842,35 @@ describe('agent tree', () => {
     ]);
   });
 
+  it('groups non-agent scopes as Other scopes and sorts Unknown project last', () => {
+    const extra = parseState({
+      ...raw,
+      units: [
+        ...raw.units,
+        rawUnit('run-p1.scope', 't3', '', { kind: 'scope', max: 64 * G }),
+        rawUnit('anon.scope', 't3', 'agent', {
+          displayName: 'anon',
+          agent: { provider: 'claude', id: 'anon' },
+        }),
+      ],
+    });
+    const rows = buildTree(extra, new Set(), '');
+    const t3 = rows.filter(r => r.key.startsWith('p:t3:'));
+    expect(t3.map(r => r.project?.name)).toEqual([
+      'Alpha',
+      'Beta',
+      'Unknown project',
+      'Other scopes',
+    ]);
+    const i = rows.findIndex(r => r.key === 'p:t3:#other');
+    expect(shape(rows.slice(i, i + 2))).toEqual(['p:t3:#other|2|1|L', 'u:run-p1.scope|3|10|L']);
+    expect(rows.find(r => r.key === 'p:t3:#other')?.project).toMatchObject({
+      other: true,
+      agents: 1,
+    });
+    expect(rows.find(r => r.key === 'u:run-p1.scope')?.depth).toBe(3);
+  });
+
   it('turns guides and last into connector cells', () => {
     expect(guideCells({ depth: 0, guides: [], last: true })).toEqual([]);
     expect(guideCells({ depth: 3, guides: [true, false], last: false })).toEqual([

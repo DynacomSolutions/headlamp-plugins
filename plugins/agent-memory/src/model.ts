@@ -1180,8 +1180,10 @@ export interface ProjectGroup {
   key: string;
   name: string;
   orchestrator: string;
-  /** All the project's agents, before the filter. */
+  /** All the project's agents, before the filter (the scopes, for the "Other scopes" group). */
   agents: number;
+  /** The "Other scopes" group: non-agent scopes of the orchestrator. */
+  other?: boolean;
   current: number;
 }
 
@@ -1211,6 +1213,9 @@ function baseName(p: string | undefined): string {
   return parts[parts.length - 1] ?? '';
 }
 
+export const UNKNOWN_PROJECT = 'Unknown project';
+export const OTHER_SCOPES = 'Other scopes';
+
 /** The project an agent sits under: T3 project title or Herdr workspace. */
 export function projectName(u: MemUnit): string {
   const n = u.agent?.names;
@@ -1220,7 +1225,7 @@ export function projectName(u: MemUnit): string {
     const i = dn.indexOf(sep);
     if (i > 0) return dn.slice(0, i);
   }
-  return baseName(n?.projectDir) || baseName(u.agent?.cwd) || '(no project)';
+  return baseName(n?.projectDir) || baseName(u.agent?.cwd) || UNKNOWN_PROJECT;
 }
 
 /** The thread name shown on an agent row: T3 thread title or Herdr tab, never the project. */
@@ -1288,10 +1293,6 @@ export function buildTree(
     for (const u of units) if (isControl(u) && keep(u)) oNode.children.push(leaf(u));
     for (const u of units)
       if (isAgents(u) && !isControl(u) && keep(u)) oNode.children.push(leaf(u));
-    // Other non-agent scopes and services stay visible; intermediate slices do not.
-    for (const u of units)
-      if (!isControl(u) && !isAgents(u) && !isAgent(u) && u.kind !== 'slice' && keep(u))
-        oNode.children.push(leaf(u));
     const projects = new Map<string, { group: ProjectGroup; units: MemUnit[] }>();
     for (const u of units) {
       if (!isAgent(u) || isControl(u) || isAgents(u)) continue;
@@ -1308,9 +1309,28 @@ export function buildTree(
       p.group.current += u.current;
       p.units.push(u);
     }
-    const sorted = [...projects.values()].sort((a, b) =>
-      a.group.name.localeCompare(b.group.name, undefined, { sensitivity: 'base' })
+    const rank = (n: string) => (n === UNKNOWN_PROJECT ? 1 : 0);
+    const sorted = [...projects.values()].sort(
+      (a, b) =>
+        rank(a.group.name) - rank(b.group.name) ||
+        a.group.name.localeCompare(b.group.name, undefined, { sensitivity: 'base' })
     );
+    // Non-agent scopes and services (systemd-run jobs and the like) go last; intermediate slices stay hidden.
+    const others = units.filter(
+      u => !isControl(u) && !isAgents(u) && !isAgent(u) && u.kind !== 'slice'
+    );
+    if (others.length > 0)
+      sorted.push({
+        group: {
+          key: `p:${o.name}:#other`,
+          name: OTHER_SCOPES,
+          orchestrator: o.name,
+          agents: others.length,
+          current: others.reduce((a, u) => a + u.current, 0),
+          other: true,
+        },
+        units: others,
+      });
     for (const p of sorted) {
       const projHit = q !== '' && p.group.name.toLowerCase().includes(q);
       const shown = p.units.filter(u => orchHit || projHit || keep(u));
