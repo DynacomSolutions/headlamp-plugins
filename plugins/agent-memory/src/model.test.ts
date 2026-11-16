@@ -15,6 +15,7 @@ import {
   checkEdit,
   cleanText,
   DEFAULT_SETTINGS,
+  describeChange,
   formatSize,
   formatSpan,
   formatStall,
@@ -938,5 +939,35 @@ describe('swap and process wording', () => {
     expect(processCount(1)).toBe('1 process');
     expect(processCount(0)).toBe('0 processes');
     expect(processCount(49)).toBe('49 processes');
+  });
+});
+
+describe('describeChange', () => {
+  const base = { time: '', caller: '', unit: 'u', method: 'systemd', runtime: true };
+  it('tolerates a null old map (refused raise)', () => {
+    expect(
+      describeChange({
+        ...base,
+        action: 'raise',
+        method: 'refused',
+        old: null,
+        new: { MemoryMax: '6G' },
+        error: 'not_approved: the user answered "Deny"',
+      })
+    ).toBe('Raise refused: Max ? to 6G (not_approved: the user answered "Deny")');
+  });
+  it('labels raises, defaults and failures', () => {
+    expect(
+      describeChange({
+        ...base,
+        action: 'raise',
+        old: { MemoryMax: '2G' },
+        new: { MemoryMax: '4G' },
+      })
+    ).toBe('Raised by request: Max 2G to 4G');
+    expect(
+      describeChange({ ...base, action: 'default', new: { MemoryMax: '24G' }, error: 'x' })
+    ).toBe('Default for every agent: Max ? to 24G (failed: x)');
+    expect(describeChange({ ...base, new: null })).toBe('-');
   });
 });

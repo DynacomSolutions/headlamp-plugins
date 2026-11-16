@@ -46,6 +46,7 @@ import {
   checkEdit,
   currentValue,
   DefaultForm,
+  describeChange,
   editableFields,
   EditField,
   EditForm,
@@ -791,13 +792,7 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
                 <span>{changeLabel(c)}</span>
               </Tooltip>
             </TableCell>
-            <TableCell>
-              {c.action === 'default' ? 'Default for every agent: ' : ''}
-              {Object.keys(c.new)
-                .map(k => `${k.replace('Memory', '')} ${c.old[k] ?? '?'} to ${c.new[k]}`)
-                .join(', ')}
-              {c.error ? ` (failed: ${c.error})` : ''}
-            </TableCell>
+            <TableCell>{describeChange(c)}</TableCell>
             <TableCell>
               {c.method}, {c.runtime ? 'this agent' : 'persistent'}
             </TableCell>
