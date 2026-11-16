@@ -1423,4 +1423,4 @@ export function processTotal(u: Pick<MemUnit, 'kind' | 'procs' | 'processes'>): 
 }
 
 /** Column widths in px of the agent table (fixed layout; Name first, Edit last). */
-export const TREE_COLUMN_WIDTHS = [420, 96, 60, 60, 60, 60, 104, 56, 236, 120, 64, 52];
+export const TREE_COLUMN_WIDTHS = [420, 124, 60, 60, 60, 60, 104, 72, 236, 120, 64, 52];

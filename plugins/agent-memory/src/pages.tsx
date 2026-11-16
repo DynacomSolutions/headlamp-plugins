@@ -103,7 +103,9 @@ function UsageBar({ unit, hostTotal }: { unit: MemUnit; hostTotal: number }) {
         sx={{
           position: 'relative',
           height: 14,
-          minWidth: 100,
+          width: '100%',
+          minWidth: 0,
+          boxSizing: 'border-box',
           borderRadius: 0.5,
           bgcolor: 'action.selected',
           border: 1,
