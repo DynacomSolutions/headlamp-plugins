@@ -1,6 +1,7 @@
 /// <reference types="@kinvolk/headlamp-plugin" />
 import { describe, expect, it } from 'vitest';
 import {
+  agentSlices,
   alertsByUnit,
   arrangeRows,
   backendUrl,
@@ -16,12 +17,15 @@ import {
   formatStall,
   matchesFilter,
   MemUnit,
+  orchestratorAgents,
+  orchestratorUnits,
   parseProcTree,
   parseSize,
   parseState,
   parseWarnings,
   processCommands,
   resolveSettings,
+  safeUrl,
   shortName,
   sizeInput,
   stallLevel,
@@ -292,7 +296,7 @@ describe('T3 agents', () => {
     expect(canEdit(inner, st)).toBe(false);
     expect(canEdit(agent, { ...st, writable: false })).toBe(false);
     const c = checkEdit(inner, { memoryMax: '100G' }, true, { ...ctx, agentSlice: st.agentSlice });
-    expect(c.errors.join(' ')).toMatch(/belongs to T3/);
+    expect(c.errors.join(' ')).toMatch(/belongs to the orchestrator/);
   });
 
   it('checks the per-agent default like the backend', () => {
@@ -561,5 +565,142 @@ describe('agent warnings', () => {
     expect(parseWarnings([null, { time: 'nope' }], now)).toEqual([]);
     expect(parseState({}).warnings).toEqual([]);
     expect(parseState({}).warningPolicy.enabled).toBe(false);
+  });
+
+  it('parses orchestrators, groups units, keeps only http(s) thread links', () => {
+    const st = parseState({
+      writable: true,
+      orchestrators: [
+        {
+          name: 't3',
+          kind: 't3',
+          title: 'T3 Code',
+          controlUnit: 't3code.service',
+          agentsSlice: 'app-t3code-agents.slice',
+          running: true,
+          controlUp: true,
+          agents: 1,
+          policy: { agent: { memoryHigh: 20 * G, memoryMax: 24 * G, oomPolicy: 'continue' } },
+          defaults: {
+            file: '/h/50-agent-cap.conf',
+            memoryHigh: 20 * G,
+            memoryMax: 24 * G,
+            memorySwapMax: 512 * 1024 * 1024,
+            apply: 'daemon-reload',
+          },
+          drift: [
+            {
+              layer: 'agents',
+              unit: 'app-t3code-agents.slice',
+              property: 'MemoryMax',
+              want: 200 * G,
+              have: null,
+            },
+          ],
+          agentDrift: 0,
+        },
+        {
+          name: 'herdr',
+          kind: 'herdr',
+          title: 'Herdr',
+          agentsSlice: 'herdr-panes.slice',
+          running: false,
+          defaults: {
+            file: '/h/pane-resource-policy.conf',
+            readOnly: true,
+            apply: 'running-agents',
+          },
+          names: { up: false, error: 'refused', entries: 0 },
+        },
+      ],
+      units: [
+        { name: 'app-t3code-agents.slice', kind: 'slice', orchestrator: 't3', role: 'agents' },
+        {
+          name: 't3code-claude-1.scope',
+          kind: 'scope',
+          orchestrator: 't3',
+          role: 'agent',
+          agent: {
+            orchestrator: 't3',
+            provider: 'claude',
+            id: '1',
+            threadId: 'mcp:launch:abc',
+            threadUrl: 'https://t3.example/env/mcp:launch:abc',
+          },
+        },
+        {
+          name: 't3code-claude-2.scope',
+          kind: 'scope',
+          orchestrator: 't3',
+          role: 'agent',
+          agent: { provider: 'claude', id: '2', threadUrl: 'javascript:alert(1)' },
+        },
+        { name: 'herdr-panes.slice', kind: 'slice', orchestrator: 'herdr', role: 'bogus' },
+      ],
+    });
+    expect(st.orchestrators.map(o => o.name)).toEqual(['t3', 'herdr']);
+    const [t3, h] = st.orchestrators;
+    expect(t3.fromBackend).toBe(true);
+    expect(t3.policy.agent).toEqual({
+      memoryHigh: 20 * G,
+      memoryMax: 24 * G,
+      oomPolicy: 'continue',
+    });
+    expect(t3.defaults?.memorySwapMax).toBe(512 * 1024 * 1024);
+    expect(t3.drift[0]).toMatchObject({ layer: 'agents', want: 200 * G, have: null });
+    expect(h.defaults?.readOnly).toBe(true);
+    expect(h.names).toEqual({ up: false, error: 'refused', entries: 0 });
+    expect(orchestratorUnits(st.units, t3).map(u => u.name)).toEqual([
+      'app-t3code-agents.slice',
+      't3code-claude-1.scope',
+      't3code-claude-2.scope',
+    ]);
+    expect(orchestratorAgents(st.units, t3)).toHaveLength(2);
+    expect(orchestratorUnits(st.units, h).map(u => u.name)).toEqual(['herdr-panes.slice']);
+    expect(st.units[3].role).toBe('');
+    expect(st.units[1].agent?.threadUrl).toBe('https://t3.example/env/mcp:launch:abc');
+    expect(st.units[2].agent?.threadUrl).toBeUndefined();
+    expect(agentSlices(st)).toEqual(['app-t3code-agents.slice', 'herdr-panes.slice']);
+    expect(canEdit(st.units[3], st)).toBe(true);
+    expect(safeUrl('ftp://x')).toBeUndefined();
+    expect(safeUrl('not a url')).toBeUndefined();
+  });
+
+  it('synthesises one T3 section for a backend without orchestrators', () => {
+    const st = parseState({
+      agentSlice: 'app-t3code-agents.slice',
+      agentDefault: { file: '/x/50-agent-cap.conf', memoryHigh: 60 * G },
+      units: [
+        { name: 'app-t3code-agents.slice', kind: 'slice', current: 5 },
+        { name: 't3code-claude-1.scope', kind: 'scope', agent: { provider: 'claude', id: '1' } },
+      ],
+    });
+    expect(st.orchestrators).toHaveLength(1);
+    const o = st.orchestrators[0];
+    expect(o).toMatchObject({ name: 't3', fromBackend: false, agents: 1, current: 5 });
+    expect(o.defaults?.memoryHigh).toBe(60 * G);
+    expect(orchestratorUnits(st.units, o)).toHaveLength(2);
+  });
+
+  it('checks the swap default without the memory minimum', () => {
+    const cur = {
+      file: '/f',
+      memoryHigh: 20 * G,
+      memoryMax: 24 * G,
+      memorySwapMax: 512 * 1024 * 1024,
+    };
+    const base = { minLimit: 256 * 1024 * 1024, hostTotal: 256 * G };
+    const r = checkDefaults(cur, { memorySwapMax: '128M' }, base, [], {});
+    expect(r.errors).toEqual([]);
+    expect(r.changes).toEqual({ memorySwapMax: '128M' });
+    // An empty field for a key the file does not set is no change.
+    const r2 = checkDefaults(
+      { file: '/f', memoryHigh: 1 * G },
+      { memoryHigh: '2G', memorySwapMax: '' },
+      base,
+      [],
+      {}
+    );
+    expect(r2.changes).toEqual({ memoryHigh: '2G' });
   });
 });

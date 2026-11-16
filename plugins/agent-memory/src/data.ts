@@ -138,17 +138,20 @@ export async function applyLimits(s: Settings, u: LimitUpdate): Promise<any> {
 }
 
 export interface DefaultsUpdate {
-  changes: Partial<Record<'memoryHigh' | 'memoryMax', string>>;
+  /** The orchestrator whose default changes; omitted for an old backend. */
+  orchestrator?: string;
+  changes: Partial<Record<'memoryHigh' | 'memoryMax' | 'memorySwapMax', string>>;
   force: boolean;
   reason: string;
 }
 
 /**
- * Changes the per-agent default (50-agent-cap.conf, then daemon-reload on the
- * host). Same authorisation path as applyLimits.
+ * Changes an orchestrator's per-agent default (T3: 50-agent-cap.conf, then
+ * daemon-reload on the host). Same authorisation path as applyLimits.
  */
 export async function applyDefaults(s: Settings, u: DefaultsUpdate): Promise<any> {
   const body: Record<string, unknown> = { ...u.changes, force: u.force };
+  if (u.orchestrator) body.orchestrator = u.orchestrator;
   if (u.reason.trim()) body.reason = u.reason.trim();
   return ApiProxy.request(backendUrl(s.backend, '/api/defaults'), {
     method: 'POST',

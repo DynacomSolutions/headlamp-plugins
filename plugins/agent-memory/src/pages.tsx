@@ -10,6 +10,7 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import Link from '@mui/material/Link';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -30,6 +31,7 @@ import {
 import {
   AgentDefault,
   AgentMemoryState,
+  agentSlices,
   alertsByUnit,
   arrangeRows,
   barGeometry,
@@ -48,9 +50,12 @@ import {
   formatSize,
   formatSpan,
   formatStall,
-  isAgent,
+  Limit,
   MemAlert,
   MemUnit,
+  Orchestrator,
+  orchestratorAgents,
+  orchestratorUnits,
   parseSize,
   shortName,
   sizeInput,
@@ -410,6 +415,7 @@ function EditDialog({
     hostTotal: state.host.total,
     protectedUnits: state.protected,
     agentSlice: state.agentSlice,
+    agentSlices: agentSlices(state),
   };
   const check = checkEdit(unit, form, persist, ctx);
   const canSubmit = check.errors.length === 0 && (!check.belowCurrent || force) && !busy;
@@ -540,11 +546,13 @@ function EditDialog({
 /* ---------- per-agent default ---------- */
 
 function DefaultsDialog({
+  o,
   current,
   state,
   onClose,
   onApplied,
 }: {
+  o: Orchestrator;
   current: AgentDefault;
   state: AgentMemoryState;
   onClose: () => void;
@@ -554,12 +562,14 @@ function DefaultsDialog({
   const [form, setForm] = React.useState<DefaultForm>(() => ({
     memoryHigh: current.memoryHigh === undefined ? '' : sizeInput(current.memoryHigh),
     memoryMax: current.memoryMax === undefined ? '' : sizeInput(current.memoryMax),
+    memorySwapMax: current.memorySwapMax === undefined ? '' : sizeInput(current.memorySwapMax),
   }));
   const [force, setForce] = React.useState(false);
   const [reason, setReason] = React.useState('');
   const [busy, setBusy] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
-  const agents = state.units.filter(isAgent);
+  const agents = orchestratorAgents(state.units, o);
+  const reload = current.apply !== 'running-agents';
   const check = checkDefaults(
     current,
     form,
@@ -573,10 +583,15 @@ function DefaultsDialog({
     setBusy(true);
     setServerError(null);
     try {
-      const res = await applyDefaults(settings, { changes: check.changes, force, reason });
+      const res = await applyDefaults(settings, {
+        orchestrator: o.fromBackend ? o.name : undefined,
+        changes: check.changes,
+        force,
+        reason,
+      });
       const again = Array.isArray(res?.reapplied) ? res.reapplied.length : 0;
       onApplied(
-        `Default for every agent: ${Object.entries(check.changes)
+        `Default for every ${o.title} agent: ${Object.entries(check.changes)
           .map(([k, v]) => `${FIELD_LABELS[k as EditField].split(' (')[0]} ${v}`)
           .join(', ')}. Saved and applied to running agents${
           again ? `; ${again} agent limit${again === 1 ? '' : 's'} set here re-applied` : ''
@@ -590,15 +605,18 @@ function DefaultsDialog({
   };
   return (
     <Dialog open onClose={busy ? undefined : onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Default limit for every agent</DialogTitle>
+      <DialogTitle>Default limit for every {o.title} agent</DialogTitle>
       <DialogContent>
         <Box display="flex" flexDirection="column" gap={2} mt={1}>
           <Typography variant="body2" color="text.secondary">
-            Saved in <code>{current.file}</code>, then the host&apos;s systemd user manager reloads
-            (daemon-reload). New agents start with this, and running agents get it too, except those
-            with a limit of their own set on this page. Nothing is restarted.
+            Saved in <code>{current.file}</code>
+            {reload
+              ? ", then the host's systemd user manager reloads (daemon-reload)."
+              : ', and set on each running agent now.'}{' '}
+            New agents start with this, and running agents get it too, except those with a limit of
+            their own set on this page. Nothing is restarted.
           </Typography>
-          {(['memoryHigh', 'memoryMax'] as const).map(f => {
+          {(['memoryHigh', 'memoryMax', 'memorySwapMax'] as const).map(f => {
             const parsed = parseSize(form[f] ?? '');
             return (
               <TextField
@@ -660,25 +678,38 @@ function DefaultsDialog({
   );
 }
 
-function DefaultsPanel({ state, onEdit }: { state: AgentMemoryState; onEdit: () => void }) {
-  const d = state.agentDefault;
+function DefaultsPanel({
+  o,
+  writable,
+  onEdit,
+}: {
+  o: Orchestrator;
+  writable: boolean;
+  onEdit: () => void;
+}) {
+  const d = o.defaults;
   if (!d) return null;
   return (
     <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={2}>
-      <Typography variant="subtitle2">Default for every agent:</Typography>
+      <Typography variant="subtitle2">Default for every {o.title} agent:</Typography>
       <Chip
-        label={`soft ${d.memoryHigh === undefined ? 'not set' : formatSize(d.memoryHigh)}, hard ${
-          d.memoryMax === undefined ? 'not set' : formatSize(d.memoryMax)
+        label={`soft ${limitText(d.memoryHigh)}, hard ${limitText(d.memoryMax)}${
+          d.memorySwapMax !== undefined ? `, swap ${limitText(d.memorySwapMax)}` : ''
         }`}
       />
-      <Tooltip title={d.file}>
+      <Tooltip title={[d.file, d.note].filter(Boolean).join(' · ')}>
         <Typography variant="caption" color="text.secondary">
           {d.file.split('/').slice(-2).join('/')}
         </Typography>
       </Tooltip>
       {d.error && <Chip color="warning" label={`Unreadable: ${d.error}`} />}
-      {state.writable && !d.error && (
-        <Button size="small" onClick={onEdit} aria-label="Edit the default limit for every agent">
+      {d.readOnly && <Chip size="small" variant="outlined" label="read-only here" />}
+      {writable && !d.error && !d.readOnly && (
+        <Button
+          size="small"
+          onClick={onEdit}
+          aria-label={`Edit the default limit for every ${o.title} agent`}
+        >
           Edit default
         </Button>
       )}
@@ -766,6 +797,318 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
   );
 }
 
+function UnitsTable({
+  o,
+  state,
+  rows,
+  byUnit,
+  expanded,
+  onToggle,
+  onEdit,
+}: {
+  o: Orchestrator;
+  state: AgentMemoryState;
+  rows: MemUnit[];
+  byUnit: Map<string, MemAlert[]>;
+  expanded: ReadonlySet<string>;
+  onToggle: (name: string) => void;
+  onEdit: (name: string) => void;
+}) {
+  return (
+    <Table size="small">
+      <TableHead>
+        <TableRow>
+          <TableCell>Name</TableCell>
+          <TableCell>Usage</TableCell>
+          <TableCell align="right">Used</TableCell>
+          <TableCell align="right">Peak</TableCell>
+          <TableCell align="right">Soft</TableCell>
+          <TableCell align="right">Hard</TableCell>
+          <TableCell align="right">Swap</TableCell>
+          <TableCell align="right">OOM kills (total)</TableCell>
+          <TableCell>Events (recent window)</TableCell>
+          <TableCell>Memory stall time</TableCell>
+          <TableCell>Alerts</TableCell>
+          <TableCell />
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {rows.map(u => {
+          const sev = worstSeverity(byUnit.get(u.name));
+          const editable = canEdit(u, state);
+          const own = state.overrides[u.name];
+          const hasTree = u.kind !== 'slice' && !!u.processes && u.processes.roots.length > 0;
+          const open = hasTree && expanded.has(u.name);
+          const summary = u.kind === 'slice' ? '' : processSummary(u);
+          return (
+            <React.Fragment key={u.name}>
+              <TableRow
+                hover
+                sx={
+                  sev
+                    ? {
+                        bgcolor: sev === 'critical' ? 'error.light' : 'warning.light',
+                        '& td': { color: 'text.primary' },
+                      }
+                    : undefined
+                }
+              >
+                <TableCell
+                  sx={{
+                    pl: 1 + u.depth * 2,
+                    fontWeight: u.kind === 'slice' ? 600 : 400,
+                  }}
+                >
+                  {hasTree && (
+                    <Chevron
+                      open={open}
+                      label={`${open ? 'Hide' : 'Show'} processes of ${unitLabel(u)}`}
+                      onToggle={() => onToggle(u.name)}
+                    />
+                  )}
+                  <Tooltip title={u.name}>
+                    <span>{unitLabel(u)}</span>
+                  </Tooltip>{' '}
+                  <Typography component="span" variant="caption" color="text.secondary">
+                    {u.kind}
+                  </Typography>
+                  {own && (
+                    <Tooltip
+                      title={`Set on this page: ${Object.entries(own)
+                        .map(([k, v]) => `${k} ${v}`)
+                        .join(', ')}. The default does not apply to this agent until it ends.`}
+                    >
+                      <Chip size="small" label="Own limit" sx={{ ml: 1 }} />
+                    </Tooltip>
+                  )}
+                  {u.role === 'agents' || (!u.role && u.name === state.agentSlice) ? (
+                    <Chip size="small" variant="outlined" label="All agents" sx={{ ml: 1 }} />
+                  ) : null}
+                  {u.role === 'control' && u.name === o.controlUnit && (
+                    <Chip size="small" variant="outlined" label="Control" sx={{ ml: 1 }} />
+                  )}
+                  {u.agent?.threadUrl && (
+                    <Link
+                      href={u.agent.threadUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{ ml: 1 }}
+                      aria-label={`Open the ${o.title} thread of ${unitLabel(u)}`}
+                    >
+                      thread
+                    </Link>
+                  )}
+                  {(unitDetail(u) || summary || u.agent) && (
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {[unitDetail(u), u.agent?.cwd, shortName(u.name), summary]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </Typography>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <UsageBar unit={u} hostTotal={state.host.total} />
+                </TableCell>
+                <TableCell align="right">{formatSize(u.current)}</TableCell>
+                <TableCell align="right">{u.peak ? formatSize(u.peak) : '-'}</TableCell>
+                <TableCell align="right">{formatSize(u.high)}</TableCell>
+                <TableCell align="right">{formatSize(u.max)}</TableCell>
+                <TableCell align="right">
+                  {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
+                </TableCell>
+                <TableCell align="right">{u.events?.oom_kill ?? 0}</TableCell>
+                <TableCell>
+                  <EventChips unit={u} />
+                </TableCell>
+                <TableCell>
+                  <Pressure unit={u} />
+                </TableCell>
+                <TableCell>
+                  <AlertBadges alerts={byUnit.get(u.name)} />
+                </TableCell>
+                <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                  {editable && (
+                    <Button
+                      size="small"
+                      onClick={() => onEdit(u.name)}
+                      aria-label={`Edit limits of ${unitLabel(u)}`}
+                    >
+                      Edit
+                    </Button>
+                  )}
+                </TableCell>
+              </TableRow>
+              {open && (
+                <TableRow>
+                  <TableCell colSpan={12} sx={{ pl: 4, bgcolor: 'action.hover' }}>
+                    <ProcessTree unit={u} />
+                  </TableCell>
+                </TableRow>
+              )}
+            </React.Fragment>
+          );
+        })}
+        {rows.length === 0 && (
+          <TableRow>
+            <TableCell colSpan={12}>
+              <Typography variant="body2" color="text.secondary">
+                No units match.
+              </Typography>
+            </TableCell>
+          </TableRow>
+        )}
+      </TableBody>
+    </Table>
+  );
+}
+
+function limitText(v: Limit | undefined): string {
+  return v === undefined ? 'not set' : formatSize(v);
+}
+
+function PolicyChips({ o }: { o: Orchestrator }) {
+  const { control, agents, agent } = o.policy;
+  const parts: [string, string][] = [];
+  if (control.memoryMin !== undefined || control.memoryLow !== undefined)
+    parts.push([
+      'Control',
+      `min ${limitText(control.memoryMin)}, low ${limitText(control.memoryLow)}${
+        control.managedOOMPreference ? `, OOM ${control.managedOOMPreference}` : ''
+      }`,
+    ]);
+  if (agents.memoryHigh !== undefined || agents.memoryMax !== undefined)
+    parts.push([
+      'All agents',
+      `soft ${limitText(agents.memoryHigh)}, hard ${limitText(agents.memoryMax)}, swap ${limitText(
+        agents.memorySwapMax
+      )}`,
+    ]);
+  if (agent.memoryHigh !== undefined || agent.memoryMax !== undefined)
+    parts.push([
+      'Each agent',
+      `soft ${limitText(agent.memoryHigh)}, hard ${limitText(agent.memoryMax)}, swap ${limitText(
+        agent.memorySwapMax
+      )}`,
+    ]);
+  if (parts.length === 0) return null;
+  return (
+    <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={1}>
+      <Typography variant="subtitle2">Policy:</Typography>
+      {parts.map(([k, v]) => (
+        <Chip key={k} size="small" variant="outlined" label={`${k}: ${v}`} />
+      ))}
+    </Box>
+  );
+}
+
+function DriftNote({ o }: { o: Orchestrator }) {
+  if (!o.fromBackend) return null;
+  if (o.drift.length === 0)
+    return o.running ? (
+      <Chip size="small" color="success" label="Live limits match the policy" sx={{ mb: 1 }} />
+    ) : null;
+  return (
+    <Alert severity="warning" sx={{ mb: 1 }}>
+      <Box>
+        Live limits differ from the policy
+        {o.agentDrift > 0 ? ` (${o.agentDrift} agent${o.agentDrift === 1 ? '' : 's'})` : ''}:
+      </Box>
+      <Box component="ul" sx={{ m: 0, pl: 3 }}>
+        {o.drift.slice(0, 8).map(d => (
+          <li key={`${d.unit}/${d.property}`}>
+            {d.layer}: {shortName(d.unit)} {d.property} is {formatSize(d.have)}, policy{' '}
+            {formatSize(d.want)}
+          </li>
+        ))}
+        {o.drift.length > 8 && <li>and {o.drift.length - 8} more</li>}
+      </Box>
+    </Alert>
+  );
+}
+
+function OrchestratorSection({
+  o,
+  state,
+  filter,
+  byUnit,
+  expanded,
+  onToggle,
+  onEdit,
+  onEditDefault,
+}: {
+  o: Orchestrator;
+  state: AgentMemoryState;
+  filter: string;
+  byUnit: Map<string, MemAlert[]>;
+  expanded: ReadonlySet<string>;
+  onToggle: (name: string) => void;
+  onEdit: (name: string) => void;
+  onEditDefault: () => void;
+}) {
+  const units = orchestratorUnits(state.units, o);
+  const rows = arrangeRows(units, filter);
+  return (
+    <Box mb={4} component="section" aria-label={`${o.title} agents`}>
+      <Box display="flex" gap={1} alignItems="center" flexWrap="wrap" mb={1}>
+        <Typography variant="h6">{o.title}</Typography>
+        <Chip
+          size="small"
+          color={o.running ? 'success' : 'default'}
+          label={o.running ? `${o.agents} agent${o.agents === 1 ? '' : 's'}` : 'not running'}
+        />
+        {o.fromBackend && o.controlUnit && (
+          <Tooltip title={`Control unit ${o.controlUnit}`}>
+            <Chip
+              size="small"
+              variant="outlined"
+              color={o.controlUp ? 'success' : 'default'}
+              label={`${o.controlUnit} ${o.controlUp ? 'up' : 'down'}`}
+            />
+          </Tooltip>
+        )}
+        {o.running && (
+          <Typography variant="body2" color="text.secondary">
+            {formatSize(o.current)} in use
+          </Typography>
+        )}
+        {o.names && !o.names.up && (
+          <Tooltip title={o.names.error ?? ''}>
+            <Chip size="small" color="warning" label="names unavailable" />
+          </Tooltip>
+        )}
+      </Box>
+      {o.fromBackend && (
+        <Typography variant="caption" color="text.secondary" display="block" mb={1}>
+          {[
+            o.agentsSlice && `agents in ${o.agentsSlice}`,
+            o.threadEnv && `thread from ${o.threadEnv}`,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </Typography>
+      )}
+      <PolicyChips o={o} />
+      <DriftNote o={o} />
+      <DefaultsPanel o={o} writable={state.writable} onEdit={onEditDefault} />
+      {o.running || units.length > 0 ? (
+        <UnitsTable
+          o={o}
+          state={state}
+          rows={rows}
+          byUnit={byUnit}
+          expanded={expanded}
+          onToggle={onToggle}
+          onEdit={onEdit}
+        />
+      ) : (
+        <Typography variant="body2" color="text.secondary">
+          {o.title} is not running on this host.
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
 export function AgentMemoryPage(): JSX.Element {
   const settings = useSettings();
   const { state, loading, error, refresh } = useAgentMemory(settings);
@@ -778,14 +1121,14 @@ export function AgentMemoryPage(): JSX.Element {
       return next;
     });
   const [editing, setEditing] = React.useState<string | null>(null);
-  const [editingDefault, setEditingDefault] = React.useState(false);
+  const [editingDefault, setEditingDefault] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [version, setVersion] = React.useState(0);
   const changes = useChanges(settings, state !== null, version);
 
   const alerts = React.useMemo(() => visibleAlerts(state?.alerts ?? []), [state]);
   const byUnit = React.useMemo(() => alertsByUnit(alerts), [alerts]);
-  const rows = arrangeRows(state?.units ?? [], filter);
+  const defaultOrch = state?.orchestrators.find(o => o.name === editingDefault) ?? null;
   const labelFor = (name: string) => {
     const u = state?.units.find(x => x.name === name);
     return u ? unitLabel(u) : shortName(name);
@@ -795,10 +1138,10 @@ export function AgentMemoryPage(): JSX.Element {
   return (
     <SectionBox title="Agent memory">
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Memory limits of the T3 Code agents on the agent host: the slice that holds all of them and
-        one scope per agent session. The bar fills with current usage; the amber line is the soft
-        limit (memory.high, where the kernel starts throttling) and the red line is the hard limit
-        (memory.max, where it kills).
+        Memory limits of the agents on the agent host, by orchestrator (T3 Code, Herdr): the
+        orchestrator itself, the slice that holds all its agents and one scope per agent session.
+        The bar fills with current usage; the amber line is the soft limit (memory.high, where the
+        kernel starts throttling) and the red line is the hard limit (memory.max, where it kills).
       </Typography>
       {loading && !state && <CircularProgress size={24} />}
       {error && (
@@ -819,7 +1162,6 @@ export function AgentMemoryPage(): JSX.Element {
             </Alert>
           )}
           <HostSummary state={state} />
-          <DefaultsPanel state={state} onEdit={() => setEditingDefault(true)} />
           <PodsPanel state={state} />
           <AlertsPanel alerts={alerts} labelFor={labelFor} />
           <WarningsPanel state={state} />
@@ -832,138 +1174,19 @@ export function AgentMemoryPage(): JSX.Element {
               sx={{ minWidth: 340 }}
             />
           </Box>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>Name</TableCell>
-                <TableCell>Usage</TableCell>
-                <TableCell align="right">Used</TableCell>
-                <TableCell align="right">Peak</TableCell>
-                <TableCell align="right">Soft</TableCell>
-                <TableCell align="right">Hard</TableCell>
-                <TableCell align="right">Swap</TableCell>
-                <TableCell align="right">OOM kills (total)</TableCell>
-                <TableCell>Events (recent window)</TableCell>
-                <TableCell>Memory stall time</TableCell>
-                <TableCell>Alerts</TableCell>
-                <TableCell />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {rows.map(u => {
-                const sev = worstSeverity(byUnit.get(u.name));
-                const editable = canEdit(u, state);
-                const own = state.overrides[u.name];
-                const hasTree = u.kind !== 'slice' && !!u.processes && u.processes.roots.length > 0;
-                const open = hasTree && expanded.has(u.name);
-                const summary = u.kind === 'slice' ? '' : processSummary(u);
-                return (
-                  <React.Fragment key={u.name}>
-                    <TableRow
-                      hover
-                      sx={
-                        sev
-                          ? {
-                              bgcolor: sev === 'critical' ? 'error.light' : 'warning.light',
-                              '& td': { color: 'text.primary' },
-                            }
-                          : undefined
-                      }
-                    >
-                      <TableCell
-                        sx={{
-                          pl: 1 + u.depth * 2,
-                          fontWeight: u.kind === 'slice' ? 600 : 400,
-                        }}
-                      >
-                        {hasTree && (
-                          <Chevron
-                            open={open}
-                            label={`${open ? 'Hide' : 'Show'} processes of ${unitLabel(u)}`}
-                            onToggle={() => toggleExpanded(u.name)}
-                          />
-                        )}
-                        <Tooltip title={u.name}>
-                          <span>{unitLabel(u)}</span>
-                        </Tooltip>{' '}
-                        <Typography component="span" variant="caption" color="text.secondary">
-                          {u.kind}
-                        </Typography>
-                        {own && (
-                          <Tooltip
-                            title={`Set on this page: ${Object.entries(own)
-                              .map(([k, v]) => `${k} ${v}`)
-                              .join(
-                                ', '
-                              )}. The default does not apply to this agent until it ends.`}
-                          >
-                            <Chip size="small" label="Own limit" sx={{ ml: 1 }} />
-                          </Tooltip>
-                        )}
-                        {u.name === state.agentSlice && (
-                          <Chip size="small" variant="outlined" label="All agents" sx={{ ml: 1 }} />
-                        )}
-                        {(unitDetail(u) || summary || u.agent) && (
-                          <Typography variant="caption" color="text.secondary" display="block">
-                            {[unitDetail(u), u.agent?.cwd, shortName(u.name), summary]
-                              .filter(Boolean)
-                              .join(' · ')}
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <UsageBar unit={u} hostTotal={state.host.total} />
-                      </TableCell>
-                      <TableCell align="right">{formatSize(u.current)}</TableCell>
-                      <TableCell align="right">{u.peak ? formatSize(u.peak) : '-'}</TableCell>
-                      <TableCell align="right">{formatSize(u.high)}</TableCell>
-                      <TableCell align="right">{formatSize(u.max)}</TableCell>
-                      <TableCell align="right">
-                        {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
-                      </TableCell>
-                      <TableCell align="right">{u.events?.oom_kill ?? 0}</TableCell>
-                      <TableCell>
-                        <EventChips unit={u} />
-                      </TableCell>
-                      <TableCell>
-                        <Pressure unit={u} />
-                      </TableCell>
-                      <TableCell>
-                        <AlertBadges alerts={byUnit.get(u.name)} />
-                      </TableCell>
-                      <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                        {editable && (
-                          <Button
-                            size="small"
-                            onClick={() => setEditing(u.name)}
-                            aria-label={`Edit limits of ${unitLabel(u)}`}
-                          >
-                            Edit
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                    {open && (
-                      <TableRow>
-                        <TableCell colSpan={12} sx={{ pl: 4, bgcolor: 'action.hover' }}>
-                          <ProcessTree unit={u} />
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </React.Fragment>
-                );
-              })}
-              {rows.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={12}>
-                    <Typography variant="body2" color="text.secondary">
-                      No units match.
-                    </Typography>
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
+          {state.orchestrators.map(o => (
+            <OrchestratorSection
+              key={o.name}
+              o={o}
+              state={state}
+              filter={filter}
+              byUnit={byUnit}
+              expanded={expanded}
+              onToggle={toggleExpanded}
+              onEdit={setEditing}
+              onEditDefault={() => setEditingDefault(o.name)}
+            />
+          ))}
           {state.writable && (
             <Box mt={3}>
               <Typography variant="h6" gutterBottom>
@@ -974,13 +1197,14 @@ export function AgentMemoryPage(): JSX.Element {
           )}
         </>
       )}
-      {state && editingDefault && state.agentDefault && (
+      {state && defaultOrch?.defaults && (
         <DefaultsDialog
-          current={state.agentDefault}
+          o={defaultOrch}
+          current={defaultOrch.defaults}
           state={state}
-          onClose={() => setEditingDefault(false)}
+          onClose={() => setEditingDefault(null)}
           onApplied={message => {
-            setEditingDefault(false);
+            setEditingDefault(null);
             setNotice(message);
             setVersion(v => v + 1);
             refresh();
