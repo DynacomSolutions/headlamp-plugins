@@ -11,6 +11,7 @@ import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Link from '@mui/material/Link';
+import { Theme } from '@mui/material/styles';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -74,11 +75,13 @@ import {
 } from './model';
 import { Chevron, processSummary, ProcessTree } from './processes';
 
-const LEVEL_COLOUR = {
-  ok: 'success.main',
-  warning: 'warning.main',
-  critical: 'error.main',
-} as const;
+const LEVEL_PALETTE = { ok: 'success', warning: 'warning', critical: 'error' } as const;
+
+/** The dark theme's .main shades are pale; its .dark shades keep the fill visibly coloured. */
+function levelColour(theme: Theme, level: keyof typeof LEVEL_PALETTE): string {
+  const c = theme.palette[LEVEL_PALETTE[level]];
+  return theme.palette.mode === 'dark' ? c.dark : c.main;
+}
 
 /** Usage bar with the soft (amber) and hard (red) limits drawn as lines. */
 function UsageBar({ unit, hostTotal }: { unit: MemUnit; hostTotal: number }) {
@@ -96,7 +99,9 @@ function UsageBar({ unit, hostTotal }: { unit: MemUnit; hostTotal: number }) {
           height: 14,
           minWidth: 160,
           borderRadius: 0.5,
-          bgcolor: 'action.hover',
+          bgcolor: 'action.selected',
+          border: 1,
+          borderColor: 'divider',
           overflow: 'hidden',
         }}
       >
@@ -105,8 +110,7 @@ function UsageBar({ unit, hostTotal }: { unit: MemUnit; hostTotal: number }) {
             position: 'absolute',
             inset: 0,
             width: `${g.fill}%`,
-            bgcolor: LEVEL_COLOUR[g.level],
-            opacity: 0.85,
+            bgcolor: (theme: Theme) => levelColour(theme, g.level),
           }}
         />
         {g.highAt !== null && g.highAt < 100 && (
@@ -138,6 +142,12 @@ function UsageBar({ unit, hostTotal }: { unit: MemUnit; hostTotal: number }) {
   );
 }
 
+/** Chips stay on one line, slightly smaller, so rows stay short. */
+const CHIP_ROW_SX = {
+  '& .MuiChip-root': { height: 20, flexShrink: 0 },
+  '& .MuiChip-label': { px: 0.75, fontSize: 11 },
+} as const;
+
 const EVENT_ITEMS: [string, boolean][] = [
   ['high', false],
   ['max', true],
@@ -153,7 +163,7 @@ function EventChips({ unit }: { unit: MemUnit }) {
   const w = unit.eventsWindow;
   const span = w ? formatSpan(w.windowSeconds) : '';
   return (
-    <Box display="flex" gap={0.5} flexWrap="wrap">
+    <Box display="flex" gap={0.5} flexWrap="nowrap" sx={CHIP_ROW_SX}>
       {EVENT_ITEMS.map(([key, severe]) => {
         const { n, active: windowActive } = windowedEvent(unit, key);
         // Soft-limit (`high`) events are routine kernel reclaim: show, never colour.
@@ -174,16 +184,13 @@ function EventChips({ unit }: { unit: MemUnit }) {
               color={active ? (severe ? 'error' : 'warning') : 'default'}
               label={
                 w
-                  ? `${key.replace('_', ' ')} ${n.toLocaleString()} events`
-                  : `${key.replace('_', ' ')} ${total.toLocaleString()} total`
+                  ? `${key.replace('_', ' ')} ${n.toLocaleString()}`
+                  : `${key.replace('_', ' ')} ${total.toLocaleString()}`
               }
             />
           </Tooltip>
         );
       })}
-      <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
-        {w ? `in last ${span}${w.partial ? ' (partial)' : ''}` : 'cumulative'}
-      </Typography>
     </Box>
   );
 }
@@ -208,12 +215,12 @@ function Pressure({ unit }: { unit: MemUnit }) {
   )}% over 10 s, ${unit.pressureFull.avg60.toFixed(1)}% over 60 s.`;
   return (
     <Tooltip title={title}>
-      <Box display="flex" gap={0.5} flexWrap="wrap">
+      <Box display="flex" gap={0.5} flexWrap="nowrap" sx={CHIP_ROW_SX}>
         <Chip
           size="small"
           variant={level === 'default' ? 'outlined' : 'filled'}
           color={level}
-          label={`fully stalled ${
+          label={`full ${
             w ? formatStall(w.fullUs) : formatStall(unit.pressureFull.totalUs) + ' total'
           }`}
         />
@@ -224,10 +231,6 @@ function Pressure({ unit }: { unit: MemUnit }) {
             w ? formatStall(w.someUs) : formatStall(unit.pressureSome.totalUs) + ' total'
           }`}
         />
-        <Typography variant="caption" color="text.secondary" sx={{ width: '100%' }}>
-          {w ? `in last ${span}${w.partial ? ' (partial)' : ''}` : 'cumulative'} · now{' '}
-          {unit.pressureFull.avg10.toFixed(1)}% full
-        </Typography>
       </Box>
     </Tooltip>
   );
@@ -804,6 +807,8 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
 }
 
 const GUIDE_WIDTH = 22;
+/** Distance from the row top to the elbow: the middle of the first text line. */
+const ELBOW_TOP = 20;
 
 /** Fixed-width connector boxes: continuing lines, tees and elbows drawn with borders. */
 function Guides({ cells }: { cells: GuideCell[] }) {
@@ -824,7 +829,7 @@ function Guides({ cells }: { cells: GuideCell[] }) {
                 position: 'absolute',
                 left: '50%',
                 top: 0,
-                bottom: c === 'elbow' ? '50%' : 0,
+                bottom: c === 'elbow' ? `calc(100% - ${ELBOW_TOP}px)` : 0,
                 borderLeft: '1px solid',
                 borderColor: 'text.disabled',
               },
@@ -835,7 +840,7 @@ function Guides({ cells }: { cells: GuideCell[] }) {
                 position: 'absolute',
                 left: '50%',
                 right: 2,
-                top: '50%',
+                top: ELBOW_TOP,
                 borderTop: '1px solid',
                 borderColor: 'text.disabled',
               },
@@ -854,29 +859,82 @@ function continuing(row: AgentTreeRow): GuideCell[] {
 
 const COLUMNS = 12;
 
-/** The first cell of a row: connectors on the left, content on the right. */
+/**
+ * The first cell of a row: connectors on the left spanning the full row
+ * height, the toggle and label on one line, and an optional caption that
+ * starts at the label's left edge.
+ */
 function TreeCell({
   cells,
+  lead,
+  caption,
   children,
   bold,
 }: {
   cells: GuideCell[];
+  lead: React.ReactNode;
+  caption?: React.ReactNode;
   children: React.ReactNode;
   bold?: boolean;
 }) {
   return (
-    <TableCell sx={{ p: 0, borderBottom: 'none', fontWeight: bold ? 600 : 400 }}>
-      <Box display="flex" alignItems="stretch" minHeight={41}>
+    <TableCell
+      sx={{
+        p: 0,
+        borderBottom: 'none',
+        fontWeight: bold ? 600 : 400,
+        position: 'relative',
+        minWidth: 380,
+        maxWidth: 520,
+      }}
+    >
+      <Box sx={{ position: 'absolute', top: 0, bottom: 0, left: 0, display: 'flex' }}>
         <Guides cells={cells} />
-        <Box sx={{ flex: 1, py: 0.75, pl: 0.5, pr: 1, display: 'flex', alignItems: 'center' }}>
-          <Box display="flex" alignItems="center" flexWrap="wrap" columnGap={0.5} rowGap={0.25}>
+      </Box>
+      <Box
+        sx={{
+          pl: `${cells.length * GUIDE_WIDTH + 4}px`,
+          pr: 1,
+          py: '8px',
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 0.5,
+        }}
+      >
+        <Box sx={{ flex: 'none', width: 24, height: 24 }}>{lead}</Box>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              flexWrap: 'nowrap',
+              gap: 0.5,
+              minHeight: 24,
+              minWidth: 0,
+              '& .MuiChip-root': { flexShrink: 0 },
+            }}
+          >
             {children}
           </Box>
+          {caption && (
+            <Typography variant="caption" color="text.secondary" display="block" noWrap>
+              {caption}
+            </Typography>
+          )}
         </Box>
       </Box>
     </TableCell>
   );
 }
+
+/** A label that shrinks with an ellipsis instead of wrapping; the tooltip carries the full text. */
+const LABEL_SX = {
+  minWidth: 0,
+  flex: '0 1 auto',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+} as const;
 
 function GroupToggle({
   row,
@@ -980,30 +1038,44 @@ function UnitRow({
             : undefined
         }
       >
-        <TreeCell cells={guideCells(row)} bold={!agent}>
-          {hasProcs && (
-            <Chevron
-              open={open}
-              label={`${open ? 'Hide' : 'Show'} processes of ${label}`}
-              onToggle={() => onToggle(u.name)}
-            />
-          )}
-          <Tooltip title={tip}>
+        <TreeCell
+          cells={guideCells(row)}
+          bold={!agent}
+          caption={summary}
+          lead={
+            hasProcs && (
+              <Chevron
+                open={open}
+                label={`${open ? 'Hide' : 'Show'} processes of ${label}`}
+                onToggle={() => onToggle(u.name)}
+              />
+            )
+          }
+        >
+          <Tooltip title={`${label} · ${tip}`}>
             {agent && u.agent?.threadUrl ? (
               <Link
                 href={u.agent.threadUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={`Open the thread ${label}`}
+                sx={LABEL_SX}
               >
                 {label}
               </Link>
             ) : (
-              <span>{label}</span>
+              <Box component="span" sx={LABEL_SX}>
+                {label}
+              </Box>
             )}
           </Tooltip>
           {!agent && (
-            <Typography component="span" variant="caption" color="text.secondary">
+            <Typography
+              component="span"
+              variant="caption"
+              color="text.secondary"
+              sx={{ flex: 'none' }}
+            >
               {u.kind}
             </Typography>
           )}
@@ -1023,11 +1095,6 @@ function UnitRow({
           )}
           {isAllAgents && <Chip size="small" variant="outlined" label="All agents" />}
           {u.role === 'control' && <Chip size="small" variant="outlined" label="Control" />}
-          {summary && (
-            <Typography component="span" variant="caption" color="text.secondary">
-              {summary}
-            </Typography>
-          )}
         </TreeCell>
         <TableCell>
           <UsageBar unit={u} hostTotal={state.host.total} />
@@ -1136,12 +1203,15 @@ function AgentTree({
             const { total, available } = state.host;
             return (
               <TableRow key={row.key} hover>
-                <TreeCell cells={[]} bold>
-                  <GroupToggle row={row} label="the host" onCollapse={onCollapse} />
-                  <span>Host {state.node || 'unknown'}</span>
-                  <Typography component="span" variant="caption" color="text.secondary">
-                    {formatSize(available)} of {formatSize(total)} available
-                  </Typography>
+                <TreeCell
+                  cells={[]}
+                  bold
+                  lead={<GroupToggle row={row} label="the host" onCollapse={onCollapse} />}
+                  caption={`${formatSize(available)} of ${formatSize(total)} available`}
+                >
+                  <Box component="span" sx={LABEL_SX}>
+                    Host {state.node || 'unknown'}
+                  </Box>
                 </TreeCell>
                 <TableCell />
                 {usedCell(total > 0 ? Math.max(0, total - available) : undefined)}
@@ -1154,9 +1224,14 @@ function AgentTree({
             return (
               <React.Fragment key={row.key}>
                 <TableRow hover>
-                  <TreeCell cells={guideCells(row)} bold>
-                    <GroupToggle row={row} label={o.title} onCollapse={onCollapse} />
-                    <span>{o.title}</span>
+                  <TreeCell
+                    cells={guideCells(row)}
+                    bold
+                    lead={<GroupToggle row={row} label={o.title} onCollapse={onCollapse} />}
+                  >
+                    <Box component="span" sx={LABEL_SX}>
+                      {o.title}
+                    </Box>
                     <Chip
                       size="small"
                       color={o.running ? 'success' : 'default'}
@@ -1211,12 +1286,17 @@ function AgentTree({
           const p = row.project as ProjectGroup;
           return (
             <TableRow key={row.key} hover>
-              <TreeCell cells={guideCells(row)} bold>
-                <GroupToggle row={row} label={`project ${p.name}`} onCollapse={onCollapse} />
-                <span>{p.name}</span>
-                <Typography component="span" variant="caption" color="text.secondary">
-                  {p.agents} agent{p.agents === 1 ? '' : 's'}
-                </Typography>
+              <TreeCell
+                cells={guideCells(row)}
+                bold
+                lead={<GroupToggle row={row} label={`project ${p.name}`} onCollapse={onCollapse} />}
+                caption={`${p.agents} ${p.other ? 'scope' : 'agent'}${p.agents === 1 ? '' : 's'}`}
+              >
+                <Tooltip title={p.name}>
+                  <Box component="span" sx={LABEL_SX}>
+                    {p.name}
+                  </Box>
+                </Tooltip>
               </TreeCell>
               <TableCell />
               {usedCell(p.current)}

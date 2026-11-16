@@ -54,7 +54,9 @@ The agents are one tree with connector lines: host, orchestrator, project (the
 T3 project or Herdr workspace) and thread. Each orchestrator lists its control
 unit and all-agents slice before its projects, and shows its policy, drift
 and default panel directly under its row. Host, orchestrator and project rows
-collapse with a chevron; project rows show the agent count and summed memory.
+collapse with a chevron; project rows show the agent count and summed memory. Non-agent
+scopes (for example systemd-run jobs) sit in an "Other scopes" group after the
+projects; agents without a project name go in "Unknown project", listed last.
 An agent row carries only the thread name (the Herdr tab), linked to the T3
 thread when the backend supplies a URL; ids, session and directory are in the
 tooltip. A **Raised by request** chip marks an agent whose limit was raised on
