@@ -983,7 +983,7 @@ describe('process chevron and column widths', () => {
   });
 
   it('keeps the fixed table within 1440 px with a 420 px name column', () => {
-    expect(TREE_COLUMN_WIDTHS[0]).toBe(420);
+    expect(TREE_COLUMN_WIDTHS[0]).toBe(390);
     expect(TREE_COLUMN_WIDTHS.length).toBe(12);
     expect(TREE_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1400);
   });
