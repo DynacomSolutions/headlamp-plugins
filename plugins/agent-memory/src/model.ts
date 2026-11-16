@@ -1415,3 +1415,12 @@ export function describeChange(c: ChangeRecord): string {
     c.error ? ` (${c.method === 'refused' ? '' : 'failed: '}${c.error})` : ''
   }`;
 }
+
+/** Processes in a unit: the tree's total, else the plain count; 0 for a slice. */
+export function processTotal(u: Pick<MemUnit, 'kind' | 'procs' | 'processes'>): number {
+  if (u.kind === 'slice') return 0;
+  return Math.max(u.processes?.total ?? 0, u.procs ?? 0);
+}
+
+/** Column widths in px of the agent table (fixed layout; Name first, Edit last). */
+export const TREE_COLUMN_WIDTHS = [420, 96, 60, 60, 60, 60, 104, 56, 236, 120, 64, 52];

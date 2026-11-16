@@ -9,7 +9,7 @@ import TableRow from '@mui/material/TableRow';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { formatSize, MemUnit, processCount, visibleProcesses } from './model';
+import { formatSize, MemUnit, processCount, processTotal, visibleProcesses } from './model';
 
 /** Chevron toggle shared by the pane rows and the process nodes. */
 export function Chevron({
@@ -36,9 +36,8 @@ export function Chevron({
 
 /** One-line summary of a scope's processes, shown under the pane name. */
 export function processSummary(u: MemUnit): string {
-  const t = u.processes;
-  if (!t) return u.procs > 0 ? processCount(u.procs) : '';
-  return processCount(t.total);
+  const n = processTotal(u);
+  return n > 0 ? processCount(n) : '';
 }
 
 /** The process tree of one scope: indented, with collapsible nodes, largest subtree first. */
