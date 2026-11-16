@@ -42,6 +42,23 @@ export interface AgentNames {
   title?: string;
   agent?: string;
   status?: string;
+  /** T3 project directory. */
+  projectDir?: string;
+  /** Parent thread id (T3 sub-threads). */
+  parent?: string;
+}
+
+/** A limit the agent raised itself, after a verified approval. */
+export interface RaisedInfo {
+  size: number;
+  high: Limit;
+  /** The limit before the raise; null when unknown or unlimited. */
+  previous: Limit;
+  reason: string;
+  question: string;
+  label: string;
+  approvedAt: string;
+  at: string;
 }
 
 /** The agent session in an orchestrator's agent scope. */
@@ -117,6 +134,8 @@ export interface MemUnit {
   /** Orchestrator and layer (control, agents, agent); absent from old backends. */
   orchestrator?: string;
   role?: '' | 'control' | 'agents' | 'agent';
+  /** Set when the agent's limit was raised by its own request. */
+  raised?: RaisedInfo;
   /** Human-friendly label ("claude · .cluster · 32a684cb"); the unit name for slices. */
   displayName: string;
 }
@@ -235,6 +254,8 @@ export interface Orchestrator {
   drift: Drift[];
   agentDrift: number;
   names?: { up: boolean; error?: string; entries: number };
+  /** The orchestrator supports limit-raise requests. */
+  raise?: boolean;
   /** false for the entry synthesised for an old backend. */
   fromBackend: boolean;
 }
@@ -839,8 +860,9 @@ function cleanAgent(a: any): AgentInfo | undefined {
   if (url) o.threadUrl = url;
   if (a.names && typeof a.names === 'object') {
     const n: AgentNames = {};
-    for (const k of ['workspace', 'tab', 'title', 'agent', 'status'] as const)
+    for (const k of ['workspace', 'tab', 'title', 'agent', 'status', 'parent'] as const)
       if (a.names[k]) n[k] = cleanText(a.names[k]);
+    if (a.names.projectDir) n.projectDir = cleanText(a.names.projectDir, 300);
     o.names = n;
   }
   if (a.sessionId !== undefined) o.sessionId = cleanText(a.sessionId);
@@ -945,8 +967,40 @@ function parseOrchestrators(json: any, units: MemUnit[]): Orchestrator[] {
               error: o.names.error ? cleanText(o.names.error, 200) : undefined,
             }
           : undefined,
+      raise: o.raise === undefined ? undefined : Boolean(o.raise),
       fromBackend: true,
     }));
+}
+
+function parseRaised(r: any): RaisedInfo | undefined {
+  if (!r || typeof r !== 'object') return undefined;
+  const size = limitOrUndefined(r.size);
+  if (typeof size !== 'number') return undefined;
+  const at = (v: unknown) => {
+    const t = Date.parse(String(v ?? ''));
+    return Number.isFinite(t) ? new Date(t).toISOString() : '';
+  };
+  return {
+    size,
+    high: limitOrUndefined(r.high) ?? null,
+    previous: limitOrUndefined(r.previous) ?? null,
+    reason: cleanText(r.reason, 300),
+    question: cleanText(r.question, 300),
+    label: cleanText(r.label, 200),
+    approvedAt: at(r.approvedAt),
+    at: at(r.at),
+  };
+}
+
+/** Tooltip of the "Raised by request" chip. */
+export function raisedTitle(
+  r: RaisedInfo,
+  fmt: (iso: string) => string = iso => new Date(iso).toLocaleString()
+): string {
+  const when = r.approvedAt ? fmt(r.approvedAt) : 'unknown time';
+  return `approved ${when}: ${r.label || 'no label'}; reason: ${
+    r.reason || 'none given'
+  }; ${formatSize(r.previous)} → ${formatSize(r.size)}`;
 }
 
 function parsePods(p: any): PodMemory | null {
@@ -1088,6 +1142,7 @@ export function parseState(json: any): AgentMemoryState {
       : u.role === undefined
       ? undefined
       : '',
+    raised: parseRaised(u.raised),
     eventsWindow: parseEventsWindow(u.eventsWindow),
     pressureWindow: parsePressureWindow(u.pressureWindow),
   }));
@@ -1117,4 +1172,186 @@ export function parseState(json: any): AgentMemoryState {
     warnings: parseWarnings(json?.warnings, Number(json?.sampled ?? 0) * 1000 || Date.now()),
     warningPolicy: { enabled: false, ...(json?.warningPolicy ?? {}) },
   };
+}
+
+/* ---------- host > orchestrator > project > thread tree ---------- */
+
+export interface ProjectGroup {
+  key: string;
+  name: string;
+  orchestrator: string;
+  /** All the project's agents, before the filter. */
+  agents: number;
+  current: number;
+}
+
+export interface AgentTreeRow {
+  /** Stable across refreshes; the collapsed set holds these keys. */
+  key: string;
+  kind: 'host' | 'orchestrator' | 'project' | 'unit';
+  /** Host 0, orchestrator 1, control/agents/project 2, thread 3. */
+  depth: number;
+  /**
+   * One entry per ancestor column left of the row's own elbow (depth - 1 of
+   * them, none for the host): true draws a continuing vertical line there.
+   */
+  guides: boolean[];
+  /** Last sibling: the elbow is a corner (└) instead of a tee (├). */
+  last: boolean;
+  /** Group rows only. */
+  hasChildren: boolean;
+  expanded: boolean;
+  unit?: MemUnit;
+  orchestrator?: Orchestrator;
+  project?: ProjectGroup;
+}
+
+function baseName(p: string | undefined): string {
+  const parts = (p ?? '').split('/').filter(Boolean);
+  return parts[parts.length - 1] ?? '';
+}
+
+/** The project an agent sits under: T3 project title or Herdr workspace. */
+export function projectName(u: MemUnit): string {
+  const n = u.agent?.names;
+  if (n?.workspace) return n.workspace;
+  const dn = u.displayName ?? '';
+  for (const sep of [' > ', ' / ']) {
+    const i = dn.indexOf(sep);
+    if (i > 0) return dn.slice(0, i);
+  }
+  return baseName(n?.projectDir) || baseName(u.agent?.cwd) || '(no project)';
+}
+
+/** The thread name shown on an agent row: T3 thread title or Herdr tab, never the project. */
+export function threadName(u: MemUnit): string {
+  const n = u.agent?.names;
+  const own = n?.title || n?.tab;
+  if (own) return own;
+  const dn = u.displayName || shortName(u.name);
+  const project = projectName(u);
+  for (const sep of [' > ', ' / ']) {
+    if (dn.startsWith(`${project}${sep}`)) return dn.slice(project.length + sep.length) || dn;
+  }
+  return dn;
+}
+
+interface TreeNode {
+  row: Omit<AgentTreeRow, 'guides' | 'last' | 'expanded' | 'hasChildren'>;
+  children: TreeNode[];
+  group: boolean;
+}
+
+function unitMatches(u: MemUnit, q: string): boolean {
+  if (matchesFilter(u, q)) return true;
+  const n = u.agent?.names;
+  return [n?.workspace, n?.title, n?.tab, n?.projectDir].some(v =>
+    (v ?? '').toLowerCase().includes(q)
+  );
+}
+
+/**
+ * The visible rows of the page's tree: host, orchestrators, their control and
+ * agents-slice rows, projects and threads. Collapsed groups hide their rows;
+ * the filter keeps matching units and their ancestors (a matching project or
+ * orchestrator name keeps everything under it).
+ */
+export function buildTree(
+  state: AgentMemoryState,
+  collapsed: ReadonlySet<string>,
+  filter: string
+): AgentTreeRow[] {
+  const q = filter.trim().toLowerCase();
+  const host: TreeNode = {
+    row: { key: 'host', kind: 'host', depth: 0 },
+    children: [],
+    group: true,
+  };
+  for (const o of state.orchestrators) {
+    const oNode: TreeNode = {
+      row: { key: `o:${o.name}`, kind: 'orchestrator', depth: 1, orchestrator: o },
+      children: [],
+      group: true,
+    };
+    const orchHit = q !== '' && `${o.title} ${o.name}`.toLowerCase().includes(q);
+    const keep = (u: MemUnit) => q === '' || orchHit || unitMatches(u, q);
+    const units = orchestratorUnits(state.units, o);
+    const isControl = (u: MemUnit) =>
+      u.role === 'control' || (!!o.controlUnit && u.name === o.controlUnit);
+    const isAgents = (u: MemUnit) =>
+      u.role === 'agents' || (!!o.agentsSlice && u.name === o.agentsSlice);
+    const leaf = (u: MemUnit): TreeNode => ({
+      row: { key: `u:${u.name}`, kind: 'unit', depth: 2, unit: u },
+      children: [],
+      group: false,
+    });
+    for (const u of units) if (isControl(u) && keep(u)) oNode.children.push(leaf(u));
+    for (const u of units)
+      if (isAgents(u) && !isControl(u) && keep(u)) oNode.children.push(leaf(u));
+    // Other non-agent scopes and services stay visible; intermediate slices do not.
+    for (const u of units)
+      if (!isControl(u) && !isAgents(u) && !isAgent(u) && u.kind !== 'slice' && keep(u))
+        oNode.children.push(leaf(u));
+    const projects = new Map<string, { group: ProjectGroup; units: MemUnit[] }>();
+    for (const u of units) {
+      if (!isAgent(u) || isControl(u) || isAgents(u)) continue;
+      const name = projectName(u);
+      let p = projects.get(name);
+      if (!p) {
+        p = {
+          group: { key: `p:${o.name}:${name}`, name, orchestrator: o.name, agents: 0, current: 0 },
+          units: [],
+        };
+        projects.set(name, p);
+      }
+      p.group.agents++;
+      p.group.current += u.current;
+      p.units.push(u);
+    }
+    const sorted = [...projects.values()].sort((a, b) =>
+      a.group.name.localeCompare(b.group.name, undefined, { sensitivity: 'base' })
+    );
+    for (const p of sorted) {
+      const projHit = q !== '' && p.group.name.toLowerCase().includes(q);
+      const shown = p.units.filter(u => orchHit || projHit || keep(u));
+      if (shown.length === 0) continue;
+      oNode.children.push({
+        row: { key: p.group.key, kind: 'project', depth: 2, project: p.group },
+        group: true,
+        children: shown.map(u => ({
+          row: { key: `u:${u.name}`, kind: 'unit' as const, depth: 3, unit: u },
+          children: [],
+          group: false,
+        })),
+      });
+    }
+    if (q === '' || orchHit || oNode.children.length > 0) host.children.push(oNode);
+  }
+  const out: AgentTreeRow[] = [];
+  const walk = (n: TreeNode, guides: boolean[], last: boolean) => {
+    const expanded = n.group && !collapsed.has(n.row.key);
+    out.push({
+      ...n.row,
+      guides,
+      last,
+      hasChildren: n.group && n.children.length > 0,
+      expanded,
+    });
+    if (!expanded) return;
+    const childGuides = n.row.depth === 0 ? [] : [...guides, !last];
+    // The host has no line column, so its children start with no ancestors.
+    n.children.forEach((c, i) =>
+      walk(c, n.row.depth === 0 ? [] : childGuides, i === n.children.length - 1)
+    );
+  };
+  walk(host, [], true);
+  return out;
+}
+
+/** The connector cells of a row, left to right: ancestor lines, then its own elbow. */
+export type GuideCell = 'line' | 'tee' | 'elbow' | 'none';
+
+export function guideCells(row: Pick<AgentTreeRow, 'depth' | 'guides' | 'last'>): GuideCell[] {
+  if (row.depth === 0) return [];
+  return [...row.guides.map((g): GuideCell => (g ? 'line' : 'none')), row.last ? 'elbow' : 'tee'];
 }
