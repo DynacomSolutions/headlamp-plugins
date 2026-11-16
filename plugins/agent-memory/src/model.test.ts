@@ -1,6 +1,8 @@
 /// <reference types="@kinvolk/headlamp-plugin" />
 import { describe, expect, it } from 'vitest';
 import {
+  agentLabel,
+  agentLabelParts,
   agentSlices,
   alertsByUnit,
   arrangeRows,
@@ -26,12 +28,14 @@ import {
   parseState,
   parseWarnings,
   processCommands,
+  processCount,
   raisedTitle,
   resolveSettings,
   safeUrl,
   shortName,
   sizeInput,
   stallLevel,
+  swapText,
   threadName,
   unitDetail,
   unitLabel,
@@ -871,6 +875,14 @@ describe('agent tree', () => {
     expect(rows.find(r => r.key === 'u:run-p1.scope')?.depth).toBe(3);
   });
 
+  it('labels agent rows Project > Thread with the parts separate', () => {
+    const u = st.units.find(x => x.name === 'a1.scope') as MemUnit;
+    expect(agentLabelParts(u)).toEqual({ project: 'Alpha', thread: 'one' });
+    expect(agentLabel(u)).toBe('Alpha > one');
+    const h = st.units.find(x => x.name === 'h1.scope') as MemUnit;
+    expect(agentLabel(h)).toBe('Work > tab1');
+  });
+
   it('turns guides and last into connector cells', () => {
     expect(guideCells({ depth: 0, guides: [], last: true })).toEqual([]);
     expect(guideCells({ depth: 3, guides: [true, false], last: false })).toEqual([
@@ -911,5 +923,20 @@ describe('agent tree', () => {
     expect(
       parseState({ units: [{ ...rawUnit('q.scope', 't3', 'agent'), raised: 'x' }] }).units[0].raised
     ).toBeUndefined();
+  });
+});
+
+describe('swap and process wording', () => {
+  it('writes swap as one used / max pair without a doubled slash', () => {
+    expect(swapText({ swapCurrent: 163 * M, swapMax: 512 * M })).toBe('163M / 512M');
+    expect(swapText({ swapCurrent: 0, swapMax: null })).toBe('0B / ∞');
+    expect(swapText({ swapCurrent: 0, swapMax: 16 * G })).not.toContain('//');
+    expect(swapText({ swapCurrent: 0, swapMax: null })).not.toMatch(/\/\s*\//);
+  });
+
+  it('pluralises processes', () => {
+    expect(processCount(1)).toBe('1 process');
+    expect(processCount(0)).toBe('0 processes');
+    expect(processCount(49)).toBe('49 processes');
   });
 });

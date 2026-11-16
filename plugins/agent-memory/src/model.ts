@@ -1375,3 +1375,24 @@ export function guideCells(row: Pick<AgentTreeRow, 'depth' | 'guides' | 'last'>)
   if (row.depth === 0) return [];
   return [...row.guides.map((g): GuideCell => (g ? 'line' : 'none')), row.last ? 'elbow' : 'tee'];
 }
+
+/** "1 process", "3 processes". */
+export function processCount(n: number): string {
+  return `${n} ${n === 1 ? 'process' : 'processes'}`;
+}
+
+/** Swap usage on one line: "used / max", where max is ∞ when unlimited. */
+export function swapText(u: Pick<MemUnit, 'swapCurrent' | 'swapMax'>): string {
+  return `${formatSize(u.swapCurrent)} / ${formatSize(u.swapMax)}`;
+}
+
+/** An agent row's label: the project (muted) and the thread (the link). */
+export function agentLabelParts(u: MemUnit): { project: string; thread: string } {
+  return { project: projectName(u), thread: threadName(u) };
+}
+
+/** The same label as plain text, for tooltips and aria labels. */
+export function agentLabel(u: MemUnit): string {
+  const { project, thread } = agentLabelParts(u);
+  return `${project} > ${thread}`;
+}
