@@ -282,9 +282,11 @@ export interface ChangeRecord {
   unit: string;
   method: string;
   runtime: boolean;
-  old: Record<string, string>;
-  new: Record<string, string>;
+  old?: Record<string, string> | null;
+  new?: Record<string, string> | null;
   error?: string;
+  /** For raises by request: the approving answer. */
+  approval?: string;
   /** "default" for a change of the per-agent default; absent for a limit change. */
   action?: string;
   displayName?: string;
@@ -1395,4 +1397,21 @@ export function agentLabelParts(u: MemUnit): { project: string; thread: string }
 export function agentLabel(u: MemUnit): string {
   const { project, thread } = agentLabelParts(u);
   return `${project} > ${thread}`;
+}
+
+/** One line describing a change record; tolerates missing old/new maps. */
+export function describeChange(c: ChangeRecord): string {
+  const oldV = c.old ?? {};
+  const newV = c.new ?? {};
+  const parts = Object.keys(newV).map(
+    k => `${k.replace('Memory', '')} ${oldV[k] ?? '?'} to ${newV[k]}`
+  );
+  let prefix = '';
+  if (c.action === 'default') prefix = 'Default for every agent: ';
+  else if (c.action === 'raise' && c.method === 'refused') prefix = 'Raise refused: ';
+  else if (c.action === 'raise') prefix = 'Raised by request: ';
+  const body = parts.join(', ') || '-';
+  return `${prefix}${body}${
+    c.error ? ` (${c.method === 'refused' ? '' : 'failed: '}${c.error})` : ''
+  }`;
 }
