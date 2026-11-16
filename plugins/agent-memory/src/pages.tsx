@@ -31,6 +31,8 @@ import {
 } from './data';
 import {
   AgentDefault,
+  agentLabel,
+  agentLabelParts,
   AgentMemoryState,
   agentSlices,
   AgentTreeRow,
@@ -66,6 +68,7 @@ import {
   shortName,
   sizeInput,
   stallLevel,
+  swapText,
   threadName,
   unitDetail,
   unitLabel,
@@ -97,7 +100,7 @@ function UsageBar({ unit, hostTotal }: { unit: MemUnit; hostTotal: number }) {
         sx={{
           position: 'relative',
           height: 14,
-          minWidth: 160,
+          minWidth: 100,
           borderRadius: 0.5,
           bgcolor: 'action.selected',
           border: 1,
@@ -806,7 +809,7 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
   );
 }
 
-const GUIDE_WIDTH = 22;
+const GUIDE_WIDTH = 24;
 /** Distance from the row top to the elbow: the middle of the first text line. */
 const ELBOW_TOP = 20;
 
@@ -881,19 +884,18 @@ function TreeCell({
     <TableCell
       sx={{
         p: 0,
-        borderBottom: 'none',
         fontWeight: bold ? 600 : 400,
         position: 'relative',
-        minWidth: 380,
-        maxWidth: 520,
+        minWidth: 340,
+        maxWidth: 420,
       }}
     >
-      <Box sx={{ position: 'absolute', top: 0, bottom: 0, left: 0, display: 'flex' }}>
+      <Box sx={{ position: 'absolute', top: 0, bottom: -1, left: 0, display: 'flex' }}>
         <Guides cells={cells} />
       </Box>
       <Box
         sx={{
-          pl: `${cells.length * GUIDE_WIDTH + 4}px`,
+          pl: `${cells.length * GUIDE_WIDTH}px`,
           pr: 1,
           py: '8px',
           display: 'flex',
@@ -1023,6 +1025,7 @@ function UnitRow({
   const summary = u.kind === 'slice' ? '' : processSummary(u);
   const agent = isAgent(u);
   const label = agent ? threadName(u) : unitLabel(u);
+  const fullLabel = agent ? agentLabel(u) : label;
   const tip = [unitDetail(u), u.agent?.cwd, u.name].filter(Boolean).join(' · ');
   const isAllAgents = u.role === 'agents' || (!u.role && u.name === state.agentSlice);
   return (
@@ -1052,22 +1055,26 @@ function UnitRow({
             )
           }
         >
-          <Tooltip title={`${label} · ${tip}`}>
-            {agent && u.agent?.threadUrl ? (
-              <Link
-                href={u.agent.threadUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label={`Open the thread ${label}`}
-                sx={LABEL_SX}
-              >
-                {label}
-              </Link>
-            ) : (
-              <Box component="span" sx={LABEL_SX}>
-                {label}
-              </Box>
-            )}
+          <Tooltip title={`${fullLabel} · ${tip}`}>
+            <Box component="span" sx={LABEL_SX}>
+              {agent && (
+                <Box component="span" sx={{ color: 'text.secondary', fontWeight: 400 }}>
+                  {agentLabelParts(u).project} &gt;{' '}
+                </Box>
+              )}
+              {agent && u.agent?.threadUrl ? (
+                <Link
+                  href={u.agent.threadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={`Open the thread ${fullLabel}`}
+                >
+                  {label}
+                </Link>
+              ) : (
+                label
+              )}
+            </Box>
           </Tooltip>
           {!agent && (
             <Typography
@@ -1103,8 +1110,8 @@ function UnitRow({
         <TableCell align="right">{u.peak ? formatSize(u.peak) : '-'}</TableCell>
         <TableCell align="right">{formatSize(u.high)}</TableCell>
         <TableCell align="right">{formatSize(u.max)}</TableCell>
-        <TableCell align="right">
-          {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
+        <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+          {swapText(u)}
         </TableCell>
         <TableCell align="right">{u.events?.oom_kill ?? 0}</TableCell>
         <TableCell>
@@ -1121,7 +1128,7 @@ function UnitRow({
             <Button
               size="small"
               onClick={() => onEdit(u.name)}
-              aria-label={`Edit limits of ${label}`}
+              aria-label={`Edit limits of ${fullLabel}`}
             >
               Edit
             </Button>
@@ -1168,7 +1175,15 @@ function AgentTree({
 }) {
   const rows = React.useMemo(() => buildTree(state, collapsed, filter), [state, collapsed, filter]);
   return (
-    <Table size="small" aria-label="Agent memory tree">
+    <Table
+      size="small"
+      aria-label="Agent memory tree"
+      sx={{
+        '& th': { px: 1, whiteSpace: 'nowrap' },
+        '& td': { px: 1 },
+        '& td:first-of-type': { px: 0 },
+      }}
+    >
       <TableHead>
         <TableRow>
           <TableCell>Name</TableCell>
@@ -1178,9 +1193,21 @@ function AgentTree({
           <TableCell align="right">Soft</TableCell>
           <TableCell align="right">Hard</TableCell>
           <TableCell align="right">Swap</TableCell>
-          <TableCell align="right">OOM kills (total)</TableCell>
-          <TableCell>Events (recent window)</TableCell>
-          <TableCell>Memory stall time</TableCell>
+          <TableCell align="right">
+            <Tooltip title="OOM kills since the cgroup was created (total)">
+              <span>OOM kills</span>
+            </Tooltip>
+          </TableCell>
+          <TableCell>
+            <Tooltip title="Events in the recent window">
+              <span>Events</span>
+            </Tooltip>
+          </TableCell>
+          <TableCell>
+            <Tooltip title="Memory stall time in the recent window">
+              <span>Stall</span>
+            </Tooltip>
+          </TableCell>
           <TableCell>Alerts</TableCell>
           <TableCell />
         </TableRow>
