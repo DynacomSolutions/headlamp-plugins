@@ -746,7 +746,7 @@ describe('agent tree', () => {
     running: true,
   });
   const raw = {
-    node: 'eu2',
+    node: 'node-a',
     orchestrators: [orch('t3', 'T3 Code'), orch('herdr', 'Herdr')],
     units: [
       rawUnit('t3-control.service', 't3', 'control'),
