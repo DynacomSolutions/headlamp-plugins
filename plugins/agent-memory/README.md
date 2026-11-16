@@ -4,11 +4,20 @@ A [Headlamp](https://headlamp.dev/) plugin that shows the memory restrictions
 on an agent host and lets you change them live. It adds an **Agent memory**
 sidebar entry with one page.
 
-The host runs T3 Code agents under a systemd user manager: one slice
-(`app-t3code-agents.slice`) holds every agent and caps them all together, and
-each agent session is a transient scope (`t3code-<provider>-<id>.scope`) with
-its own `memory.high` (soft) and `memory.max` (hard) limit. The page lists
-that slice and the agents and, for each:
+The host runs agents under orchestrators (T3 Code, Herdr, ...) inside a
+systemd user manager. Every orchestrator has three layers: its own control
+unit (`t3code.service`, `herdr-host.service`), one slice that holds every
+agent and caps them all together (`app-t3code-agents.slice`,
+`herdr-panes.slice`), and one transient scope per agent session
+(`t3code-<provider>-<id>.scope`, `herdr-*.scope`) with its own `memory.high`
+(soft) and `memory.max` (hard) limit. The page has one section per
+orchestrator with:
+
+- its status (running, agent count, control unit up), the shared policy for
+  the three layers and whether the live limits match it (drift);
+- its per-agent default (editable, or read-only when the backend mounts the
+  file read-only, as for Herdr);
+- its control unit, agents slice and agents, and for each:
 
 - a usage bar with the soft limit (amber line) and hard limit (red line);
 - used, peak (`memory.peak`), soft, hard and swap figures, and the lifetime
@@ -23,17 +32,19 @@ that slice and the agents and, for each:
 - active alert badges, and a summary of all active alerts at the top;
 - which session it is: the row label is `provider · directory · session`
   (`claude · .cluster · 32a684cb`), with the full session id (resumed or new),
-  the T3 thread id, the agent's pid and working directory underneath;
+  the thread id, the agent's pid and working directory underneath, and a
+  **thread** link that opens the T3 thread (T3 agents); Herdr panes are named
+  `workspace / tab`;
 - an **Own limit** badge on an agent whose limit was set on this page;
-- an **Edit** button on the agents slice and on each agent. A change to the
+- an **Edit** button on each agents slice and on each agent. A change to a
   slice is always persistent (systemd writes
   `~/.config/systemd/user.control/app-t3code-agents.slice.d/50-Memory*.conf`,
   which override T3's runtime values); a change to one agent lasts until that
   agent ends;
-- the **default for every agent** with an **Edit default** button: it rewrites
-  the backend host's `t3code-.scope.d/50-agent-cap.conf` and reloads the user
-  manager, so new and running agents get it (agents with their own limit keep
-  theirs);
+- the **default for every agent** of the orchestrator with an **Edit
+  default** button (soft, hard and swap): for T3 it rewrites the backend
+  host's `t3code-.scope.d/50-agent-cap.conf` and reloads the user manager, so
+  new and running agents get it (agents with their own limit keep theirs);
 - the memory of the node's Kubernetes pods by QoS class (Guaranteed, Burstable,
   BestEffort), with the pod count and the program / page cache split.
 

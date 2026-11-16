@@ -35,12 +35,26 @@ export interface PressureWindow {
 /** A byte quantity; null means unlimited ("max" / infinity). */
 export type Limit = number | null;
 
-/** The T3 Code agent session in a t3code-<provider>-<id>.scope. */
+/** Labels the orchestrator itself supplies (Herdr workspace and tab). */
+export interface AgentNames {
+  workspace?: string;
+  tab?: string;
+  title?: string;
+  agent?: string;
+  status?: string;
+}
+
+/** The agent session in an orchestrator's agent scope. */
 export interface AgentInfo {
+  /** The orchestrator that started it (t3, herdr); absent from old backends. */
+  orchestrator?: string;
   provider: string;
   id: string;
-  /** T3CODE_THREAD_ID: the T3 thread the session belongs to. */
+  /** The orchestrator's thread (T3CODE_THREAD_ID) or pane (HERDR_PANE_ID). */
   threadId?: string;
+  /** Opens the thread in the orchestrator; only http(s) links are kept. */
+  threadUrl?: string;
+  names?: AgentNames;
   /** The agent CLI session (claude --resume=<id> or --session-id=<id>). */
   sessionId?: string;
   /** true when the session was resumed (--resume). */
@@ -98,8 +112,11 @@ export interface MemUnit {
   processes?: ProcTree;
   /** memory.peak: the highest usage seen since the cgroup was created. */
   peak?: number;
-  /** The T3 agent behind an agent scope; absent for slices. */
+  /** The agent behind an agent scope; absent for slices. */
   agent?: AgentInfo;
+  /** Orchestrator and layer (control, agents, agent); absent from old backends. */
+  orchestrator?: string;
+  role?: '' | 'control' | 'agents' | 'agent';
   /** Human-friendly label ("claude · .cluster · 32a684cb"); the unit name for slices. */
   displayName: string;
 }
@@ -152,6 +169,11 @@ export interface AgentMemoryState {
   agentDefault: AgentDefault | null;
   /** Limits set on single agents from this page: unit to property to value. */
   overrides: Record<string, Record<string, string>>;
+  /**
+   * The orchestrators (T3 Code, Herdr, ...). An old backend without them
+   * gets one synthesised T3 entry holding every unit.
+   */
+  orchestrators: Orchestrator[];
   /** The node's pods by QoS class; null when the backend does not read them. */
   pods: PodMemory | null;
   units: MemUnit[];
@@ -161,12 +183,60 @@ export interface AgentMemoryState {
   warningPolicy: WarningPolicy;
 }
 
-/** 50-agent-cap.conf: the default cap of every agent. undefined: not set; null: infinity. */
+/** An orchestrator's per-agent default file. undefined: not set; null: infinity. */
 export interface AgentDefault {
   file: string;
   memoryHigh?: Limit;
   memoryMax?: Limit;
+  memorySwapMax?: Limit;
+  /** daemon-reload (T3) or running-agents (Herdr: set on each running pane). */
+  apply?: string;
+  /** Shown without an editor (mounted read-only). */
+  readOnly?: boolean;
+  note?: string;
   error?: string;
+}
+
+export interface LayerLimits {
+  memoryMin?: Limit;
+  memoryLow?: Limit;
+  memoryHigh?: Limit;
+  memoryMax?: Limit;
+  memorySwapMax?: Limit;
+  managedOOMPreference?: string;
+  oomPolicy?: string;
+  ioWeight?: number;
+}
+
+export interface Drift {
+  layer: 'control' | 'agents' | 'agent';
+  unit: string;
+  property: string;
+  want: Limit;
+  have: Limit;
+}
+
+/** One orchestrator: its three layers, its default and how live limits match the policy. */
+export interface Orchestrator {
+  name: string;
+  kind: string;
+  title: string;
+  controlUnit: string;
+  agentsSlice: string;
+  agentScope: string;
+  threadEnv: string;
+  running: boolean;
+  controlUp: boolean;
+  agents: number;
+  current: number;
+  policy: { control: LayerLimits; agents: LayerLimits; agent: LayerLimits };
+  defaults: AgentDefault | null;
+  overrides: Record<string, Record<string, string>>;
+  drift: Drift[];
+  agentDrift: number;
+  names?: { up: boolean; error?: string; entries: number };
+  /** false for the entry synthesised for an old backend. */
+  fromBackend: boolean;
 }
 
 export interface PodClass {
@@ -357,6 +427,8 @@ export interface EditContext {
   protectedUnits: string[];
   /** The only editable slice; empty allows any. */
   agentSlice?: string;
+  /** The editable slices (every orchestrator's agents slice); wins over agentSlice. */
+  agentSlices?: string[];
 }
 
 /** Mirrors the backend rules so the dialog can explain a problem before sending. */
@@ -389,8 +461,13 @@ export function checkEdit(
   }
   if (persist && unit.kind !== 'slice')
     errors.push('Only slices can be persisted; scopes are transient.');
-  if (unit.kind === 'slice' && ctx.agentSlice && unit.name !== ctx.agentSlice)
-    errors.push(`Only ${ctx.agentSlice} and the agents can be edited; ${unit.name} belongs to T3.`);
+  const slices = ctx.agentSlices?.length ? ctx.agentSlices : ctx.agentSlice ? [ctx.agentSlice] : [];
+  if (unit.kind === 'slice' && slices.length > 0 && !slices.includes(unit.name))
+    errors.push(
+      `Only ${slices.join(', ')} and the agents can be edited; ${
+        unit.name
+      } belongs to the orchestrator.`
+    );
   if (ctx.protectedUnits.includes(unit.name)) {
     for (const f of ['memoryHigh', 'memoryMax', 'memorySwapMax'] as EditField[]) {
       if (parsed[f] !== undefined && parsed[f] !== null) {
@@ -442,7 +519,7 @@ export function checkEdit(
   return { changes, errors, belowCurrent };
 }
 
-export type DefaultField = 'memoryHigh' | 'memoryMax';
+export type DefaultField = 'memoryHigh' | 'memoryMax' | 'memorySwapMax';
 export type DefaultForm = Partial<Record<DefaultField, string>>;
 
 /**
@@ -460,16 +537,16 @@ export function checkDefaults(
   const errors: string[] = [];
   const parsed: Partial<Record<DefaultField, Limit>> = {};
   const changes: DefaultForm = {};
-  for (const f of ['memoryHigh', 'memoryMax'] as DefaultField[]) {
+  for (const f of ['memoryHigh', 'memoryMax', 'memorySwapMax'] as DefaultField[]) {
     const raw = form[f];
-    if (raw === undefined) continue;
+    if (raw === undefined || (raw.trim() === '' && current[f] === undefined)) continue;
     const v = parseSize(raw);
     if (v === undefined) {
       errors.push(`${FIELD_LABELS[f]}: "${raw}" is not a size (use for example 64G or infinity)`);
       continue;
     }
     if (v === current[f]) continue;
-    if (typeof v === 'number' && v < ctx.minLimit)
+    if (f !== 'memorySwapMax' && typeof v === 'number' && v < ctx.minLimit)
       errors.push(`${FIELD_LABELS[f]} must be at least ${formatSize(ctx.minLimit)}.`);
     if (typeof v === 'number' && ctx.hostTotal > 0 && v > ctx.hostTotal)
       errors.push(`${FIELD_LABELS[f]} exceeds the host memory (${formatSize(ctx.hostTotal)}).`);
@@ -606,14 +683,47 @@ export function arrangeRows(units: MemUnit[], query: string): MemUnit[] {
   return units.filter(u => matchesFilter(u, query));
 }
 
-/** Whether the page can edit this unit: the agents slice (persisted) or an agent scope (live). */
+/** The editable slices: every orchestrator's agents slice (the legacy agentSlice otherwise). */
+export function agentSlices(
+  state: Partial<Pick<AgentMemoryState, 'agentSlice' | 'orchestrators'>>
+): string[] {
+  const out = (state.orchestrators ?? []).map(o => o.agentsSlice).filter(Boolean);
+  if (out.length === 0 && state.agentSlice) out.push(state.agentSlice);
+  return out;
+}
+
+/** Whether the page can edit this unit: an agents slice (persisted) or an agent scope (live). */
 export function canEdit(
   u: MemUnit,
-  state: Pick<AgentMemoryState, 'agentSlice' | 'writable'>
+  state: Pick<AgentMemoryState, 'agentSlice' | 'writable'> &
+    Partial<Pick<AgentMemoryState, 'orchestrators'>>
 ): boolean {
   if (!state.writable) return false;
   if (u.kind === 'scope') return true;
-  return u.kind === 'slice' && (!state.agentSlice || u.name === state.agentSlice);
+  const slices = agentSlices(state);
+  return u.kind === 'slice' && (slices.length === 0 || slices.includes(u.name));
+}
+
+/** The units of one orchestrator, in the backend's order (parents before children). */
+export function orchestratorUnits(units: MemUnit[], o: Orchestrator): MemUnit[] {
+  if (!o.fromBackend) return units;
+  return units.filter(u => u.orchestrator === o.name);
+}
+
+/** The orchestrator's own running agents. */
+export function orchestratorAgents(units: MemUnit[], o: Orchestrator): MemUnit[] {
+  return orchestratorUnits(units, o).filter(isAgent);
+}
+
+/** Only http(s) links are followed; anything else is dropped. */
+export function safeUrl(v: unknown): string | undefined {
+  if (typeof v !== 'string' || v.length > 600) return undefined;
+  try {
+    const u = new URL(v);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.toString() : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const MAX_TEXT = 120;
@@ -723,7 +833,16 @@ export function visibleProcesses(t: ProcTree, collapsed: ReadonlySet<number>): T
 function cleanAgent(a: any): AgentInfo | undefined {
   if (!a || typeof a !== 'object') return undefined;
   const o: AgentInfo = { provider: cleanText(a.provider), id: cleanText(a.id) };
-  if (a.threadId !== undefined) o.threadId = cleanText(a.threadId);
+  if (a.orchestrator !== undefined) o.orchestrator = cleanText(a.orchestrator);
+  if (a.threadId !== undefined) o.threadId = cleanText(a.threadId, 256);
+  const url = safeUrl(a.threadUrl);
+  if (url) o.threadUrl = url;
+  if (a.names && typeof a.names === 'object') {
+    const n: AgentNames = {};
+    for (const k of ['workspace', 'tab', 'title', 'agent', 'status'] as const)
+      if (a.names[k]) n[k] = cleanText(a.names[k]);
+    o.names = n;
+  }
   if (a.sessionId !== undefined) o.sessionId = cleanText(a.sessionId);
   if (a.cwd !== undefined) o.cwd = cleanText(a.cwd, 300);
   if (a.resumed !== undefined) o.resumed = Boolean(a.resumed);
@@ -743,8 +862,91 @@ function parseDefault(d: any): AgentDefault | null {
   const out: AgentDefault = { file: cleanText(d.file, 300) };
   if ('memoryHigh' in d) out.memoryHigh = limitOrUndefined(d.memoryHigh);
   if ('memoryMax' in d) out.memoryMax = limitOrUndefined(d.memoryMax);
+  if ('memorySwapMax' in d) out.memorySwapMax = limitOrUndefined(d.memorySwapMax);
+  if (d.apply) out.apply = cleanText(d.apply);
+  if (d.readOnly) out.readOnly = true;
+  if (d.note) out.note = cleanText(d.note, 300);
   if (d.error) out.error = cleanText(d.error, 300);
   return out;
+}
+
+function parseLayer(l: any): LayerLimits {
+  const out: LayerLimits = {};
+  if (!l || typeof l !== 'object') return out;
+  for (const k of ['memoryMin', 'memoryLow', 'memoryHigh', 'memoryMax', 'memorySwapMax'] as const)
+    if (k in l) out[k] = limitOrUndefined(l[k]);
+  if (l.managedOOMPreference) out.managedOOMPreference = cleanText(l.managedOOMPreference);
+  if (l.oomPolicy) out.oomPolicy = cleanText(l.oomPolicy);
+  if (l.ioWeight) out.ioWeight = num(l.ioWeight);
+  return out;
+}
+
+function parseOrchestrators(json: any, units: MemUnit[]): Orchestrator[] {
+  const list = Array.isArray(json?.orchestrators) ? json.orchestrators : null;
+  if (!list) {
+    // A backend that predates orchestrators: one T3 section with every unit.
+    const slice = String(json?.agentSlice ?? '');
+    return [
+      {
+        name: 't3',
+        kind: 't3',
+        title: 'T3 Code',
+        controlUnit: '',
+        agentsSlice: slice,
+        agentScope: '',
+        threadEnv: 'T3CODE_THREAD_ID',
+        running: units.length > 0,
+        controlUp: false,
+        agents: units.filter(isAgent).length,
+        current: units.find(u => u.name === slice)?.current ?? 0,
+        policy: { control: {}, agents: {}, agent: {} },
+        defaults: parseDefault(json?.agentDefault),
+        overrides: parseOverrides(json?.overrides),
+        drift: [],
+        agentDrift: 0,
+        fromBackend: false,
+      },
+    ];
+  }
+  return list
+    .filter((o: any) => o && typeof o === 'object' && o.name)
+    .map((o: any) => ({
+      name: cleanText(o.name),
+      kind: cleanText(o.kind),
+      title: cleanText(o.title) || cleanText(o.name),
+      controlUnit: cleanText(o.controlUnit),
+      agentsSlice: cleanText(o.agentsSlice),
+      agentScope: cleanText(o.agentScope, 200),
+      threadEnv: cleanText(o.threadEnv),
+      running: Boolean(o.running),
+      controlUp: Boolean(o.controlUp),
+      agents: num(o.agents),
+      current: num(o.current),
+      policy: {
+        control: parseLayer(o.policy?.control),
+        agents: parseLayer(o.policy?.agents),
+        agent: parseLayer(o.policy?.agent),
+      },
+      defaults: parseDefault(o.defaults),
+      overrides: parseOverrides(o.overrides),
+      drift: (Array.isArray(o.drift) ? o.drift : []).slice(0, 100).map((d: any) => ({
+        layer: d?.layer === 'control' || d?.layer === 'agents' ? d.layer : 'agent',
+        unit: cleanText(d?.unit),
+        property: cleanText(d?.property),
+        want: limitOrUndefined(d?.want) ?? null,
+        have: limitOrUndefined(d?.have) ?? null,
+      })),
+      agentDrift: num(o.agentDrift),
+      names:
+        o.names && typeof o.names === 'object'
+          ? {
+              up: Boolean(o.names.up),
+              entries: num(o.names.entries),
+              error: o.names.error ? cleanText(o.names.error, 200) : undefined,
+            }
+          : undefined,
+      fromBackend: true,
+    }));
 }
 
 function parsePods(p: any): PodMemory | null {
@@ -880,6 +1082,12 @@ export function parseState(json: any): AgentMemoryState {
     eventsLocal: u.eventsLocal ?? {},
     pressureSome: u.pressureSome ?? zero,
     pressureFull: u.pressureFull ?? zero,
+    orchestrator: u.orchestrator === undefined ? undefined : cleanText(u.orchestrator),
+    role: ['control', 'agents', 'agent'].includes(u.role)
+      ? u.role
+      : u.role === undefined
+      ? undefined
+      : '',
     eventsWindow: parseEventsWindow(u.eventsWindow),
     pressureWindow: parsePressureWindow(u.pressureWindow),
   }));
@@ -902,6 +1110,7 @@ export function parseState(json: any): AgentMemoryState {
     t3: { agentSlice: '', agents: 0, ...(json?.t3 ?? {}) },
     agentDefault: parseDefault(json?.agentDefault),
     overrides: parseOverrides(json?.overrides),
+    orchestrators: parseOrchestrators(json, units),
     pods: parsePods(json?.pods),
     units,
     alerts: Array.isArray(json?.alerts) ? json.alerts : [],

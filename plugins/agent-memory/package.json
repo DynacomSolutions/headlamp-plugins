@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "MIT",
   "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
-  "description": "Headlamp plugin: view and live-edit T3 agent memory limits (host slice, per agent, default), with limit and event alerts",
+  "description": "Headlamp plugin: view and live-edit agent memory limits per orchestrator (T3 Code, Herdr): control, agents slice, per agent and default, with policy drift and alerts",
   "scripts": {
     "start": "headlamp-plugin start",
     "build": "headlamp-plugin build",
