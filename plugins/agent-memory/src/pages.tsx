@@ -32,9 +32,10 @@ import {
   AgentDefault,
   AgentMemoryState,
   agentSlices,
+  AgentTreeRow,
   alertsByUnit,
-  arrangeRows,
   barGeometry,
+  buildTree,
   canEdit,
   changeLabel,
   ChangeRecord,
@@ -50,16 +51,21 @@ import {
   formatSize,
   formatSpan,
   formatStall,
+  GuideCell,
+  guideCells,
+  isAgent,
   Limit,
   MemAlert,
   MemUnit,
   Orchestrator,
   orchestratorAgents,
-  orchestratorUnits,
   parseSize,
+  ProjectGroup,
+  raisedTitle,
   shortName,
   sizeInput,
   stallLevel,
+  threadName,
   unitDetail,
   unitLabel,
   visibleAlerts,
@@ -797,25 +803,305 @@ function ChangesList({ changes }: { changes: ChangeRecord[] }) {
   );
 }
 
-function UnitsTable({
+const GUIDE_WIDTH = 22;
+
+/** Fixed-width connector boxes: continuing lines, tees and elbows drawn with borders. */
+function Guides({ cells }: { cells: GuideCell[] }) {
+  return (
+    <>
+      {cells.map((c, i) => (
+        <Box
+          key={i}
+          aria-hidden
+          sx={{
+            position: 'relative',
+            flex: 'none',
+            alignSelf: 'stretch',
+            width: GUIDE_WIDTH,
+            ...(c !== 'none' && {
+              '&::before': {
+                content: '""',
+                position: 'absolute',
+                left: '50%',
+                top: 0,
+                bottom: c === 'elbow' ? '50%' : 0,
+                borderLeft: '1px solid',
+                borderColor: 'text.disabled',
+              },
+            }),
+            ...((c === 'tee' || c === 'elbow') && {
+              '&::after': {
+                content: '""',
+                position: 'absolute',
+                left: '50%',
+                right: 2,
+                top: '50%',
+                borderTop: '1px solid',
+                borderColor: 'text.disabled',
+              },
+            }),
+          }}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Line cells that continue past a row to whatever sits below it. */
+function continuing(row: AgentTreeRow): GuideCell[] {
+  return [...row.guides.map((g): GuideCell => (g ? 'line' : 'none')), row.last ? 'none' : 'line'];
+}
+
+const COLUMNS = 12;
+
+/** The first cell of a row: connectors on the left, content on the right. */
+function TreeCell({
+  cells,
+  children,
+  bold,
+}: {
+  cells: GuideCell[];
+  children: React.ReactNode;
+  bold?: boolean;
+}) {
+  return (
+    <TableCell sx={{ p: 0, borderBottom: 'none', fontWeight: bold ? 600 : 400 }}>
+      <Box display="flex" alignItems="stretch" minHeight={41}>
+        <Guides cells={cells} />
+        <Box sx={{ flex: 1, py: 0.75, pl: 0.5, pr: 1, display: 'flex', alignItems: 'center' }}>
+          <Box display="flex" alignItems="center" flexWrap="wrap" columnGap={0.5} rowGap={0.25}>
+            {children}
+          </Box>
+        </Box>
+      </Box>
+    </TableCell>
+  );
+}
+
+function GroupToggle({
+  row,
+  label,
+  onCollapse,
+}: {
+  row: AgentTreeRow;
+  label: string;
+  onCollapse: (key: string) => void;
+}) {
+  return row.hasChildren ? (
+    <Chevron
+      open={row.expanded}
+      label={`${row.expanded ? 'Collapse' : 'Expand'} ${label}`}
+      onToggle={() => onCollapse(row.key)}
+    />
+  ) : (
+    <Box sx={{ width: 24, flex: 'none' }} />
+  );
+}
+
+function usedCell(v: number | undefined) {
+  return <TableCell align="right">{v === undefined ? '' : formatSize(v)}</TableCell>;
+}
+
+function EmptyCells({ n }: { n: number }) {
+  return (
+    <>
+      {Array.from({ length: n }, (_, i) => (
+        <TableCell key={i} />
+      ))}
+    </>
+  );
+}
+
+function OrchestratorInfo({
   o,
+  writable,
+  onEditDefault,
+}: {
+  o: Orchestrator;
+  writable: boolean;
+  onEditDefault: () => void;
+}) {
+  return (
+    <Box py={0.5} pr={1}>
+      {o.fromBackend && (
+        <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
+          {[
+            o.agentsSlice && `agents in ${o.agentsSlice}`,
+            o.threadEnv && `thread from ${o.threadEnv}`,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </Typography>
+      )}
+      <PolicyChips o={o} />
+      <DriftNote o={o} />
+      <DefaultsPanel o={o} writable={writable} onEdit={onEditDefault} />
+    </Box>
+  );
+}
+
+function UnitRow({
+  row,
   state,
-  rows,
   byUnit,
   expanded,
   onToggle,
   onEdit,
 }: {
-  o: Orchestrator;
+  row: AgentTreeRow;
   state: AgentMemoryState;
-  rows: MemUnit[];
   byUnit: Map<string, MemAlert[]>;
   expanded: ReadonlySet<string>;
   onToggle: (name: string) => void;
   onEdit: (name: string) => void;
 }) {
+  const u = row.unit as MemUnit;
+  const o = state.orchestrators.find(x => x.name === u.orchestrator) ?? state.orchestrators[0];
+  const sev = worstSeverity(byUnit.get(u.name));
+  const editable = canEdit(u, state);
+  const own = state.overrides[u.name] ?? o?.overrides[u.name];
+  const hasProcs = u.kind !== 'slice' && !!u.processes && u.processes.roots.length > 0;
+  const open = hasProcs && expanded.has(u.name);
+  const summary = u.kind === 'slice' ? '' : processSummary(u);
+  const agent = isAgent(u);
+  const label = agent ? threadName(u) : unitLabel(u);
+  const tip = [unitDetail(u), u.agent?.cwd, u.name].filter(Boolean).join(' · ');
+  const isAllAgents = u.role === 'agents' || (!u.role && u.name === state.agentSlice);
   return (
-    <Table size="small">
+    <React.Fragment>
+      <TableRow
+        hover
+        sx={
+          sev
+            ? {
+                bgcolor: sev === 'critical' ? 'error.light' : 'warning.light',
+                '& td': { color: 'text.primary' },
+              }
+            : undefined
+        }
+      >
+        <TreeCell cells={guideCells(row)} bold={!agent}>
+          {hasProcs && (
+            <Chevron
+              open={open}
+              label={`${open ? 'Hide' : 'Show'} processes of ${label}`}
+              onToggle={() => onToggle(u.name)}
+            />
+          )}
+          <Tooltip title={tip}>
+            {agent && u.agent?.threadUrl ? (
+              <Link
+                href={u.agent.threadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`Open the thread ${label}`}
+              >
+                {label}
+              </Link>
+            ) : (
+              <span>{label}</span>
+            )}
+          </Tooltip>
+          {!agent && (
+            <Typography component="span" variant="caption" color="text.secondary">
+              {u.kind}
+            </Typography>
+          )}
+          {u.raised && (
+            <Tooltip title={raisedTitle(u.raised)}>
+              <Chip size="small" color="info" variant="outlined" label="Raised by request" />
+            </Tooltip>
+          )}
+          {own && (
+            <Tooltip
+              title={`Set on this page: ${Object.entries(own)
+                .map(([k, v]) => `${k} ${v}`)
+                .join(', ')}. The default does not apply to this agent until it ends.`}
+            >
+              <Chip size="small" label="Own limit" />
+            </Tooltip>
+          )}
+          {isAllAgents && <Chip size="small" variant="outlined" label="All agents" />}
+          {u.role === 'control' && <Chip size="small" variant="outlined" label="Control" />}
+          {summary && (
+            <Typography component="span" variant="caption" color="text.secondary">
+              {summary}
+            </Typography>
+          )}
+        </TreeCell>
+        <TableCell>
+          <UsageBar unit={u} hostTotal={state.host.total} />
+        </TableCell>
+        <TableCell align="right">{formatSize(u.current)}</TableCell>
+        <TableCell align="right">{u.peak ? formatSize(u.peak) : '-'}</TableCell>
+        <TableCell align="right">{formatSize(u.high)}</TableCell>
+        <TableCell align="right">{formatSize(u.max)}</TableCell>
+        <TableCell align="right">
+          {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
+        </TableCell>
+        <TableCell align="right">{u.events?.oom_kill ?? 0}</TableCell>
+        <TableCell>
+          <EventChips unit={u} />
+        </TableCell>
+        <TableCell>
+          <Pressure unit={u} />
+        </TableCell>
+        <TableCell>
+          <AlertBadges alerts={byUnit.get(u.name)} />
+        </TableCell>
+        <TableCell sx={{ whiteSpace: 'nowrap' }}>
+          {editable && (
+            <Button
+              size="small"
+              onClick={() => onEdit(u.name)}
+              aria-label={`Edit limits of ${label}`}
+            >
+              Edit
+            </Button>
+          )}
+        </TableCell>
+      </TableRow>
+      {open && (
+        <TableRow>
+          <TableCell colSpan={COLUMNS} sx={{ p: 0, bgcolor: 'action.hover' }}>
+            <Box display="flex" alignItems="stretch">
+              <Guides cells={continuing(row)} />
+              <Box sx={{ flex: 1, minWidth: 0, p: 1, pl: 2 }}>
+                <ProcessTree unit={u} />
+              </Box>
+            </Box>
+          </TableCell>
+        </TableRow>
+      )}
+    </React.Fragment>
+  );
+}
+
+/** The whole page as one table so the connector lines run unbroken from row to row. */
+function AgentTree({
+  state,
+  filter,
+  byUnit,
+  expanded,
+  collapsed,
+  onToggle,
+  onCollapse,
+  onEdit,
+  onEditDefault,
+}: {
+  state: AgentMemoryState;
+  filter: string;
+  byUnit: Map<string, MemAlert[]>;
+  expanded: ReadonlySet<string>;
+  collapsed: ReadonlySet<string>;
+  onToggle: (name: string) => void;
+  onCollapse: (key: string) => void;
+  onEdit: (name: string) => void;
+  onEditDefault: (orchestrator: string) => void;
+}) {
+  const rows = React.useMemo(() => buildTree(state, collapsed, filter), [state, collapsed, filter]);
+  return (
+    <Table size="small" aria-label="Agent memory tree">
       <TableHead>
         <TableRow>
           <TableCell>Name</TableCell>
@@ -833,124 +1119,114 @@ function UnitsTable({
         </TableRow>
       </TableHead>
       <TableBody>
-        {rows.map(u => {
-          const sev = worstSeverity(byUnit.get(u.name));
-          const editable = canEdit(u, state);
-          const own = state.overrides[u.name];
-          const hasTree = u.kind !== 'slice' && !!u.processes && u.processes.roots.length > 0;
-          const open = hasTree && expanded.has(u.name);
-          const summary = u.kind === 'slice' ? '' : processSummary(u);
-          return (
-            <React.Fragment key={u.name}>
-              <TableRow
-                hover
-                sx={
-                  sev
-                    ? {
-                        bgcolor: sev === 'critical' ? 'error.light' : 'warning.light',
-                        '& td': { color: 'text.primary' },
-                      }
-                    : undefined
-                }
-              >
-                <TableCell
-                  sx={{
-                    pl: 1 + u.depth * 2,
-                    fontWeight: u.kind === 'slice' ? 600 : 400,
-                  }}
-                >
-                  {hasTree && (
-                    <Chevron
-                      open={open}
-                      label={`${open ? 'Hide' : 'Show'} processes of ${unitLabel(u)}`}
-                      onToggle={() => onToggle(u.name)}
-                    />
-                  )}
-                  <Tooltip title={u.name}>
-                    <span>{unitLabel(u)}</span>
-                  </Tooltip>{' '}
+        {rows.map(row => {
+          if (row.kind === 'unit')
+            return (
+              <UnitRow
+                key={row.key}
+                row={row}
+                state={state}
+                byUnit={byUnit}
+                expanded={expanded}
+                onToggle={onToggle}
+                onEdit={onEdit}
+              />
+            );
+          if (row.kind === 'host') {
+            const { total, available } = state.host;
+            return (
+              <TableRow key={row.key} hover>
+                <TreeCell cells={[]} bold>
+                  <GroupToggle row={row} label="the host" onCollapse={onCollapse} />
+                  <span>Host {state.node || 'unknown'}</span>
                   <Typography component="span" variant="caption" color="text.secondary">
-                    {u.kind}
+                    {formatSize(available)} of {formatSize(total)} available
                   </Typography>
-                  {own && (
-                    <Tooltip
-                      title={`Set on this page: ${Object.entries(own)
-                        .map(([k, v]) => `${k} ${v}`)
-                        .join(', ')}. The default does not apply to this agent until it ends.`}
-                    >
-                      <Chip size="small" label="Own limit" sx={{ ml: 1 }} />
-                    </Tooltip>
-                  )}
-                  {u.role === 'agents' || (!u.role && u.name === state.agentSlice) ? (
-                    <Chip size="small" variant="outlined" label="All agents" sx={{ ml: 1 }} />
-                  ) : null}
-                  {u.role === 'control' && u.name === o.controlUnit && (
-                    <Chip size="small" variant="outlined" label="Control" sx={{ ml: 1 }} />
-                  )}
-                  {u.agent?.threadUrl && (
-                    <Link
-                      href={u.agent.threadUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      sx={{ ml: 1 }}
-                      aria-label={`Open the ${o.title} thread of ${unitLabel(u)}`}
-                    >
-                      thread
-                    </Link>
-                  )}
-                  {(unitDetail(u) || summary || u.agent) && (
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      {[unitDetail(u), u.agent?.cwd, shortName(u.name), summary]
-                        .filter(Boolean)
-                        .join(' · ')}
-                    </Typography>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <UsageBar unit={u} hostTotal={state.host.total} />
-                </TableCell>
-                <TableCell align="right">{formatSize(u.current)}</TableCell>
-                <TableCell align="right">{u.peak ? formatSize(u.peak) : '-'}</TableCell>
-                <TableCell align="right">{formatSize(u.high)}</TableCell>
-                <TableCell align="right">{formatSize(u.max)}</TableCell>
-                <TableCell align="right">
-                  {formatSize(u.swapCurrent)} / {formatSize(u.swapMax)}
-                </TableCell>
-                <TableCell align="right">{u.events?.oom_kill ?? 0}</TableCell>
-                <TableCell>
-                  <EventChips unit={u} />
-                </TableCell>
-                <TableCell>
-                  <Pressure unit={u} />
-                </TableCell>
-                <TableCell>
-                  <AlertBadges alerts={byUnit.get(u.name)} />
-                </TableCell>
-                <TableCell sx={{ whiteSpace: 'nowrap' }}>
-                  {editable && (
-                    <Button
-                      size="small"
-                      onClick={() => onEdit(u.name)}
-                      aria-label={`Edit limits of ${unitLabel(u)}`}
-                    >
-                      Edit
-                    </Button>
-                  )}
-                </TableCell>
+                </TreeCell>
+                <TableCell />
+                {usedCell(total > 0 ? Math.max(0, total - available) : undefined)}
+                <EmptyCells n={COLUMNS - 3} />
               </TableRow>
-              {open && (
-                <TableRow>
-                  <TableCell colSpan={12} sx={{ pl: 4, bgcolor: 'action.hover' }}>
-                    <ProcessTree unit={u} />
-                  </TableCell>
+            );
+          }
+          if (row.kind === 'orchestrator') {
+            const o = row.orchestrator as Orchestrator;
+            return (
+              <React.Fragment key={row.key}>
+                <TableRow hover>
+                  <TreeCell cells={guideCells(row)} bold>
+                    <GroupToggle row={row} label={o.title} onCollapse={onCollapse} />
+                    <span>{o.title}</span>
+                    <Chip
+                      size="small"
+                      color={o.running ? 'success' : 'default'}
+                      label={
+                        o.running ? `${o.agents} agent${o.agents === 1 ? '' : 's'}` : 'not running'
+                      }
+                    />
+                    {o.fromBackend && o.controlUnit && (
+                      <Tooltip title={`Control unit ${o.controlUnit}`}>
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color={o.controlUp ? 'success' : 'default'}
+                          label={`${shortName(o.controlUnit)} ${o.controlUp ? 'up' : 'down'}`}
+                        />
+                      </Tooltip>
+                    )}
+                    {o.names && !o.names.up && (
+                      <Tooltip title={o.names.error ?? ''}>
+                        <Chip size="small" color="warning" label="names unavailable" />
+                      </Tooltip>
+                    )}
+                  </TreeCell>
+                  <TableCell />
+                  {usedCell(o.running ? o.current : undefined)}
+                  <EmptyCells n={COLUMNS - 3} />
                 </TableRow>
-              )}
-            </React.Fragment>
+                {row.expanded && (
+                  <TableRow>
+                    <TableCell colSpan={COLUMNS} sx={{ p: 0, borderBottom: 'none' }}>
+                      <Box display="flex" alignItems="stretch">
+                        <Guides cells={[...continuing(row), row.hasChildren ? 'line' : 'none']} />
+                        <Box sx={{ flex: 1, minWidth: 0, pl: 0.5 }}>
+                          <OrchestratorInfo
+                            o={o}
+                            writable={state.writable}
+                            onEditDefault={() => onEditDefault(o.name)}
+                          />
+                          {!o.running && !row.hasChildren && (
+                            <Typography variant="body2" color="text.secondary" pb={1}>
+                              {o.title} is not running on this host.
+                            </Typography>
+                          )}
+                        </Box>
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </React.Fragment>
+            );
+          }
+          const p = row.project as ProjectGroup;
+          return (
+            <TableRow key={row.key} hover>
+              <TreeCell cells={guideCells(row)} bold>
+                <GroupToggle row={row} label={`project ${p.name}`} onCollapse={onCollapse} />
+                <span>{p.name}</span>
+                <Typography component="span" variant="caption" color="text.secondary">
+                  {p.agents} agent{p.agents === 1 ? '' : 's'}
+                </Typography>
+              </TreeCell>
+              <TableCell />
+              {usedCell(p.current)}
+              <EmptyCells n={COLUMNS - 3} />
+            </TableRow>
           );
         })}
-        {rows.length === 0 && (
+        {rows.length <= 1 && (
           <TableRow>
-            <TableCell colSpan={12}>
+            <TableCell colSpan={COLUMNS}>
               <Typography variant="body2" color="text.secondary">
                 No units match.
               </Typography>
@@ -1026,89 +1302,6 @@ function DriftNote({ o }: { o: Orchestrator }) {
   );
 }
 
-function OrchestratorSection({
-  o,
-  state,
-  filter,
-  byUnit,
-  expanded,
-  onToggle,
-  onEdit,
-  onEditDefault,
-}: {
-  o: Orchestrator;
-  state: AgentMemoryState;
-  filter: string;
-  byUnit: Map<string, MemAlert[]>;
-  expanded: ReadonlySet<string>;
-  onToggle: (name: string) => void;
-  onEdit: (name: string) => void;
-  onEditDefault: () => void;
-}) {
-  const units = orchestratorUnits(state.units, o);
-  const rows = arrangeRows(units, filter);
-  return (
-    <Box mb={4} component="section" aria-label={`${o.title} agents`}>
-      <Box display="flex" gap={1} alignItems="center" flexWrap="wrap" mb={1}>
-        <Typography variant="h6">{o.title}</Typography>
-        <Chip
-          size="small"
-          color={o.running ? 'success' : 'default'}
-          label={o.running ? `${o.agents} agent${o.agents === 1 ? '' : 's'}` : 'not running'}
-        />
-        {o.fromBackend && o.controlUnit && (
-          <Tooltip title={`Control unit ${o.controlUnit}`}>
-            <Chip
-              size="small"
-              variant="outlined"
-              color={o.controlUp ? 'success' : 'default'}
-              label={`${o.controlUnit} ${o.controlUp ? 'up' : 'down'}`}
-            />
-          </Tooltip>
-        )}
-        {o.running && (
-          <Typography variant="body2" color="text.secondary">
-            {formatSize(o.current)} in use
-          </Typography>
-        )}
-        {o.names && !o.names.up && (
-          <Tooltip title={o.names.error ?? ''}>
-            <Chip size="small" color="warning" label="names unavailable" />
-          </Tooltip>
-        )}
-      </Box>
-      {o.fromBackend && (
-        <Typography variant="caption" color="text.secondary" display="block" mb={1}>
-          {[
-            o.agentsSlice && `agents in ${o.agentsSlice}`,
-            o.threadEnv && `thread from ${o.threadEnv}`,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </Typography>
-      )}
-      <PolicyChips o={o} />
-      <DriftNote o={o} />
-      <DefaultsPanel o={o} writable={state.writable} onEdit={onEditDefault} />
-      {o.running || units.length > 0 ? (
-        <UnitsTable
-          o={o}
-          state={state}
-          rows={rows}
-          byUnit={byUnit}
-          expanded={expanded}
-          onToggle={onToggle}
-          onEdit={onEdit}
-        />
-      ) : (
-        <Typography variant="body2" color="text.secondary">
-          {o.title} is not running on this host.
-        </Typography>
-      )}
-    </Box>
-  );
-}
-
 export function AgentMemoryPage(): JSX.Element {
   const settings = useSettings();
   const { state, loading, error, refresh } = useAgentMemory(settings);
@@ -1118,6 +1311,13 @@ export function AgentMemoryPage(): JSX.Element {
     setExpanded(prev => {
       const next = new Set(prev);
       if (!next.delete(name)) next.add(name);
+      return next;
+    });
+  const [collapsed, setCollapsed] = React.useState<ReadonlySet<string>>(new Set());
+  const toggleCollapsed = (key: string) =>
+    setCollapsed(prev => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
       return next;
     });
   const [editing, setEditing] = React.useState<string | null>(null);
@@ -1138,10 +1338,11 @@ export function AgentMemoryPage(): JSX.Element {
   return (
     <SectionBox title="Agent memory">
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Memory limits of the agents on the agent host, by orchestrator (T3 Code, Herdr): the
-        orchestrator itself, the slice that holds all its agents and one scope per agent session.
-        The bar fills with current usage; the amber line is the soft limit (memory.high, where the
-        kernel starts throttling) and the red line is the hard limit (memory.max, where it kills).
+        Memory limits of the agents on the agent host as a tree: host, orchestrator (T3 Code,
+        Herdr), project and thread. Each orchestrator lists its own control unit and the slice that
+        holds all its agents, then one scope per agent thread. The bar fills with current usage; the
+        amber line is the soft limit (memory.high, where the kernel starts throttling) and the red
+        line is the hard limit (memory.max, where it kills).
       </Typography>
       {loading && !state && <CircularProgress size={24} />}
       {error && (
@@ -1174,19 +1375,17 @@ export function AgentMemoryPage(): JSX.Element {
               sx={{ minWidth: 340 }}
             />
           </Box>
-          {state.orchestrators.map(o => (
-            <OrchestratorSection
-              key={o.name}
-              o={o}
-              state={state}
-              filter={filter}
-              byUnit={byUnit}
-              expanded={expanded}
-              onToggle={toggleExpanded}
-              onEdit={setEditing}
-              onEditDefault={() => setEditingDefault(o.name)}
-            />
-          ))}
+          <AgentTree
+            state={state}
+            filter={filter}
+            byUnit={byUnit}
+            expanded={expanded}
+            collapsed={collapsed}
+            onToggle={toggleExpanded}
+            onCollapse={toggleCollapsed}
+            onEdit={setEditing}
+            onEditDefault={setEditingDefault}
+          />
           {state.writable && (
             <Box mt={3}>
               <Typography variant="h6" gutterBottom>

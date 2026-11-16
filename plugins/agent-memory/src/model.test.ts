@@ -6,6 +6,7 @@ import {
   arrangeRows,
   backendUrl,
   barGeometry,
+  buildTree,
   canEdit,
   changeLabel,
   checkDefaults,
@@ -15,6 +16,7 @@ import {
   formatSize,
   formatSpan,
   formatStall,
+  guideCells,
   matchesFilter,
   MemUnit,
   orchestratorAgents,
@@ -24,11 +26,13 @@ import {
   parseState,
   parseWarnings,
   processCommands,
+  raisedTitle,
   resolveSettings,
   safeUrl,
   shortName,
   sizeInput,
   stallLevel,
+  threadName,
   unitDetail,
   unitLabel,
   visibleAlerts,
@@ -702,5 +706,181 @@ describe('agent warnings', () => {
       {}
     );
     expect(r2.changes).toEqual({ memoryHigh: '2G' });
+  });
+});
+
+describe('agent tree', () => {
+  const rawUnit = (name: string, orch: string, role: string, extra: any = {}) => ({
+    name,
+    kind: role === 'agent' ? 'scope' : 'slice',
+    parent: '',
+    depth: 1,
+    current: G,
+    high: null,
+    max: null,
+    min: 0,
+    low: 0,
+    swapCurrent: 0,
+    swapMax: null,
+    procs: 1,
+    displayName: name,
+    orchestrator: orch,
+    role,
+    ...extra,
+  });
+  const agent = (name: string, orch: string, workspace: string, title: string) =>
+    rawUnit(name, orch, 'agent', {
+      displayName: `${workspace} > ${title}`,
+      agent: {
+        provider: 'claude',
+        id: name,
+        names: orch === 't3' ? { workspace, title } : { workspace, tab: title },
+      },
+    });
+  const orch = (name: string, title: string) => ({
+    name,
+    title,
+    kind: name,
+    controlUnit: `${name}-control.service`,
+    agentsSlice: `${name}-agents.slice`,
+    running: true,
+  });
+  const raw = {
+    node: 'eu2',
+    orchestrators: [orch('t3', 'T3 Code'), orch('herdr', 'Herdr')],
+    units: [
+      rawUnit('t3-control.service', 't3', 'control'),
+      rawUnit('t3-agents.slice', 't3', 'agents'),
+      rawUnit('app-t3code-agents-abc.slice', 't3', ''),
+      agent('a1.scope', 't3', 'Alpha', 'one'),
+      agent('a2.scope', 't3', 'Alpha', 'two'),
+      agent('b1.scope', 't3', 'Beta', 'three'),
+      rawUnit('herdr-control.service', 'herdr', 'control'),
+      agent('h1.scope', 'herdr', 'Work', 'tab1'),
+    ],
+  };
+  const st = parseState(raw);
+  const shape = (rows: ReturnType<typeof buildTree>) =>
+    rows.map(
+      r => `${r.key}|${r.depth}|${r.guides.map(g => (g ? 1 : 0)).join('')}|${r.last ? 'L' : 'T'}`
+    );
+
+  it('lays out host, orchestrators, control rows, projects and threads', () => {
+    const rows = buildTree(st, new Set(), '');
+    expect(shape(rows)).toEqual([
+      'host|0||L',
+      'o:t3|1||T',
+      'u:t3-control.service|2|1|T',
+      'u:t3-agents.slice|2|1|T',
+      'p:t3:Alpha|2|1|T',
+      'u:a1.scope|3|11|T',
+      'u:a2.scope|3|11|L',
+      'p:t3:Beta|2|1|L',
+      'u:b1.scope|3|10|L',
+      'o:herdr|1||L',
+      'u:herdr-control.service|2|0|T',
+      'p:herdr:Work|2|0|L',
+      'u:h1.scope|3|00|L',
+    ]);
+    expect(rows.find(r => r.key === 'p:t3:Alpha')?.project).toMatchObject({
+      agents: 2,
+      current: 2 * G,
+    });
+    expect(rows.some(r => r.key === 'u:app-t3code-agents-abc.slice')).toBe(false);
+  });
+
+  it('keeps sibling guides correct when a project is collapsed', () => {
+    const rows = buildTree(st, new Set(['p:t3:Alpha']), '');
+    expect(rows.map(r => r.key)).not.toContain('u:a1.scope');
+    const alpha = rows.find(r => r.key === 'p:t3:Alpha');
+    expect(alpha).toMatchObject({ hasChildren: true, expanded: false });
+    expect(shape(rows).filter(r => r.startsWith('u:b1') || r.startsWith('p:t3:Beta'))).toEqual([
+      'p:t3:Beta|2|1|L',
+      'u:b1.scope|3|10|L',
+    ]);
+    const collapsedOrch = buildTree(st, new Set(['o:t3']), '');
+    expect(collapsedOrch.map(r => r.key)).toEqual([
+      'host',
+      'o:t3',
+      'o:herdr',
+      'u:herdr-control.service',
+      'p:herdr:Work',
+      'u:h1.scope',
+    ]);
+    expect(buildTree(st, new Set(['host']), '').map(r => r.key)).toEqual(['host']);
+  });
+
+  it('keeps the ancestors of filter matches', () => {
+    const rows = buildTree(st, new Set(), 'three');
+    expect(shape(rows)).toEqual(['host|0||L', 'o:t3|1||L', 'p:t3:Beta|2|0|L', 'u:b1.scope|3|00|L']);
+    expect(buildTree(st, new Set(), 'alpha').map(r => r.key)).toContain('u:a2.scope');
+    expect(buildTree(st, new Set(), 'zzz').map(r => r.key)).toEqual(['host']);
+  });
+
+  it('still renders an old backend without orchestrators', () => {
+    const old = parseState({
+      agentSlice: 't3-agents.slice',
+      units: [
+        { ...rawUnit('t3-agents.slice', '', ''), orchestrator: undefined, role: undefined },
+        {
+          ...rawUnit('x.scope', '', ''),
+          kind: 'scope',
+          orchestrator: undefined,
+          role: undefined,
+          displayName: 'claude · .cluster · 32a684cb',
+          agent: { provider: 'claude', id: 'x', cwd: '/home/u/.cluster' },
+        },
+      ],
+    });
+    const rows = buildTree(old, new Set(), '');
+    expect(rows.map(r => `${r.kind}:${r.key}`)).toEqual([
+      'host:host',
+      'orchestrator:o:t3',
+      'unit:u:t3-agents.slice',
+      'project:p:t3:.cluster',
+      'unit:u:x.scope',
+    ]);
+  });
+
+  it('turns guides and last into connector cells', () => {
+    expect(guideCells({ depth: 0, guides: [], last: true })).toEqual([]);
+    expect(guideCells({ depth: 3, guides: [true, false], last: false })).toEqual([
+      'line',
+      'none',
+      'tee',
+    ]);
+    expect(guideCells({ depth: 1, guides: [], last: true })).toEqual(['elbow']);
+  });
+
+  it('shows the thread name only and the raised chip text', () => {
+    const u = st.units.find(x => x.name === 'a1.scope') as MemUnit;
+    expect(threadName(u)).toBe('one');
+    const h = st.units.find(x => x.name === 'h1.scope') as MemUnit;
+    expect(threadName(h)).toBe('tab1');
+    expect(
+      threadName(unit({ displayName: 'Proj > Thread x', agent: { provider: 'c', id: '1' } }))
+    ).toBe('Thread x');
+    const r = parseState({
+      units: [
+        {
+          ...rawUnit('r.scope', 't3', 'agent'),
+          raised: {
+            size: 16 * G,
+            previous: 8 * G,
+            reason: 'build',
+            label: 'ok',
+            approvedAt: '2026-11-16T01:00:00Z',
+            at: '2026-11-16T01:00:01Z',
+          },
+        },
+      ],
+    }).units[0].raised;
+    expect(r?.size).toBe(16 * G);
+    expect(raisedTitle(r!, iso => `T(${iso})`)).toBe(
+      'approved T(2026-11-16T01:00:00.000Z): ok; reason: build; 8G → 16G'
+    );
+    expect(
+      parseState({ units: [{ ...rawUnit('q.scope', 't3', 'agent'), raised: 'x' }] }).units[0].raised
+    ).toBeUndefined();
   });
 });

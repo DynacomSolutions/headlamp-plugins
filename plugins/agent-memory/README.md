@@ -50,6 +50,17 @@ orchestrator with:
 
 The page never stops an agent.
 
+The agents are one tree with connector lines: host, orchestrator, project (the
+T3 project or Herdr workspace) and thread. Each orchestrator lists its control
+unit and all-agents slice before its projects, and shows its policy, drift
+and default panel directly under its row. Host, orchestrator and project rows
+collapse with a chevron; project rows show the agent count and summed memory.
+An agent row carries only the thread name (the Herdr tab), linked to the T3
+thread when the backend supplies a URL; ids, session and directory are in the
+tooltip. A **Raised by request** chip marks an agent whose limit was raised on
+its own request after a verified approval; its tooltip gives the approval time,
+label, reason and the old and new limit.
+
 The editors validate in the browser with the same rules the backend enforces
 (soft not above hard, sane minimum and maximum, a confirmation before a hard
 limit is set below current usage, including running agents a lower default
