@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="preview_background">#FF2B2930</color>
+    <color name="preview_text">#FFE6E0E9</color>
+    <color name="preview_text_muted">#FFCAC4D0</color>
+    <color name="preview_accent">#FFD0BCFF</color>
+    <color name="preview_track">#FF49454F</color>
+</resources>
