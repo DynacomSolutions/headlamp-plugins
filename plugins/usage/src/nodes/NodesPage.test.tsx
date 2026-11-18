@@ -130,8 +130,8 @@ describe('NodesPage', () => {
     const panel = container.querySelector('[data-detail-panel]') as HTMLElement;
     expect(panel.textContent).toContain('Kubernetes');
     expect(panel.textContent).toContain('of capacity');
-    expect(panel.textContent).toContain('of parent');
-    expect(panel.textContent).toContain('of root');
+    expect(panel.textContent).not.toContain('of parent');
+    expect(panel.textContent).not.toContain('of root');
     fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));
     // Two nodes show the node ring, so the path starts with the node arc.
     expect(url()).toBe('/usage/dashboard?path=node%3Aworker-2%2Ck8s');
