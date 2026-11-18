@@ -120,8 +120,11 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Smoke test the bundle
+        # Runs dist/ copied on its own, laid out as in the image (/app/main.mjs, /app/skills),
+        # so nothing can resolve through the source tree.
         run: |
-          PORT=18080 KUBE_API=http://127.0.0.1:1 node dist/main.mjs serve & pid=$!
+          app="$(mktemp -d)"; cp -r dist/. "$app/"
+          (cd "$app" && PORT=18080 KUBE_API=http://127.0.0.1:1 node main.mjs serve) & pid=$!
           for i in $(seq 1 20); do curl -fsS localhost:18080/healthz && break; sleep 0.5; done
           curl -fsS localhost:18080/ | jq -e '.tools > 15'
           kill $pid
