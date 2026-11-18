@@ -47,18 +47,26 @@ export function parseAlerts(body: unknown, now = Date.now()): Array<{ alert: Ale
     });
 }
 
-/** Decides which firing alerts start a diagnosis: severity, ignore list, one per activation, an hourly cap. */
+/**
+ * Decides which firing alerts start a diagnosis: severity, ignore list, one per activation, an hourly cap.
+ * `startedSince` counts diagnoses started since a time from the shared store, so the cap holds across
+ * pods and rollouts; without it the gate counts in memory (tests, single process).
+ */
 export class AlertGate {
   private readonly started: number[] = [];
 
-  constructor(private readonly config: DiagnosisConfig) {}
+  constructor(
+    private readonly config: DiagnosisConfig,
+    private readonly startedSince?: (since: number) => number,
+  ) {}
 
   wants(alert: Alert): { ok: true } | { ok: false; reason: string } {
     if (this.config.ignoreAlerts.includes(alert.name)) return { ok: false, reason: 'ignored alert' };
     if (!this.config.severities.includes(alert.severity)) return { ok: false, reason: `severity "${alert.severity}" is not diagnosed` };
     const hourAgo = Date.now() - 3600_000;
     while (this.started.length && this.started[0] < hourAgo) this.started.shift();
-    if (this.started.length >= this.config.maxPerHour) return { ok: false, reason: 'hourly diagnosis limit reached' };
+    const count = this.startedSince ? this.startedSince(hourAgo) : this.started.length;
+    if (count >= this.config.maxPerHour) return { ok: false, reason: 'hourly diagnosis limit reached' };
     return { ok: true };
   }
 

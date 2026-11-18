@@ -339,3 +339,22 @@ describe('Runner.drain', () => {
     expect(store.get(late.id)?.status).toBe('queued');
   });
 });
+
+describe('hourly cap across pods', () => {
+  it('counts webhook diagnoses from the shared store, so a new pod does not reset it', async () => {
+    const { AlertGate } = await import('../src/alerts.js');
+    const a = new DiagnosisStore(dir, 50);
+    const b = new DiagnosisStore(dir, 50);
+    const config = { toolBudget: 5, severities: ['critical'], maxPerHour: 2, ignoreAlerts: [] as string[] };
+    const counter = (s: DiagnosisStore) => (since: number) => s.list().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= since).length;
+    const recent = new Date().toISOString();
+    a.put(diagnosis('one', 'done', { createdAt: recent }));
+    a.put(diagnosis('two', 'done', { createdAt: recent }));
+    a.put(diagnosis('old', 'done', { createdAt: '2026-01-01T00:00:00.000Z' }));
+    a.put(diagnosis('api', 'done', { createdAt: recent, source: 'api' }));
+    const alert = { name: 'X', severity: 'critical', labels: {}, annotations: {}, startsAt: '', fingerprint: 'f' };
+    // Pod B starts fresh but sees pod A's two webhook diagnoses from the last hour.
+    expect(new AlertGate(config, counter(b)).wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
+    expect(new AlertGate({ ...config, maxPerHour: 3 }, counter(b)).wants(alert).ok).toBe(true);
+  });
+});
