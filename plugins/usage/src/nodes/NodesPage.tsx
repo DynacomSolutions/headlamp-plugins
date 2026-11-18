@@ -150,5 +150,12 @@ export function NodesPage(): JSX.Element {
   if (state.kiosk) {
     return <KioskOverlay onExit={() => setKiosk(false)}>{exit => render(exit)}</KioskOverlay>;
   }
-  return <SectionBox title="Usage dashboard">{render(fullScreen)}</SectionBox>;
+  // On a phone Headlamp gives the page no side padding, so the page keeps a small margin itself.
+  return (
+    <SectionBox title="Usage dashboard">
+      <Box data-page-margin sx={{ px: { xs: 1, sm: 0 } }}>
+        {render(fullScreen)}
+      </Box>
+    </SectionBox>
+  );
 }
