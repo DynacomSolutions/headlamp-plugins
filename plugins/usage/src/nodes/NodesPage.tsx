@@ -17,7 +17,7 @@ import { useNodesSettings } from '../settings';
 import { formatPercent } from '../units';
 import type { AgentHost } from './agents';
 import { NodesUrlState, parseNodesUrl, serialiseNodesUrl } from './nodesUrl';
-import { buildTrees, NO_HOST_METRICS, NodeView, usedText } from './NodeView';
+import { agentAlertText, buildTrees, NO_HOST_METRICS, NodeView, usedText } from './NodeView';
 import { Sunburst } from './Sunburst';
 import { NodeTree, Resource } from './tree';
 import type { NodeMetrics } from './types';
@@ -53,9 +53,10 @@ function NodeCard(props: {
   metrics: NodeMetrics;
   host: AgentHost | null;
   error?: string;
+  asOf?: number;
   onOpen: () => void;
 }) {
-  const { metrics, host, error, onOpen } = props;
+  const { metrics, host, error, asOf, onOpen } = props;
   const trees = React.useMemo(() => buildTrees(metrics, host), [metrics, host]);
   const chart = (resource: Resource, tree: NodeTree) => (
     <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
@@ -86,7 +87,7 @@ function NodeCard(props: {
       </CardActionArea>
       {error && (
         <Alert severity="warning" sx={{ m: 2, mt: 0 }}>
-          Agent detail unavailable: {error}
+          {agentAlertText(error, asOf)}
         </Alert>
       )}
     </Card>
@@ -127,6 +128,7 @@ export function NodesPage(): JSX.Element {
         metrics={m}
         host={data.agents.get(m.node) ?? null}
         agentError={data.nodeErrors.get(m.node)}
+        agentAsOf={data.agentsAsOf.get(m.node)}
         path={state.path}
         onPath={path => go({ node: m.node, path })}
         onOverview={overview}
@@ -158,6 +160,7 @@ export function NodesPage(): JSX.Element {
             metrics={m}
             host={data.agents.get(m.node) ?? null}
             error={data.nodeErrors.get(m.node)}
+            asOf={data.agentsAsOf.get(m.node)}
             onOpen={() => go({ node: m.node, path: [] })}
           />
         ))}
@@ -172,8 +175,8 @@ export function NodesPage(): JSX.Element {
           Refresh failed, showing the last data received: {data.metricsError}
         </Alert>
       )}
-      {data.errors.map(e => (
-        <Alert key={e} severity="warning" sx={{ mb: 2 }}>
+      {data.errors.map((e, i) => (
+        <Alert key={`${i}:${e}`} severity="warning" sx={{ mb: 2 }}>
           Agent backend unavailable: {e}
         </Alert>
       ))}

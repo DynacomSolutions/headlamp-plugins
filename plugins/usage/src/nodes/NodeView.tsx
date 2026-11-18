@@ -39,6 +39,14 @@ export function usedText(tree: NodeTree, resource: Resource): string {
   return `${fmt(tree.used)} of ${fmt(tree.capacity)} (${formatPercent(tree.used, tree.capacity)})`;
 }
 
+/** The per-node agent alert: stale data with its time, or no agent detail at all. */
+export function agentAlertText(error: string, asOf?: number): string {
+  if (asOf === undefined) return `Agent detail unavailable: ${error}`;
+  return `Agent backend failed, showing agent data from ${new Date(
+    asOf
+  ).toLocaleTimeString()}: ${error}`;
+}
+
 export const NO_HOST_METRICS =
   'No host metrics for this node: the charts show only what Kubernetes and the agents report, against capacity.';
 
@@ -71,8 +79,8 @@ export function chartLayout(
   const chartsWidth = detailBeside ? width - DETAIL_WIDTH - GAP : width;
   const twoUp = !portrait && chartsWidth >= 2 * MIN_TWO_UP + GAP;
   let size = twoUp ? (chartsWidth - GAP) / 2 : chartsWidth;
-  // Side by side, both charts should fit on the screen without scrolling.
-  if (twoUp) size = Math.min(size, height - CHROME_HEIGHT);
+  // Both charts should fit on the screen without scrolling: side by side, or stacked in half.
+  size = Math.min(size, twoUp ? height - CHROME_HEIGHT : (height - CHROME_HEIGHT) / 2);
   size = Math.max(MIN_CHART, Math.min(MAX_CHART, size));
   return { size: Math.floor(size), detailBeside };
 }
@@ -81,11 +89,13 @@ export function NodeView(props: {
   metrics: NodeMetrics;
   host: AgentHost | null;
   agentError?: string;
+  /** When the shown agent data arrived, if it is from an earlier poll. */
+  agentAsOf?: number;
   path: string[];
   onPath: (path: string[]) => void;
   onOverview: () => void;
 }) {
-  const { metrics, host, agentError, path, onPath, onOverview } = props;
+  const { metrics, host, agentError, agentAsOf, path, onPath, onOverview } = props;
   const trees = React.useMemo(() => buildTrees(metrics, host), [metrics, host]);
   const detail = React.useMemo(() => detailFor(trees.cpu, trees.mem, path), [trees, path]);
   const ref = React.useRef<HTMLDivElement>(null);
@@ -125,7 +135,7 @@ export function NodeView(props: {
       </Breadcrumbs>
       {agentError && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          Agent detail unavailable for this node: {agentError}
+          {agentAlertText(agentError, agentAsOf)}
         </Alert>
       )}
       {!(trees.cpu.hostMetrics && trees.mem.hostMetrics) && (
