@@ -17,6 +17,9 @@ export interface AgentUnit {
   orchestrator?: string;
   role?: '' | 'control' | 'agents' | 'agent';
   kind: string;
+  /** The parent unit's name; empty or missing at the top level. */
+  parent?: string;
+  depth?: number;
   memBytes: number;
   cpuCores?: number;
   project?: string;
@@ -116,6 +119,8 @@ function parseUnit(u: any): AgentUnit {
     orchestrator: optText(u?.orchestrator),
     role: ROLES.includes(u?.role) ? u.role : undefined,
     kind: text(u?.kind),
+    parent: optText(u?.parent),
+    depth: optNum(u?.depth),
     memBytes: num(u?.anon) + num(u?.shmem) + num(u?.kernel),
     cpuCores: optNum(u?.cpuCores),
     project: optText(names?.workspace),

@@ -223,6 +223,163 @@ describe('buildNodeTree', () => {
   });
 });
 
+describe('buildNodeTree with nested backend units', () => {
+  // Mirrors the unit shapes a live agent-memory backend reports: every unit under a control
+  // slice has role control, and an agents slice has role-less sub-slices.
+  const live = (): AgentUnit[] => [
+    unit({
+      name: 't3code.service',
+      kind: 'service',
+      orchestrator: 't3',
+      role: 'control',
+      memBytes: 15 * GB,
+    }),
+    unit({
+      name: 'app-t3code-agents.slice',
+      kind: 'slice',
+      orchestrator: 't3',
+      role: 'agents',
+      memBytes: 70 * GB,
+    }),
+    unit({
+      name: 'app-t3code-agents-builds.slice',
+      kind: 'slice',
+      orchestrator: 't3',
+      parent: 'app-t3code-agents.slice',
+      depth: 1,
+      memBytes: 32 * GB,
+    }),
+    unit({
+      name: 'app-t3code-agents-env1.slice',
+      kind: 'slice',
+      orchestrator: 't3',
+      parent: 'app-t3code-agents.slice',
+      depth: 1,
+      memBytes: 38 * GB,
+    }),
+    unit({
+      name: 't3code-acp-1.scope',
+      orchestrator: 't3',
+      role: 'agent',
+      parent: 'app-t3code-agents-env1.slice',
+      depth: 2,
+      memBytes: 3 * GB,
+      project: 'P',
+      projectId: 'p',
+    }),
+    unit({
+      name: 't3code-acp-2.scope',
+      orchestrator: 't3',
+      role: 'agent',
+      parent: 'app-t3code-agents-env1.slice',
+      depth: 2,
+      memBytes: 1 * GB,
+      project: 'P',
+      projectId: 'p',
+    }),
+    unit({
+      name: 'run-1.scope',
+      orchestrator: 't3',
+      role: '',
+      parent: 'app-t3code-agents-env1.slice',
+      depth: 2,
+      memBytes: 0.5 * GB,
+    }),
+    unit({
+      name: 'herdr-control.slice',
+      kind: 'slice',
+      orchestrator: 'herdr',
+      role: 'control',
+      memBytes: 2 * GB,
+    }),
+    unit({
+      name: 'herdr-host.service',
+      kind: 'service',
+      orchestrator: 'herdr',
+      role: 'control',
+      parent: 'herdr-control.slice',
+      depth: 1,
+      memBytes: 0.3 * GB,
+    }),
+    unit({
+      name: 'herdr-kill-ledger.service',
+      kind: 'service',
+      orchestrator: 'herdr',
+      role: 'control',
+      parent: 'herdr-control.slice',
+      depth: 1,
+      memBytes: 1 * GB,
+    }),
+    unit({
+      name: 'herdr-native-control-1.scope',
+      orchestrator: 'herdr',
+      role: 'control',
+      parent: 'herdr-control.slice',
+      depth: 1,
+      memBytes: 0.2 * GB,
+    }),
+    unit({
+      name: 'herdr-panes.slice',
+      kind: 'slice',
+      orchestrator: 'herdr',
+      role: 'agents',
+      memBytes: 1 * GB,
+    }),
+    unit({
+      name: 'herdr-pane-1.scope',
+      orchestrator: 'herdr',
+      role: 'agent',
+      parent: 'herdr-panes.slice',
+      depth: 1,
+      memBytes: 0.5 * GB,
+      project: 'WS',
+    }),
+  ];
+  const m = () =>
+    metrics({
+      memUsed: 200 * GB,
+      memCapacity: 256 * GB,
+      pods: [{ namespace: 'ns', pod: 'p', container: 'c', cpuCores: 1, memBytes: 4 * GB }],
+    });
+  const find = (n: SunNode, key: string) => n.children.find(c => c.key === key);
+
+  it('counts each orchestrator once: control plus agents slice', () => {
+    const t = buildNodeTree(m(), host(live()), 'memory', icon);
+    expect(keys(t.root)).toEqual(['k8s', 't3', 'herdr', 'system']);
+    const t3 = find(t.root, 't3')!;
+    expect(t3.value).toBeCloseTo(85 * GB);
+    const herdr = find(t.root, 'herdr')!;
+    expect(herdr.value).toBeCloseTo(3 * GB);
+    expect(find(t.root, 'system')!.value).toBeCloseTo((200 - 4 - 85 - 3) * GB);
+  });
+
+  it('draws control children inside the control arc', () => {
+    const t = buildNodeTree(m(), host(live()), 'memory', icon);
+    const control = find(find(t.root, 'herdr')!, 'herdr/control')!;
+    expect(control.value).toBeCloseTo(2 * GB);
+    expect(keys(control)).toEqual([
+      'herdr/control/u:herdr-kill-ledger.service',
+      'herdr/control/u:herdr-host.service',
+      'herdr/control/u:herdr-native-control-1.scope',
+    ]);
+  });
+
+  it('puts role-less scopes and agent-free sub-slices under the orchestrator', () => {
+    const t = buildNodeTree(m(), host(live()), 'memory', icon);
+    const t3 = find(t.root, 't3')!;
+    expect(keys(t3)).toEqual(['t3/control', 't3/p:p', 't3/other']);
+    const other = find(t3, 't3/other')!;
+    expect(other.label).toBe('Other scopes');
+    expect(other.children.map(c => [c.key, c.value])).toEqual([
+      ['t3/other/u:app-t3code-agents-builds.slice', 32 * GB],
+      ['t3/other/u:run-1.scope', 0.5 * GB],
+    ]);
+    const all = JSON.stringify(t.root);
+    expect(all).not.toContain('agents-env1.slice"');
+    expect(find(find(t.root, 'herdr')!, 'herdr/other')).toBeUndefined();
+  });
+});
+
 describe('findPath', () => {
   it('returns the deepest existing prefix', () => {
     const units = [

@@ -22,6 +22,8 @@ const state = {
       kind: 'scope',
       orchestrator: 't3',
       role: 'agent',
+      parent: 'env.slice',
+      depth: 2,
       anon: 100,
       shmem: 20,
       kernel: 3,
@@ -80,6 +82,9 @@ describe('parseAgentState', () => {
     expect(b.thread).toBe('T');
     expect(b.threadUrl).toBeUndefined();
     expect(b.procs).toEqual([]);
+    expect(a.parent).toBe('env.slice');
+    expect(a.depth).toBe(2);
+    expect(b.parent).toBeUndefined();
   });
   it('throws on garbage', () => {
     expect(() => parseAgentState(null, 'x')).toThrow();

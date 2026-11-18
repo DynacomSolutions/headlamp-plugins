@@ -129,6 +129,48 @@ function projectIcon(u: AgentUnit, iconSrc: (id: string) => string): SunNode['ic
   return { kind: 'mdi', name: 'folder' };
 }
 
+const noRole = (u: AgentUnit) => !u.role;
+
+/** Names of a unit's ancestors among `byName`, nearest first (stops on a cycle). */
+function ancestors(u: AgentUnit, byName: Map<string, AgentUnit>): string[] {
+  const out: string[] = [];
+  let p = u.parent;
+  while (p && !out.includes(p)) {
+    out.push(p);
+    p = byName.get(p)?.parent;
+  }
+  return out;
+}
+
+/**
+ * Arcs for `units` nested by their parent links: a unit inside another listed unit becomes its
+ * child arc, not a sibling, so nothing is counted twice. Each unit's own processes follow its
+ * child units.
+ */
+function unitForest(
+  units: AgentUnit[],
+  prefix: string,
+  kind: SunNode['kind'],
+  byName: Map<string, AgentUnit>,
+  r: Resource
+): SunNode[] {
+  const listed = new Set(units.map(u => u.name));
+  const nearest = (u: AgentUnit) => ancestors(u, byName).find(a => listed.has(a));
+  const build = (u: AgentUnit): SunNode => {
+    const key = `${prefix}/u:${u.name}`;
+    const kids = units.filter(c => nearest(c) === u.name).map(build);
+    return node(key, u.name, kind, unitValue(u, r), [
+      ...kids.sort(byValue),
+      ...procNodes(u.procs, key, r),
+    ]);
+  };
+  return units
+    .filter(u => nearest(u) === undefined)
+    .map(build)
+    .filter(n => n.value > 0)
+    .sort(byValue);
+}
+
 function orchestrator(
   name: string,
   title: string,
@@ -137,26 +179,29 @@ function orchestrator(
   iconSrc: (id: string) => string
 ): SunNode | null {
   const own = units.filter(u => u.orchestrator === name);
+  const byName = new Map(own.map(u => [u.name, u]));
   const controls = own.filter(u => u.role === 'control');
-  const slice = own.find(u => u.role === 'agents');
+  const controlNames = new Set(controls.map(u => u.name));
+  // A control slice already includes the control units inside it: only the shallowest count.
+  const topControls = controls.filter(u => !u.parent || !controlNames.has(u.parent));
+  const slices = own.filter(u => u.role === 'agents');
+  const sliceNames = new Set(slices.map(u => u.name));
   const agents = own.filter(u => u.role === 'agent');
 
   const controlNodes: SunNode[] = [];
-  const controlValue = controls.reduce((s, u) => s + unitValue(u, r), 0);
+  const controlValue = topControls.reduce((s, u) => s + unitValue(u, r), 0);
   if (controlValue > 0) {
     const key = `${name}/control`;
+    const inner = controls.filter(u => !topControls.includes(u));
     controlNodes.push(
-      node(
-        key,
-        `${title} itself`,
-        'control',
-        controlValue,
-        procNodes(
-          controls.flatMap(u => u.procs),
+      node(key, `${title} itself`, 'control', controlValue, [
+        ...unitForest(inner, key, 'control', byName, r),
+        ...procNodes(
+          topControls.flatMap(u => u.procs),
           key,
           r
-        )
-      )
+        ),
+      ])
     );
   }
 
@@ -182,19 +227,50 @@ function orchestrator(
   const known = projects.filter(p => p.key !== `${name}/p:unknown`).sort(byValue);
   const unknown = projects.filter(p => p.key === `${name}/p:unknown`);
 
-  const agentsValue = slice ? unitValue(slice, r) : sum(projects);
+  // Other scopes: role-less scopes, and role-less sub-slices of an agents slice that hold no
+  // agent scopes (a builds slice, say). A sub-slice that holds agents is drawn as its projects.
+  const holdsAgents = new Set(agents.flatMap(a => ancestors(a, byName)));
+  const others = own.filter(
+    u =>
+      noRole(u) &&
+      !ancestors(u, byName).some(a => controlNames.has(a)) &&
+      (u.kind === 'scope' ||
+        (u.kind === 'slice' &&
+          !holdsAgents.has(u.name) &&
+          ancestors(u, byName).some(a => sliceNames.has(a))))
+  );
+  const otherItems = unitForest(others, `${name}/other`, 'thread', byName, r);
+  const otherNodes = otherItems.length
+    ? [
+        node(`${name}/other`, 'Other scopes', 'project', sum(otherItems), otherItems, {
+          icon: { kind: 'mdi', name: 'folder' },
+        }),
+      ]
+    : [];
+
+  // Role-less scopes outside every agents and control unit are not in either total yet.
+  const outside = others
+    .filter(u => !ancestors(u, byName).some(a => byName.has(a)))
+    .reduce((s, u) => s + unitValue(u, r), 0);
+  const agentsValue = slices.length
+    ? slices.reduce((s, u) => s + unitValue(u, r), 0) + outside
+    : sum(projects) + sum(otherNodes);
   const total = sum(controlNodes) + agentsValue;
   if (!(total > 0)) return null;
-  return node(name, title, 'orchestrator', total, [...controlNodes, ...known, ...unknown], {
-    icon: { kind: 'mdi', name: /herdr/i.test(name) ? 'console' : 'robot' },
-  });
+  return node(
+    name,
+    title,
+    'orchestrator',
+    total,
+    [...controlNodes, ...known, ...unknown, ...otherNodes],
+    { icon: { kind: 'mdi', name: /herdr/i.test(name) ? 'console' : 'robot' } }
+  );
 }
 
+/** Role-less scopes that belong to no orchestrator. */
 function otherScopes(units: AgentUnit[], r: Resource): SunNode | null {
   const items = units
-    .filter(
-      u => u.kind === 'scope' && u.role !== 'control' && u.role !== 'agents' && u.role !== 'agent'
-    )
+    .filter(u => !u.orchestrator && u.kind === 'scope' && noRole(u))
     .map(u => {
       const key = `other/${u.name}`;
       return node(key, u.name, 'thread', unitValue(u, r), procNodes(u.procs, key, r));
