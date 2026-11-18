@@ -1,8 +1,8 @@
 # headlamp-plugins
 
-Ten plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
+Eleven plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
 spot slow disks, see where CI jobs are running, find application URLs, manage
-notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, and see where CPU, memory, disk and network go.
+notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, see where CPU, memory, disk and network go, and check uptime from several sites.
 
 Built with `@kinvolk/headlamp-plugin` (TypeScript + React). Install the plugins
 you need; each has its own release archive and configuration.
@@ -19,6 +19,7 @@ you need; each has its own release archive and configuration.
 | [VM images](#vm-images) | See KubeVirt disks, VM images in the registry and what uses them | [Backend, settings and RBAC](plugins/vm-images/README.md) |
 | [Node hardware](#node-hardware) | See server temperatures and estimated power draw per node | [Queries and metrics](plugins/node-hardware/README.md) |
 | [Usage](#usage) | Break down CPU, memory, disk and network usage by namespace, workload, Service, node or label | [Queries and the label join](plugins/usage/README.md) |
+| [Uptime](#uptime) | Check HTTP, TCP, TLS, DNS and ICMP targets from several sites, with history | [Labels and scrape config](plugins/uptime/README.md) |
 
 ## A tour of the plugins
 
@@ -204,10 +205,26 @@ Needs a Prometheus-compatible query endpoint with cAdvisor metrics (and
 kube-state-metrics for workload grouping), plus permission to list Pods and
 Services. See the [setup guide](plugins/usage/README.md).
 
+### Uptime
+
+One row per uptime check (HTTP status and keyword, TCP, TLS, DNS, ICMP), with
+a column per probe site, TLS days left, 24-hour and 7-day uptime and a 24-hour
+history strip. Expand a row for a latency chart per site. A check with policy
+`all` is down only when every site fails (degraded when some do); with `any`
+one failing site is enough, the same rule the alerts use.
+
+**Example:** a site feels slow from one office. Open **Uptime**, find its row,
+compare the two site columns, then expand it to see when latency rose at one
+site but not the other.
+
+Needs blackbox_exporter probe series with `target`, `location`, `type` and
+`policy` labels in a Prometheus-compatible query endpoint. See the
+[setup guide](plugins/uptime/README.md).
+
 Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
-The release contains ten plugin archives and ten checksum lines.
+The release contains eleven plugin archives and eleven checksum lines.
 
 ## Creating a release
 
