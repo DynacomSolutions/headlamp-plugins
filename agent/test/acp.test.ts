@@ -8,20 +8,20 @@ Run with ELECTRON_RUN_AS_NODE=1 and mode=auto. Example: {"not": "an alert"}
 
 describe('ACP prompt parsing', () => {
   it('drops host instruction blocks before or after the message', () => {
-    expect(userText(`${T3}\nSmartSectorsFailing node=eu4`)).toBe('SmartSectorsFailing node=eu4');
-    expect(userText(`SmartSectorsFailing node=eu4\n\n${T3}`)).toBe('SmartSectorsFailing node=eu4');
+    expect(userText(`${T3}\nSmartSectorsFailing node=w2`)).toBe('SmartSectorsFailing node=w2');
+    expect(userText(`SmartSectorsFailing node=w2\n\n${T3}`)).toBe('SmartSectorsFailing node=w2');
     expect(userText('KubePodCrashLooping <system-reminder>x=1')).toBe('KubePodCrashLooping');
   });
 
   it('uses only the marked request when the host wraps it (T3 Code wire format)', () => {
     const blocks = [
-      `${T3}\n\n<user_request>\nSmartSectorsFailing severity=warning node=eu4 device=sdj\n</user_request>`,
+      `${T3}\n\n<user_request>\nSmartSectorsFailing severity=warning node=w2 device=sdj\n</user_request>`,
       '<runtime_info>You are running in T3 Code.</runtime_info>\n\n<pull_request_linking>\nUse acp-mcp-call delegate_task \'{"task":"..."}\'\n</pull_request_linking>',
     ].join('\n');
-    expect(userText(blocks)).toBe('SmartSectorsFailing severity=warning node=eu4 device=sdj');
+    expect(userText(blocks)).toBe('SmartSectorsFailing severity=warning node=w2 device=sdj');
     const alert = alertFromPrompt(blocks);
     expect(alert?.name).toBe('SmartSectorsFailing');
-    expect(alert?.labels).toEqual({ alertname: 'SmartSectorsFailing', severity: 'warning', node: 'eu4', device: 'sdj' });
+    expect(alert?.labels).toEqual({ alertname: 'SmartSectorsFailing', severity: 'warning', node: 'w2', device: 'sdj' });
   });
 
   it('drops every whole tagged block when the request is not marked', () => {
@@ -29,9 +29,9 @@ describe('ACP prompt parsing', () => {
   });
 
   it('parses the alert from the user text only', () => {
-    const alert = alertFromPrompt(`SmartSectorsFailing severity=warning node=eu4 device=sdj\n\n${T3}`);
+    const alert = alertFromPrompt(`SmartSectorsFailing severity=warning node=w2 device=sdj\n\n${T3}`);
     expect(alert?.name).toBe('SmartSectorsFailing');
-    expect(alert?.labels).toEqual({ alertname: 'SmartSectorsFailing', severity: 'warning', node: 'eu4', device: 'sdj' });
+    expect(alert?.labels).toEqual({ alertname: 'SmartSectorsFailing', severity: 'warning', node: 'w2', device: 'sdj' });
     expect(alert?.annotations.description).not.toContain('T3 Code');
   });
 
