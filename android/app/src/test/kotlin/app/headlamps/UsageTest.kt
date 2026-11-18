@@ -45,6 +45,14 @@ class UsageTest {
     }
 
     @Test
+    fun barFractionIsClamped() {
+        assertEquals(0f, barFraction(-5.0), 0f)
+        assertEquals(0.5f, barFraction(50.0), 1e-6f)
+        assertEquals(1f, barFraction(159.0), 0f)
+        assertEquals(Level.CRITICAL, levelOf(159.0))
+    }
+
+    @Test
     fun levelsUseThresholds() {
         assertEquals(Level.NORMAL, levelOf(75.0))
         assertEquals(Level.HIGH, levelOf(75.1))

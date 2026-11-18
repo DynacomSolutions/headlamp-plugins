@@ -50,6 +50,7 @@ import java.util.Date
 import kotlinx.coroutines.launch
 
 private val SMALL = DpSize(110.dp, 110.dp)
+private val TALL = DpSize(110.dp, 180.dp)
 private val LARGE = DpSize(250.dp, 180.dp)
 
 private val NORMAL_COLOUR = Color(0xFF2E7D32)
@@ -65,7 +66,7 @@ private fun colourFor(pct: Double): ColorProvider = ColorProvider(
 )
 
 class NodeUsageWidget : GlanceAppWidget() {
-    override val sizeMode = SizeMode.Responsive(setOf(SMALL, LARGE))
+    override val sizeMode = SizeMode.Responsive(setOf(SMALL, TALL, LARGE))
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val repository = Repository(context)
@@ -87,7 +88,10 @@ class NodeUsageWidget : GlanceAppWidget() {
 @Composable
 private fun WidgetBody(widgetId: Int, configured: Boolean, cluster: String, snapshot: Snapshot?, link: String?) {
     val context = LocalContext.current
-    val compact = LocalSize.current.let { it.width < LARGE.width || it.height < LARGE.height }
+    val size = LocalSize.current
+    val tall = size.height >= TALL.height
+    val wide = size.width >= LARGE.width
+    val compact = !wide
     val open = if (link != null) {
         GlanceModifier.clickable(actionStartActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link))))
     } else {
@@ -111,8 +115,13 @@ private fun WidgetBody(widgetId: Int, configured: Boolean, cluster: String, snap
             snapshot == null -> Message(context.getString(R.string.widget_loading), open)
             snapshot.error != null -> Message(context.getString(errorText(snapshot.error)), open)
             snapshot.nodes.isEmpty() -> Message(context.getString(R.string.widget_no_nodes), open)
-            compact -> Totals(snapshot, open)
-            else -> NodeList(snapshot, link)
+            else -> {
+                Totals(snapshot, open)
+                if (tall) {
+                    Spacer(GlanceModifier.height(6.dp))
+                    NodeList(snapshot, link, wide)
+                }
+            }
         }
     }
 }
@@ -153,7 +162,7 @@ private fun Message(text: String, modifier: GlanceModifier) {
 @Composable
 private fun Totals(snapshot: Snapshot, modifier: GlanceModifier) {
     val context = LocalContext.current
-    Column(modifier = modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxWidth()) {
         UsageBar(context.getString(R.string.label_cpu), snapshot.cpuPct)
         Spacer(GlanceModifier.height(6.dp))
         UsageBar(context.getString(R.string.label_memory), snapshot.memPct)
@@ -167,28 +176,26 @@ private fun UsageBar(label: String, pct: Double) {
             "$label ${pct.toInt()}%",
             style = TextStyle(color = GlanceTheme.colors.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium),
         )
-        LinearProgressIndicator(
-            progress = (pct / 100.0).coerceIn(0.0, 1.0).toFloat(),
-            modifier = GlanceModifier.fillMaxWidth().height(6.dp),
-            color = colourFor(pct),
-            backgroundColor = GlanceTheme.colors.surfaceVariant,
-        )
+        Bar(pct, 6)
     }
 }
 
 @Composable
-private fun NodeList(snapshot: Snapshot, link: String?) {
-    val context = LocalContext.current
+private fun Bar(pct: Double, heightDp: Int, modifier: GlanceModifier = GlanceModifier.fillMaxWidth()) {
+    LinearProgressIndicator(
+        progress = barFraction(pct),
+        modifier = modifier.height(heightDp.dp),
+        color = colourFor(pct),
+        backgroundColor = GlanceTheme.colors.surfaceVariant,
+    )
+}
+
+@Composable
+private fun NodeList(snapshot: Snapshot, link: String?, wide: Boolean) {
     val open = if (link != null) {
         GlanceModifier.clickable(actionStartActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link))))
     } else {
         GlanceModifier
-    }
-    Row(modifier = GlanceModifier.fillMaxWidth().padding(bottom = 4.dp)) {
-        Text(
-            context.getString(R.string.widget_total, snapshot.cpuPct.toInt(), snapshot.memPct.toInt()),
-            style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 11.sp),
-        )
     }
     LazyColumn(modifier = GlanceModifier.fillMaxSize()) {
         items(snapshot.nodes) { node ->
@@ -198,29 +205,44 @@ private fun NodeList(snapshot: Snapshot, link: String?) {
                     maxLines = 1,
                     style = TextStyle(color = GlanceTheme.colors.onSurface, fontSize = 12.sp),
                 )
-                Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = GlanceModifier.defaultWeight()) {
-                        Text("${context.getString(R.string.label_cpu)} ${node.cpuPct.toInt()}%", style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 10.sp))
-                        LinearProgressIndicator(
-                            progress = (node.cpuPct / 100.0).coerceIn(0.0, 1.0).toFloat(),
-                            modifier = GlanceModifier.fillMaxWidth().height(5.dp),
-                            color = colourFor(node.cpuPct),
-                            backgroundColor = GlanceTheme.colors.surfaceVariant,
-                        )
-                    }
-                    Spacer(GlanceModifier.width(8.dp))
-                    Column(modifier = GlanceModifier.defaultWeight()) {
-                        Text("${context.getString(R.string.label_memory)} ${node.memPct.toInt()}%", style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 10.sp))
-                        LinearProgressIndicator(
-                            progress = (node.memPct / 100.0).coerceIn(0.0, 1.0).toFloat(),
-                            modifier = GlanceModifier.fillMaxWidth().height(5.dp),
-                            color = colourFor(node.memPct),
-                            backgroundColor = GlanceTheme.colors.surfaceVariant,
-                        )
-                    }
-                }
+                if (wide) FullRow(node) else CompactRows(node)
             }
         }
+    }
+}
+
+@Composable
+private fun FullRow(node: NodeUsage) {
+    val context = LocalContext.current
+    Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = GlanceModifier.defaultWeight()) {
+            Text("${context.getString(R.string.label_cpu)} ${node.cpuPct.toInt()}%", style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 10.sp))
+            Bar(node.cpuPct, 5)
+        }
+        Spacer(GlanceModifier.width(8.dp))
+        Column(modifier = GlanceModifier.defaultWeight()) {
+            Text("${context.getString(R.string.label_memory)} ${node.memPct.toInt()}%", style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 10.sp))
+            Bar(node.memPct, 5)
+        }
+    }
+}
+
+@Composable
+private fun CompactRows(node: NodeUsage) {
+    CompactBar("C", node.cpuPct)
+    CompactBar("M", node.memPct)
+}
+
+@Composable
+private fun CompactBar(label: String, pct: Double) {
+    Row(modifier = GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 10.sp), modifier = GlanceModifier.width(12.dp))
+        Bar(pct, 4, GlanceModifier.defaultWeight())
+        Text(
+            "${pct.toInt()}%",
+            style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 10.sp),
+            modifier = GlanceModifier.width(34.dp).padding(start = 4.dp),
+        )
     }
 }
 

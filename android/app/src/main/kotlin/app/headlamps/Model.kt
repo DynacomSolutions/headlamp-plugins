@@ -61,6 +61,9 @@ fun levelOf(pct: Double): Level = when {
     else -> Level.NORMAL
 }
 
+/** Bar fill for a percentage. Usage above 100% fills the bar; the text still shows the real value. */
+fun barFraction(pct: Double): Float = (pct / 100.0).coerceIn(0.0, 1.0).toFloat()
+
 fun percent(used: Double, total: Double): Double =
     if (total <= 0.0) 0.0 else used / total * 100.0
 
