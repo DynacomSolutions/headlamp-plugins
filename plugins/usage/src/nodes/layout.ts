@@ -15,15 +15,11 @@ export interface ArcDatum {
   y0: number;
   y1: number;
   fill: string;
-  label: string | null;
-  showIcon: boolean;
 }
 
 const TAU = 2 * Math.PI;
-const CENTRE = 0.3;
-const MIN_LABEL_ARC = 48;
-const MIN_LABEL_RING = 20;
-const MIN_ICON_ARC = 40;
+/** Radius of the centre disc as a share of the chart radius. */
+export const CENTRE = 0.36;
 
 /** Hue and saturation of a `#rrggbb` or `hsl(h, s%, l%)` colour, plus its lightness. */
 function toHsl(c: string): { h: number; s: number; l: number } {
@@ -79,7 +75,8 @@ export function layoutSunburst(
   focusNode: SunNode;
   /** The focus path this tree has: the deepest existing prefix of `focus`. */
   path: string[];
-  centre: { title: string; value: number; share: number };
+  /** The focus node's value, its share of capacity and of its parent (null at the root). */
+  centre: { title: string; value: number; share: number; parentShare: number | null };
 } {
   const { radius, rings, mode } = opts;
   const path = findPath(tree.root, focus);
@@ -88,6 +85,7 @@ export function layoutSunburst(
   const categoryOf = path[1];
   const arcs: ArcDatum[] = [];
   const thickness = (radius * (1 - CENTRE)) / rings;
+  const parent = atRoot ? null : path[path.length - 2];
 
   const walk = (
     parent: SunNode,
@@ -113,8 +111,6 @@ export function layoutSunburst(
       } else {
         fill = shade(base as string, absDepth, i);
       }
-      const arc = ((c1 - c0) * (y0 + y1)) / 2;
-      const roomy = arc >= MIN_LABEL_ARC && y1 - y0 >= MIN_LABEL_RING;
       arcs.push({
         key: child.key,
         node: child,
@@ -124,8 +120,6 @@ export function layoutSunburst(
         y0,
         y1,
         fill,
-        label: roomy ? child.label : null,
-        showIcon: child.kind === 'project' && arc >= MIN_ICON_ARC,
       });
       walk(child, c0, c1, depth + 1, absDepth + 1, colour);
     });
@@ -147,6 +141,7 @@ export function layoutSunburst(
       title: focusNode.label,
       value: focusNode.value,
       share: tree.capacity > 0 ? focusNode.value / tree.capacity : 0,
+      parentShare: parent && parent.value > 0 ? focusNode.value / parent.value : parent ? 0 : null,
     },
   };
 }

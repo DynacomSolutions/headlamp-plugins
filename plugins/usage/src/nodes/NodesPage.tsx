@@ -24,6 +24,7 @@ import type { NodeMetrics } from './types';
 import { useIdle } from './useIdle';
 import { useNodesData } from './useNodesData';
 
+/** Two compact charts side by side fit the narrowest card (340 px less padding and gap). */
 const CARD_CHART = 140;
 
 function FullscreenButton() {
@@ -59,7 +60,15 @@ function NodeCard(props: {
   const { metrics, host, error, asOf, onOpen } = props;
   const trees = React.useMemo(() => buildTrees(metrics, host), [metrics, host]);
   const chart = (resource: Resource, tree: NodeTree) => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        flex: '1 1 0',
+        minWidth: 0,
+      }}
+    >
       <Sunburst tree={tree} resource={resource} focus={[]} size={CARD_CHART} compact />
       <Typography variant="body1" sx={{ fontWeight: 600, mt: 0.5 }}>
         {resource === 'cpu' ? 'CPU' : 'Memory'} {share(tree)}
@@ -75,7 +84,7 @@ function NodeCard(props: {
         <Typography variant="h6" component="h2" sx={{ mb: 1, overflowWrap: 'anywhere' }}>
           {metrics.node}
         </Typography>
-        <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2, flexWrap: 'wrap' }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2, flexWrap: 'nowrap' }}>
           {chart('cpu', trees.cpu)}
           {chart('memory', trees.mem)}
         </Box>

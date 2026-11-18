@@ -1,6 +1,7 @@
 /*
  * One node full screen: the CPU and memory sunbursts side by side (stacked in portrait), sized
- * from the container, both zoomed to the same focus path, with a breadcrumb and a detail panel.
+ * from the container, both zoomed to the same focus path, with a breadcrumb and, for a T3
+ * thread, a link to open it. The details of the focus are in the centre of each chart.
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -11,17 +12,14 @@ import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
 import { AgentHost, iconUrl } from './agents';
 import { detailFor } from './detail';
-import { DetailPanel } from './DetailPanel';
 import { Sunburst } from './Sunburst';
 import { buildNodeTree, NodeTree, Resource } from './tree';
 import type { NodeMetrics } from './types';
 
 const GAP = 16;
 const MIN_CHART = 200;
-const MAX_CHART = 900;
+const MAX_CHART = 1200;
 const MIN_TWO_UP = 260;
-const DETAIL_WIDTH = 380;
-const DETAIL_BESIDE_FROM = 1100;
 /** Room kept for the page header, breadcrumb and chart headings above a chart. */
 const CHROME_HEIGHT = 220;
 
@@ -70,19 +68,19 @@ function useBox(ref: React.RefObject<HTMLElement>): { width: number; height: num
 }
 
 /** Chart size and layout from the container width and the window shape. */
-export function chartLayout(
-  width: number,
-  height: number
-): { size: number; detailBeside: boolean } {
+export function chartLayout(width: number, height: number): { size: number; twoUp: boolean } {
   const portrait = height > width;
-  const detailBeside = !portrait && width >= DETAIL_BESIDE_FROM;
-  const chartsWidth = detailBeside ? width - DETAIL_WIDTH - GAP : width;
-  const twoUp = !portrait && chartsWidth >= 2 * MIN_TWO_UP + GAP;
-  let size = twoUp ? (chartsWidth - GAP) / 2 : chartsWidth;
+  const twoUp = !portrait && width >= 2 * MIN_TWO_UP + GAP;
+  let size = twoUp ? (width - GAP) / 2 : width;
   // Both charts should fit on the screen without scrolling: side by side, or stacked in half.
   size = Math.min(size, twoUp ? height - CHROME_HEIGHT : (height - CHROME_HEIGHT) / 2);
   size = Math.max(MIN_CHART, Math.min(MAX_CHART, size));
-  return { size: Math.floor(size), detailBeside };
+  return { size: Math.floor(size), twoUp };
+}
+
+/** A thread link, only for http(s) URLs. */
+export function threadHref(href: string | undefined): string | undefined {
+  return href && /^https?:\/\//i.test(href) ? href : undefined;
 }
 
 export function NodeView(props: {
@@ -100,7 +98,9 @@ export function NodeView(props: {
   const detail = React.useMemo(() => detailFor(trees.cpu, trees.mem, path), [trees, path]);
   const ref = React.useRef<HTMLDivElement>(null);
   const box = useBox(ref);
-  const { size, detailBeside } = chartLayout(box.width, box.height);
+  const { size, twoUp } = chartLayout(box.width, box.height);
+  const href = threadHref(detail.focus.href);
+  const subject = { label: detail.focus.label, icon: detail.focus.icon };
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
 
   const chart = (resource: Resource, tree: NodeTree) => (
@@ -111,28 +111,49 @@ export function NodeView(props: {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
         {usedText(tree, resource)}
       </Typography>
-      <Sunburst tree={tree} resource={resource} focus={detail.path} size={size} onFocus={onPath} />
+      <Sunburst
+        tree={tree}
+        resource={resource}
+        focus={detail.path}
+        size={size}
+        onFocus={onPath}
+        subject={subject}
+      />
     </Box>
   );
 
   return (
     <Box ref={ref}>
-      <Breadcrumbs aria-label="Focus" sx={{ mb: 1 }}>
-        <Button sx={crumb} onClick={onOverview}>
-          All nodes
-        </Button>
-        {detail.trail.map((t, i) =>
-          i === detail.trail.length - 1 ? (
-            <Typography key={t.key} sx={{ fontSize: 16, py: 1.5 }} aria-current="page">
-              {t.label}
-            </Typography>
-          ) : (
-            <Button key={t.key} sx={crumb} onClick={() => onPath(t.path)}>
-              {t.label}
-            </Button>
-          )
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+        <Breadcrumbs aria-label="Focus" sx={{ flex: '1 1 0', minWidth: 0 }}>
+          <Button sx={crumb} onClick={onOverview}>
+            All nodes
+          </Button>
+          {detail.trail.map((t, i) =>
+            i === detail.trail.length - 1 ? (
+              <Typography key={t.key} sx={{ fontSize: 16, py: 1.5 }} aria-current="page">
+                {t.label}
+              </Typography>
+            ) : (
+              <Button key={t.key} sx={crumb} onClick={() => onPath(t.path)}>
+                {t.label}
+              </Button>
+            )
+          )}
+        </Breadcrumbs>
+        {href && (
+          <Button
+            component="a"
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            variant="outlined"
+            sx={{ minHeight: 48, fontSize: 16 }}
+          >
+            Open thread
+          </Button>
         )}
-      </Breadcrumbs>
+      </Box>
       {agentError && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           {agentAlertText(agentError, agentAsOf)}
@@ -143,28 +164,17 @@ export function NodeView(props: {
           {NO_HOST_METRICS}
         </Typography>
       )}
-      <Box sx={{ display: 'flex', flexWrap: detailBeside ? 'nowrap' : 'wrap', gap: `${GAP}px` }}>
-        <Box
-          sx={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: `${GAP}px`,
-            justifyContent: 'center',
-            flex: detailBeside ? '1 1 auto' : '1 1 100%',
-            minWidth: 0,
-          }}
-        >
-          {chart('cpu', trees.cpu)}
-          {chart('memory', trees.mem)}
-        </Box>
-        <Box sx={{ flex: detailBeside ? `0 0 ${DETAIL_WIDTH}px` : '1 1 100%', minWidth: 0 }}>
-          <DetailPanel
-            detail={detail}
-            cpuCapacity={trees.cpu.capacity}
-            memCapacity={trees.mem.capacity}
-            onFocus={onPath}
-          />
-        </Box>
+      <Box
+        sx={{
+          display: 'flex',
+          flexWrap: twoUp ? 'nowrap' : 'wrap',
+          gap: `${GAP}px`,
+          justifyContent: 'center',
+          minWidth: 0,
+        }}
+      >
+        {chart('cpu', trees.cpu)}
+        {chart('memory', trees.mem)}
       </Box>
     </Box>
   );

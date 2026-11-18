@@ -162,7 +162,7 @@ memory of every cluster node as sunburst charts, made for a touch screen in a
 server cabinet: finger only, no mouse and no hover.
 
 - **Overview:** one card per node with its name, a small CPU sunburst and a
-  small memory sunburst, and the % used under each. Tap a card to open that
+  small memory sunburst side by side, and the % used under each. Tap a card to open that
   node.
 - **Node view:** the CPU and memory sunbursts side by side (stacked on a
   portrait screen), as large as the screen allows. Each chart is sized against
@@ -173,10 +173,17 @@ server cabinet: finger only, no mouse and no hover.
   - Tap an arc to zoom both charts to it (CPU and memory stay on the same
     path). Tap the centre to go up one level. The breadcrumb above the charts
     also steps back, and **All nodes** returns to the overview.
-  - The detail panel shows the focused arc's icon, name, cores, bytes, % of the
-    node and % of its parent, and lists every child as a large row (no top-N,
-    no "Other"). Tap a row to zoom to it; this is how to reach arcs too thin to
-    tap. Thread rows have a **thread** link when the agent backend gives one.
+  - Arc labels sit inside the arcs, along the radius or across it, whichever
+    fits more of the name (long names end in an ellipsis; arcs too small for a
+    few characters have no label). Project arcs show their icon before the
+    label when there is room.
+  - The centre of each chart describes the focused arc: icon, name, cores (CPU)
+    or bytes (memory), % of the node and % of its parent. When a chart has no
+    data for the focus it says so (for example "no CPU data").
+  - A focused T3 thread shows an **Open thread** button next to the
+    breadcrumb when the agent backend gives a link.
+  - Every arc is also a focusable button named with its value and % of node,
+    so keyboards and screen readers reach every value (Enter or Space zooms).
   - **Full screen** uses the browser Fullscreen API.
   - With no touch for the idle time (default 2 minutes) the page goes back to
     the overview.

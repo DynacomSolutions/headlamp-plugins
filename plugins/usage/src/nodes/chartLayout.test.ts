@@ -3,31 +3,41 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ ApiProxy: { request: vi.fn() } }));
 vi.mock('@iconify/react', () => ({ Icon: () => null }));
 
-import { agentAlertText, chartLayout } from './NodeView';
+import { agentAlertText, chartLayout, threadHref } from './NodeView';
 
 describe('chartLayout', () => {
-  it('puts both charts and the detail panel side by side on a wide landscape screen', () => {
-    const l = chartLayout(1800, 1080);
-    expect(l.detailBeside).toBe(true);
-    // (1800 - 380 - 16 - 16) / 2 = 694, under the height limit 1080 - 220.
-    expect(l.size).toBe(694);
+  it('gives both charts the full width side by side on a wide landscape screen', () => {
+    // (1800 - 16) / 2 = 892, under the height limit 1300 - 220.
+    expect(chartLayout(1800, 1300)).toEqual({ size: 892, twoUp: true });
   });
 
   it('keeps side-by-side charts within the screen height', () => {
+    // 1080 - 220 = 860, under the width share 892.
+    expect(chartLayout(1800, 1080)).toEqual({ size: 860, twoUp: true });
     expect(chartLayout(1800, 600).size).toBe(380);
   });
 
   it('stacks the charts full width in portrait', () => {
-    expect(chartLayout(800, 2000)).toEqual({ size: 800, detailBeside: false });
+    expect(chartLayout(800, 2000)).toEqual({ size: 800, twoUp: false });
   });
 
   it('caps stacked charts so both fit the screen height', () => {
     // (1280 - 220) / 2 = 530, under the width 800.
-    expect(chartLayout(800, 1280)).toEqual({ size: 530, detailBeside: false });
+    expect(chartLayout(800, 1280)).toEqual({ size: 530, twoUp: false });
   });
 
-  it('never goes below 200 px', () => {
+  it('never goes below 200 px or above 1200 px', () => {
     expect(chartLayout(0, 768).size).toBe(200);
+    expect(chartLayout(4000, 3000).size).toBe(1200);
+  });
+});
+
+describe('threadHref', () => {
+  it('keeps only http(s) links', () => {
+    expect(threadHref('https://example.com/t/1')).toBe('https://example.com/t/1');
+    expect(threadHref('http://example.com/t/1')).toBe('http://example.com/t/1');
+    expect(threadHref('javascript:alert(1)')).toBeUndefined();
+    expect(threadHref(undefined)).toBeUndefined();
   });
 });
 

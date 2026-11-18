@@ -99,9 +99,9 @@ describe('Sunburst', () => {
     expect(onFocus).toHaveBeenCalledWith(['t3', 'p:x']);
   });
 
-  it('labels the image with the top children and their share of capacity', () => {
+  it('labels the chart with the top children and their share of capacity', () => {
     const { getByRole } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={400} />);
-    const label = getByRole('img').getAttribute('aria-label') as string;
+    const label = getByRole('group').getAttribute('aria-label') as string;
     expect(label).toContain('t3');
     expect(label).toContain('38%');
     expect(label).toContain('k8s');
@@ -170,5 +170,84 @@ describe('Sunburst', () => {
       expect(Number(t.getAttribute('font-size'))).toBeGreaterThanOrEqual(14);
     });
     expect(container.textContent).toContain('\u2026');
+  });
+
+  it('names every arc with its value and share and makes it focusable', () => {
+    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={400} />);
+    const arc = container.querySelector('path[data-key="t3"]') as Element;
+    expect(arc.getAttribute('aria-label')).toBe('t3: 6.00 cores, 38% of node');
+    expect(arc.getAttribute('tabindex')).toBe('0');
+    expect(arc.getAttribute('role')).toBe('button');
+  });
+
+  it('focuses an arc with Enter or Space', () => {
+    const onFocus = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onFocus={onFocus} />
+    );
+    const arc = container.querySelector('path[data-key="p:x"]') as Element;
+    fireEvent.keyDown(arc, { key: 'Enter' });
+    fireEvent.keyDown(arc, { key: ' ' });
+    fireEvent.keyDown(arc, { key: 'a' });
+    expect(onFocus).toHaveBeenCalledTimes(2);
+    expect(onFocus).toHaveBeenCalledWith(['t3', 'p:x']);
+  });
+
+  it('keeps compact charts out of the tab order', () => {
+    const { container, getByRole } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={140} compact />
+    );
+    expect(container.querySelectorAll('[tabindex]')).toHaveLength(0);
+    expect(getByRole('img')).not.toBeNull();
+  });
+
+  it('describes the focus in the centre: name, value, share of node and of parent', () => {
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={800} />
+    );
+    const line = (k: string) => container.querySelector(`[data-centre-line="${k}"]`)?.textContent;
+    expect(line('title')).toBe('p:x');
+    expect(line('value')).toBe('2.00 cores');
+    expect(line('node')).toBe('13% of node');
+    expect(line('parent')).toBe('33% of parent');
+    expect(container.querySelector('foreignObject [data-icon="lucide:box"]')).not.toBeNull();
+  });
+
+  it('has no share of parent at the root', () => {
+    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={800} />);
+    expect(container.querySelector('[data-centre-line="parent"]')).toBeNull();
+    expect(container.querySelector('[data-centre-line="node"]')?.textContent).toBe('50% of node');
+  });
+
+  it('says so in the centre when this chart has no data for the focus', () => {
+    const onFocus = vi.fn();
+    const { container } = render(
+      <Sunburst
+        tree={tree}
+        resource="cpu"
+        focus={['t3', 'only-in-memory']}
+        size={800}
+        onFocus={onFocus}
+        subject={{ label: 'Memory only' }}
+      />
+    );
+    const line = (k: string) => container.querySelector(`[data-centre-line="${k}"]`)?.textContent;
+    expect(line('title')).toBe('Memory only');
+    expect(line('value')).toBe('no CPU data');
+    expect(line('node')).toBeUndefined();
+    const centre = container.querySelector('circle[data-centre]') as Element;
+    fireEvent.pointerDown(centre);
+    fireEvent.pointerUp(centre);
+    expect(onFocus).toHaveBeenCalledWith(['t3']);
+  });
+
+  it('labels arcs inside them in a colour that contrasts with the fill', () => {
+    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={['t3']} size={800} />);
+    const labels = container.querySelectorAll('text[data-arc-label]');
+    expect(labels.length).toBeGreaterThan(0);
+    labels.forEach(t => {
+      expect(['#fff', 'rgba(0, 0, 0, 0.87)']).toContain(t.getAttribute('fill'));
+      expect(Number(t.getAttribute('font-size'))).toBeGreaterThanOrEqual(14);
+    });
   });
 });

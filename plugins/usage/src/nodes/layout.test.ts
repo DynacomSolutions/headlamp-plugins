@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { colourAt } from '../palette';
-import { categoryColour, layoutSunburst, shade } from './layout';
+import { categoryColour, CENTRE, layoutSunburst, shade } from './layout';
 import type { NodeTree, SunNode } from './tree';
 
 function n(key: string, value: number, kind: SunNode['kind'], children: SunNode[] = []): SunNode {
@@ -28,7 +28,7 @@ describe('layoutSunburst', () => {
     const d1 = arcs.filter(a => a.depth === 1);
     expect(d1[0].x0).toBe(0);
     expect(d1[d1.length - 1].x1).toBeCloseTo(Math.PI);
-    expect(centre).toEqual({ title: 'root', value: 8, share: 0.5 });
+    expect(centre).toEqual({ title: 'root', value: 8, share: 0.5, parentShare: null });
   });
 
   it('fills the circle when focused and leaves gaps empty', () => {
@@ -55,20 +55,15 @@ describe('layoutSunburst', () => {
     const { arcs } = layoutSunburst(tree(), [], opts);
     const a1 = arcs.find(a => a.depth === 1)!;
     const a2 = arcs.find(a => a.depth === 2)!;
-    expect(a1.y0).toBeCloseTo(300);
-    expect(a1.y1).toBeCloseTo(300 + 700 / 3);
+    expect(a1.y0).toBeCloseTo(1000 * CENTRE);
+    expect(CENTRE).toBe(0.36);
+    expect(a1.y1).toBeCloseTo(360 + 640 / 3);
     expect(a2.y0).toBeCloseTo(a1.y1);
   });
 
-  it('hides labels on small arcs or thin rings, shows icons on big projects', () => {
-    const big = layoutSunburst(tree(), ['t3'], opts).arcs;
-    expect(big.find(a => a.key === 't3/p:x')!.label).toBe('t3/p:x');
-    expect(big.find(a => a.key === 't3/p:x')!.showIcon).toBe(true);
-    expect(big.find(a => a.key === 't3/p:x/t:a')!.showIcon).toBe(false);
-    const small = layoutSunburst(tree(), ['t3'], { ...opts, radius: 100 }).arcs;
-    expect(small.find(a => a.key === 't3/p:y')!.label).toBeNull();
-    const thin = layoutSunburst(tree(), ['t3'], { ...opts, radius: 1000, rings: 40 }).arcs;
-    expect(thin.every(a => a.label === null)).toBe(true);
+  it('gives the share of the parent below the root', () => {
+    expect(layoutSunburst(tree(), [], opts).centre.parentShare).toBeNull();
+    expect(layoutSunburst(tree(), ['t3', 't3/p:x'], opts).centre.parentShare).toBeCloseTo(2 / 6);
   });
 
   it('falls back to the deepest existing ancestor', () => {

@@ -33,51 +33,38 @@ const cpu = tree(
 const mem = tree(
   n('root', 600, [
     n('k8s', 400),
-    n('t3', 200, [n('t3/p:x', 50, [n('t3/p:x/t:a', 50)]), n('t3/p:y', 100)]),
+    n('t3', 200, [
+      n('t3/p:x', 50, [n('t3/p:x/t:a', 50)], { icon: { kind: 'lucide', name: 'box' } }),
+      n('t3/p:y', 100),
+    ]),
   ]),
   1000
 );
 
 describe('detailFor', () => {
-  it('describes the root with no parent and every top-level group', () => {
+  it('describes the root', () => {
     const d = detailFor(cpu, mem, []);
-    expect(d.focus).toMatchObject({
-      key: 'root',
-      label: 'ROOT',
-      cpu: 4,
-      mem: 600,
-      cpuParent: null,
-      memParent: null,
-    });
+    expect(d.focus).toMatchObject({ key: 'root', label: 'ROOT' });
     expect(d.path).toEqual([]);
-    expect(d.children.map(c => c.key).sort()).toEqual(['k8s', 't3']);
   });
 
-  it("lists the union of both trees' children, with the value from each tree", () => {
-    const d = detailFor(cpu, mem, ['t3']);
-    expect(d.focus).toMatchObject({ key: 't3', cpu: 3, mem: 200, cpuParent: 4, memParent: 600 });
-    expect(d.children).toEqual([
-      expect.objectContaining({ key: 't3/p:x', cpu: 2, mem: 50, path: ['t3', 't3/p:x'] }),
-      expect.objectContaining({ key: 't3/p:y', cpu: null, mem: 100, path: ['t3', 't3/p:y'] }),
-    ]);
+  it('takes the icon from whichever tree has it', () => {
+    expect(detailFor(cpu, mem, ['t3', 't3/p:x']).focus.icon).toEqual({
+      kind: 'lucide',
+      name: 'box',
+    });
   });
 
-  it('sorts children by the larger share of node capacity', () => {
-    // t3/p:x: cpu 2/8 = 25 %, mem 5 %; t3/p:y: mem 10 %.
-    expect(detailFor(cpu, mem, ['t3']).children.map(c => c.key)).toEqual(['t3/p:x', 't3/p:y']);
-    // At root: t3 cpu 37.5 %, k8s mem 40 %.
-    expect(detailFor(cpu, mem, []).children.map(c => c.key)).toEqual(['k8s', 't3']);
+  it('resolves a node only memory has', () => {
+    const d = detailFor(cpu, mem, ['t3', 't3/p:y']);
+    expect(d.path).toEqual(['t3', 't3/p:y']);
+    expect(d.focus.key).toBe('t3/p:y');
   });
 
   it('falls back to the CPU tree when memory lacks the focused node', () => {
     const d = detailFor(cpu, mem, ['t3', 't3/p:x', 't3/p:x/t:b']);
     expect(d.path).toEqual(['t3', 't3/p:x', 't3/p:x/t:b']);
-    expect(d.focus).toMatchObject({
-      key: 't3/p:x/t:b',
-      cpu: 1,
-      mem: null,
-      href: 'https://example.com/t/b',
-    });
+    expect(d.focus).toMatchObject({ key: 't3/p:x/t:b', href: 'https://example.com/t/b' });
   });
 
   it('stops at the deepest node either tree has', () => {

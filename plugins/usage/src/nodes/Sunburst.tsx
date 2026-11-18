@@ -1,20 +1,22 @@
 /*
  * One node's CPU or memory sunburst as SVG, for a touch screen: pointer events only, no hover,
- * no tooltips. A tap on an arc focuses it; a tap on the centre disc goes up one level.
+ * no tooltips. A tap on an arc focuses it; a tap on the centre disc goes up one level. Labels and
+ * project icons sit inside the arcs where they fit, and the centre disc describes the focus.
+ * Every arc is also a focusable button with its value as its name, for keyboards and screen
+ * readers.
  */
 import { Icon } from '@iconify/react';
 import { useTheme } from '@mui/material/styles';
 import { arc as d3arc } from 'd3-shape';
 import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
-import { ArcDatum, layoutSunburst } from './layout';
+import { ARC_ICON, ARC_ICON_GAP, arcLabel, CentreLine, centreLines, CHAR_WIDTH } from './arcLabel';
+import { ArcDatum, CENTRE, layoutSunburst } from './layout';
 import { NodeTree, Resource, SunNode } from './tree';
 import { useIconUrl } from './useIconUrl';
 
 const MOVE_LIMIT = 10;
-const CENTRE = 0.3;
 const MIN_FONT = 14;
-const CHAR_WIDTH = 0.6;
 const FALLBACK_ICON = { kind: 'mdi' as const, name: 'folder' };
 
 function fmt(resource: Resource, v: number): string {
@@ -31,11 +33,17 @@ function withPaths(arcs: ArcDatum[], focus: string[]): { arc: ArcDatum; path: st
   });
 }
 
-function ArcIcon({ icon, size }: { icon: NonNullable<SunNode['icon']>; size: number }) {
+function ArcIcon(props: {
+  icon: NonNullable<SunNode['icon']>;
+  size: number;
+  /** Colour for icons that do not bring their own. */
+  color: string;
+}) {
+  const { icon, size, color } = props;
   const url = useIconUrl(icon.kind === 'file' ? icon.src : undefined);
   const iconify = (i: { kind: string; name?: string; color?: string }) => (
     <foreignObject width={size} height={size} style={{ pointerEvents: 'none' }}>
-      <Icon icon={`${i.kind}:${i.name}`} width={size} height={size} color={i.color} />
+      <Icon icon={`${i.kind}:${i.name}`} width={size} height={size} color={i.color ?? color} />
     </foreignObject>
   );
   if (icon.kind !== 'file') return iconify(icon);
@@ -52,8 +60,10 @@ export function Sunburst(props: {
   rings?: number;
   onFocus?: (path: string[]) => void;
   compact?: boolean;
+  /** The focused node by name and icon, for the centre when this tree does not have it. */
+  subject?: { label: string; icon?: SunNode['icon'] };
 }) {
-  const { tree, resource, focus, size, rings = 3, onFocus, compact = false } = props;
+  const { tree, resource, focus, size, rings = 3, onFocus, compact = false, subject } = props;
   const theme = useTheme();
   const radius = size / 2;
   const [pressed, setPressed] = React.useState<string | null>(null);
@@ -62,6 +72,7 @@ export function Sunburst(props: {
   const {
     arcs,
     centre,
+    focusNode,
     path: shown,
   } = React.useMemo(
     () => layoutSunburst(tree, focus, { radius, rings, mode: theme.palette.mode }),
@@ -70,6 +81,10 @@ export function Sunburst(props: {
   // Arc paths start from the focus this tree has, which may be shallower than `focus` (a key
   // only the other chart has), so a tap always yields a path this tree can resolve.
   const items = React.useMemo(() => withPaths(arcs, shown), [arcs, shown]);
+  const name = resource === 'cpu' ? 'CPU' : 'Memory';
+  // This chart has no data for the focus when its tree resolves a shorter path.
+  const missing = shown.length < focus.length;
+  const up = focus.length ? focus.slice(0, -1) : null;
 
   const shape = d3arc<ArcDatum>()
     .startAngle(a => a.x0)
@@ -105,6 +120,11 @@ export function Sunburst(props: {
           },
           onPointerLeave: (e: React.PointerEvent) => release(e.pointerId),
           onPointerCancel: (e: React.PointerEvent) => release(e.pointerId),
+          onKeyDown: (e: React.KeyboardEvent) => {
+            if (!target || (e.key !== 'Enter' && e.key !== ' ')) return;
+            e.preventDefault();
+            onFocus?.(target);
+          },
         };
 
   const top = [...tree.root.children]
@@ -112,18 +132,36 @@ export function Sunburst(props: {
     .slice(0, 5)
     .map(c => `${c.label} ${formatPercent(c.value, tree.capacity)}`)
     .join(', ');
-  const aria = `${resource === 'cpu' ? 'CPU' : 'Memory'} usage by group: ${top}`;
+  const aria = `${name} usage by group: ${top}`;
   const fontSize = Math.max(MIN_FONT, size / 40);
-  const fits = (text: string, width: number) => text.length * fontSize * CHAR_WIDTH <= width;
-  const clip = (text: string, width: number) => {
-    const max = Math.max(1, Math.floor(width / (fontSize * CHAR_WIDTH)));
-    return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1))}\u2026`;
-  };
-  const discWidth = radius * CENTRE * 1.6;
+  const centreR = radius * CENTRE;
+
+  const title = subject?.label ?? centre.title;
+  const centreIcon = subject ? subject.icon : focusNode.icon;
+  const lines: CentreLine[] = compact
+    ? []
+    : centreLines(centreR, fontSize, {
+        title,
+        icon: !!centreIcon,
+        ...(missing
+          ? { value: `no ${resource === 'cpu' ? 'CPU' : 'memory'} data` }
+          : {
+              value: fmt(resource, centre.value),
+              node: `${formatPercent(centre.share, 1)} of node`,
+              parent:
+                centre.parentShare === null
+                  ? undefined
+                  : `${formatPercent(centre.parentShare, 1)} of parent`,
+            }),
+      });
+  const centreText = lines
+    .filter(l => l.kind !== 'icon')
+    .map(l => l.text)
+    .join(', ');
 
   return (
     <svg
-      role="img"
+      role={compact ? 'img' : 'group'}
       aria-label={aria}
       width={size}
       height={size}
@@ -139,9 +177,19 @@ export function Sunburst(props: {
       />
       {items.map(({ arc, path }) => {
         const id = path.join('/');
-        const [cx, cy] = shape.centroid(arc);
-        const ringW = arc.y1 - arc.y0;
-        const iconSize = Math.min(24, ringW * 0.7);
+        const ink = theme.palette.getContrastText(arc.fill);
+        const wantIcon = arc.node.kind === 'project' && !!arc.node.icon;
+        const label = compact ? null : arcLabel(arc, arc.node.label, fontSize, wantIcon);
+        const a11y = compact
+          ? {}
+          : {
+              role: 'button',
+              tabIndex: 0,
+              'aria-label': `${arc.node.label}: ${fmt(resource, arc.node.value)}, ${formatPercent(
+                arc.node.value,
+                tree.capacity
+              )} of node`,
+            };
         return (
           <g key={id}>
             <path
@@ -155,58 +203,86 @@ export function Sunburst(props: {
                 transform: pressed === id ? 'scale(1.03)' : '',
                 transition: 'transform 80ms',
               }}
+              {...a11y}
               {...handlers(id, path)}
             />
-            {!compact && arc.showIcon && arc.node.icon && (
-              <g transform={`translate(${cx - iconSize / 2} ${cy - iconSize / 2 - fontSize})`}>
-                <ArcIcon icon={arc.node.icon} size={iconSize} />
+            {label && (
+              <g
+                transform={`translate(${label.x} ${label.y}) rotate(${label.rotate})`}
+                style={{ pointerEvents: 'none' }}
+                aria-hidden="true"
+              >
+                {label.icon && arc.node.icon && (
+                  <g transform={`translate(${-label.width / 2} ${-ARC_ICON / 2})`}>
+                    <ArcIcon icon={arc.node.icon} size={ARC_ICON} color={ink} />
+                  </g>
+                )}
+                <text
+                  data-arc-label={label.orientation}
+                  x={label.icon ? -label.width / 2 + ARC_ICON + ARC_ICON_GAP : 0}
+                  textAnchor={label.icon ? 'start' : 'middle'}
+                  dominantBaseline="central"
+                  fontSize={fontSize}
+                  fill={ink}
+                >
+                  {label.text}
+                </text>
               </g>
             )}
-            {!compact &&
-              arc.label &&
-              fits(arc.label, ((arc.x1 - arc.x0) * (arc.y0 + arc.y1)) / 2 - 4) &&
-              ringW >= fontSize + 4 && (
-                <text
-                  data-arc-label
-                  x={cx}
-                  y={arc.showIcon && arc.node.icon ? cy + iconSize / 2 : cy}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={fontSize}
-                  fill={theme.palette.getContrastText(arc.fill)}
-                  style={{ pointerEvents: 'none' }}
-                >
-                  {arc.label}
-                </text>
-              )}
           </g>
         );
       })}
       <circle
         data-centre
-        r={radius * CENTRE}
+        r={centreR}
         fill={theme.palette.background.paper}
         stroke={theme.palette.divider}
-        style={{ cursor: !compact && shown.length ? 'pointer' : undefined }}
-        {...handlers('centre', shown.length ? shown.slice(0, -1) : null)}
+        style={{ cursor: !compact && up ? 'pointer' : undefined }}
+        {...(!compact && up
+          ? {
+              role: 'button',
+              tabIndex: 0,
+              'aria-label': `${centreText}. Up one level`,
+            }
+          : {})}
+        {...handlers('centre', up)}
       />
       <g style={{ pointerEvents: 'none' }} textAnchor="middle" fill={theme.palette.text.primary}>
-        {!compact && (
-          <text y={-fontSize * 1.4} fontSize={fontSize} fill={theme.palette.text.secondary}>
-            {clip(centre.title, discWidth)}
+        {compact ? (
+          <text
+            y={0}
+            dominantBaseline="central"
+            fontSize={Math.min(fontSize * 1.8, (centreR * 1.6) / 3 / CHAR_WIDTH)}
+            fontWeight={600}
+          >
+            {Math.round(centre.share * 100)}%
           </text>
-        )}
-        <text
-          y={compact ? 0 : fontSize * 0.4}
-          fontSize={Math.min(fontSize * 1.8, discWidth / 3 / CHAR_WIDTH)}
-          fontWeight={600}
-        >
-          {Math.round(centre.share * 100)}%
-        </text>
-        {!compact && (
-          <text y={fontSize * 2} fontSize={fontSize} fill={theme.palette.text.secondary}>
-            {clip(fmt(resource, centre.value), discWidth)}
-          </text>
+        ) : (
+          lines.map(l =>
+            l.kind === 'icon' ? (
+              centreIcon && (
+                <g key="icon" transform={`translate(${-ARC_ICON / 2} ${l.y})`}>
+                  <ArcIcon icon={centreIcon} size={ARC_ICON} color={theme.palette.text.primary} />
+                </g>
+              )
+            ) : (
+              <text
+                key={l.kind}
+                data-centre-line={l.kind}
+                y={l.y}
+                fontSize={l.fontSize}
+                fontWeight={l.kind === 'value' ? 600 : undefined}
+                fill={
+                  l.kind === 'title' || l.kind === 'value'
+                    ? theme.palette.text.primary
+                    : theme.palette.text.secondary
+                }
+                aria-hidden={up ? 'true' : undefined}
+              >
+                {l.text}
+              </text>
+            )
+          )
         )}
       </g>
     </svg>
