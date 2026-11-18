@@ -7,14 +7,14 @@ import { agentAlertText, chartLayout, threadHref } from './NodeView';
 
 describe('chartLayout', () => {
   it('gives both charts the full width side by side on a wide landscape screen', () => {
-    // (1800 - 16) / 2 = 892, under the height limit 1300 - 220.
+    // (1800 - 16) / 2 = 892, under the height limit 1300 - 64.
     expect(chartLayout(1800, 1300)).toEqual({ size: 892, twoUp: true });
   });
 
   it('keeps side-by-side charts within the screen height', () => {
-    // 1080 - 220 = 860, under the width share 892.
-    expect(chartLayout(1800, 1080)).toEqual({ size: 860, twoUp: true });
-    expect(chartLayout(1800, 600).size).toBe(380);
+    // 800 - 64 = 736, under the width share 892.
+    expect(chartLayout(1800, 800)).toEqual({ size: 736, twoUp: true });
+    expect(chartLayout(1800, 600).size).toBe(536);
   });
 
   it('stacks the charts full width in portrait', () => {
@@ -22,8 +22,8 @@ describe('chartLayout', () => {
   });
 
   it('caps stacked charts so both fit the screen height', () => {
-    // (1280 - 220) / 2 = 530, under the width 800.
-    expect(chartLayout(800, 1280)).toEqual({ size: 530, twoUp: false });
+    // (1280 - 2 * 64 - 16) / 2 = 568, under the width 800.
+    expect(chartLayout(800, 1280)).toEqual({ size: 568, twoUp: false });
   });
 
   it('never goes below 200 px or above 1200 px', () => {

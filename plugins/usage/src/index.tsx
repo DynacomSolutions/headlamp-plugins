@@ -6,6 +6,7 @@
  * (/usage/dashboard): the Usage dashboard, CPU and memory sunbursts for a touch screen. The old
  * /usage/nodes URL redirects to it.
  */
+import './nodes/registerIcons';
 import { registerPluginSettings, registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
 import { LegacyNodesRedirect } from './nodes/LegacyNodesRedirect';
 import { NodesPage } from './nodes/NodesPage';
@@ -46,6 +47,7 @@ registerRoute({
 
 registerRoute({
   path: '/usage/nodes',
+  sidebar: 'usage-dashboard',
   name: 'usage-nodes-redirect',
   exact: true,
   component: LegacyNodesRedirect,

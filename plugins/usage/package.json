@@ -2,7 +2,11 @@
   "name": "usage",
   "version": "0.1.0",
   "license": "MIT",
-  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
+  "headlamp": {
+    "extraDist": {
+      "LICENSE": "../../LICENSE"
+    }
+  },
   "description": "Headlamp plugin: pie-chart usage dashboard (CPU, memory, disk, network) per namespace, workload, service, node or label, sourced from a Prometheus-compatible metrics service",
   "scripts": {
     "start": "headlamp-plugin start",
@@ -37,6 +41,8 @@
     "typescript": "5.6.2"
   },
   "devDependencies": {
+    "@iconify-json/mdi": "^1.2.3",
+    "@iconify-json/simple-icons": "^1.2.103",
     "@kinvolk/headlamp-plugin": "^0.14.0",
     "@types/d3-shape": "^3.2.0"
   },

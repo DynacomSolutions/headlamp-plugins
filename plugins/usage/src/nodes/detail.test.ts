@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detailFor } from './detail';
+import { childRows, detailFor, selectionFor } from './detail';
 import type { NodeTree, SunNode } from './tree';
 
 function n(
@@ -80,5 +80,54 @@ describe('detailFor', () => {
       { key: 't3', label: 'T3', path: ['t3'] },
       { key: 't3/p:x', label: 'T3/P:X', path: ['t3', 't3/p:x'] },
     ]);
+  });
+});
+
+describe('selectionFor', () => {
+  it('gives name, kind, both resources and the three shares', () => {
+    const sel = selectionFor(cpu, mem, [], ['t3', 't3/p:x'])!;
+    expect(sel.label).toBe('T3/P:X');
+    expect(sel.icon).toEqual({ kind: 'lucide', name: 'box' });
+    expect(sel.canOpen).toBe(true);
+    expect(sel.cpu).toEqual({ value: 2, ofCapacity: 0.25, ofParent: 2 / 3, ofRoot: 0.5 });
+    expect(sel.mem!.value).toBe(50);
+    expect(sel.mem!.ofCapacity).toBeCloseTo(0.05);
+    expect(sel.mem!.ofParent).toBeCloseTo(0.25);
+  });
+
+  it('measures the share of the zoom root', () => {
+    const sel = selectionFor(cpu, mem, ['t3'], ['t3', 't3/p:x'])!;
+    expect(sel.cpu!.ofRoot).toBeCloseTo(2 / 3);
+  });
+
+  it('cannot open a segment with no children, and has no data in a chart that lacks it', () => {
+    const sel = selectionFor(cpu, mem, [], ['t3', 't3/p:y'])!;
+    expect(sel.canOpen).toBe(false);
+    expect(sel.cpu).toBeNull();
+    expect(sel.mem!.value).toBe(100);
+  });
+
+  it('describes the unused capacity and the unattributed space, which cannot be opened', () => {
+    const unused = selectionFor(cpu, mem, [], ['root/~unused'])!;
+    expect(unused).toMatchObject({ label: 'Unused', kind: 'unused', canOpen: false });
+    expect(unused.cpu).toEqual({ value: 4, ofCapacity: 0.5, ofParent: null, ofRoot: null });
+    const un = selectionFor(cpu, mem, [], ['t3', 't3/~unattributed'])!;
+    expect(un.label).toBe('Unattributed');
+    expect(un.cpu!.value).toBe(1);
+    expect(un.cpu!.ofParent).toBeCloseTo(1 / 3);
+  });
+
+  it('is null for a path neither tree has', () => {
+    expect(selectionFor(cpu, mem, [], ['nope'])).toBeNull();
+  });
+});
+
+describe('childRows', () => {
+  it('lists the children of either chart, biggest share of capacity first', () => {
+    const rows = childRows(cpu, mem, ['t3', 't3/p:x']);
+    expect(rows.map(r => r.key)).toEqual(['t3/p:x/t:a', 't3/p:x/t:b']);
+    expect(rows[0]).toMatchObject({ cpu: 1, mem: 50 });
+    expect(rows[1]).toMatchObject({ cpu: 1, mem: null });
+    expect(childRows(cpu, mem, ['t3']).map(r => r.key)).toEqual(['t3/p:x', 't3/p:y']);
   });
 });
