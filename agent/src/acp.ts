@@ -61,9 +61,25 @@ async function mcpTools(url: string, headers: Record<string, string>): Promise<{
   };
 }
 
+/**
+ * The user's own message, without the text a host adds around it. T3 Code, for
+ * example, sends <t3_code_instructions>…</t3_code_instructions> and
+ * <user_request>…</user_request> in one block and <runtime_info>,
+ * <pull_request_linking> and similar in another. When the host marks the
+ * request, only that is used; otherwise every whole tagged block is removed.
+ */
+export function userText(text: string): string {
+  const marked = [...text.matchAll(/<(user_request|user_message|user_query)\b[^>]*>([\s\S]*?)<\/\1>/gi)].map(m => m[2].trim());
+  if (marked.length) return marked.join('\n').trim();
+  return text
+    .replace(/<([a-z][\w-]*)\b[^>]*>[\s\S]*?<\/\1>/g, '')
+    .replace(/<([a-z][\w-]*(?:instructions?|context|reminder|info))\b[^>]*>[\s\S]*$/i, '')
+    .trim();
+}
+
 /** Turns the prompt into an alert: a JSON alert, an Alertmanager payload, or free text. */
 export function alertFromPrompt(text: string): Alert | undefined {
-  const trimmed = text.trim();
+  const trimmed = userText(text);
   const json = /\{[\s\S]*\}|\[[\s\S]*\]/.exec(trimmed)?.[0];
   if (json) {
     try {
@@ -80,9 +96,9 @@ export function alertFromPrompt(text: string): Alert | undefined {
     }
   }
   if (!trimmed || /^(diagnose|latest|go|run)\.?$/i.test(trimmed)) return undefined;
-  // "AlertName key=value key=value ..." or plain words.
+  // "AlertName key=value key=value ..." or plain words. Labels come from the first line only.
   const labels: Record<string, string> = {};
-  for (const m of trimmed.matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)=("[^"]*"|\S+)/g)) labels[m[1]] = m[2].replace(/^"|"$/g, '');
+  for (const m of trimmed.split('\n')[0].matchAll(/\b([a-zA-Z_][a-zA-Z0-9_]*)=("[^"]*"|\S+)/g)) labels[m[1]] = m[2].replace(/^"|"$/g, '');
   const first = trimmed.split(/\s+/)[0];
   const name = labels.alertname ?? (/^[A-Z][A-Za-z0-9]+$/.test(first) ? first : 'ReportedIncident');
   labels.alertname = name;
@@ -186,9 +202,13 @@ export function startAcp(): void {
                 sessionUpdate: 'tool_call',
                 toolCallId: event.id,
                 title: `${event.id} ${event.tool}: ${event.reason}`,
-                kind: 'fetch',
+                kind: 'other',
                 status: 'in_progress',
                 rawInput: event.args,
+                content: [{ type: 'content', content: { type: 'text', text: `${event.tool} ${JSON.stringify(event.args)}` } }],
+                // Names the MCP server and tool, so hosts that read it (T3 Code) label the
+                // call headlamp-agent.<tool> instead of a generic "Tool".
+                _meta: { serverId: 'headlamp-agent', toolName: event.tool },
               });
             } else if (event.type === 'tool_end') {
               await update({
@@ -196,6 +216,7 @@ export function startAcp(): void {
                 toolCallId: event.id,
                 status: event.ok ? 'completed' : 'failed',
                 content: [{ type: 'content', content: { type: 'text', text: event.summary } }],
+                _meta: { serverId: 'headlamp-agent', toolName: event.tool },
               });
             } else if (event.type === 'thought') {
               await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: event.text } });
