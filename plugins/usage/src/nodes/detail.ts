@@ -3,7 +3,8 @@
  * and the breadcrumb trail. A key may exist in only one tree (a thread with CPU but no memory,
  * say), so the deeper of the two resolved paths wins, memory on a tie.
  */
-import { findPath, NodeTree, SunNode } from './tree';
+import { idOf, nameOf } from './names';
+import { findPath, gapNodes, NodeTree, SunNode, UNUSED } from './tree';
 
 export interface Detail {
   /** The resolved focus path (the deepest prefix of the requested path either tree has). */
@@ -30,10 +31,110 @@ export function detailFor(cpu: NodeTree, mem: NodeTree, path: string[]): Detail 
     path: keys,
     focus: {
       key: node.key,
-      label: node.label,
+      label: nameOf(node),
       icon: m?.icon ?? c?.icon,
       href: m?.href ?? c?.href,
     },
-    trail: chosen.map((n, i) => ({ key: n.key, label: n.label, path: keys.slice(0, i) })),
+    trail: chosen.map((n, i) => ({ key: n.key, label: nameOf(n), path: keys.slice(0, i) })),
   };
+}
+
+/** One resource's numbers for a selected segment. */
+export interface SegmentInfo {
+  value: number;
+  ofCapacity: number;
+  /** Null when there is no parent (the root) or the segment is unused capacity. */
+  ofParent: number | null;
+  /** Share of the zoom root. Null for unused capacity. */
+  ofRoot: number | null;
+}
+
+/** The selected node in `tree` (a real arc or an empty-space arc), with its parent. */
+function resolve(tree: NodeTree, sel: string[]): { node: SunNode; parent: SunNode | null } | null {
+  const node = exact(tree, sel);
+  if (node) return { node, parent: sel.length ? exact(tree, sel.slice(0, -1)) ?? null : null };
+  if (sel.length === 0) return null;
+  const parent = exact(tree, sel.slice(0, -1));
+  if (!parent) return null;
+  const gap = gapNodes(tree, parent, parent === tree.root).find(g => g.key === sel[sel.length - 1]);
+  return gap ? { node: gap, parent } : null;
+}
+
+function segmentFor(tree: NodeTree, zoom: string[], sel: string[]): SegmentInfo | null {
+  const r = resolve(tree, sel);
+  if (!r) return null;
+  const zoomRoot = findPath(tree.root, zoom).slice(-1)[0];
+  const capacityGap = r.node.key.endsWith(`/${UNUSED}`);
+  const share = (of: number) => (of > 0 ? r.node.value / of : 0);
+  return {
+    value: r.node.value,
+    ofCapacity: share(tree.capacity),
+    ofParent: r.parent && !capacityGap ? share(r.parent.value) : null,
+    ofRoot: capacityGap ? null : share(zoomRoot.value),
+  };
+}
+
+export interface Selection {
+  /** The friendly name. */
+  label: string;
+  /** The raw id, shown under the name; absent when it is the name. */
+  id?: string;
+  kind: SunNode['kind'];
+  icon?: SunNode['icon'];
+  href?: string;
+  /** The segment has children in either chart, so it can be opened. */
+  canOpen: boolean;
+  cpu: SegmentInfo | null;
+  mem: SegmentInfo | null;
+}
+
+/** What the details card shows for the selected path, or null when it is in neither tree. */
+export function selectionFor(
+  cpu: NodeTree,
+  mem: NodeTree,
+  zoom: string[],
+  sel: string[]
+): Selection | null {
+  const c = resolve(cpu, sel);
+  const m = resolve(mem, sel);
+  const n = m?.node ?? c?.node;
+  if (!n) return null;
+  const shown = nameOf(n);
+  const raw = idOf(n);
+  return {
+    label: shown,
+    id: raw !== shown ? raw : undefined,
+    kind: n.kind,
+    icon: m?.node.icon ?? c?.node.icon,
+    href: m?.node.href ?? c?.node.href,
+    canOpen: n.kind !== 'unused' && ((c?.node.children.length ?? 0) > 0 || (m?.node.children.length ?? 0) > 0),
+    cpu: segmentFor(cpu, zoom, sel),
+    mem: segmentFor(mem, zoom, sel),
+  };
+}
+
+export interface ChildRow {
+  key: string;
+  label: string;
+  icon?: SunNode['icon'];
+  cpu: number | null;
+  mem: number | null;
+}
+
+/** The children of the node at `base` in either chart, biggest share of capacity first. */
+export function childRows(cpu: NodeTree, mem: NodeTree, base: string[]): ChildRow[] {
+  const rows = new Map<string, ChildRow>();
+  const add = (tree: NodeTree, field: 'cpu' | 'mem') => {
+    for (const ch of exact(tree, base)?.children ?? []) {
+      const row = rows.get(ch.key) ?? { key: ch.key, label: nameOf(ch), icon: ch.icon, cpu: null, mem: null };
+      row[field] = ch.value;
+      rows.set(ch.key, row);
+    }
+  };
+  add(cpu, 'cpu');
+  add(mem, 'mem');
+  const weight = (r: ChildRow) =>
+    (cpu.capacity > 0 ? (r.cpu ?? 0) / cpu.capacity : 0) +
+    (mem.capacity > 0 ? (r.mem ?? 0) / mem.capacity : 0);
+  return [...rows.values()].sort((a, b) => weight(b) - weight(a));
 }

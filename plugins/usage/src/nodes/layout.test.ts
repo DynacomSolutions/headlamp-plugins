@@ -25,7 +25,7 @@ const opts = { radius: 1000, rings: 3, mode: 'light' as const };
 describe('layoutSunburst', () => {
   it('draws 2π·used/capacity at the root', () => {
     const { arcs, centre } = layoutSunburst(tree(), [], opts);
-    const d1 = arcs.filter(a => a.depth === 1);
+    const d1 = arcs.filter(a => a.depth === 1 && !a.gap);
     expect(d1[0].x0).toBe(0);
     expect(d1[d1.length - 1].x1).toBeCloseTo(Math.PI);
     expect(centre).toEqual({ title: 'root', value: 8, share: 0.5, parentShare: null });
@@ -56,8 +56,8 @@ describe('layoutSunburst', () => {
     const a1 = arcs.find(a => a.depth === 1)!;
     const a2 = arcs.find(a => a.depth === 2)!;
     expect(a1.y0).toBeCloseTo(1000 * CENTRE);
-    expect(CENTRE).toBe(0.36);
-    expect(a1.y1).toBeCloseTo(360 + 640 / 3);
+    expect(CENTRE).toBe(0.24);
+    expect(a1.y1).toBeCloseTo(240 + 760 / 3);
     expect(a2.y0).toBeCloseTo(a1.y1);
   });
 
@@ -116,8 +116,64 @@ describe('layoutSunburst', () => {
 
   it('uses root value when used is null', () => {
     const { arcs } = layoutSunburst(tree(null), [], opts);
-    const d1 = arcs.filter(a => a.depth === 1);
+    const d1 = arcs.filter(a => a.depth === 1 && !a.gap);
     expect(d1[d1.length - 1].x1).toBeCloseTo(Math.PI);
+  });
+});
+
+describe('layoutSunburst gaps', () => {
+  it('draws the unused capacity and the unattributed space as arcs without fill', () => {
+    const { arcs } = layoutSunburst(tree(), [], opts);
+    const unused = arcs.find(a => a.key === 'root/~unused')!;
+    expect(unused).toMatchObject({ gap: true, fill: 'none', depth: 1 });
+    expect(unused.x0).toBeCloseTo(Math.PI);
+    expect(unused.x1).toBeCloseTo(2 * Math.PI);
+    const un = arcs.find(a => a.key === 't3/~unattributed')!;
+    expect(un.gap).toBe(true);
+    expect(un.depth).toBe(2);
+    // t3 holds 6, its children 3: the gap is the other half of the t3 arc.
+    const t3 = arcs.find(a => a.key === 't3')!;
+    expect(un.x0).toBeCloseTo(t3.x0 + (t3.x1 - t3.x0) / 2);
+    expect(un.x1).toBeCloseTo(t3.x1);
+  });
+
+  it('has an unattributed arc only where children sum to less than the parent', () => {
+    const { arcs } = layoutSunburst(tree(), ['t3'], opts);
+    expect(arcs.some(a => a.key === 't3/~unused')).toBe(false);
+    expect(arcs.some(a => a.key === 't3/~unattributed')).toBe(true);
+  });
+});
+
+describe('layoutSunburst empty space reaches the rim', () => {
+  it('runs a gap arc from its ring to the outer radius, and nothing under a leaf', () => {
+    const { arcs } = layoutSunburst(tree(), [], opts);
+    for (const key of ['root/~unused', 't3/~unattributed']) {
+      expect(arcs.find(a => a.key === key)!.y1).toBeCloseTo(1000);
+    }
+    // Leaves (k8s here, and the thread under t3/p:x) hold no unattributed space.
+    expect(arcs.some(a => a.key === 'k8s/~unattributed')).toBe(false);
+    expect(arcs.some(a => a.key === 't3/p:x/t:a/~unattributed')).toBe(false);
+  });
+});
+
+describe('layoutSunburst node ring', () => {
+  const ring: NodeTree = {
+    root: n('root', 8, 'node', [
+      n('node:a', 5, 'node', [n('k8s', 3, 'category'), n('system', 2, 'system')]),
+      n('node:b', 3, 'node', [n('k8s', 3, 'category')]),
+    ]),
+    capacity: 16,
+    used: 8,
+    hostMetrics: true,
+    nodeRing: true,
+  };
+
+  it('colours categories on the second ring and keeps node arcs neutral', () => {
+    const { arcs } = layoutSunburst(ring, [], opts);
+    const k8s = arcs.filter(a => a.node.kind === 'category');
+    expect(k8s).toHaveLength(2);
+    k8s.forEach(a => expect(a.fill).toBe(colourAt(0, 'light')));
+    expect(arcs.find(a => a.key === 'node:a')!.fill).not.toBe(colourAt(0, 'light'));
   });
 });
 

@@ -3,9 +3,9 @@
 A [Headlamp](https://headlamp.dev/) plugin built with the official
 `@kinvolk/headlamp-plugin` tooling (TypeScript + React). It adds a **Usage**
 entry to the sidebar (route `/usage`): a dashboard of donut charts that break
-down resource usage over a chosen period. A **Nodes** entry under it shows
+down resource usage over a chosen period. A **Dashboard** entry under it shows
 each node's CPU and memory as touch-friendly sunburst charts (see
-[Nodes page](#nodes-page)).
+[Usage dashboard](#usage-dashboard)).
 
 ## What it shows
 
@@ -155,43 +155,87 @@ Notes:
 - A VictoriaMetrics that returns no series shows the "No usage metrics found"
   state rather than empty charts.
 
-## Nodes page
+## Usage dashboard
 
-A **Nodes** entry under **Usage** (route `/usage/nodes`) shows the CPU and
-memory of every cluster node as sunburst charts, made for a touch screen in a
-server cabinet: finger only, no mouse and no hover.
+A **Dashboard** entry under **Usage** (route `/usage/dashboard`) shows the CPU
+and memory of your nodes as two large sunburst charts, made for a touch screen
+in a server cabinet: finger only, no mouse and no hover. The page uses the
+whole width of the main area. The old `/usage/nodes` URL redirects here and
+keeps its query.
 
-- **Overview:** one card per node with its name, a small CPU sunburst and a
-  small memory sunburst side by side, and the % used under each. Tap a card to open that
-  node.
-- **Node view:** the CPU and memory sunbursts side by side (stacked on a
-  portrait screen), as large as the screen allows. Each chart is sized against
-  the node's full capacity, so the unused share stays empty inside a dashed
-  outline. The rings go node > group (Kubernetes, each agent orchestrator,
-  System) > namespace or project > pod or thread > container or process, three
-  rings at a time.
-  - Tap an arc to zoom both charts to it (CPU and memory stay on the same
-    path). Tap the centre to go up one level. The breadcrumb above the charts
-    also steps back, and **All nodes** returns to the overview.
-  - Arc labels sit inside the arcs, along the radius or across it, whichever
-    fits more of the name (long names end in an ellipsis; arcs too small for a
-    few characters have no label). Project arcs show their icon before the
-    label when there is room.
-  - The centre of each chart describes the focused arc: icon, name, cores (CPU)
-    or bytes (memory), % of the node and % of its parent. When a chart has no
-    data for the focus it says so (for example "no CPU data").
-  - A focused T3 thread shows an **Open thread** button next to the
-    breadcrumb when the agent backend gives a link.
-  - Every arc is also a focusable button named with its value and % of node,
-    so keyboards and screen readers reach every value (Enter or Space zooms).
-  - **Full screen** uses the browser Fullscreen API.
-  - With no touch for the idle time (default 2 minutes) the page goes back to
-    the overview.
-- **Kiosk URL:** the whole view is in the query string, replaced (not pushed)
-  on every tap, so a cabinet browser can boot into a fixed view, for example
-  `/usage/nodes?node=worker-1&path=k8s/k8s%2Fns%3Amonitoring`. `node` is the
-  node name; `path` is the list of arc keys from the node down, each key
-  percent-encoded and joined with `/`.
+- **Charts:** one **CPU** and one **Memory** sunburst. On a landscape screen
+  the row is CPU, Memory and a details column (about 360 px) beside them, and
+  the charts take the rest of the width and height, so the page does not
+  scroll. On a portrait screen they sit side by side when each gets at least
+  45% of the width, else one above the other, with the details below. Each is sized against capacity, so the unused
+  share is a real arc.
+- **Filters:** a bar at the top, with **Nodes** and **Category** (Kubernetes,
+  T3 Code, Herdr, Other scopes, System). Nothing selected means all. With one
+  node selected the rings are that node's tree. With more than one, the first
+  ring is one arc per node, each sized against the summed capacity of the
+  selected nodes, and its tree sits under it. A category filter drops the other
+  category arcs; the gap they leave stays empty and the rest is not rescaled.
+- **Rings:** node (only for several nodes) > group (Kubernetes, each agent
+  orchestrator, System) > namespace or project > pod or thread > container or
+  process, three rings at a time.
+- **Icons first:** an arc shows its icon, as large as fits (16 to 40 px), and
+  its name beside it only when both fit. Project icons come from the agent
+  backend. Apps and processes (node, git, claude, nginx and so on) and
+  Kubernetes containers get icons from a local table, bundled with the plugin,
+  so they are not fetched from the internet. Unknown ones get a generic icon.
+  (A project icon of kind lucide set by the backend is still looked up by
+  Iconify.)
+- **Names:** arcs, the centre, the breadcrumb and the list show a friendly
+  name, for example `runwarden-runners` as "Runwarden". The details card shows
+  that name as its title and the raw id under it. A name comes from, in order:
+  the **Display names** setting (`id=Name` lines, one per line); the cluster
+  (a Namespace's `app.kubernetes.io/display-name` annotation, then its
+  `app.kubernetes.io/part-of`, `name` or `instance` label); the app table
+  (processes and containers such as `node` as "Node.js"); and last a plain
+  humaniser that drops a suffix such as `-runners` or `-system`, splits on `-`
+  and `_` and title-cases. Pods show their workload name, without the
+  ReplicaSet hash. T3 project and thread names are used as they are.
+- **Select, then open:** a tap on an arc selects it in both charts. It grows a
+  little and gets an outline. Tap it again, or empty space, to clear it. A card
+  below the charts gives its icon, name and kind, its CPU and memory with the
+  share of capacity, of its parent and of the zoom root, and an **Open thread**
+  link for a T3 thread. Next to it is the list of its children (tap a row to
+  select it). **Open** zooms both charts to the selected segment. **Up**, the
+  centre of a chart and the breadcrumb go up a level.
+- **Empty space:** the capacity nothing uses (**Unused**) and what a parent
+  holds beyond its children (**Unattributed**) are arcs with a dotted outline
+  and no fill. They can be selected and show their value and shares, but they
+  cannot be opened.
+  - Every arc is also a focusable button named with its value and share, so
+    keyboards and screen readers reach every value (Enter or Space selects).
+  - The centre of each chart describes the zoom root: icon, name, cores (CPU)
+    or bytes (memory), and its share of capacity and of its parent.
+- **Full screen:** the **Full screen** button shows only the dashboard (filters,
+  charts, details) over the whole window, with no Headlamp header or sidebar,
+  and asks the browser for full screen too. **Exit full screen**, always in the
+  top right, leaves it; so do Escape and leaving browser full screen by any
+  other way.
+- **Idle:** with no touch for the idle time (default 2 minutes) the zoom and
+  selection go back to the root. The filters and full screen stay.
+- **URL:** the whole view is in the query string and is replaced (not pushed) on
+  every change, so a URL reproduces the view after a reload or on another
+  device, and a cabinet browser can boot into a fixed view. Defaults are left
+  out.
+
+  | Param | Meaning |
+  | --- | --- |
+  | `nodes` | selected nodes, comma separated (all when absent) |
+  | `cats` | selected categories: `k8s`, `t3`, `herdr`, `other`, `system` |
+  | `path` | zoom path: arc keys from the root, comma separated |
+  | `sel` | selected segment, same form as `path` |
+  | `kiosk` | `1` for the full screen view |
+
+  Commas and percent signs inside a name are escaped, so any node name or arc
+  key survives. Example:
+  `/usage/dashboard?nodes=worker-1&cats=k8s,t3&kiosk=1`. Opened with `kiosk=1`
+  the page shows the full screen view without the browser's own full screen
+  (browsers allow that only after a tap). An old `?node=worker-1` link maps to
+  `nodes=worker-1`.
 - **States:** a loader on the first load; an error if the first metrics query
   fails; a warning banner when a refresh fails (the last data stays on screen);
   a warning on one node only when its agent backend fails (the other nodes keep
@@ -241,7 +285,7 @@ counted twice.
 
 - `get` on the Services proxy (`services/proxy`) of the metrics service,
 - `list` on Pods and Services (cluster-wide), and
-- for the Nodes page, `get` on the Services proxy of each agent-memory backend.
+- for the Usage dashboard, `get` on the Services proxy of each agent-memory backend.
 
 The built-in `view` ClusterRole grants these.
 

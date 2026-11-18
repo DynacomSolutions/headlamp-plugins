@@ -1,107 +1,26 @@
 /*
- * The Nodes page (/usage/nodes), for a server-cabinet touch screen: an overview of every node as
- * a card with compact CPU and memory sunbursts, and one node full screen (?node=&path=). The URL
- * holds the whole view and is replaced, not pushed, as /usage does. With no touch for the idle
- * time the page goes back to the overview.
+ * The Usage dashboard (/usage/dashboard), for a server-cabinet touch screen: one big CPU sunburst
+ * and one big memory sunburst, with filters on top for the nodes and categories. With more than
+ * one node selected the first ring is one arc per node. Tap an arc to select it in both charts, and Open to zoom. The URL
+ * holds the whole view (filters, zoom path, selection, kiosk) and is replaced, not pushed, as /usage does.
+ * With no touch for the idle time the zoom goes back to the root, keeping filters and kiosk.
  */
 import { Loader, SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Card from '@mui/material/Card';
-import CardActionArea from '@mui/material/CardActionArea';
-import Typography from '@mui/material/Typography';
 import React from 'react';
 import { useHistory, useLocation } from 'react-router-dom';
 import { useNodesSettings } from '../settings';
-import { formatPercent } from '../units';
-import type { AgentHost } from './agents';
+import { iconUrl } from './agents';
+import { Filters } from './Filters';
+import { enterBrowserFullscreen, KioskOverlay } from './Kiosk';
+import { NameContext, useNamespaceNames } from './names';
 import { NodesUrlState, parseNodesUrl, serialiseNodesUrl } from './nodesUrl';
-import { agentAlertText, buildTrees, NO_HOST_METRICS, NodeView, usedText } from './NodeView';
-import { Sunburst } from './Sunburst';
-import { NodeTree, Resource } from './tree';
-import type { NodeMetrics } from './types';
+import { agentAlertText, NodeView } from './NodeView';
+import { buildCombinedTree } from './tree';
 import { useIdle } from './useIdle';
 import { useNodesData } from './useNodesData';
-
-/** Two compact charts side by side fit the narrowest card (340 px less padding and gap). */
-const CARD_CHART = 140;
-
-function FullscreenButton() {
-  const [on, setOn] = React.useState(() => !!document.fullscreenElement);
-  React.useEffect(() => {
-    const update = () => setOn(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', update);
-    return () => document.removeEventListener('fullscreenchange', update);
-  }, []);
-  if (!document.documentElement.requestFullscreen) return null;
-  const toggle = () => {
-    const p = on ? document.exitFullscreen() : document.documentElement.requestFullscreen();
-    p.catch(() => undefined);
-  };
-  return (
-    <Button variant="outlined" onClick={toggle} sx={{ minHeight: 48, fontSize: 16 }}>
-      {on ? 'Exit full screen' : 'Full screen'}
-    </Button>
-  );
-}
-
-function share(tree: NodeTree): string {
-  return tree.used === null ? 'n/a' : formatPercent(tree.used, tree.capacity);
-}
-
-function NodeCard(props: {
-  metrics: NodeMetrics;
-  host: AgentHost | null;
-  error?: string;
-  asOf?: number;
-  onOpen: () => void;
-}) {
-  const { metrics, host, error, asOf, onOpen } = props;
-  const trees = React.useMemo(() => buildTrees(metrics, host), [metrics, host]);
-  const chart = (resource: Resource, tree: NodeTree) => (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        flex: '1 1 0',
-        minWidth: 0,
-      }}
-    >
-      <Sunburst tree={tree} resource={resource} focus={[]} size={CARD_CHART} compact />
-      <Typography variant="body1" sx={{ fontWeight: 600, mt: 0.5 }}>
-        {resource === 'cpu' ? 'CPU' : 'Memory'} {share(tree)}
-      </Typography>
-      <Typography variant="body2" color="text.secondary" align="center">
-        {usedText(tree, resource)}
-      </Typography>
-    </Box>
-  );
-  return (
-    <Card variant="outlined">
-      <CardActionArea onClick={onOpen} aria-label={`Open node ${metrics.node}`} sx={{ p: 2 }}>
-        <Typography variant="h6" component="h2" sx={{ mb: 1, overflowWrap: 'anywhere' }}>
-          {metrics.node}
-        </Typography>
-        <Box sx={{ display: 'flex', justifyContent: 'space-around', gap: 2, flexWrap: 'nowrap' }}>
-          {chart('cpu', trees.cpu)}
-          {chart('memory', trees.mem)}
-        </Box>
-        {!(trees.cpu.hostMetrics && trees.mem.hostMetrics) && (
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {NO_HOST_METRICS}
-          </Typography>
-        )}
-      </CardActionArea>
-      {error && (
-        <Alert severity="warning" sx={{ m: 2, mt: 0 }}>
-          {agentAlertText(error, asOf)}
-        </Alert>
-      )}
-    </Card>
-  );
-}
 
 export function NodesPage(): JSX.Element {
   const history = useHistory();
@@ -115,8 +34,39 @@ export function NodesPage(): JSX.Element {
       history.replace({ pathname: location.pathname, search: serialiseNodesUrl(s) }),
     [history, location.pathname]
   );
-  const overview = React.useCallback(() => go({ node: null, path: [] }), [go]);
-  useIdle(state.node !== null, settings.idleSeconds, overview);
+  // A filter change resets the zoom: its keys may not exist in the new selection.
+  const setNodes = (nodes: string[]) => go({ ...state, nodes, path: [], sel: [] });
+  const setCats = (cats: string[]) => go({ ...state, cats, path: [], sel: [] });
+  const setPath = (path: string[]) => go({ ...state, path, sel: [] });
+  const setSel = (sel: string[]) => go({ ...state, sel });
+  const setKiosk = (kiosk: boolean) => go({ ...state, kiosk });
+  const resetZoom = React.useCallback(() => go({ ...state, path: [], sel: [] }), [go, state]);
+  useIdle(state.path.length > 0 || state.sel.length > 0, settings.idleSeconds, resetZoom);
+
+  // The selection: the chosen nodes that have metrics; none chosen (or none left) means all.
+  const selected = React.useMemo(() => {
+    const picked = data.metrics.filter(m => state.nodes.includes(m.node));
+    return picked.length ? picked : data.metrics;
+  }, [data.metrics, state.nodes]);
+  const nsNames = useNamespaceNames();
+  const names = React.useMemo<NameContext>(
+    () => ({ overrides: settings.displayNames, namespaces: nsNames }),
+    [settings.displayNames, nsNames]
+  );
+  const trees = React.useMemo(() => {
+    const hostOf = (n: string) => data.agents.get(n) ?? null;
+    const src = (n: string, id: string) => {
+      const h = hostOf(n);
+      return h ? iconUrl(h.backend, id) : '';
+    };
+    return {
+      cpu: buildCombinedTree(selected, hostOf, 'cpu', src, state.cats, names),
+      mem: buildCombinedTree(selected, hostOf, 'memory', src, state.cats, names),
+    };
+  }, [selected, data.agents, state.cats, names]);
+  const alerts = selected
+    .filter(m => data.nodeErrors.has(m.node))
+    .map(m => `${m.node}: ${agentAlertText(data.nodeErrors.get(m.node) ?? '', data.agentsAsOf.get(m.node))}`);
 
   let body: React.ReactNode;
   if (data.loading) {
@@ -130,65 +80,82 @@ export function NodesPage(): JSX.Element {
         metrics service.
       </Alert>
     );
-  } else if (state.node !== null) {
-    const m = data.metrics.find(x => x.node === state.node);
-    body = m ? (
-      <NodeView
-        metrics={m}
-        host={data.agents.get(m.node) ?? null}
-        agentError={data.nodeErrors.get(m.node)}
-        agentAsOf={data.agentsAsOf.get(m.node)}
-        path={state.path}
-        onPath={path => go({ node: m.node, path })}
-        onOverview={overview}
-      />
-    ) : (
-      <Alert
-        severity="info"
-        action={
-          <Button onClick={overview} sx={{ minHeight: 48 }}>
-            All nodes
-          </Button>
-        }
-      >
-        Node {state.node} has no metrics.
-      </Alert>
-    );
   } else {
     body = (
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-          gap: 2,
-        }}
-      >
-        {data.metrics.map(m => (
-          <NodeCard
-            key={m.node}
-            metrics={m}
-            host={data.agents.get(m.node) ?? null}
-            error={data.nodeErrors.get(m.node)}
-            asOf={data.agentsAsOf.get(m.node)}
-            onOpen={() => go({ node: m.node, path: [] })}
-          />
-        ))}
-      </Box>
+      <NodeView
+        cpu={trees.cpu}
+        mem={trees.mem}
+        alerts={alerts}
+        path={state.path}
+        sel={state.sel}
+        onSelect={setSel}
+        kiosk={state.kiosk}
+        onPath={setPath}
+      />
     );
   }
 
-  return (
-    <SectionBox title="Nodes" headerProps={{ actions: [<FullscreenButton key="fullscreen" />] }}>
+  const filters = (
+    <Filters
+      nodeOptions={data.metrics.map(m => m.node)}
+      nodes={state.nodes}
+      cats={state.cats}
+      onNodes={setNodes}
+      onCats={setCats}
+    />
+  );
+  const banners = (
+    <>
       {data.stale && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
+        <Alert severity="warning" sx={{ mb: 1 }}>
           Refresh failed, showing the last data received: {data.metricsError}
         </Alert>
       )}
       {data.errors.map((e, i) => (
-        <Alert key={`${i}:${e}`} severity="warning" sx={{ mb: 2 }}>
+        <Alert key={`${i}:${e}`} severity="warning" sx={{ mb: 1 }}>
           Agent backend unavailable: {e}
         </Alert>
       ))}
+    </>
+  );
+
+  if (state.kiosk) {
+    return (
+      <KioskOverlay onExit={() => setKiosk(false)} bar={filters}>
+        {banners}
+        {body}
+      </KioskOverlay>
+    );
+  }
+
+  const enter = () => {
+    enterBrowserFullscreen();
+    setKiosk(true);
+  };
+  return (
+    <SectionBox
+      title="Usage dashboard"
+      headerProps={{
+        actions: [
+          <Button key="fullscreen" variant="outlined" onClick={enter} sx={{ minHeight: 48, fontSize: 16 }}>
+            Full screen
+          </Button>,
+        ],
+      }}
+    >
+      <Box
+        sx={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 2,
+          bgcolor: 'background.default',
+          pb: 1,
+          mb: 1,
+        }}
+      >
+        {filters}
+      </Box>
+      {banners}
       {body}
     </SectionBox>
   );

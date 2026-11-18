@@ -4,7 +4,9 @@
  * Children that sum to more than their parent (sampling skew) are scaled down to fit.
  */
 import type { AgentHost, AgentProc, AgentUnit } from './agents';
+import { GENERIC, iconForContainer, iconForNamespace, iconForProcess } from './appIcons';
 import { processLabel, unitLabel } from './labels';
+import { applyNames, NameContext, NO_NAMES } from './names';
 import type { NodeMetrics } from './types';
 
 export type Resource = 'cpu' | 'memory';
@@ -24,9 +26,19 @@ export interface SunNode {
     | 'project'
     | 'thread'
     | 'process'
-    | 'system';
-  icon?: { kind: 'file' | 'lucide' | 'mdi'; name?: string; src?: string; color?: string };
+    | 'system'
+    | 'unused';
+  icon?: {
+    kind: 'file' | 'lucide' | 'mdi' | 'simple-icons';
+    name?: string;
+    src?: string;
+    color?: string;
+  };
   href?: string;
+  /** Friendly name for arcs, centre, breadcrumb and lists; `label` stays the raw id. */
+  displayName?: string;
+  /** The raw command line of a process, its id. */
+  command?: string;
   children: SunNode[];
 }
 
@@ -35,6 +47,22 @@ export interface NodeTree {
   capacity: number;
   used: number | null;
   hostMetrics: boolean;
+  /** The first ring is one arc per node (more than one node selected), not the categories. */
+  nodeRing?: boolean;
+}
+
+/** The categories the dashboard can filter, in display order. */
+export const CATEGORIES: { id: string; label: string }[] = [
+  { id: 'k8s', label: 'Kubernetes' },
+  { id: 't3', label: 'T3 Code' },
+  { id: 'herdr', label: 'Herdr' },
+  { id: 'other', label: 'Other scopes' },
+  { id: 'system', label: 'System' },
+];
+
+/** The filter id of a top-level arc: an orchestrator this list does not know counts as other. */
+export function categoryId(key: string): string {
+  return CATEGORIES.some(c => c.id === key) ? key : 'other';
 }
 
 const UNKNOWN_PROJECT = 'Unknown project';
@@ -80,7 +108,11 @@ function kubernetes(m: NodeMetrics, r: Resource): SunNode {
     nss.set(p.namespace, pods);
     const cs = pods.get(p.pod) ?? [];
     pods.set(p.pod, cs);
-    cs.push(node(`c:${p.container}`, p.container, 'container', v));
+    cs.push(
+      node(`c:${p.container}`, p.container, 'container', v, [], {
+        icon: iconForContainer(p.container, p.namespace),
+      })
+    );
   }
   const nsNodes: SunNode[] = [];
   for (const [ns, pods] of nss) {
@@ -89,9 +121,18 @@ function kubernetes(m: NodeMetrics, r: Resource): SunNode {
     for (const [pod, cs] of pods) {
       const podKey = `${nsKey}/pod:${pod}`;
       for (const c of cs) c.key = `${podKey}/${c.key}`;
-      podNodes.push(node(podKey, pod, 'pod', sum(cs), cs.sort(byValue)));
+      // A pod looks like its biggest container that is a known app, else a generic pod.
+      const sorted = cs.sort(byValue);
+      const known = sorted.find(c => c.icon?.name !== GENERIC.container.name);
+      podNodes.push(
+        node(podKey, pod, 'pod', sum(sorted), sorted, { icon: known?.icon ?? GENERIC.pod })
+      );
     }
-    nsNodes.push(node(nsKey, ns, 'namespace', sum(podNodes), podNodes.sort(byValue)));
+    nsNodes.push(
+      node(nsKey, ns, 'namespace', sum(podNodes), podNodes.sort(byValue), {
+        icon: iconForNamespace(ns),
+      })
+    );
   }
   return node('k8s', 'Kubernetes', 'category', sum(nsNodes), nsNodes.sort(byValue), {
     icon: { kind: 'mdi', name: 'kubernetes' },
@@ -113,7 +154,8 @@ function procNodes(procs: AgentProc[], prefix: string, r: Resource): SunNode[] {
         processLabel(p.command),
         'process',
         procValue(p, r),
-        procNodes(p.children, key, r)
+        procNodes(p.children, key, r),
+        { icon: iconForProcess(p.command), command: p.command }
       );
     })
     .filter(n => n.value > 0)
@@ -195,14 +237,21 @@ function orchestrator(
     const key = `${name}/control`;
     const inner = controls.filter(u => !topControls.includes(u));
     controlNodes.push(
-      node(key, `${title} itself`, 'control', controlValue, [
-        ...unitForest(inner, key, 'control', byName, r),
-        ...procNodes(
-          topControls.flatMap(u => u.procs),
-          key,
-          r
-        ),
-      ])
+      node(
+        key,
+        `${title} itself`,
+        'control',
+        controlValue,
+        [
+          ...unitForest(inner, key, 'control', byName, r),
+          ...procNodes(
+            topControls.flatMap(u => u.procs),
+            key,
+            r
+          ),
+        ],
+        { icon: { kind: 'mdi', name: 'cog' } }
+      )
     );
   }
 
@@ -217,6 +266,7 @@ function orchestrator(
     g.threads.push(
       node(key, u.thread || u.name, 'thread', v, procNodes(u.procs, key, r), {
         href: u.threadUrl,
+        icon: GENERIC.thread,
       })
     );
   }
@@ -288,7 +338,9 @@ export function buildNodeTree(
   m: NodeMetrics,
   agents: AgentHost | null,
   r: Resource,
-  iconSrc: (projectId: string) => string
+  iconSrc: (projectId: string) => string,
+  categories: string[] = [],
+  names: NameContext = NO_NAMES
 ): NodeTree {
   const capacity = r === 'cpu' ? m.cpuCapacity : m.memCapacity;
   const used = r === 'cpu' ? m.cpuUsed : m.memUsed;
@@ -315,8 +367,11 @@ export function buildNodeTree(
       })
     );
   }
-  const root = node('root', m.node, 'node', used ?? attributed, cats);
+  // The root keeps the unfiltered total: a dropped category leaves its gap, nothing is rescaled.
+  const kept = categories.length ? cats.filter(c => categories.includes(categoryId(c.key))) : cats;
+  const root = node('root', m.node, 'node', used ?? attributed, kept);
   fitChildren(root);
+  applyNames(root, names);
   return { root, capacity, used, hostMetrics: used !== null };
 }
 
@@ -329,6 +384,84 @@ export function findPath(root: SunNode, path: string[]): SunNode[] {
     if (!next) break;
     out.push(next);
     cur = next;
+  }
+  return out;
+}
+
+/**
+ * One tree for the selected nodes. One node gives that node's tree. More than one gives a root
+ * whose first ring is one arc per node (key `node:<name>`), each sized by its own total and drawn
+ * against the sum of the capacities, so the unused share stays empty. An empty `categories` keeps
+ * every category.
+ */
+export function buildCombinedTree(
+  metrics: NodeMetrics[],
+  hostOf: (node: string) => AgentHost | null,
+  r: Resource,
+  iconSrc: (node: string, projectId: string) => string,
+  categories: string[] = [],
+  names: NameContext = NO_NAMES
+): NodeTree {
+  const trees = metrics.map(m => ({
+    m,
+    t: buildNodeTree(m, hostOf(m.node), r, id => iconSrc(m.node, id), categories, names),
+  }));
+  if (trees.length === 1) return trees[0].t;
+  const nodes = trees
+    .map(({ m, t }) => ({ ...t.root, key: `node:${m.node}`, label: m.node, icon: GENERIC.node }))
+    .filter(n => n.value > 0)
+    .sort(byValue);
+  const hostMetrics = trees.length > 0 && trees.every(x => x.t.hostMetrics);
+  const total = sum(nodes);
+  return {
+    root: node('root', 'All selected nodes', 'node', total, nodes),
+    capacity: trees.reduce((s, x) => s + x.t.capacity, 0),
+    // Nodes without host metrics count by what is attributed to them.
+    used: trees.some(x => x.t.used !== null) ? total : null,
+    hostMetrics,
+    nodeRing: true,
+  };
+}
+
+/** Key suffix of the unused capacity at the root, and of space a parent holds but no child does. */
+export const UNUSED = '~unused';
+const EMPTY_ICON: NonNullable<SunNode['icon']> = { kind: 'mdi', name: 'selection-ellipse' };
+export const UNATTRIBUTED = '~unattributed';
+/** Gaps smaller than this share of their parent are not drawn: nobody can tap them. */
+const MIN_GAP = 0.002;
+
+/**
+ * The empty space under `parent` as nodes of their own, so it can be drawn and selected:
+ * "Unattributed" where the children sum to less than the parent, and at the root "Unused", the
+ * capacity nothing uses. Keys are `<parent key>/~unattributed` and `<parent key>/~unused`.
+ */
+export function gapNodes(tree: NodeTree, parent: SunNode, atRoot: boolean): SunNode[] {
+  const out: SunNode[] = [];
+  const gap = parent.value - sum(parent.children);
+  // A leaf has nothing below it, so it holds no unattributed space.
+  const hasKids = parent.children.length > 0;
+  if (parent.value > 0 && hasKids && gap / parent.value > MIN_GAP) {
+    out.push({
+      key: `${parent.key}/${UNATTRIBUTED}`,
+      label: `Unattributed in ${parent.label}`,
+      kind: 'unused',
+      value: gap,
+      icon: EMPTY_ICON,
+      children: [],
+    });
+  }
+  if (atRoot) {
+    const free = tree.capacity - (tree.used ?? parent.value);
+    if (tree.capacity > 0 && free / tree.capacity > MIN_GAP) {
+      out.push({
+        key: `${parent.key}/${UNUSED}`,
+        label: 'Unused',
+        kind: 'unused',
+        icon: EMPTY_ICON,
+        value: free,
+        children: [],
+      });
+    }
   }
   return out;
 }

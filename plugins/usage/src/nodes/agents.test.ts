@@ -117,7 +117,9 @@ describe('resolveNodesSettings', () => {
     expect(resolveNodesSettings({ agentBackends: 'a, b', idleSeconds: '5' })).toEqual({
       agentBackends: ['a', 'b'],
       idleSeconds: 30,
+      displayNames: {},
     });
+    expect(resolveNodesSettings({ displayNames: 'a=A' }).displayNames).toEqual({ a: 'A' });
   });
   it('falls back to defaults', () => {
     expect(resolveNodesSettings(undefined)).toEqual(DEFAULT_NODES_SETTINGS);

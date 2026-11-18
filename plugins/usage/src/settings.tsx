@@ -24,7 +24,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={720}>
       <Typography variant="body2">
-        Settings for the Nodes page. Blank fields use the built-in default.
+        Settings for the Usage dashboard. Blank fields use the built-in default.
       </Typography>
       <TextField
         label="Agent backends"
@@ -40,6 +40,21 @@ export function Settings(props: PluginSettingsDetailsProps) {
         value={(data as any)?.idleSeconds ?? ''}
         placeholder={String(DEFAULT_NODES_SETTINGS.idleSeconds)}
         onChange={e => set('idleSeconds', e.target.value)}
+        fullWidth
+      />
+      <TextField
+        label="Display names"
+        helperText="One id=Name per line, for example runwarden-runners=Runwarden. The id is a namespace, pod, container or arc key. It overrides every guessed name."
+        multiline
+        minRows={3}
+        value={
+          typeof (data as any)?.displayNames === 'string'
+            ? (data as any).displayNames
+            : Object.entries((data as any)?.displayNames ?? {})
+                .map(([k, v]) => `${k}=${v}`)
+                .join('\n')
+        }
+        onChange={e => set('displayNames', e.target.value)}
         fullWidth
       />
     </Box>

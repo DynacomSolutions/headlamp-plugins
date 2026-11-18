@@ -1,6 +1,6 @@
 /*
  * Calls onIdle once after `seconds` with no pointerdown anywhere in the document, while active.
- * Kiosk use: the Nodes page goes back to the overview when nobody has touched the screen.
+ * Kiosk use: the Usage dashboard goes back to the overview when nobody has touched the screen.
  */
 import React from 'react';
 

@@ -1,0 +1,131 @@
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ ApiProxy: { request: vi.fn() } }));
+
+import { parseDisplayNames } from './agents';
+import { selectionFor } from './detail';
+import {
+  applyNames,
+  humanise,
+  idOf,
+  namespaceDataName,
+  NO_NAMES,
+  stripPodHash,
+} from './names';
+import { buildNodeTree } from './tree';
+import type { NodeMetrics } from './types';
+
+describe('humanise', () => {
+  it('drops a common suffix and title-cases', () => {
+    expect(humanise('runwarden-runners')).toBe('Runwarden');
+    expect(humanise('my_cool-operator')).toBe('My Cool');
+    expect(humanise('payments-api')).toBe('Payments API');
+  });
+
+  it('uses known whole names and casing, and leaves cert-manager as it is', () => {
+    expect(humanise('kube-system')).toBe('Kube system');
+    expect(humanise('cert-manager')).toBe('cert-manager');
+    expect(humanise('victoria-metrics')).toBe('VictoriaMetrics');
+    expect(humanise('argocd')).toBe('ArgoCD');
+    expect(humanise('cnpg-system')).toBe('CloudNativePG');
+    expect(humanise('headlamp')).toBe('Headlamp');
+  });
+
+  it('keeps ids that already look deliberate', () => {
+    expect(humanise('MyApp')).toBe('MyApp');
+    expect(humanise('worker.example.com')).toBe('worker.example.com');
+  });
+});
+
+describe('stripPodHash', () => {
+  it('removes ReplicaSet and random pod suffixes, keeps other names', () => {
+    expect(stripPodHash('grafana-7d9f8b6c5d-x2k4p')).toBe('grafana');
+    expect(stripPodHash('node-exporter-x7k2p')).toBe('node-exporter');
+    expect(stripPodHash('vmstorage-0')).toBe('vmstorage-0');
+  });
+});
+
+describe('namespaceDataName', () => {
+  it('prefers a display-name annotation, then part-of, name and instance labels', () => {
+    expect(namespaceDataName({ annotations: { 'app.kubernetes.io/display-name': 'Shop' } })).toBe('Shop');
+    expect(namespaceDataName({ labels: { 'app.kubernetes.io/part-of': 'runwarden' } })).toBe('Runwarden');
+    expect(namespaceDataName({ labels: { 'app.kubernetes.io/name': 'foo-bar' } })).toBe('Foo Bar');
+    expect(namespaceDataName({})).toBeUndefined();
+  });
+});
+
+describe('parseDisplayNames', () => {
+  it('reads id=Name lines and skips bad ones', () => {
+    expect(parseDisplayNames('a=A\n bad \nb = B C \n=x\nc=')).toEqual({ a: 'A', b: 'B C' });
+  });
+});
+
+const metrics = (): NodeMetrics => ({
+  node: 'worker-1',
+  cpuCapacity: 8,
+  cpuUsed: 4,
+  memCapacity: 8,
+  memUsed: 4,
+  pods: [
+    { namespace: 'runwarden-runners', pod: 'job-7d9f8b6c5d-x2k4p', container: 'grafana', cpuCores: 1, memBytes: 1 },
+  ],
+});
+const icon = () => '';
+
+describe('names in the tree', () => {
+  it('names namespaces, pods and containers, and keeps the raw id as the label', () => {
+    const t = buildNodeTree(metrics(), null, 'cpu', icon);
+    const ns = t.root.children[0].children[0];
+    expect(ns.label).toBe('runwarden-runners');
+    expect(ns.displayName).toBe('Runwarden');
+    expect(ns.children[0].displayName).toBe('Job');
+    expect(ns.children[0].children[0].displayName).toBe('Grafana');
+  });
+
+  it('prefers the cluster data over the guess, and an override over everything', () => {
+    const data = { overrides: {}, namespaces: new Map([['runwarden-runners', 'Runwarden CI']]) };
+    expect(buildNodeTree(metrics(), null, 'cpu', icon, [], data).root.children[0].children[0].displayName).toBe('Runwarden CI');
+    const forced = { ...data, overrides: { 'runwarden-runners': 'RW' } };
+    expect(buildNodeTree(metrics(), null, 'cpu', icon, [], forced).root.children[0].children[0].displayName).toBe('RW');
+  });
+
+  it('names a process from the app table and keeps the command as its id', () => {
+    const t = buildNodeTree(
+      metrics(),
+      {
+        node: 'worker-1',
+        backend: 'service/a/b:80',
+        orchestrators: [],
+        units: [
+          {
+            name: 'x.scope',
+            kind: 'scope',
+            memBytes: 1,
+            cpuCores: 1,
+            procs: [{ pid: 1, command: '/usr/bin/node /opt/codex/bin/codex.js', rss: 1, cpuCores: 1, children: [] }],
+          },
+        ],
+      },
+      'cpu',
+      icon
+    );
+    const proc = t.root.children.find(c => c.key === 'other')!.children[0].children[0];
+    expect(proc.displayName).toBe('Codex');
+    expect(idOf(proc)).toBe('/usr/bin/node /opt/codex/bin/codex.js');
+  });
+
+  it('applyNames with no context leaves T3 and other names alone', () => {
+    const t = buildNodeTree(metrics(), null, 'cpu', icon);
+    applyNames(t.root, NO_NAMES);
+    expect(t.root.displayName).toBeUndefined();
+  });
+});
+
+describe('the selection carries both names', () => {
+  it('gives the friendly name as the label and the raw id apart', () => {
+    const t = buildNodeTree(metrics(), null, 'cpu', icon);
+    const sel = selectionFor(t, t, [], ['k8s', 'k8s/ns:runwarden-runners'])!;
+    expect(sel.label).toBe('Runwarden');
+    expect(sel.id).toBe('runwarden-runners');
+  });
+});

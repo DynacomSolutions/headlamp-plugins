@@ -2,10 +2,13 @@
 /*
  * usage: pie-chart dashboard of CPU, memory, disk and network usage per
  * namespace, workload, Service, node, pod or label, from a Prometheus-compatible
- * metrics service. Adds a "Usage" sidebar entry and the /usage route, and under it "Nodes"
- * (/usage/nodes): per-node CPU and memory sunbursts for a touch screen.
+ * metrics service. Adds a "Usage" sidebar entry and the /usage route, and under it "Dashboard"
+ * (/usage/dashboard): the Usage dashboard, CPU and memory sunbursts for a touch screen. The old
+ * /usage/nodes URL redirects to it.
  */
+import './nodes/registerIcons';
 import { registerPluginSettings, registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
+import { LegacyNodesRedirect } from './nodes/LegacyNodesRedirect';
 import { NodesPage } from './nodes/NodesPage';
 import { Settings } from './settings';
 import { UsagePage } from './UsagePage';
@@ -20,9 +23,9 @@ registerSidebarEntry({
 
 registerSidebarEntry({
   parent: 'usage',
-  name: 'usage-nodes',
-  label: 'Nodes',
-  url: '/usage/nodes',
+  name: 'usage-dashboard',
+  label: 'Dashboard',
+  url: '/usage/dashboard',
   icon: 'mdi:server',
 });
 
@@ -35,11 +38,19 @@ registerRoute({
 });
 
 registerRoute({
-  path: '/usage/nodes',
-  sidebar: 'usage-nodes',
-  name: 'usage-nodes',
+  path: '/usage/dashboard',
+  sidebar: 'usage-dashboard',
+  name: 'usage-dashboard',
   exact: true,
   component: NodesPage,
+});
+
+registerRoute({
+  path: '/usage/nodes',
+  sidebar: 'usage-dashboard',
+  name: 'usage-nodes-redirect',
+  exact: true,
+  component: LegacyNodesRedirect,
 });
 
 registerPluginSettings('usage', Settings, true);

@@ -6,6 +6,17 @@ const deep = { x0: 0.1, x1: 0.2, y0: 200, y1: 320 };
 // A wide, short arc: about 470 px wide at mid-radius, 30 px thick.
 const wide = { x0: 0, x1: 1.5, y0: 300, y1: 330 };
 
+describe('arcLabel clipping', () => {
+  it('never draws a stub of a few characters and an ellipsis', () => {
+    // Room for about 5 characters at 14 px: a long name is dropped, not clipped to "Kube…".
+    const small = { x0: 0, x1: 0.1, y0: 200, y1: 240 };
+    for (const name of ['Kubernetes', 'System', 'kube-system']) {
+      const l = arcLabel(small, name, 14);
+      if (l) expect(l.text === name || l.text.replace('\u2026', '').length >= 6).toBe(true);
+    }
+  });
+});
+
 describe('arcLabel', () => {
   it('runs text along the radius of a narrow, deep arc', () => {
     const l = arcLabel(deep, 'production', 14)!;
@@ -84,9 +95,23 @@ describe('centreLines', () => {
     expect(Math.max(...ys)).toBeLessThan(110);
   });
 
-  it('drops the least important lines when the disc is small', () => {
-    const out = centreLines(60, 14, lines);
-    expect(out.map(l => l.kind)).toEqual(['title', 'value']);
+  it('never drops the value and the share, however small the disc', () => {
+    for (const r of [30, 45, 60]) {
+      const kinds = centreLines(r, 14, { ...lines, nodeShort: '9%' }).map(l => l.kind);
+      expect(kinds).toContain('value');
+      expect(kinds).toContain('node');
+    }
+  });
+
+  it('drops the parent share and the icon before the title, and the title before the numbers', () => {
+    const kinds = (r: number) => centreLines(r, 14, lines).map(l => l.kind);
+    expect(kinds(70)).not.toContain('parent');
+    expect(kinds(45)).not.toContain('title');
+  });
+
+  it('uses the bare percentage when the long share does not fit', () => {
+    const out = centreLines(38, 14, { ...lines, nodeShort: '9%' });
+    expect(out.find(l => l.kind === 'node')!.text).toBe('9%');
   });
 
   it('clips a long title to the width of the disc', () => {

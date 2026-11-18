@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentHost, AgentProc, AgentUnit } from './agents';
-import { buildNodeTree, findPath, SunNode } from './tree';
+import { buildCombinedTree, buildNodeTree, findPath, gapNodes, SunNode } from './tree';
 import type { NodeMetrics } from './types';
 
 const GB = 1e9;
@@ -395,5 +395,69 @@ describe('findPath', () => {
     const t = buildNodeTree(metrics({ memUsed: 100 }), host(units), 'memory', icon);
     const r = findPath(t.root, ['t3', 't3/p:x', 't3/p:x/t:missing']);
     expect(r.map(n => n.key)).toEqual(['root', 't3', 't3/p:x']);
+  });
+});
+
+describe('buildCombinedTree', () => {
+  const src = (_node: string, id: string) => icon(id);
+  const two = [
+    metrics({ node: 'worker-1', cpuCapacity: 8, cpuUsed: 6 }),
+    metrics({ node: 'worker-2', cpuCapacity: 16, cpuUsed: 10 }),
+  ];
+  const noHost = () => null;
+
+  it('gives one node its own tree, with no node ring', () => {
+    const t = buildCombinedTree([two[0]], noHost, 'cpu', src);
+    expect(t.nodeRing).toBeUndefined();
+    expect(t.root.key).toBe('root');
+    expect(t.root.children.map(c => c.key)).toEqual(['k8s', 'system']);
+    expect(t.capacity).toBe(8);
+  });
+
+  it('makes the first ring one arc per node, sized against the summed capacity', () => {
+    const t = buildCombinedTree(two, noHost, 'cpu', src);
+    expect(t.nodeRing).toBe(true);
+    expect(t.capacity).toBe(24);
+    expect(t.used).toBe(16);
+    expect(t.root.value).toBe(16);
+    expect(t.root.children.map(c => [c.key, c.label, c.value])).toEqual([
+      ['node:worker-2', 'worker-2', 10],
+      ['node:worker-1', 'worker-1', 6],
+    ]);
+    // Under each node arc is its own tree.
+    expect(t.root.children[1].children.map(c => c.key)).toEqual(['k8s', 'system']);
+  });
+
+  it('drops filtered-out categories and leaves the gap, without rescaling', () => {
+    const all = buildCombinedTree(two, noHost, 'cpu', src);
+    const t = buildCombinedTree(two, noHost, 'cpu', src, ['k8s']);
+    const w1 = t.root.children.find(c => c.key === 'node:worker-1')!;
+    expect(w1.children.map(c => c.key)).toEqual(['k8s']);
+    // The node arc keeps its total; the k8s arc keeps its value.
+    expect(w1.value).toBe(6);
+    expect(w1.children[0].value).toBe(all.root.children.find(c => c.key === 'node:worker-1')!.children[0].value);
+    expect(t.root.value).toBe(16);
+    // The dropped share is a gap the layout can draw.
+    expect(gapNodes(t, w1, false)[0]).toMatchObject({ key: 'node:worker-1/~unattributed', kind: 'unused' });
+  });
+
+  it('counts a node without host metrics by what is attributed to it', () => {
+    const bare = metrics({ node: 'worker-3', cpuCapacity: 4, cpuUsed: null });
+    const t = buildCombinedTree([two[0], bare], noHost, 'cpu', src);
+    expect(t.hostMetrics).toBe(false);
+    expect(t.capacity).toBe(12);
+    // worker-3 holds 4 cores of pods, worker-1 used 6.
+    expect(t.root.children.find(c => c.key === 'node:worker-3')!.value).toBe(4);
+    expect(t.root.value).toBe(10);
+  });
+});
+
+describe('gapNodes', () => {
+  it('gives the unused capacity at the root and the unattributed rest below it', () => {
+    const t = buildNodeTree(metrics({ cpuUsed: 6 }), null, 'cpu', icon);
+    const gaps = gapNodes(t, t.root, true);
+    expect(gaps.map(g => [g.key, g.value])).toEqual([['root/~unused', 2]]);
+    const ns = t.root.children[0].children[0];
+    expect(gapNodes(t, ns, false)).toEqual([]);
   });
 });

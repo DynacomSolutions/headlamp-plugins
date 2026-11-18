@@ -43,21 +43,88 @@ class TestPointerEvent extends MouseEvent {
 afterEach(cleanup);
 
 describe('Sunburst', () => {
-  it('draws one path per arc and a capacity outline', () => {
+  it('draws one path per arc, plus the empty space as arcs without fill', () => {
     const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={400} />);
-    expect(container.querySelectorAll('path[data-key]')).toHaveLength(5);
-    expect(container.querySelector('circle[data-outline]')).not.toBeNull();
+    expect(container.querySelectorAll('path[data-key]:not([data-gap])')).toHaveLength(5);
+    const unused = container.querySelector('path[data-key="root/~unused"]') as SVGElement;
+    expect(unused.getAttribute('fill')).toBe('none');
+    expect(unused.style.pointerEvents).toBe('all');
+    expect(unused.getAttribute('stroke-dasharray')).toBeTruthy();
+    expect(container.querySelector('path[data-key="t3/~unattributed"]')).not.toBeNull();
   });
 
-  it('taps an arc to focus its key path', () => {
+  it('taps an arc to select its key path without zooming', () => {
     const onFocus = vi.fn();
+    const onSelect = vi.fn();
     const { container } = render(
-      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onFocus={onFocus} />
+      <Sunburst
+        tree={tree}
+        resource="cpu"
+        focus={[]}
+        size={400}
+        onFocus={onFocus}
+        onSelect={onSelect}
+      />
     );
     const arc = container.querySelector('path[data-key="p:x"]') as Element;
     fireEvent.pointerDown(arc, { clientX: 5, clientY: 5 });
     fireEvent.pointerUp(arc, { clientX: 6, clientY: 5 });
-    expect(onFocus).toHaveBeenCalledWith(['t3', 'p:x']);
+    expect(onSelect).toHaveBeenCalledWith(['t3', 'p:x']);
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+
+  it('grows and outlines the selected arc, and a second tap clears it', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <Sunburst
+        tree={tree}
+        resource="cpu"
+        focus={[]}
+        size={400}
+        selected={['t3']}
+        onSelect={onSelect}
+      />
+    );
+    const arc = container.querySelector('path[data-key="t3"]') as SVGElement;
+    const other = container.querySelector('path[data-key="k8s"]') as SVGElement;
+    expect(arc.getAttribute('data-selected')).toBe('true');
+    expect(arc.getAttribute('stroke-width')).toBe('3');
+    expect(other.getAttribute('data-selected')).toBeNull();
+    // The selected arc reaches further out than an unselected one of the same ring.
+    const outer = (el: SVGElement) => Math.max(...(el.getAttribute('d') ?? '').match(/-?\d+\.?\d*/g)!.map(v => Math.abs(Number(v))));
+    expect(outer(arc)).toBeGreaterThan(outer(other));
+    fireEvent.pointerDown(arc);
+    fireEvent.pointerUp(arc);
+    expect(onSelect).toHaveBeenCalledWith(null);
+  });
+
+  it('draws a dotted rim at the full outer radius, and no focus box on an arc', () => {
+    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={420} />);
+    const rim = container.querySelector('circle[data-rim]') as Element;
+    expect(Number(rim.getAttribute('r'))).toBeCloseTo(210 - 10);
+    expect(container.querySelector('style')?.textContent).toContain('.sb-arc{outline:none}');
+    expect(container.querySelector('style')?.textContent).toContain(':focus-visible');
+    expect(container.querySelector('path[data-key="t3"]')?.getAttribute('class')).toBe('sb-arc');
+  });
+
+  it('selects the unused capacity like any other arc', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onSelect={onSelect} />
+    );
+    const arc = container.querySelector('path[data-key="root/~unused"]') as Element;
+    fireEvent.pointerDown(arc);
+    fireEvent.pointerUp(arc);
+    expect(onSelect).toHaveBeenCalledWith(['root/~unused']);
+  });
+
+  it('clears the selection on a tap beside the arcs', () => {
+    const onSelect = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onSelect={onSelect} />
+    );
+    fireEvent.pointerUp(container.querySelector('svg') as Element);
+    expect(onSelect).toHaveBeenCalledWith(null);
   });
 
   it('ignores a tap that moved', () => {
@@ -83,20 +150,20 @@ describe('Sunburst', () => {
   });
 
   it('taps an arc under a focus deeper than this tree into a path it can resolve', () => {
-    const onFocus = vi.fn();
+    const onSelect = vi.fn();
     const { container } = render(
       <Sunburst
         tree={tree}
         resource="cpu"
         focus={['t3', 'only-in-memory']}
         size={400}
-        onFocus={onFocus}
+        onSelect={onSelect}
       />
     );
     const arc = container.querySelector('path[data-key="p:x"]') as Element;
     fireEvent.pointerDown(arc, { clientX: 5, clientY: 5 });
     fireEvent.pointerUp(arc, { clientX: 5, clientY: 5 });
-    expect(onFocus).toHaveBeenCalledWith(['t3', 'p:x']);
+    expect(onSelect).toHaveBeenCalledWith(['t3', 'p:x']);
   });
 
   it('labels the chart with the top children and their share of capacity', () => {
@@ -136,28 +203,28 @@ describe('Sunburst', () => {
   });
 
   it('ignores a pointerup from another pointer', () => {
-    const onFocus = vi.fn();
+    const onSelect = vi.fn();
     const { container } = render(
-      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onFocus={onFocus} />
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onSelect={onSelect} />
     );
     const arc = container.querySelector('path[data-key="k8s"]') as Element;
     fireEvent.pointerDown(arc, { pointerId: 1 });
     fireEvent.pointerUp(arc, { pointerId: 2 });
-    expect(onFocus).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
     fireEvent.pointerUp(arc, { pointerId: 1 });
-    expect(onFocus).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledTimes(1);
   });
 
   it('pointercancel then pointerup does not focus', () => {
-    const onFocus = vi.fn();
+    const onSelect = vi.fn();
     const { container } = render(
-      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onFocus={onFocus} />
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onSelect={onSelect} />
     );
     const arc = container.querySelector('path[data-key="k8s"]') as Element;
     fireEvent.pointerDown(arc, { pointerId: 1 });
     fireEvent.pointerCancel(arc, { pointerId: 1 });
     fireEvent.pointerUp(arc, { pointerId: 1 });
-    expect(onFocus).not.toHaveBeenCalled();
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it('never draws text under 14 px and truncates long centre titles', () => {
@@ -165,7 +232,7 @@ describe('Sunburst', () => {
       ...tree,
       root: { ...tree.root, label: 'a-very-long-node-title-here' },
     };
-    const { container } = render(<Sunburst tree={long} resource="cpu" focus={[]} size={300} />);
+    const { container } = render(<Sunburst tree={long} resource="cpu" focus={[]} size={1000} />);
     container.querySelectorAll('text').forEach(t => {
       expect(Number(t.getAttribute('font-size'))).toBeGreaterThanOrEqual(14);
     });
@@ -181,16 +248,16 @@ describe('Sunburst', () => {
   });
 
   it('focuses an arc with Enter or Space', () => {
-    const onFocus = vi.fn();
+    const onSelect = vi.fn();
     const { container } = render(
-      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onFocus={onFocus} />
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onSelect={onSelect} />
     );
     const arc = container.querySelector('path[data-key="p:x"]') as Element;
     fireEvent.keyDown(arc, { key: 'Enter' });
     fireEvent.keyDown(arc, { key: ' ' });
     fireEvent.keyDown(arc, { key: 'a' });
-    expect(onFocus).toHaveBeenCalledTimes(2);
-    expect(onFocus).toHaveBeenCalledWith(['t3', 'p:x']);
+    expect(onSelect).toHaveBeenCalledTimes(2);
+    expect(onSelect).toHaveBeenCalledWith(['t3', 'p:x']);
   });
 
   it('keeps compact charts out of the tab order', () => {
@@ -203,7 +270,7 @@ describe('Sunburst', () => {
 
   it('describes the focus in the centre: name, value, share of node and of parent', () => {
     const { container } = render(
-      <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={800} />
+      <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={1200} />
     );
     const line = (k: string) => container.querySelector(`[data-centre-line="${k}"]`)?.textContent;
     expect(line('title')).toBe('p:x');
@@ -226,7 +293,7 @@ describe('Sunburst', () => {
         tree={tree}
         resource="cpu"
         focus={['t3', 'only-in-memory']}
-        size={800}
+        size={1200}
         onFocus={onFocus}
         subject={{ label: 'Memory only' }}
       />
