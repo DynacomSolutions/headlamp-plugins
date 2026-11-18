@@ -1,8 +1,8 @@
 # headlamp-plugins
 
-Eleven plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
+Twelve plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
 spot slow disks, see where CI jobs are running, find application URLs, manage
-notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, see where CPU, memory, disk and network go, and check uptime from several sites.
+notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, see where CPU, memory, disk and network go, check uptime from several sites, and read incident diagnoses.
 
 Built with `@kinvolk/headlamp-plugin` (TypeScript + React). Install the plugins
 you need; each has its own release archive and configuration.
@@ -20,6 +20,15 @@ you need; each has its own release archive and configuration.
 | [Node hardware](#node-hardware) | See server temperatures and estimated power draw per node | [Queries and metrics](plugins/node-hardware/README.md) |
 | [Usage](#usage) | Break down CPU, memory, disk and network usage by namespace, workload, Service, node or label | [Queries and the label join](plugins/usage/README.md) |
 | [Uptime](#uptime) | Check HTTP, TCP, TLS, DNS and ICMP targets from several sites, with history | [Labels and scrape config](plugins/uptime/README.md) |
+| [Incidents](#incidents) | Read the agent's alert diagnoses, rendered from A2UI | [Settings, RBAC and the renderer](plugins/incidents/README.md) |
+
+## Agent layer
+
+[`agent/`](agent/README.md) is a read-only MCP server (spec 2026-07-28, stateless)
+over everything these plugins and Headlamp see, with an incident-diagnosis agent
+for MCP and ACP hosts and a vmalert webhook. Plugins add their own typed data
+providers in `plugins/<plugin>/agent/provider.ts`. Tool results and diagnoses
+carry A2UI v1.0, which the Incidents plugin renders.
 
 ## A tour of the plugins
 
@@ -221,17 +230,30 @@ Needs blackbox_exporter probe series with `target`, `location`, `type` and
 `policy` labels in a Prometheus-compatible query endpoint. See the
 [setup guide](plugins/uptime/README.md).
 
+### Incidents
+
+List the alert diagnoses made by the read-only headlamp-agent, newest first,
+with severity, status, likely cause, confidence and source. Open one to see the
+full report, which is an A2UI surface rendered in the page and refreshed while
+the diagnosis is still running.
+
+**Example:** an alert fired overnight. Open **Incidents**, click the diagnosis
+and read the likely cause, the evidence and the suggested read-only checks.
+
+Needs the headlamp-agent Service, reached through the Kubernetes service proxy.
+See the [settings and RBAC guide](plugins/incidents/README.md).
+
 Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
-The release contains eleven plugin archives and eleven checksum lines.
+The release contains twelve plugin archives and twelve checksum lines.
 
 ## Creating a release
 
 Push a strict semantic-version tag such as `v1.2.3` or `v1.2.3-rc.1` to
 create a release. The workflow stages the tag version in each plugin's
 `package.json` and `package-lock.json` in its job workspace without committing
-those changes, then creates and uploads ten plugin archives plus
+those changes, then creates and uploads twelve plugin archives plus
 `SHA256SUMS`. Tags containing a hyphen publish as prereleases.
 
 ## Installing a release

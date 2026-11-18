@@ -34,9 +34,9 @@ jobs:
           while IFS= read -r path; do case "$path" in .github/workflows/*|.pre-commit-config.yaml|Makefile|package.json|package-lock.json|tsconfig.json|scripts/*|LICENSE) shared=1;; esac; done <<< "$changed"
           matrix='[]'
           if [ "$shared" = 1 ] || [ "$event" != pull_request ]; then
-            matrix='["agent-memory","alerting","disk-health","github-runners","node-hardware","registry","sites","updates","uptime","usage","vm-images"]'
+            matrix='["agent-memory","alerting","disk-health","github-runners","incidents","node-hardware","registry","sites","updates","uptime","usage","vm-images"]'
           else
-            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(agent-memory|alerting|disk-health|github-runners|node-hardware|registry|sites|updates|uptime|usage|vm-images)\// {print $2}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
+            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(agent-memory|alerting|disk-health|github-runners|incidents|node-hardware|registry|sites|updates|uptime|usage|vm-images)\// {print $2}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           if [ "$matrix" = '[]' ]; then has_changes=false; else has_changes=true; fi
@@ -99,9 +99,35 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+  agent:
+    # The agent layer (agent/): MCP server, plugin data providers, diagnosis agent. Plugin
+    # providers (plugins/*/agent/) are bundled into it, so it runs on every change.
+    needs: [generic-checks, private-identifiers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - run: npm ci
+      - run: npm run tsc
+      - run: npm test
+      - run: npm run build
+      - name: Smoke test the bundle
+        run: |
+          PORT=18080 KUBE_API=http://127.0.0.1:1 node dist/main.mjs serve & pid=$!
+          for i in $(seq 1 20); do curl -fsS localhost:18080/healthz && break; sleep 0.5; done
+          curl -fsS localhost:18080/ | jq -e '.tools > 15'
+          kill $pid
   gate:
     if: always()
-    needs: [changes, generic-checks, private-identifiers, plugin]
+    needs: [changes, generic-checks, private-identifiers, plugin, agent]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -109,6 +135,7 @@ jobs:
           test "${{ needs.changes.result }}" = success
           test "${{ needs.generic-checks.result }}" = success
           test "${{ needs.private-identifiers.result }}" = success
+          test "${{ needs.agent.result }}" = success
           plugin_result="${{ needs.plugin.result }}"
           if [ "${{ needs.changes.outputs.has_changes }}" = true ]; then
             test "$plugin_result" = success
