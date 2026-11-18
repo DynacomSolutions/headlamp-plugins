@@ -46,3 +46,11 @@ export function unitLabel(name: string, orchestratorScopePrefix?: string): strin
   if (hit) s = s.slice(hit.length);
   return s || name;
 }
+
+/** A friendly name for a systemd cgroup unit: user-1000.slice is "User 1000 session". */
+export function cgroupLabel(unit: string): string {
+  const s = unit.replace(/\.(slice|scope|service)$/, '');
+  const session = /^user-(\d+)$/.exec(s);
+  if (session) return `User ${session[1]} session`;
+  return s || unit;
+}

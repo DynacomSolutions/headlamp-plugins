@@ -93,3 +93,38 @@ describe('assembleNodeMetrics', () => {
     expect(nodes.map((n) => n.node)).toEqual(['mac-1', 'worker-1', 'worker-2']);
   });
 });
+
+describe('assembleNodeMetrics system series', () => {
+  const info = (unit: string, parent: string, agent = '') =>
+    s({ node: 'worker-1', unit, parent, agent_unit: agent }, 1);
+
+  it('joins cgroups, agent values and programs per node', () => {
+    const [n] = assembleNodeMetrics(
+      results({
+        cgroupInfo: [info('system.slice', ''), info('app-agent.scope', 'user.slice', 'agent-1')],
+        cgroupMem: [s({ node: 'worker-1', unit: 'system.slice' }, 5e9)],
+        cgroupCpu: [s({ node: 'worker-1', unit: 'system.slice' }, 0.5)],
+        agentUnitMem: [s({ node: 'worker-1', unit: 'agent-1' }, 1e9)],
+        programMem: [s({ node: 'worker-1', unit: 'system.slice', program: 'sshd' }, 1e6)],
+        programCpu: [s({ node: 'worker-1', unit: 'system.slice', program: 'sshd' }, 0.1)],
+        remainderMem: [s({ node: 'worker-1' }, 2e9)],
+      })
+    );
+    expect(n.system?.cgroups).toEqual([
+      { unit: 'system.slice', parent: '', agentUnit: '', cpuCores: 0.5, memBytes: 5e9 },
+      { unit: 'app-agent.scope', parent: 'user.slice', agentUnit: 'agent-1', cpuCores: 0, memBytes: 1e9 },
+    ]);
+    expect(n.system?.programs).toEqual([
+      { unit: 'system.slice', program: 'sshd', cpuCores: 0.1, memBytes: 1e6 },
+    ]);
+    expect(n.system?.remainderMem).toBe(2e9);
+    expect(n.system?.remainderCpu).toBeNull();
+  });
+
+  it('leaves system absent without cgroup info', () => {
+    const [n] = assembleNodeMetrics(
+      results({ kubeCpuCapacity: [s({ node: 'mac-1' }, 4)] })
+    );
+    expect(n.system).toBeUndefined();
+  });
+});

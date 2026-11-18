@@ -1,5 +1,5 @@
 import { MetricSample, numberFromValue, queryMetrics } from '../metrics';
-import type { NodeMetrics, PodUsage } from './types';
+import type { CgroupUsage, NodeMetrics, PodUsage, ProgramUsage, SystemUsage } from './types';
 
 export type QueryKey =
   | 'cpuCount'
@@ -14,7 +14,16 @@ export type QueryKey =
   | 'macMemCompressed'
   | 'kubeMemCapacity'
   | 'podCpu'
-  | 'podMem';
+  | 'podMem'
+  | 'cgroupInfo'
+  | 'cgroupCpu'
+  | 'cgroupMem'
+  | 'programCpu'
+  | 'programMem'
+  | 'agentUnitCpu'
+  | 'agentUnitMem'
+  | 'remainderCpu'
+  | 'remainderMem';
 
 export const NODE_QUERIES: Record<QueryKey, string> = {
   cpuCount: 'count by (node) (node_cpu_seconds_total{mode="idle"})',
@@ -32,6 +41,17 @@ export const NODE_QUERIES: Record<QueryKey, string> = {
     'sum by (node, namespace, pod, container) (rate(container_cpu_usage_seconds_total{container!=""}[2m]))',
   podMem:
     'sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!=""})',
+  cgroupInfo: 'max by (node, unit, parent, agent_unit) (agent_memory_cgroup_info)',
+  cgroupCpu: 'sum by (node, unit) (rate(agent_memory_cgroup_cpu_seconds_total[2m]))',
+  cgroupMem:
+    'sum by (node, unit) (agent_memory_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',
+  programCpu:
+    'sum by (node, unit, program) (rate(agent_memory_process_cpu_seconds_total[2m]))',
+  programMem: 'sum by (node, unit, program) (agent_memory_process_rss_bytes)',
+  agentUnitCpu: 'sum by (node, unit) (rate(agent_memory_agent_unit_cpu_seconds_total[2m]))',
+  agentUnitMem: 'sum by (node, unit) (agent_memory_agent_unit_memory_bytes)',
+  remainderCpu: 'max by (node) (agent_memory_node_remainder_cpu_cores)',
+  remainderMem: 'max by (node) (agent_memory_node_remainder_memory_bytes)',
 };
 
 type NodeValues = Map<string, number>;
@@ -45,6 +65,68 @@ function byNode(samples: MetricSample[]): NodeValues {
     if (node && value !== undefined) {
       out.set(node, value);
     }
+  }
+  return out;
+}
+
+/** Sums the values of samples per node and a key made of the given labels. */
+function byLabels(samples: MetricSample[], labels: string[]): Map<string, Map<string, number>> {
+  const out = new Map<string, Map<string, number>>();
+  for (const sample of samples) {
+    const { node } = sample.metric;
+    const value = numberFromValue(sample);
+    if (!node || value === undefined) continue;
+    const inner = out.get(node) ?? new Map<string, number>();
+    out.set(node, inner);
+    const id = JSON.stringify(labels.map(l => sample.metric[l] ?? ''));
+    inner.set(id, (inner.get(id) ?? 0) + value);
+  }
+  return out;
+}
+
+/** The cgroup breakdown per node; a node without cgroup info series has none. */
+function assembleSystem(
+  results: Record<QueryKey, MetricSample[]>,
+  v: Record<QueryKey, NodeValues>
+): Map<string, SystemUsage> {
+  const cpu = byLabels(results.cgroupCpu ?? [], ['unit']);
+  const mem = byLabels(results.cgroupMem ?? [], ['unit']);
+  const agentCpu = byLabels(results.agentUnitCpu ?? [], ['unit']);
+  const agentMem = byLabels(results.agentUnitMem ?? [], ['unit']);
+  const progCpu = byLabels(results.programCpu ?? [], ['unit', 'program']);
+  const progMem = byLabels(results.programMem ?? [], ['unit', 'program']);
+  const key = (...parts: string[]) => JSON.stringify(parts);
+  const out = new Map<string, SystemUsage>();
+  for (const sample of results.cgroupInfo ?? []) {
+    const { node, unit, parent = '', agent_unit: agentUnit = '' } = sample.metric;
+    if (!node || !unit) continue;
+    const sys = out.get(node) ?? {
+      cgroups: [],
+      programs: [],
+      remainderMem: v.remainderMem.get(node) ?? null,
+      remainderCpu: v.remainderCpu.get(node) ?? null,
+    };
+    out.set(node, sys);
+    // An agent cgroup is not in the cgroup series: its values come from the agent series.
+    const [c, m] = agentUnit
+      ? [agentCpu.get(node)?.get(key(agentUnit)), agentMem.get(node)?.get(key(agentUnit))]
+      : [cpu.get(node)?.get(key(unit)), mem.get(node)?.get(key(unit))];
+    const row: CgroupUsage = { unit, parent, agentUnit, cpuCores: c ?? 0, memBytes: m ?? 0 };
+    sys.cgroups.push(row);
+  }
+  for (const [node, sys] of out) {
+    const progs = new Map<string, ProgramUsage>();
+    const add = (m: Map<string, number> | undefined, field: 'cpuCores' | 'memBytes') => {
+      for (const [id, value] of m ?? []) {
+        const [unit, program] = JSON.parse(id) as string[];
+        const p = progs.get(id) ?? { unit, program, cpuCores: 0, memBytes: 0 };
+        p[field] += value;
+        progs.set(id, p);
+      }
+    };
+    add(progCpu.get(node), 'cpuCores');
+    add(progMem.get(node), 'memBytes');
+    sys.programs = [...progs.values()];
   }
   return out;
 }
@@ -73,6 +155,8 @@ export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): 
   };
   addPods(results.podCpu ?? [], 'cpuCores');
   addPods(results.podMem ?? [], 'memBytes');
+
+  const system = assembleSystem(results, v);
 
   const names = new Set<string>();
   for (const map of Object.values(v)) {
@@ -117,6 +201,7 @@ export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): 
         memCapacity,
         memUsed,
         pods: [...(pods.get(node)?.values() ?? [])],
+        ...(system.has(node) ? { system: system.get(node) } : {}),
       };
     });
 }
