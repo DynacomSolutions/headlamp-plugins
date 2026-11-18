@@ -1,0 +1,4 @@
+First internal release.
+- Home-screen widget with CPU and memory use for each node.
+- Add several Headlamp instances, with an optional token.
+- The widget refreshes every 15 minutes, or when you tap Refresh.
