@@ -30,6 +30,8 @@ for MCP and ACP hosts and a vmalert webhook. Plugins add their own typed data
 providers in `plugins/<plugin>/agent/provider.ts`. Tool results and diagnoses
 carry A2UI v1.0, which the Incidents plugin renders.
 
+An Android app, [Headlamps](android/README.md), shows per-node CPU and memory widgets from your Headlamp instances.
+
 ## A tour of the plugins
 
 These are screenshots of the running plugins, with names and identifying
