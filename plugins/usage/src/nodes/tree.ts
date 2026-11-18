@@ -4,6 +4,7 @@
  * Children that sum to more than their parent (sampling skew) are scaled down to fit.
  */
 import type { AgentHost, AgentProc, AgentUnit } from './agents';
+import { processLabel, unitLabel } from './labels';
 import type { NodeMetrics } from './types';
 
 export type Resource = 'cpu' | 'memory';
@@ -109,7 +110,7 @@ function procNodes(procs: AgentProc[], prefix: string, r: Resource): SunNode[] {
       const key = `${prefix}/pid:${p.pid}`;
       return node(
         key,
-        p.command || `pid ${p.pid}`,
+        processLabel(p.command),
         'process',
         procValue(p, r),
         procNodes(p.children, key, r)
@@ -159,7 +160,7 @@ function unitForest(
   const build = (u: AgentUnit): SunNode => {
     const key = `${prefix}/u:${u.name}`;
     const kids = units.filter(c => nearest(c) === u.name).map(build);
-    return node(key, u.name, kind, unitValue(u, r), [
+    return node(key, unitLabel(u.name), kind, unitValue(u, r), [
       ...kids.sort(byValue),
       ...procNodes(u.procs, key, r),
     ]);
@@ -273,7 +274,7 @@ function otherScopes(units: AgentUnit[], r: Resource): SunNode | null {
     .filter(u => !u.orchestrator && u.kind === 'scope' && noRole(u))
     .map(u => {
       const key = `other/${u.name}`;
-      return node(key, u.name, 'thread', unitValue(u, r), procNodes(u.procs, key, r));
+      return node(key, unitLabel(u.name), 'thread', unitValue(u, r), procNodes(u.procs, key, r));
     })
     .filter(n => n.value > 0)
     .sort(byValue);
