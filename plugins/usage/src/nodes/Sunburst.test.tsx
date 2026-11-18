@@ -82,6 +82,23 @@ describe('Sunburst', () => {
     expect(onFocus).toHaveBeenCalledWith(['t3']);
   });
 
+  it('taps an arc under a focus deeper than this tree into a path it can resolve', () => {
+    const onFocus = vi.fn();
+    const { container } = render(
+      <Sunburst
+        tree={tree}
+        resource="cpu"
+        focus={['t3', 'only-in-memory']}
+        size={400}
+        onFocus={onFocus}
+      />
+    );
+    const arc = container.querySelector('path[data-key="p:x"]') as Element;
+    fireEvent.pointerDown(arc, { clientX: 5, clientY: 5 });
+    fireEvent.pointerUp(arc, { clientX: 5, clientY: 5 });
+    expect(onFocus).toHaveBeenCalledWith(['t3', 'p:x']);
+  });
+
   it('labels the image with the top children and their share of capacity', () => {
     const { getByRole } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={400} />);
     const label = getByRole('img').getAttribute('aria-label') as string;

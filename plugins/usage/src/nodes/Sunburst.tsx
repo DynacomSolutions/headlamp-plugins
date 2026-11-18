@@ -59,11 +59,17 @@ export function Sunburst(props: {
   const [pressed, setPressed] = React.useState<string | null>(null);
   const start = React.useRef<{ id: number; x: number; y: number } | null>(null);
 
-  const { arcs, centre } = React.useMemo(
+  const {
+    arcs,
+    centre,
+    path: shown,
+  } = React.useMemo(
     () => layoutSunburst(tree, focus, { radius, rings, mode: theme.palette.mode }),
     [tree, focus, radius, rings, theme.palette.mode]
   );
-  const items = React.useMemo(() => withPaths(arcs, focus), [arcs, focus]);
+  // Arc paths start from the focus this tree has, which may be shallower than `focus` (a key
+  // only the other chart has), so a tap always yields a path this tree can resolve.
+  const items = React.useMemo(() => withPaths(arcs, shown), [arcs, shown]);
 
   const shape = d3arc<ArcDatum>()
     .startAngle(a => a.x0)
@@ -181,8 +187,8 @@ export function Sunburst(props: {
         r={radius * CENTRE}
         fill={theme.palette.background.paper}
         stroke={theme.palette.divider}
-        style={{ cursor: !compact && focus.length ? 'pointer' : undefined }}
-        {...handlers('centre', focus.length ? focus.slice(0, -1) : null)}
+        style={{ cursor: !compact && shown.length ? 'pointer' : undefined }}
+        {...handlers('centre', shown.length ? shown.slice(0, -1) : null)}
       />
       <g style={{ pointerEvents: 'none' }} textAnchor="middle" fill={theme.palette.text.primary}>
         {!compact && (

@@ -57,6 +57,19 @@ export function shade(base: string, depth: number, index: number): string {
   return `hsl(${h.toFixed(2)}, ${Math.round(s)}%, ${lightness.toFixed(1)}%)`;
 }
 
+/** Fixed palette slots, so a category keeps its colour whichever other categories are present. */
+const CATEGORY_SLOT: Record<string, number> = { k8s: 0, t3: 1, herdr: 2, other: 3, system: 5 };
+const FREE_SLOTS = [4, 6, 7, 8, 9, 10, 11, 12];
+
+/** The colour of a top-level category, from its key alone (unknown keys hash to a free slot). */
+export function categoryColour(key: string, mode: Mode): string {
+  const slot = CATEGORY_SLOT[key];
+  if (slot !== undefined) return colourAt(slot, mode);
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return colourAt(FREE_SLOTS[h % FREE_SLOTS.length], mode);
+}
+
 export function layoutSunburst(
   tree: NodeTree,
   focus: string[],
@@ -64,6 +77,8 @@ export function layoutSunburst(
 ): {
   arcs: ArcDatum[];
   focusNode: SunNode;
+  /** The focus path this tree has: the deepest existing prefix of `focus`. */
+  path: string[];
   centre: { title: string; value: number; share: number };
 } {
   const { radius, rings, mode } = opts;
@@ -93,7 +108,7 @@ export function layoutSunburst(
       let colour = base;
       let fill: string;
       if (absDepth === 1) {
-        colour = colourAt(i, mode);
+        colour = categoryColour(child.key, mode);
         fill = colour;
       } else {
         fill = shade(base as string, absDepth, i);
@@ -121,13 +136,13 @@ export function layoutSunburst(
     const end = tree.capacity > 0 ? Math.min(TAU, (TAU * total) / tree.capacity) : 0;
     walk(tree.root, 0, end, 1, 1, null);
   } else {
-    const idx = tree.root.children.indexOf(categoryOf);
-    walk(focusNode, 0, TAU, 1, path.length, colourAt(idx, mode));
+    walk(focusNode, 0, TAU, 1, path.length, categoryColour(categoryOf.key, mode));
   }
 
   return {
     arcs,
     focusNode,
+    path: path.slice(1).map(n => n.key),
     centre: {
       title: focusNode.label,
       value: focusNode.value,

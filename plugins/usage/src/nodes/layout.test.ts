@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { layoutSunburst, shade } from './layout';
+import { colourAt } from '../palette';
+import { categoryColour, layoutSunburst, shade } from './layout';
 import type { NodeTree, SunNode } from './tree';
 
 function n(key: string, value: number, kind: SunNode['kind'], children: SunNode[] = []): SunNode {
@@ -84,6 +85,38 @@ describe('layoutSunburst', () => {
     expect(a.fill).toBe(b.fill);
     expect(hue(root.find(x => x.key === 't3/p:y')!.fill)).toBe(hue(a.fill));
     expect(root.find(x => x.key === 't3')!.fill).not.toBe(root.find(x => x.key === 'k8s')!.fill);
+  });
+
+  it('gives a category the same colour whatever other categories are present', () => {
+    const other: NodeTree = {
+      root: n('root', 8, 'node', [
+        n('system', 1, 'system'),
+        n('herdr', 2, 'category'),
+        n('t3', 3, 'category', [n('t3/p:x', 2, 'project')]),
+      ]),
+      capacity: 16,
+      used: 8,
+      hostMetrics: true,
+    };
+    const a = layoutSunburst(tree(), [], opts).arcs;
+    const b = layoutSunburst(other, [], opts).arcs;
+    const fill = (arcs: typeof a, key: string) => arcs.find(x => x.key === key)!.fill;
+    expect(fill(a, 't3')).toBe(fill(b, 't3'));
+    expect(fill(a, 't3/p:x')).toBe(fill(b, 't3/p:x'));
+    expect(fill(a, 't3')).toBe(colourAt(1, 'light'));
+    expect(fill(a, 'k8s')).toBe(colourAt(0, 'light'));
+    expect(fill(b, 'herdr')).toBe(colourAt(2, 'light'));
+    expect(fill(b, 'system')).toBe(colourAt(5, 'light'));
+    expect(categoryColour('other', 'dark')).toBe(colourAt(3, 'dark'));
+    expect(categoryColour('custom', 'light')).toBe(categoryColour('custom', 'light'));
+    expect([0, 1, 2, 3, 5].map(i => colourAt(i, 'light'))).not.toContain(
+      categoryColour('custom', 'light')
+    );
+  });
+
+  it('returns the resolved focus path', () => {
+    expect(layoutSunburst(tree(), ['t3', 'nope', 't3/p:x'], opts).path).toEqual(['t3']);
+    expect(layoutSunburst(tree(), ['t3', 't3/p:x'], opts).path).toEqual(['t3', 't3/p:x']);
   });
 
   it('uses root value when used is null', () => {
