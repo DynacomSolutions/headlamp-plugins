@@ -144,6 +144,18 @@ describe('layoutSunburst gaps', () => {
   });
 });
 
+describe('layoutSunburst empty space reaches the rim', () => {
+  it('runs a gap arc from its ring to the outer radius, and nothing under a leaf', () => {
+    const { arcs } = layoutSunburst(tree(), [], opts);
+    for (const key of ['root/~unused', 't3/~unattributed']) {
+      expect(arcs.find(a => a.key === key)!.y1).toBeCloseTo(1000);
+    }
+    // Leaves (k8s here, and the thread under t3/p:x) hold no unattributed space.
+    expect(arcs.some(a => a.key === 'k8s/~unattributed')).toBe(false);
+    expect(arcs.some(a => a.key === 't3/p:x/t:a/~unattributed')).toBe(false);
+  });
+});
+
 describe('layoutSunburst node ring', () => {
   const ring: NodeTree = {
     root: n('root', 8, 'node', [

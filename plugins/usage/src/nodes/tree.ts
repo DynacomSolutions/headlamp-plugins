@@ -406,7 +406,7 @@ export function buildCombinedTree(
   const hostMetrics = trees.length > 0 && trees.every(x => x.t.hostMetrics);
   const total = sum(nodes);
   return {
-    root: node('root', `${trees.length} nodes`, 'node', total, nodes),
+    root: node('root', 'All selected nodes', 'node', total, nodes),
     capacity: trees.reduce((s, x) => s + x.t.capacity, 0),
     // Nodes without host metrics count by what is attributed to them.
     used: trees.some(x => x.t.used !== null) ? total : null,
@@ -417,6 +417,7 @@ export function buildCombinedTree(
 
 /** Key suffix of the unused capacity at the root, and of space a parent holds but no child does. */
 export const UNUSED = '~unused';
+const EMPTY_ICON: NonNullable<SunNode['icon']> = { kind: 'mdi', name: 'selection-ellipse' };
 export const UNATTRIBUTED = '~unattributed';
 /** Gaps smaller than this share of their parent are not drawn: nobody can tap them. */
 const MIN_GAP = 0.002;
@@ -429,12 +430,15 @@ const MIN_GAP = 0.002;
 export function gapNodes(tree: NodeTree, parent: SunNode, atRoot: boolean): SunNode[] {
   const out: SunNode[] = [];
   const gap = parent.value - sum(parent.children);
-  if (parent.value > 0 && gap / parent.value > MIN_GAP) {
+  // A leaf has nothing below it, so it holds no unattributed space.
+  const hasKids = parent.children.length > 0;
+  if (parent.value > 0 && hasKids && gap / parent.value > MIN_GAP) {
     out.push({
       key: `${parent.key}/${UNATTRIBUTED}`,
-      label: 'Unattributed',
+      label: `Unattributed in ${parent.label}`,
       kind: 'unused',
       value: gap,
+      icon: EMPTY_ICON,
       children: [],
     });
   }
@@ -445,6 +449,7 @@ export function gapNodes(tree: NodeTree, parent: SunNode, atRoot: boolean): SunN
         key: `${parent.key}/${UNUSED}`,
         label: 'Unused',
         kind: 'unused',
+        icon: EMPTY_ICON,
         value: free,
         children: [],
       });

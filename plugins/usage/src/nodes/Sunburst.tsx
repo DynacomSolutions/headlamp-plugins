@@ -221,6 +221,7 @@ export function Sunburst(props: {
           : {
               value: fmt(resource, centre.value),
               node: `${formatPercent(centre.share, 1)} ${scope}`,
+              nodeShort: formatPercent(centre.share, 1),
               parent:
                 centre.parentShare === null
                   ? undefined
@@ -245,6 +246,16 @@ export function Sunburst(props: {
         if (!compact && e.target === e.currentTarget) onSelect?.(null);
       }}
     >
+      <style>{`.sb-arc{outline:none}.sb-arc:focus-visible{stroke:${theme.palette.primary.main};stroke-width:3px;stroke-dasharray:none;stroke-opacity:1}`}</style>
+      <circle
+        data-rim
+        r={radius}
+        fill="none"
+        stroke={theme.palette.text.secondary}
+        strokeOpacity={0.4}
+        strokeDasharray="2 4"
+        style={{ pointerEvents: 'none' }}
+      />
       {drawn.map(({ arc, path }) => {
         const id = path.join('/');
         const chosen = isSelected(arc.key, arc);
@@ -253,14 +264,16 @@ export function Sunburst(props: {
         // or under it only when both fit.
         const icon = compact || arc.gap ? undefined : arc.node.icon;
         const iconSize = icon ? arcIconSize(arc) : null;
+        // An arc with an icon shows the whole name or none: never a clipped stub. Without room
+        // for the name beside it the icon stands alone. An arc with no icon may show a clipped
+        // name when at least 8 characters fit.
         const fitted =
           compact || arc.gap
             ? null
-            : arcLabel(arc, arc.node.label, fontSize, iconSize !== null, iconSize ?? 0);
-        // The icon wins: without room for both, the arc shows the icon alone.
-        // Without the full name beside it, an icon stands alone: no clipped stubs next to icons.
-        const whole = fitted && fitted.text === arc.node.label;
-        const label = iconSize !== null && !(fitted?.icon && whole) ? null : fitted;
+            : arcLabel(arc, arc.node.label, fontSize, iconSize !== null, iconSize ?? 0, 8);
+        const whole = !!fitted && fitted.text === arc.node.label;
+        let label = fitted;
+        if (icon) label = whole && (iconSize === null || fitted?.icon) ? fitted : null;
         const lone = icon && iconSize !== null && !label ? arcCentroid(arc) : null;
         const a11y = compact
           ? {}
@@ -275,6 +288,7 @@ export function Sunburst(props: {
         return (
           <g key={id}>
             <path
+              className="sb-arc"
               data-key={arc.key}
               d={shape(arc) ?? ''}
               data-selected={chosen ? 'true' : undefined}

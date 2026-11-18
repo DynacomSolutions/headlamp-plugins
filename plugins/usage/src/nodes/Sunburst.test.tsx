@@ -98,6 +98,15 @@ describe('Sunburst', () => {
     expect(onSelect).toHaveBeenCalledWith(null);
   });
 
+  it('draws a dotted rim at the full outer radius, and no focus box on an arc', () => {
+    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={420} />);
+    const rim = container.querySelector('circle[data-rim]') as Element;
+    expect(Number(rim.getAttribute('r'))).toBeCloseTo(210 - 10);
+    expect(container.querySelector('style')?.textContent).toContain('.sb-arc{outline:none}');
+    expect(container.querySelector('style')?.textContent).toContain(':focus-visible');
+    expect(container.querySelector('path[data-key="t3"]')?.getAttribute('class')).toBe('sb-arc');
+  });
+
   it('selects the unused capacity like any other arc', () => {
     const onSelect = vi.fn();
     const { container } = render(
@@ -223,7 +232,7 @@ describe('Sunburst', () => {
       ...tree,
       root: { ...tree.root, label: 'a-very-long-node-title-here' },
     };
-    const { container } = render(<Sunburst tree={long} resource="cpu" focus={[]} size={300} />);
+    const { container } = render(<Sunburst tree={long} resource="cpu" focus={[]} size={1000} />);
     container.querySelectorAll('text').forEach(t => {
       expect(Number(t.getAttribute('font-size'))).toBeGreaterThanOrEqual(14);
     });

@@ -6,21 +6,21 @@ vi.mock('@iconify/react', () => ({ Icon: () => null }));
 import { agentAlertText, chartLayout, threadHref } from './NodeView';
 
 describe('chartLayout', () => {
-  it('puts CPU, Memory and a 360 px details column in one row in landscape', () => {
-    // (1800 - 360 - 32) / 2 = 704, under the height limit 1300 - 64.
-    expect(chartLayout(1800, 1300)).toEqual({ size: 704, twoUp: true, side: true });
+  it('puts CPU, Memory and a 320 px details column in one row in landscape', () => {
+    // (1800 - 320 - 32) / 2 = 724, under the height limit 1300 - 64.
+    expect(chartLayout(1800, 1300)).toEqual({ size: 724, twoUp: true, side: true });
   });
 
   it('keeps the charts within the height under their headings', () => {
     expect(chartLayout(1800, 700)).toEqual({ size: 636, twoUp: true, side: true });
   });
 
-  it('gives about 590 px at 1600x1000 in kiosk, and 500 px or more in normal mode', () => {
+  it('gives about 610 px at 1600x1000 in kiosk, and 460 px or more with the sidebar open', () => {
     // Kiosk: the overlay is 1576 wide inside its padding; the height is what is left under
     // the filters bar (72) and the breadcrumb (56).
-    expect(chartLayout(1576, 1000 - 24 - 72 - 56).size).toBe(592);
-    // Normal mode with a main area 1500 wide (collapsed sidebar), under the app bar, heading,
-    // filters bar and breadcrumb.
+    expect(chartLayout(1576, 1000 - 24 - 72 - 56).size).toBe(612);
+    // Normal mode: the main area is about 1280 wide with the sidebar open, so the width limits.
+    expect(chartLayout(1280, 1000 - 64 - 64 - 72 - 56).size).toBe(464);
     expect(chartLayout(1500, 1000 - 64 - 64 - 72 - 56).size).toBeGreaterThanOrEqual(500);
   });
 

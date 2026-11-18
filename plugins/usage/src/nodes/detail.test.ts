@@ -112,9 +112,20 @@ describe('selectionFor', () => {
     expect(unused).toMatchObject({ label: 'Unused', kind: 'unused', canOpen: false });
     expect(unused.cpu).toEqual({ value: 4, ofCapacity: 0.5, ofParent: null, ofRoot: null });
     const un = selectionFor(cpu, mem, [], ['t3', 't3/~unattributed'])!;
-    expect(un.label).toBe('Unattributed');
+    expect(un.label).toBe('Unattributed in T3');
     expect(un.cpu!.value).toBe(1);
     expect(un.cpu!.ofParent).toBeCloseTo(1 / 3);
+  });
+
+  it('measures an unattributed gap against its parent, which has children of its own', () => {
+    const un = selectionFor(cpu, mem, [], ['t3', 't3/~unattributed'])!;
+    // t3 holds 3 cores and its children 2: the gap is 1 core, a third of the parent, not all.
+    expect(un.cpu!.value).toBe(1);
+    expect(un.cpu!.ofParent).toBeCloseTo(1 / 3);
+    expect(un.cpu!.ofRoot).toBeCloseTo(1 / 4);
+    expect(un.icon).toEqual({ kind: 'mdi', name: 'selection-ellipse' });
+    // A leaf has no unattributed space.
+    expect(selectionFor(cpu, mem, [], ['k8s', 'k8s/~unattributed'])).toBeNull();
   });
 
   it('is null for a path neither tree has', () => {

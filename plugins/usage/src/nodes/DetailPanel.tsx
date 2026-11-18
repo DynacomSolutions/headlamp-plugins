@@ -16,7 +16,7 @@ import { useIconUrl } from './useIconUrl';
 
 export const PANEL_HEIGHT = 200;
 /** Width of the details column beside the charts in landscape. */
-export const DETAILS_WIDTH = 360;
+export const DETAILS_WIDTH = 320;
 
 const KIND: Record<string, string> = {
   node: 'Node',

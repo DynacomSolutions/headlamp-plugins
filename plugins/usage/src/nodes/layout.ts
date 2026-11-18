@@ -140,7 +140,8 @@ export function layoutSunburst(
       const end = g.key.endsWith(`/${UNUSED}`)
         ? TAU
         : Math.min(x1, at + (g.value / parent.value) * (x1 - x0));
-      arcs.push({ key: g.key, node: g, depth, x0: at, x1: end, y0, y1, fill: 'none', gap: true });
+      // Nothing is drawn below an empty arc, so it runs through every deeper ring to the rim.
+      arcs.push({ key: g.key, node: g, depth, x0: at, x1: end, y0, y1: radius, fill: 'none', gap: true });
       at = end;
     }
   };

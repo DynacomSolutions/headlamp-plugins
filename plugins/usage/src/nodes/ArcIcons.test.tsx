@@ -77,4 +77,23 @@ describe('arc icons', () => {
     expect(lone.length).toBeGreaterThan(0);
     lone.forEach(g => expect(g.parentElement?.querySelector('text[data-arc-label]')).toBeNull());
   });
+
+  it('never clips the name of an arc that has an icon', () => {
+    iconUrl.value = 'blob:x';
+    const long: NodeTree = {
+      ...tree,
+      root: n('root', 10, 'node', undefined, [
+        n('a', 3, 'category', { kind: 'mdi', name: 'kubernetes' }),
+        n('b', 3, 'category', { kind: 'mdi', name: 'cog' }),
+        n('c', 2, 'category', { kind: 'mdi', name: 'robot' }),
+      ].map((x, i) => ({ ...x, label: ['Kubernetes control plane', 'System services', 'Other scopes'][i] }))),
+    };
+    for (const size of [260, 420, 600]) {
+      const { container, unmount } = render(<Sunburst tree={long} resource="cpu" focus={[]} size={size} />);
+      container.querySelectorAll('text[data-arc-label]').forEach(t => {
+        expect(t.textContent).not.toContain('\u2026');
+      });
+      unmount();
+    }
+  });
 });

@@ -95,9 +95,23 @@ describe('centreLines', () => {
     expect(Math.max(...ys)).toBeLessThan(110);
   });
 
-  it('drops the least important lines when the disc is small', () => {
-    const out = centreLines(60, 14, lines);
-    expect(out.map(l => l.kind)).toEqual(['title', 'value']);
+  it('never drops the value and the share, however small the disc', () => {
+    for (const r of [30, 45, 60]) {
+      const kinds = centreLines(r, 14, { ...lines, nodeShort: '9%' }).map(l => l.kind);
+      expect(kinds).toContain('value');
+      expect(kinds).toContain('node');
+    }
+  });
+
+  it('drops the parent share and the icon before the title, and the title before the numbers', () => {
+    const kinds = (r: number) => centreLines(r, 14, lines).map(l => l.kind);
+    expect(kinds(70)).not.toContain('parent');
+    expect(kinds(45)).not.toContain('title');
+  });
+
+  it('uses the bare percentage when the long share does not fit', () => {
+    const out = centreLines(38, 14, { ...lines, nodeShort: '9%' });
+    expect(out.find(l => l.kind === 'node')!.text).toBe('9%');
   });
 
   it('clips a long title to the width of the disc', () => {

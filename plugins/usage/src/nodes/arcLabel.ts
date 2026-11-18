@@ -60,7 +60,8 @@ export function arcLabel(
   label: string,
   fontSize: number,
   wantIcon = false,
-  iconSize = ARC_ICON
+  iconSize = ARC_ICON,
+  minClipped = MIN_CLIPPED
 ): ArcLabel | null {
   const rm = (a.y0 + a.y1) / 2;
   const thickness = a.y1 - a.y0;
@@ -83,7 +84,7 @@ export function arcLabel(
     const icon = iconFits && withIcon >= Math.min(label.length, MIN_CHARS_WITH_ICON);
     const n = icon ? withIcon : plain;
     // A clipped name needs more than a stub: 5 characters and an ellipsis, or nothing.
-    if (n < label.length && n < MIN_CLIPPED) return null;
+    if (n < label.length && n < minClipped) return null;
     if (n < 1) return null;
     return { n, icon };
   };
@@ -125,63 +126,84 @@ export interface CentreLine {
 }
 
 /**
- * The lines of the centre disc that fit inside a circle of radius `r`, top to bottom, most
- * important first when room is short: title, value, % of node, % of parent, icon. The title is
- * clipped to the chord of the disc at its height; the numbers show in full or not at all.
+ * The lines of the centre disc that fit inside a circle of radius `r`, top to bottom. The value
+ * and the share of capacity are never dropped: when the disc is small the parent share and the
+ * icon go first, then the title, and then the font shrinks to 14 px. The title is clipped to the
+ * chord of the disc at its height; the numbers are never clipped (the share falls back to its
+ * short form, the bare percentage).
  */
 export function centreLines(
   r: number,
   fontSize: number,
-  lines: { title: string; value: string; node?: string; parent?: string; icon: boolean }
+  lines: {
+    title: string;
+    value: string;
+    node?: string;
+    /** The share on its own, for a disc too narrow for `node`. */
+    nodeShort?: string;
+    parent?: string;
+    icon: boolean;
+  }
 ): CentreLine[] {
-  const lineH = fontSize * 1.25;
-  const valueFont = fontSize * 1.3;
-  const valueH = valueFont * 1.2;
-  const iconH = ARC_ICON + 4;
-  const wanted: { kind: CentreLine['kind']; text: string; h: number; font: number }[] = [
-    { kind: 'title', text: lines.title, h: lineH, font: fontSize },
-    { kind: 'value', text: lines.value, h: valueH, font: valueFont },
-  ];
-  if (lines.node) wanted.push({ kind: 'node', text: lines.node, h: lineH, font: fontSize });
-  if (lines.parent) wanted.push({ kind: 'parent', text: lines.parent, h: lineH, font: fontSize });
-  if (lines.icon) wanted.push({ kind: 'icon', text: '', h: iconH, font: fontSize });
   const order: CentreLine['kind'][] = ['icon', 'title', 'value', 'node', 'parent'];
+  const drops: CentreLine['kind'][][] = [
+    [],
+    ['parent'],
+    ['parent', 'icon'],
+    ['parent', 'icon', 'title'],
+  ];
 
-  // Drop the least important lines until the stack fits, each clipped to its chord.
-  for (let count = wanted.length; count > 0; count--) {
+  const attempt = (font: number, drop: CentreLine['kind'][], force: boolean): CentreLine[] | null => {
+    const lineH = font * 1.25;
+    const valueFont = font === fontSize ? font * 1.3 : font;
+    const wanted: { kind: CentreLine['kind']; text: string; h: number; font: number }[] = [
+      { kind: 'title', text: lines.title, h: lineH, font },
+      { kind: 'value', text: lines.value, h: valueFont * 1.2, font: valueFont },
+    ];
+    if (lines.node) wanted.push({ kind: 'node', text: lines.node, h: lineH, font });
+    if (lines.parent) wanted.push({ kind: 'parent', text: lines.parent, h: lineH, font });
+    if (lines.icon) wanted.push({ kind: 'icon', text: '', h: ARC_ICON + 4, font });
     const chosen = wanted
-      .slice(0, count)
+      .filter(l => !drop.includes(l.kind))
       .sort((p, q) => order.indexOf(p.kind) - order.indexOf(q.kind));
     const total = chosen.reduce((s, l) => s + l.h, 0);
     let top = -total / 2;
     const out: CentreLine[] = [];
-    let ok = true;
     for (const l of chosen) {
       const far = Math.max(Math.abs(top), Math.abs(top + l.h));
       const half = r * r - far * far;
       const room = half > 0 ? 2 * Math.sqrt(half) - 2 * PAD : 0;
       if (l.kind === 'icon') {
-        if (room < ARC_ICON) ok = false;
+        if (room < ARC_ICON && !force) return null;
         out.push({ kind: 'icon', text: '', y: top + 2, fontSize: l.font });
       } else {
         const max = chars(room, l.font);
+        let text = l.text;
+        if (l.kind === 'node' && lines.nodeShort && max < text.length) text = lines.nodeShort;
         // Only the name may be clipped: a clipped number would mislead.
-        const keep = l.kind === 'title' ? Math.min(l.text.length, MIN_CHARS) : l.text.length;
-        if (max < keep) ok = false;
-        // Baseline: middle of the line box, shifted down by about a third of the font size.
+        const keep = l.kind === 'title' ? Math.min(text.length, MIN_CHARS) : text.length;
+        if (max < keep && !force) return null;
         out.push({
           kind: l.kind,
-          text: clipText(l.text, max),
+          text: l.kind === 'title' ? clipText(text, max) : text,
+          // Baseline: middle of the line box, shifted down by about a third of the font size.
           y: top + l.h / 2 + l.font * 0.35,
           fontSize: l.font,
         });
       }
       top += l.h;
-      if (!ok) break;
     }
-    if (ok) return out;
+    return out;
+  };
+
+  for (const font of fontSize > 14 ? [fontSize, 14] : [14]) {
+    for (const drop of drops) {
+      const out = attempt(font, drop, false);
+      if (out) return out;
+    }
   }
-  return [];
+  // Nothing fits: still show the value and the share, at the smallest font.
+  return attempt(14, ['parent', 'icon', 'title'], true) ?? [];
 }
 
 /**
