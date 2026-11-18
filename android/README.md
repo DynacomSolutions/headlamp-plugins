@@ -17,6 +17,15 @@ for each node of a Kubernetes cluster. It reads the data from one or more
 - Tap Refresh in the widget header to update at once.
 - The widget shows an error text when the server is not reachable, when the token is refused (401 or 403), or when the metrics API is missing (404 or 503).
 
+## Headlamp panel widget
+
+The "Headlamp panel" widget shows one panel of the headlamp-agent: uptime, usage,
+alerts, disks, hardware, sites, updates, incidents or agent memory.
+You pick the instance, the cluster and the panel when you add the widget.
+The widget shows a status colour, up to four numbers and a list of rows, worst first.
+It needs the headlamp-agent in the cluster. The app reads the agent through the
+Headlamp Kubernetes service proxy.
+
 ## Data the app reads
 
 The app sends only GET requests. `<base>` is the base URL of the instance.
@@ -27,7 +36,14 @@ The app sends only GET requests. `<base>` is the base URL of the instance.
 | `<base>/clusters/<cluster>/apis/metrics.k8s.io/v1beta1/nodes` | Node CPU and memory use |
 | `<base>/clusters/<cluster>/api/v1/nodes` | Node allocatable CPU and memory (the 100% value) |
 
-The cluster must run the Kubernetes metrics server.
+The panel widget reads these paths (GET only):
+
+| Request | Use |
+| --- | --- |
+| `<base>/clusters/<cluster>/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets` | List of panels |
+| `<base>/clusters/<cluster>/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets/<id>` | One panel |
+
+The node usage widget needs the Kubernetes metrics server in the cluster.
 The widget opens `<base>/c/<cluster>/usage/nodes`. This page needs the usage plugin of this repository.
 
 ## Authentication
