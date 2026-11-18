@@ -345,7 +345,9 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
               return out.data;
             },
             serviceGet,
+            kubeList: async (kind, options) => (await runtime.kube.list(kind, { limit: 2000, ...options })).items,
             agentMemoryUrl: config.agentMemoryUrl,
+            registryCatalogueUrl: config.registryCatalogueUrl,
             query: url.searchParams,
             now: new Date(),
           });

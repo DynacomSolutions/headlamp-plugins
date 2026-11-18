@@ -14,7 +14,11 @@ function deps(outputs: Record<string, unknown>, extra: Partial<PanelDeps> = {}):
       return out;
     },
     serviceGet: async () => ({}),
+    kubeList: async kind => {
+      throw new Error(`no list for ${kind}`);
+    },
     agentMemoryUrl: 'http://agent-memory.example.svc/api/state',
+    registryCatalogueUrl: 'http://registry-catalog.example.svc/api/repositories',
     query: new URLSearchParams(),
     now: new Date('2026-11-18T08:00:00Z'),
     ...extra,
@@ -25,7 +29,7 @@ describe('panel list', () => {
   it('lists the v1 panels with the contract fields', () => {
     const { version, panels } = listPanels();
     expect(version).toBe(1);
-    expect(panels.map(p => p.id)).toEqual(['uptime', 'usage', 'alerts', 'disks', 'hardware', 'sites', 'updates', 'incidents', 'agent-memory']);
+    expect(panels.map(p => p.id)).toEqual(['uptime', 'usage', 'alerts', 'disks', 'hardware', 'sites', 'updates', 'incidents', 'github-runners', 'registry', 'vm-images', 'agent-memory']);
     for (const p of panels) {
       expect(p.title).toBeTruthy();
       expect(p.description).toBeTruthy();
@@ -235,6 +239,94 @@ describe('panel mappings', () => {
       expect(s.value.length).toBeLessThanOrEqual(8);
     }
     expect(m!.stats.length).toBeLessThanOrEqual(4);
+  });
+});
+
+const hoursAgo = (h: number) => new Date(Date.parse('2026-11-18T08:00:00Z') - h * 3600_000).toISOString();
+const tag = (name: string, size: number, created: string) => ({ tag: name, digest: `sha256:${name}`, mediaType: null, artifactType: null, configMediaType: null, sizeBytes: size, created, platforms: [] });
+const CATALOGUE = {
+  generatedAt: '2026-11-18T08:00:00Z',
+  error: null,
+  repositories: [
+    { name: 'web', tags: [tag('1', 100 * 2 ** 20, hoursAgo(5)), tag('2', 50 * 2 ** 20, hoursAgo(2))] },
+    { name: 'macos-vz/base', tags: [tag('15', 20 * 2 ** 30, hoursAgo(30))] },
+    { name: 'api', tags: [tag('1', 10 * 2 ** 20, hoursAgo(1))] },
+  ],
+};
+
+describe('github-runners, registry and vm-images', () => {
+  const arcSet = (name: string, extra: Record<string, unknown> = {}) => ({
+    metadata: { name, namespace: 'arc-runners' },
+    spec: { runnerScaleSetName: name, minRunners: 0, maxRunners: 4 },
+    status: { phase: 'Running', currentRunners: 2, runningEphemeralRunners: 1, pendingEphemeralRunners: 1, ...extra },
+  });
+  const listener = (set: string) => ({ spec: { autoscalingRunnerSetName: set, autoscalingRunnerSetNamespace: 'arc-runners' } });
+
+  it('github-runners: one row per set, a missing listener is critical', async () => {
+    const lists: Record<string, any[]> = {
+      'autoscalingrunnersets.actions.github.com': [arcSet('good'), arcSet('nolistener'), arcSet('broken', { failedEphemeralRunners: 2 })],
+      'ephemeralrunners.actions.github.com': [],
+      'autoscalinglisteners.actions.github.com': [listener('good'), listener('broken')],
+    };
+    const m = await buildPanel('github-runners', deps({}, { kubeList: async kind => lists[kind] ?? [] }));
+    expect(m!.status).toBe('crit');
+    expect(m!.stats.map(s => [s.label, s.value])).toEqual([['Sets', '3'], ['Running', '3'], ['Idle/Pending', '0/3'], ['Failed', '1']]);
+    expect(m!.rows.map(r => r.label).sort()).toEqual(['broken', 'good', 'nolistener']);
+    expect(m!.rows[m!.rows.length - 1]).toMatchObject({ label: 'good', value: '2/4', fraction: 0.5, status: 'ok', detail: '1 running, 1 pending, max 4' });
+    expect(m!.rows.find(r => r.label === 'nolistener')!.detail).toContain('listener missing');
+    expect(m!.rows.find(r => r.label === 'broken')!.detail).toContain('2 failed');
+  });
+
+  it('github-runners: a pending runner for a long time is a warning; no ARC is a backend failure', async () => {
+    const lists: Record<string, any[]> = {
+      'autoscalingrunnersets.actions.github.com': [arcSet('a')],
+      'ephemeralrunners.actions.github.com': [{ metadata: { name: 'r1', creationTimestamp: hoursAgo(1), annotations: { 'actions.github.com/runner-scale-set-name': 'a' } }, status: { phase: 'Pending' } }],
+      'autoscalinglisteners.actions.github.com': [listener('a')],
+    };
+    const m = await buildPanel('github-runners', deps({}, { kubeList: async kind => lists[kind] ?? [] }));
+    expect(m!.status).toBe('warn');
+    await expect(buildPanel('github-runners', deps({}))).rejects.toThrow(/ARC is not installed/);
+  });
+
+  it('registry: totals and largest repositories first', async () => {
+    const m = await buildPanel('registry', deps({}, { serviceGet: async () => CATALOGUE }));
+    expect(m!.stats.map(s => [s.label, s.value])).toEqual([['Repositories', '3'], ['Tags', '4'], ['Size', '20.2 GiB']]);
+    expect(m!.rows.map(r => r.label)).toEqual(['macos-vz/base', 'web', 'api']);
+    expect(m!.rows[0]).toMatchObject({ value: '20.0 GiB', fraction: 1, detail: '1 tags, pushed 1 day ago' });
+  });
+
+  it('registry: sort=recent and backend failures', async () => {
+    const m = await buildPanel('registry', deps({}, { query: new URLSearchParams('sort=recent'), serviceGet: async () => CATALOGUE }));
+    expect(m!.rows.map(r => r.label)).toEqual(['api', 'web', 'macos-vz/base']);
+    await expect(buildPanel('registry', deps({}, { serviceGet: async () => { throw new Error('down'); } }))).rejects.toThrow('The registry catalogue is not reachable');
+    await expect(buildPanel('registry', deps({}, { serviceGet: async () => ({ error: 'scan failed', repositories: [] }) }))).rejects.toThrow('scan failed');
+  });
+
+  it('vm-images: problems first, then images with their users', async () => {
+    const lists: Record<string, any[]> = {
+      'datavolumes.cdi.kubevirt.io': [
+        { metadata: { name: 'ok', namespace: 'vm' }, status: { phase: 'Succeeded' } },
+        { metadata: { name: 'importing', namespace: 'vm' }, status: { phase: 'ImportInProgress', progress: '40.0%' }, spec: { source: { http: { url: 'https://example.com/a.img' } } } },
+      ],
+      'datasources.cdi.kubevirt.io': [{ metadata: { name: 'src', namespace: 'vm' }, status: { conditions: [{ type: 'Ready', status: 'False' }] } }],
+      'dataimportcrons.cdi.kubevirt.io': [],
+      'virtualmachines.kubevirt.io': [
+        { metadata: { name: 'vm1', namespace: 'vm' }, status: { printableStatus: 'ErrorUnschedulable' }, spec: { template: { spec: { volumes: [{ name: 'd', containerDisk: { image: 'registry.example.com/macos-vz/base:15' } }] } } } },
+        { metadata: { name: 'vm2', namespace: 'vm' }, status: { printableStatus: 'Running' } },
+      ],
+    };
+    const m = await buildPanel('vm-images', deps({}, { serviceGet: async () => CATALOGUE, kubeList: async kind => lists[kind] ?? [] }));
+    expect(m!.status).toBe('crit');
+    expect(m!.stats.map(s => [s.label, s.value])).toEqual([['Images', '1'], ['In use', '1'], ['Problems', '3'], ['VMs running', '1']]);
+    expect(m!.rows[0]).toMatchObject({ label: 'vm/vm1', value: 'ErrorUnschedulable', status: 'crit' });
+    expect(m!.rows.find(r => r.label === 'vm/importing')).toMatchObject({ value: 'ImportInProgress', fraction: 0.4, status: 'warn' });
+    expect(m!.rows[m!.rows.length - 1]).toMatchObject({ label: 'macos-vz/base', detail: '1 tags, used by 1', status: 'ok' });
+  });
+
+  it('vm-images: works when the KubeVirt types are not served', async () => {
+    const m = await buildPanel('vm-images', deps({}, { serviceGet: async () => CATALOGUE }));
+    expect(m!.status).toBe('ok');
+    expect(m!.stats[0].value).toBe('1');
   });
 });
 

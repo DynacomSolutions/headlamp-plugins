@@ -14,6 +14,8 @@ export interface Config {
   vmalertUrl: string;
   /** The agent-memory state endpoint, for the agent-memory panel. */
   agentMemoryUrl: string;
+  /** The registry catalogue backend (`/api/repositories`), for the registry and VM images panels. */
+  registryCatalogueUrl: string;
   /** JSON file with per-provider settings (`{"<provider>": {...}}`). */
   providerConfigFile: string;
   /** Browser origins allowed to call /mcp. Requests without an Origin header are always allowed. */
@@ -84,6 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     metricsUrl: (env.METRICS_URL ?? '').replace(/\/+$/, ''),
     vmalertUrl: (env.VMALERT_URL ?? '').replace(/\/+$/, ''),
     agentMemoryUrl: (env.AGENT_MEMORY_URL ?? 'http://agent-memory.agent-memory.svc/api/state').replace(/\/+$/, ''),
+    registryCatalogueUrl: (env.REGISTRY_CATALOGUE_URL ?? 'http://registry-catalog.registry.svc/api/repositories').replace(/\/+$/, ''),
     providerConfigFile: env.PROVIDER_CONFIG_FILE ?? '',
     allowedOrigins: list(env.ALLOWED_ORIGINS, []),
     dataDir: env.DATA_DIR ?? '',
