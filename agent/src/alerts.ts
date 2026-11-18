@@ -66,3 +66,10 @@ export class AlertGate {
     this.started.push(Date.now());
   }
 }
+
+/** A stable UUID-shaped id for one firing alert, so two pods or a repeated POST make the same diagnosis id. */
+export function diagnosisIdFor(fingerprint: string, startsAt: string): string {
+  const h = createHash('sha256').update(`${fingerprint}|${startsAt}`).digest('hex');
+  const variant = ((parseInt(h[16]!, 16) & 3) | 8).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}

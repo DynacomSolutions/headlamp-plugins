@@ -67,6 +67,12 @@ export interface Diagnosis {
   model: string;
   error?: string;
   a2ui: A2uiMessage[];
+  /** The process that holds this record while it is queued or running. */
+  owner?: string;
+  /** The holder's claim ends at this time (ISO). After it, another process may take over. */
+  leaseUntil?: string;
+  /** How many times a process started this diagnosis. A takeover adds one. */
+  attempts?: number;
 }
 
 /** Commands a fix may show: reads and checks only. Anything else is dropped from the fix, its text stays. */

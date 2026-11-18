@@ -145,6 +145,10 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
 
 `GET /api/diagnoses` and `GET /api/diagnoses/<id>` serve the Incidents plugin.
 
+Diagnoses are stored one file per diagnosis. During a rollout the old pod
+finishes its running diagnosis, and the new pod takes over queued and
+interrupted ones.
+
 ## Hosts
 
 **Claude Code** (MCP):
@@ -214,7 +218,7 @@ diagnosed.
 | `METRICS_URL` | – | Prometheus-compatible endpoint (VictoriaMetrics) |
 | `VMALERT_URL` | – | vmalert, for rules and alerts |
 | `PROVIDER_CONFIG_FILE` | – | JSON with each provider's settings, `{"<provider>": {...}}` |
-| `DATA_DIR` | memory only | Where `diagnoses.json` is kept |
+| `DATA_DIR` | memory only | Where the diagnoses are kept, one file each in `diagnoses/` |
 | `MAX_DIAGNOSES` | `200` | Diagnoses kept |
 | `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` |
 | `AGENT_TOOL_BUDGET` | `10` | Tool calls per diagnosis after the evidence pack |
