@@ -9,7 +9,8 @@ import { ModelClient } from './agent/model.js';
 import { alertSchema, renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis } from './agent/report.js';
 import { mask, maskText } from './mask.js';
 import { mcpHandler } from './mcp.js';
-import { Runtime } from './runtime.js';
+import { Runtime, serviceGet } from './runtime.js';
+import { PanelError, buildPanel, listPanels } from './widgets.js';
 import { DiagnosisStore } from './store.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -331,6 +332,27 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         }
         if (started) log('info', 'alerts received', { alerts: alerts.length, started });
         return send(res, 200, { status: 'success', started });
+      }
+      if (path === '/api/widgets' && req.method === 'GET') return send(res, 200, listPanels());
+      if (path.startsWith('/api/widgets/') && req.method === 'GET') {
+        const id = decodeURIComponent(path.slice('/api/widgets/'.length));
+        try {
+          const model = await buildPanel(id, {
+            call: async (tool, args) => {
+              const out = await runtime.registry.call(tool, args, p => runtime.context(p));
+              if (!out.ok) throw new PanelError(out.summary);
+              return out.data;
+            },
+            serviceGet,
+            agentMemoryUrl: config.agentMemoryUrl,
+            query: url.searchParams,
+            now: new Date(),
+          });
+          return model ? send(res, 200, model) : send(res, 404, { error: 'unknown panel' });
+        } catch (error) {
+          if (error instanceof PanelError) return send(res, 502, { error: error.message });
+          throw error;
+        }
       }
       if (path === '/api/v2/status' && req.method === 'GET') return send(res, 200, { cluster: { status: 'ready' }, versionInfo: { version } });
       if (path === '/api/diagnoses' && req.method === 'GET') {
