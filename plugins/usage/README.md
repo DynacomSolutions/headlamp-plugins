@@ -185,6 +185,16 @@ keeps its query.
   so they are not fetched from the internet. Unknown ones get a generic icon.
   (A project icon of kind lucide set by the backend is still looked up by
   Iconify.)
+- **Names:** arcs, the centre, the breadcrumb and the list show a friendly
+  name, for example `runwarden-runners` as "Runwarden". The details card shows
+  that name as its title and the raw id under it. A name comes from, in order:
+  the **Display names** setting (`id=Name` lines, one per line); the cluster
+  (a Namespace's `app.kubernetes.io/display-name` annotation, then its
+  `app.kubernetes.io/part-of`, `name` or `instance` label); the app table
+  (processes and containers such as `node` as "Node.js"); and last a plain
+  humaniser that drops a suffix such as `-runners` or `-system`, splits on `-`
+  and `_` and title-cases. Pods show their workload name, without the
+  ReplicaSet hash. T3 project and thread names are used as they are.
 - **Select, then open:** a tap on an arc selects it in both charts. It grows a
   little and gets an outline. Tap it again, or empty space, to clear it. A card
   below the charts gives its icon, name and kind, its CPU and memory with the

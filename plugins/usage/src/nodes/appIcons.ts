@@ -88,6 +88,72 @@ const APPS: Record<string, Icon> = {
   ffmpeg: brand('ffmpeg'),
 };
 
+/** Friendly names of the apps above, by the same keys. Others use the humaniser. */
+const NAMES: Record<string, string> = {
+  node: 'Node.js',
+  nodejs: 'Node.js',
+  npm: 'npm',
+  npx: 'npm',
+  bun: 'Bun',
+  deno: 'Deno',
+  python: 'Python',
+  go: 'Go',
+  cargo: 'Rust',
+  rustc: 'Rust',
+  rust: 'Rust',
+  java: 'Java',
+  claude: 'Claude Code',
+  anthropic: 'Anthropic',
+  codex: 'Codex',
+  kimi: 'Kimi',
+  git: 'Git',
+  gh: 'GitHub CLI',
+  ssh: 'SSH',
+  sshd: 'SSH server',
+  bash: 'Bash',
+  sh: 'Shell',
+  zsh: 'Zsh',
+  chromium: 'Chromium',
+  chrome: 'Chrome',
+  firefox: 'Firefox',
+  postgres: 'PostgreSQL',
+  postgresql: 'PostgreSQL',
+  redis: 'Redis',
+  'redis-server': 'Redis',
+  nginx: 'nginx',
+  caddy: 'Caddy',
+  traefik: 'Traefik',
+  grafana: 'Grafana',
+  prometheus: 'Prometheus',
+  'victoria-metrics': 'VictoriaMetrics',
+  victoriametrics: 'VictoriaMetrics',
+  vmagent: 'vmagent',
+  vmalert: 'vmalert',
+  headlamp: 'Headlamp',
+  argocd: 'ArgoCD',
+  argo: 'Argo',
+  coredns: 'CoreDNS',
+  containerd: 'containerd',
+  kubelet: 'kubelet',
+  kubectl: 'kubectl',
+  sqlite: 'SQLite',
+  sqlite3: 'SQLite',
+  docker: 'Docker',
+  dockerd: 'Docker',
+  podman: 'Podman',
+  buildah: 'Buildah',
+  systemd: 'systemd',
+  herdr: 'Herdr',
+  t3code: 'T3 Code',
+  t3: 'T3 Code',
+  vite: 'Vite',
+  esbuild: 'esbuild',
+  tsc: 'TypeScript',
+  tsx: 'TypeScript',
+  playwright: 'Playwright',
+  ffmpeg: 'FFmpeg',
+};
+
 /** Every icon the table can return, for checks that all of them are bundled. */
 export const ALL_APP_ICONS: Icon[] = [...Object.values(APPS), ...Object.values(GENERIC)];
 
@@ -124,34 +190,49 @@ function lookup(name: string): Icon | undefined {
   return Object.prototype.hasOwnProperty.call(APPS, name) ? APPS[name] : undefined;
 }
 
-/** The icon of a process, from its command line (full paths and arguments are fine). */
-export function iconForProcess(command: string): Icon {
+/** The table key of a process: the program, or the program an interpreter runs. */
+function processKey(command: string): string | undefined {
   const tokens = (command ?? '').trim().split(/\s+/).filter(Boolean);
   const program = baseName(tokens[0] ?? '');
-  const own = lookup(program);
-  if (!LAUNCHERS.has(program)) return own ?? GENERIC.process;
+  const own = lookup(program) ? program : undefined;
+  if (!LAUNCHERS.has(program)) return own;
   // An interpreter or launcher: the program it runs says more (node .../codex.js, sh -c vite).
   for (const arg of tokens.slice(1, 6)) {
     if (arg.startsWith('-')) continue;
     const name = baseName(arg.replace(/^@[^/]+\//, ''));
-    const hit = LAUNCHERS.has(name) ? undefined : lookup(name);
-    if (hit) return hit;
+    if (!LAUNCHERS.has(name) && lookup(name)) return name;
   }
-  return own ?? GENERIC.process;
+  return own;
+}
+
+/** The icon of a process, from its command line (full paths and arguments are fine). */
+export function iconForProcess(command: string): Icon {
+  const key = processKey(command);
+  return key ? APPS[key] : GENERIC.process;
+}
+
+/** The container key in the table: its name, then a part of it, then its namespace. */
+function containerKey(container: string, namespace: string): string | undefined {
+  const name = (container ?? '').toLowerCase();
+  if (lookup(name)) return name;
+  if (lookup(baseName(name))) return baseName(name);
+  for (const part of name.split(/[-_.]/)) if (lookup(part)) return part;
+  const ns = (namespace ?? '').toLowerCase();
+  if (lookup(ns)) return ns;
+  const bare = ns.replace(/^kube-/, '');
+  return lookup(bare) ? bare : undefined;
+}
+
+/** The friendly name of a known app: for a container (name, namespace) or a process command. */
+export function appName(container?: string, namespace?: string, command?: string): string | undefined {
+  const key = command !== undefined ? processKey(command) : containerKey(container ?? '', namespace ?? '');
+  return key ? NAMES[key] : undefined;
 }
 
 /** The icon of a container: its name first, then its namespace (argocd, monitoring, ...). */
 export function iconForContainer(container: string, namespace = ''): Icon {
-  const name = (container ?? '').toLowerCase();
-  const direct = lookup(name) ?? lookup(baseName(name));
-  if (direct) return direct;
-  // A container is often named <app>-<role> (grafana-sc-dashboard, argocd-server).
-  for (const part of name.split(/[-_.]/)) {
-    const hit = lookup(part);
-    if (hit) return hit;
-  }
-  const ns = (namespace ?? '').toLowerCase();
-  return lookup(ns) ?? lookup(ns.replace(/^kube-/, '')) ?? GENERIC.container;
+  const key = containerKey(container, namespace);
+  return key ? APPS[key] : GENERIC.container;
 }
 
 /** The icon of a namespace: the app it is named after, else a grid. */

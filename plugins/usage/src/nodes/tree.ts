@@ -6,6 +6,7 @@
 import type { AgentHost, AgentProc, AgentUnit } from './agents';
 import { GENERIC, iconForContainer, iconForNamespace, iconForProcess } from './appIcons';
 import { processLabel, unitLabel } from './labels';
+import { applyNames, NameContext, NO_NAMES } from './names';
 import type { NodeMetrics } from './types';
 
 export type Resource = 'cpu' | 'memory';
@@ -34,6 +35,10 @@ export interface SunNode {
     color?: string;
   };
   href?: string;
+  /** Friendly name for arcs, centre, breadcrumb and lists; `label` stays the raw id. */
+  displayName?: string;
+  /** The raw command line of a process, its id. */
+  command?: string;
   children: SunNode[];
 }
 
@@ -150,7 +155,7 @@ function procNodes(procs: AgentProc[], prefix: string, r: Resource): SunNode[] {
         'process',
         procValue(p, r),
         procNodes(p.children, key, r),
-        { icon: iconForProcess(p.command) }
+        { icon: iconForProcess(p.command), command: p.command }
       );
     })
     .filter(n => n.value > 0)
@@ -334,7 +339,8 @@ export function buildNodeTree(
   agents: AgentHost | null,
   r: Resource,
   iconSrc: (projectId: string) => string,
-  categories: string[] = []
+  categories: string[] = [],
+  names: NameContext = NO_NAMES
 ): NodeTree {
   const capacity = r === 'cpu' ? m.cpuCapacity : m.memCapacity;
   const used = r === 'cpu' ? m.cpuUsed : m.memUsed;
@@ -365,6 +371,7 @@ export function buildNodeTree(
   const kept = categories.length ? cats.filter(c => categories.includes(categoryId(c.key))) : cats;
   const root = node('root', m.node, 'node', used ?? attributed, kept);
   fitChildren(root);
+  applyNames(root, names);
   return { root, capacity, used, hostMetrics: used !== null };
 }
 
@@ -392,11 +399,12 @@ export function buildCombinedTree(
   hostOf: (node: string) => AgentHost | null,
   r: Resource,
   iconSrc: (node: string, projectId: string) => string,
-  categories: string[] = []
+  categories: string[] = [],
+  names: NameContext = NO_NAMES
 ): NodeTree {
   const trees = metrics.map(m => ({
     m,
-    t: buildNodeTree(m, hostOf(m.node), r, id => iconSrc(m.node, id), categories),
+    t: buildNodeTree(m, hostOf(m.node), r, id => iconSrc(m.node, id), categories, names),
   }));
   if (trees.length === 1) return trees[0].t;
   const nodes = trees

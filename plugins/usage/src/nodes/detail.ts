@@ -3,6 +3,7 @@
  * and the breadcrumb trail. A key may exist in only one tree (a thread with CPU but no memory,
  * say), so the deeper of the two resolved paths wins, memory on a tie.
  */
+import { idOf, nameOf } from './names';
 import { findPath, gapNodes, NodeTree, SunNode, UNUSED } from './tree';
 
 export interface Detail {
@@ -30,11 +31,11 @@ export function detailFor(cpu: NodeTree, mem: NodeTree, path: string[]): Detail 
     path: keys,
     focus: {
       key: node.key,
-      label: node.label,
+      label: nameOf(node),
       icon: m?.icon ?? c?.icon,
       href: m?.href ?? c?.href,
     },
-    trail: chosen.map((n, i) => ({ key: n.key, label: n.label, path: keys.slice(0, i) })),
+    trail: chosen.map((n, i) => ({ key: n.key, label: nameOf(n), path: keys.slice(0, i) })),
   };
 }
 
@@ -74,7 +75,10 @@ function segmentFor(tree: NodeTree, zoom: string[], sel: string[]): SegmentInfo 
 }
 
 export interface Selection {
+  /** The friendly name. */
   label: string;
+  /** The raw id, shown under the name; absent when it is the name. */
+  id?: string;
   kind: SunNode['kind'];
   icon?: SunNode['icon'];
   href?: string;
@@ -95,8 +99,11 @@ export function selectionFor(
   const m = resolve(mem, sel);
   const n = m?.node ?? c?.node;
   if (!n) return null;
+  const shown = nameOf(n);
+  const raw = idOf(n);
   return {
-    label: n.label,
+    label: shown,
+    id: raw !== shown ? raw : undefined,
     kind: n.kind,
     icon: m?.node.icon ?? c?.node.icon,
     href: m?.node.href ?? c?.node.href,
@@ -119,7 +126,7 @@ export function childRows(cpu: NodeTree, mem: NodeTree, base: string[]): ChildRo
   const rows = new Map<string, ChildRow>();
   const add = (tree: NodeTree, field: 'cpu' | 'mem') => {
     for (const ch of exact(tree, base)?.children ?? []) {
-      const row = rows.get(ch.key) ?? { key: ch.key, label: ch.label, icon: ch.icon, cpu: null, mem: null };
+      const row = rows.get(ch.key) ?? { key: ch.key, label: nameOf(ch), icon: ch.icon, cpu: null, mem: null };
       row[field] = ch.value;
       rows.set(ch.key, row);
     }

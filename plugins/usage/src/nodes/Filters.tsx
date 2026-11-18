@@ -49,6 +49,12 @@ export function Filters(props: {
         disableCloseOnSelect
         options={CATEGORIES.map(c => c.id)}
         getOptionLabel={labelOf}
+        // Match the friendly label and the raw id (k8s, t3, ...).
+        filterOptions={(opts, st) =>
+          opts.filter(o =>
+            `${labelOf(o)} ${o}`.toLowerCase().includes(st.inputValue.trim().toLowerCase())
+          )
+        }
         value={cats}
         onChange={(_, v) => onCats(v)}
         renderInput={field('Category')}

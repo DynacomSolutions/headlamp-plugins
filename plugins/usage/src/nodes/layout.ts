@@ -4,6 +4,7 @@
  * sized against node capacity, so the unused share is empty too.
  */
 import { colourAt, Mode } from '../palette';
+import { nameOf } from './names';
 import { findPath, gapNodes, NodeTree, SunNode, UNUSED } from './tree';
 
 export interface ArcDatum {
@@ -159,7 +160,7 @@ export function layoutSunburst(
     focusNode,
     path: path.slice(1).map(n => n.key),
     centre: {
-      title: focusNode.label,
+      title: nameOf(focusNode),
       value: focusNode.value,
       share: tree.capacity > 0 ? focusNode.value / tree.capacity : 0,
       parentShare: parent && parent.value > 0 ? focusNode.value / parent.value : parent ? 0 : null,

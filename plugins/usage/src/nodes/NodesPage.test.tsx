@@ -19,7 +19,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib/CommonComponents', () => ({
   ),
 }));
 vi.mock('@iconify/react', () => ({ Icon: (p: { icon: string }) => <i data-icon={p.icon} /> }));
-vi.mock('../settings', () => ({ useNodesSettings: () => ({ idleSeconds: 120 }) }));
+vi.mock('../settings', () => ({ useNodesSettings: () => ({ idleSeconds: 120, displayNames: {} }) }));
 
 const metric = (node: string, used: number): NodeMetrics => ({
   node,
@@ -73,6 +73,14 @@ describe('NodesPage', () => {
     const one = mount('/usage/dashboard?nodes=worker-1');
     const p1 = one.container.querySelector('[data-detail-panel]') as HTMLElement;
     expect(p1.textContent).toContain('worker-1');
+  });
+
+  it('shows the friendly name as the title and the raw id under it', () => {
+    const { container } = mount('/usage/dashboard?nodes=worker-1&sel=k8s%2Ck8s%2Fns%3Ans');
+    const panel = container.querySelector('[data-detail-panel]') as HTMLElement;
+    expect(panel.textContent).toContain('Ns');
+    expect(panel.querySelector('[data-raw-id]')?.textContent).toBe('ns');
+    expect(panel.textContent).toContain('Namespace');
   });
 
   it('shows the heading and one CPU and one memory chart', () => {

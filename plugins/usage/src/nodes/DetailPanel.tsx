@@ -141,6 +141,20 @@ export function DetailPanel(props: {
                 {selected ? kindLabel(subject.kind) : rootKind ?? kindLabel(subject.kind)}
               </Typography>
             </Box>
+            {subject.id && (
+              <Typography
+                data-raw-id
+                sx={{
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  overflowWrap: 'anywhere',
+                  userSelect: 'text',
+                }}
+                color="text.secondary"
+              >
+                {subject.id}
+              </Typography>
+            )}
             <Typography sx={{ fontSize: 14, mt: 0.5 }}>
               {figures('CPU', formatCores, subject.cpu)}
             </Typography>

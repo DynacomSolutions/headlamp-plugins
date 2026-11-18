@@ -15,6 +15,7 @@ import { useNodesSettings } from '../settings';
 import { iconUrl } from './agents';
 import { Filters } from './Filters';
 import { enterBrowserFullscreen, KioskOverlay } from './Kiosk';
+import { NameContext, useNamespaceNames } from './names';
 import { NodesUrlState, parseNodesUrl, serialiseNodesUrl } from './nodesUrl';
 import { agentAlertText, NodeView } from './NodeView';
 import { buildCombinedTree } from './tree';
@@ -47,6 +48,11 @@ export function NodesPage(): JSX.Element {
     const picked = data.metrics.filter(m => state.nodes.includes(m.node));
     return picked.length ? picked : data.metrics;
   }, [data.metrics, state.nodes]);
+  const nsNames = useNamespaceNames();
+  const names = React.useMemo<NameContext>(
+    () => ({ overrides: settings.displayNames, namespaces: nsNames }),
+    [settings.displayNames, nsNames]
+  );
   const trees = React.useMemo(() => {
     const hostOf = (n: string) => data.agents.get(n) ?? null;
     const src = (n: string, id: string) => {
@@ -54,10 +60,10 @@ export function NodesPage(): JSX.Element {
       return h ? iconUrl(h.backend, id) : '';
     };
     return {
-      cpu: buildCombinedTree(selected, hostOf, 'cpu', src, state.cats),
-      mem: buildCombinedTree(selected, hostOf, 'memory', src, state.cats),
+      cpu: buildCombinedTree(selected, hostOf, 'cpu', src, state.cats, names),
+      mem: buildCombinedTree(selected, hostOf, 'memory', src, state.cats, names),
     };
-  }, [selected, data.agents, state.cats]);
+  }, [selected, data.agents, state.cats, names]);
   const alerts = selected
     .filter(m => data.nodeErrors.has(m.node))
     .map(m => `${m.node}: ${agentAlertText(data.nodeErrors.get(m.node) ?? '', data.agentsAsOf.get(m.node))}`);

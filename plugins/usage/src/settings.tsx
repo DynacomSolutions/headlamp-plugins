@@ -42,6 +42,21 @@ export function Settings(props: PluginSettingsDetailsProps) {
         onChange={e => set('idleSeconds', e.target.value)}
         fullWidth
       />
+      <TextField
+        label="Display names"
+        helperText="One id=Name per line, for example runwarden-runners=Runwarden. The id is a namespace, pod, container or arc key. It overrides every guessed name."
+        multiline
+        minRows={3}
+        value={
+          typeof (data as any)?.displayNames === 'string'
+            ? (data as any).displayNames
+            : Object.entries((data as any)?.displayNames ?? {})
+                .map(([k, v]) => `${k}=${v}`)
+                .join('\n')
+        }
+        onChange={e => set('displayNames', e.target.value)}
+        fullWidth
+      />
     </Box>
   );
 }

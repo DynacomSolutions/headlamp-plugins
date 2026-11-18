@@ -40,11 +40,14 @@ export interface AgentHost {
 export interface NodesSettings {
   agentBackends: string[];
   idleSeconds: number;
+  /** Arc id (or key) to display name: overrides every guess. */
+  displayNames: Record<string, string>;
 }
 
 export const DEFAULT_NODES_SETTINGS: NodesSettings = {
   agentBackends: ['service/agent-memory/agent-memory:80'],
   idleSeconds: 120,
+  displayNames: {},
 };
 
 const MIN_IDLE_SECONDS = 30;
@@ -171,6 +174,23 @@ export async function fetchAgentHosts(
 }
 
 /** Browser-local settings over the built-in defaults. Blank or bad values fall back. */
+/** Parses `id=Name` lines (or a ready object) into a map; bad lines are skipped. */
+export function parseDisplayNames(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw)) if (k && typeof v === 'string' && v) out[k] = v;
+    return out;
+  }
+  for (const line of String(raw ?? '').split(/\r?\n/)) {
+    const i = line.indexOf('=');
+    if (i < 1) continue;
+    const id = line.slice(0, i).trim();
+    const name = line.slice(i + 1).trim();
+    if (id && name) out[id] = name;
+  }
+  return out;
+}
+
 export function resolveNodesSettings(raw: unknown): NodesSettings {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const list = Array.isArray(r.agentBackends)
@@ -190,5 +210,6 @@ export function resolveNodesSettings(raw: unknown): NodesSettings {
     idleSeconds: hasIdle
       ? Math.max(MIN_IDLE_SECONDS, Math.round(idle))
       : DEFAULT_NODES_SETTINGS.idleSeconds,
+    displayNames: parseDisplayNames(r.displayNames),
   };
 }

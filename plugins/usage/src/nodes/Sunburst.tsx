@@ -23,6 +23,7 @@ import {
   CHAR_WIDTH,
 } from './arcLabel';
 import { ArcDatum, CENTRE, layoutSunburst } from './layout';
+import { nameOf } from './names';
 import { NodeTree, Resource, SunNode } from './tree';
 import { useIconUrl } from './useIconUrl';
 
@@ -270,8 +271,8 @@ export function Sunburst(props: {
         const fitted =
           compact || arc.gap
             ? null
-            : arcLabel(arc, arc.node.label, fontSize, iconSize !== null, iconSize ?? 0, 8);
-        const whole = !!fitted && fitted.text === arc.node.label;
+            : arcLabel(arc, nameOf(arc.node), fontSize, iconSize !== null, iconSize ?? 0, 8);
+        const whole = !!fitted && fitted.text === nameOf(arc.node);
         let label = fitted;
         if (icon) label = whole && (iconSize === null || fitted?.icon) ? fitted : null;
         const lone = icon && iconSize !== null && !label ? arcCentroid(arc) : null;
@@ -280,7 +281,7 @@ export function Sunburst(props: {
           : {
               role: 'button',
               tabIndex: 0,
-              'aria-label': `${arc.node.label}: ${fmt(resource, arc.node.value)}, ${formatPercent(
+              'aria-label': `${nameOf(arc.node)}: ${fmt(resource, arc.node.value)}, ${formatPercent(
                 arc.node.value,
                 tree.capacity
               )} ${arc.gap ? 'of capacity' : scope}`,
