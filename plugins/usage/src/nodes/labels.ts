@@ -47,10 +47,21 @@ export function unitLabel(name: string, orchestratorScopePrefix?: string): strin
   return s || name;
 }
 
-/** A friendly name for a systemd cgroup unit: user-1000.slice is "User 1000 session". */
+/**
+ * A friendly name for a systemd cgroup, from its path or its last segment: user-1000.slice is
+ * "User 1000 session", the user manager "User 1000 services", k3s.service is "k3s". The raw
+ * path stays the id.
+ */
 export function cgroupLabel(unit: string): string {
-  const s = unit.replace(/\.(slice|scope|service)$/, '');
+  const last = unit.replace(/\/+$/, '').split('/').pop() ?? '';
+  // systemd escapes unit names (\x2d is a dash).
+  const plain = last.replace(/\\x([0-9a-f]{2})/gi, (_m, h: string) =>
+    String.fromCharCode(parseInt(h, 16))
+  );
+  const s = plain.replace(/\.(slice|scope|service)$/, '');
   const session = /^user-(\d+)$/.exec(s);
   if (session) return `User ${session[1]} session`;
-  return s || unit;
+  const manager = /^user@(\d+)$/.exec(s);
+  if (manager) return `User ${manager[1]} services`;
+  return s || plain || unit;
 }

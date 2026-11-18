@@ -400,9 +400,27 @@ function systemChildren(sys: SystemUsage, r: Resource): SunNode[] {
   return out.sort(byValue);
 }
 
+/**
+ * The agent host with each unit's CPU and memory taken from the exporter's agent-unit series, when
+ * the node reports them. Those share their window and instant with the node used and the cgroup
+ * values, while the backend's own numbers come from another poll: mixing the two made the agent
+ * categories exceed the node used and left System empty. Units the series lack keep the backend's.
+ */
+function onSeriesBasis(agents: AgentHost, sys: SystemUsage | undefined): AgentHost {
+  if (!sys || sys.agentUnits.length === 0) return agents;
+  const series = new Map(sys.agentUnits.map(u => [u.unit, u]));
+  return {
+    ...agents,
+    units: agents.units.map(u => {
+      const s = series.get(u.name);
+      return s ? { ...u, cpuCores: s.cpuCores, memBytes: s.memBytes } : u;
+    }),
+  };
+}
+
 export function buildNodeTree(
   m: NodeMetrics,
-  agents: AgentHost | null,
+  hostState: AgentHost | null,
   r: Resource,
   iconSrc: (projectId: string) => string,
   categories: string[] = [],
@@ -411,7 +429,8 @@ export function buildNodeTree(
   const capacity = r === 'cpu' ? m.cpuCapacity : m.memCapacity;
   const used = r === 'cpu' ? m.cpuUsed : m.memUsed;
   const cats: SunNode[] = [kubernetes(m, r)];
-  if (agents) {
+  if (hostState) {
+    const agents = onSeriesBasis(hostState, m.system);
     const names = agents.orchestrators.map(o => ({ name: o.name, title: o.title }));
     for (const u of agents.units) {
       if (u.orchestrator && !names.some(n => n.name === u.orchestrator)) {
@@ -427,17 +446,15 @@ export function buildNodeTree(
   }
   const attributed = sum(cats);
   if (used !== null) {
+    const kids = m.system ? systemChildren(m.system, r) : [];
+    // System is what is left of the used; sampling skew can leave less than its own cgroups hold,
+    // and it must never vanish while they exist, so it is at least their sum (the root then
+    // scales every category down to fit).
+    const rest = Math.max(0, used - attributed);
     cats.push(
-      node(
-        'system',
-        'System',
-        'system',
-        Math.max(0, used - attributed),
-        m.system ? systemChildren(m.system, r) : [],
-        {
-          icon: { kind: 'mdi', name: 'cog' },
-        }
-      )
+      node('system', 'System', 'system', Math.max(rest, sum(kids)), kids, {
+        icon: { kind: 'mdi', name: 'cog' },
+      })
     );
   }
   // The root keeps the unfiltered total: a dropped category leaves its gap, nothing is rescaled.

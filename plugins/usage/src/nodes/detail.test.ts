@@ -141,4 +141,14 @@ describe('childRows', () => {
     expect(rows[1]).toMatchObject({ cpu: 1, mem: null });
     expect(childRows(cpu, mem, ['t3']).map(r => r.key)).toEqual(['t3/p:x', 't3/p:y']);
   });
+
+  it('shows friendly names and orders equal values by name', () => {
+    const mk = (label: string, key: string, displayName?: string) =>
+      n(key, 5, [], { label, displayName });
+    const t = tree(
+      n('root', 10, [mk('b.mount', 'k:b', 'Beta'), mk('a.mount', 'k:a', 'Alpha')]),
+      100
+    );
+    expect(childRows(t, t, []).map(r => r.label)).toEqual(['Alpha', 'Beta']);
+  });
 });

@@ -7,7 +7,9 @@ const s = (labels: Record<string, string>, v: number): MetricSample => ({
   value: [0, String(v)],
 });
 
-function results(partial: Partial<Record<QueryKey, MetricSample[]>>): Record<QueryKey, MetricSample[]> {
+function results(
+  partial: Partial<Record<QueryKey, MetricSample[]>>
+): Record<QueryKey, MetricSample[]> {
   const out = {} as Record<QueryKey, MetricSample[]>;
   for (const key of Object.keys(NODE_QUERIES) as QueryKey[]) {
     out[key] = partial[key] ?? [];
@@ -79,7 +81,7 @@ describe('assembleNodeMetrics', () => {
         podMem: [s({ node: 'a', namespace: 'n', pod: 'p1', container: 'c' }, 10)],
       })
     );
-    expect(nodes.map((n) => n.pods.map((p) => p.pod))).toEqual([['p1'], ['p2']]);
+    expect(nodes.map(n => n.pods.map(p => p.pod))).toEqual([['p1'], ['p2']]);
     expect(nodes[0].pods[0].memBytes).toBe(10);
     expect(nodes[1].pods[0].memBytes).toBe(0);
   });
@@ -87,10 +89,14 @@ describe('assembleNodeMetrics', () => {
   it('sorts nodes by name', () => {
     const nodes = assembleNodeMetrics(
       results({
-        kubeCpuCapacity: [s({ node: 'worker-2' }, 1), s({ node: 'mac-1' }, 1), s({ node: 'worker-1' }, 1)],
+        kubeCpuCapacity: [
+          s({ node: 'worker-2' }, 1),
+          s({ node: 'mac-1' }, 1),
+          s({ node: 'worker-1' }, 1),
+        ],
       })
     );
-    expect(nodes.map((n) => n.node)).toEqual(['mac-1', 'worker-1', 'worker-2']);
+    expect(nodes.map(n => n.node)).toEqual(['mac-1', 'worker-1', 'worker-2']);
   });
 });
 
@@ -112,19 +118,24 @@ describe('assembleNodeMetrics system series', () => {
     );
     expect(n.system?.cgroups).toEqual([
       { unit: 'system.slice', parent: '', agentUnit: '', cpuCores: 0.5, memBytes: 5e9 },
-      { unit: 'app-agent.scope', parent: 'user.slice', agentUnit: 'agent-1', cpuCores: 0, memBytes: 1e9 },
+      {
+        unit: 'app-agent.scope',
+        parent: 'user.slice',
+        agentUnit: 'agent-1',
+        cpuCores: 0,
+        memBytes: 1e9,
+      },
     ]);
     expect(n.system?.programs).toEqual([
       { unit: 'system.slice', program: 'sshd', cpuCores: 0.1, memBytes: 1e6 },
     ]);
+    expect(n.system?.agentUnits).toEqual([{ unit: 'agent-1', cpuCores: 0, memBytes: 1e9 }]);
     expect(n.system?.remainderMem).toBe(2e9);
     expect(n.system?.remainderCpu).toBeNull();
   });
 
   it('leaves system absent without cgroup info', () => {
-    const [n] = assembleNodeMetrics(
-      results({ kubeCpuCapacity: [s({ node: 'mac-1' }, 4)] })
-    );
+    const [n] = assembleNodeMetrics(results({ kubeCpuCapacity: [s({ node: 'mac-1' }, 4)] }));
     expect(n.system).toBeUndefined();
   });
 });
