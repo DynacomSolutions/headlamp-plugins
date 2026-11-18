@@ -98,4 +98,11 @@ describe('diagnosis engine', () => {
     expect(d.error).toMatch(/401/);
     expect(d.a2ui[0]).toHaveProperty('createSurface');
   });
+
+  it('fails with a clear error when the forced final turn returns no submit_diagnosis', async () => {
+    const mute = { name: 'x', complete: async () => ({ text: 'No.', stop: 'end', usage: { input: 0, output: 0 }, toolCalls: [] }) } as unknown as ModelClient;
+    const d = await diagnose({ alert, tools: host([]), model: mute, budget: 1, source: 'api' });
+    expect(d.status).toBe('failed');
+    expect(d.error).toBe('The model did not submit a diagnosis');
+  });
 });

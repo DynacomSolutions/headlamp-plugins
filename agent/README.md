@@ -179,8 +179,9 @@ and this environment:
 
 ```sh
 HEADLAMP_AGENT_MCP_URL=https://agent.example.com/mcp
-AGENT_MODEL=<model>  AGENT_MODEL_STYLE=openai|anthropic
+AGENT_MODEL=<model>  AGENT_MODEL_STYLE=openai|anthropic|responses
 AIS_GATEWAY_URL=<gateway app URL>  AIS_GATEWAY_TOKEN=<app token>
+# or several providers: AGENT_MODEL_ROUTES_FILE (see Model)
 HEADLAMP_INCIDENTS_URL=https://headlamp.example.com/c/main/incidents   # optional link
 ```
 
@@ -189,17 +190,90 @@ vmalert starts run in the cluster with no host.
 
 ## Model
 
-The model is configuration only. There is no SDK and no provider is fixed in
-the code. Two API styles are supported:
+Any model that the AIS Gateway serves can run a diagnosis. Model calls go only
+through gateway apps. There is no raw base URL and no raw API key setting. The
+model is chosen per run.
+
+A gateway app serves one provider, so each provider is one route. Three API
+styles exist: `anthropic` (Messages), `openai` (Chat Completions) and
+`responses` (OpenAI Responses, streamed). A model id is `<route>/<model>`, for
+example `claude/claude-sonnet-5-5`. A bare id uses the first route that lists
+it.
 
 | Variable | Meaning |
 | --- | --- |
-| `AGENT_MODEL` | Model id, for example the gateway pool's model |
-| `AGENT_MODEL_STYLE` | `openai` (Chat Completions) or `anthropic` (Messages) |
-| `AIS_GATEWAY_URL` / `AGENT_MODEL_BASE_URL` | Base URL (`…/chat/completions` or `…/v1/messages` is appended) |
-| `AIS_GATEWAY_TOKEN` / `AGENT_MODEL_API_KEY` | Bearer token |
-| `AGENT_MODEL_HEADERS` | Extra headers, JSON. `{session}` becomes the diagnosis id, for example `{"x-opencode-session":"{session}"}` |
-| `AGENT_MODEL_SYSTEM_PREFIX` | Text put before the system prompt, for endpoints that need it |
+| `AGENT_MODEL_ROUTES_FILE` | Path of a JSON array of routes (below) |
+| `AGENT_MODEL_ROUTES` | The same array, inline |
+| `AGENT_MODEL` | Default model id, used when a run names none |
+| `AGENT_MODEL_MAX_TOKENS` / `AGENT_MODEL_TIMEOUT_MS` | Defaults for routes that set neither |
+
+Each route names the environment variables that hold its gateway URL and app
+token. Both names must match `^AIS_GATEWAY_[A-Z0-9_]*(URL|TOKEN)$`, so a route
+cannot point at another endpoint. A route whose URL or token is empty is
+skipped and logged. The other routes keep working.
+
+```json
+[
+  { "id": "zai", "style": "openai", "urlEnv": "AIS_GATEWAY_ZAI_URL", "tokenEnv": "AIS_GATEWAY_ZAI_TOKEN" },
+  { "id": "claude", "style": "anthropic", "urlEnv": "AIS_GATEWAY_CLAUDE_URL", "tokenEnv": "AIS_GATEWAY_CLAUDE_TOKEN",
+    "systemPrefix": "You are Claude Code, Anthropic's official CLI for Claude." },
+  { "id": "codex", "style": "responses", "urlEnv": "AIS_GATEWAY_CODEX_URL", "tokenEnv": "AIS_GATEWAY_CODEX_TOKEN" },
+  { "id": "kimi", "style": "anthropic", "urlEnv": "AIS_GATEWAY_KIMI_URL", "tokenEnv": "AIS_GATEWAY_KIMI_TOKEN" },
+  { "id": "grok", "style": "openai", "urlEnv": "AIS_GATEWAY_GROK_URL", "tokenEnv": "AIS_GATEWAY_GROK_TOKEN",
+    "headers": { "x-grok-client-version": "1.0.70" } },
+  { "id": "opencode", "style": "openai", "urlEnv": "AIS_GATEWAY_OPENCODE_URL", "tokenEnv": "AIS_GATEWAY_OPENCODE_TOKEN",
+    "headers": { "x-opencode-session": "{session}" } },
+  { "id": "ali", "style": "anthropic", "urlEnv": "AIS_GATEWAY_ALI_URL", "tokenEnv": "AIS_GATEWAY_ALI_TOKEN" }
+]
+```
+
+```sh
+AGENT_MODEL_ROUTES_FILE=/etc/headlamp-agent/routes.json
+AGENT_MODEL=claude/claude-sonnet-5-5
+AIS_GATEWAY_CLAUDE_URL=https://gateway.example.com/gateway/headlamp-agent-claude
+AIS_GATEWAY_CLAUDE_TOKEN=<app token>
+```
+
+Route fields: `id`, `style`, `urlEnv`, `tokenEnv`, and optional `headers`
+(`{session}` becomes the diagnosis id), `systemPrefix` (text put before the
+system prompt), `models` (allowlist, also the list used when the gateway cannot
+list models), `maxTokens` and `timeoutMs`.
+
+Provider notes:
+
+- **claude**: the system prompt must start with the Claude Code identity line.
+  Set `systemPrefix` as shown.
+- **codex**: Responses API only (`POST {base}/responses`, streamed, `store:false`).
+  The agent sends no token limit there. The model list needs a client version,
+  which the agent adds.
+- **grok**: send the `x-grok-client-version` header on every call.
+- **opencode**: send the `x-opencode-session` header on every call.
+- **kimi, zai, ali**: `anthropic` or `openai`, as the gateway app is set up.
+- Every call carries a `headlamp-agent/<version>` user agent, because some
+  providers refuse a default library one.
+
+The agent lists models from `GET {base}/models` (then `{base}/v1/models`) and
+caches the result for 10 minutes. It accepts the OpenAI, Anthropic and Codex
+list shapes.
+
+**Single route (older setting).** With no routes configured, one route named
+`gateway` is built from `AIS_GATEWAY_URL`, `AIS_GATEWAY_TOKEN`,
+`AGENT_MODEL_STYLE` (`openai`, `anthropic` or `responses`), `AGENT_MODEL_HEADERS`
+(JSON) and `AGENT_MODEL_SYSTEM_PREFIX`. `AGENT_MODEL` is the model id.
+
+**Choosing the model.**
+
+- `GET /api/models` returns `{ default, models: [{ id, route, name }] }`.
+- `POST /api/diagnoses` accepts `"model": "<route>/<model>"`. An unknown id gets
+  a 400 that lists the valid ids.
+- A webhook alert picks a model with the `agent_model` annotation or label. An
+  unknown value logs a warning and uses the default.
+- A run that a restart interrupted resumes with its recorded model. Each
+  diagnosis stores the full id in `model`.
+- The ACP agent returns a `model` select option from `session/new` (grouped by
+  route) and accepts `session/set_config_option`, so a host such as T3 Code
+  shows a model picker. The listing wait is capped at 5 seconds, then the
+  configured lists are used.
 
 Without a model, the MCP server still works, and alerts are recorded but not
 diagnosed.
