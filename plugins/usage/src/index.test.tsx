@@ -17,7 +17,7 @@ import './index';
 describe('routes', () => {
   it('renders the dashboard and its legacy redirect at full width', () => {
     const byPath = (p: string) => registerRoute.mock.calls.map(c => c[0]).find(r => r.path === p);
-    expect(byPath('/usage/dashboard').isFullWidth).toBe(true);
+    expect(byPath('/usage/dashboard/:zoom*').isFullWidth).toBe(true);
     expect(byPath('/usage/nodes').isFullWidth).toBe(true);
   });
 });
