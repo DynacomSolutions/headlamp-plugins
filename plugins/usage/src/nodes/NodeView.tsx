@@ -11,7 +11,7 @@ import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
-import { childRows, detailFor, selectionFor } from './detail';
+import { childRows, detailFor, selectionFor, valueAt } from './detail';
 import { DetailPanel } from './DetailPanel';
 import { Sunburst } from './Sunburst';
 import { NodeTree, Resource } from './tree';
@@ -23,8 +23,22 @@ const MIN_CHART = 200;
 /** Room the heading and the used text above a chart need. */
 const CHART_HEAD = 64;
 
-export function usedText(tree: NodeTree, resource: Resource): string {
+/**
+ * The line under a chart heading. At the root: used against capacity. Zoomed in (`focus` not
+ * empty): the total of the focus node in this tree, with no share of capacity.
+ */
+export function usedText(
+  tree: NodeTree,
+  resource: Resource,
+  focus: string[] = [],
+  focusName = ''
+): string {
   const fmt = resource === 'cpu' ? formatCores : formatBytes;
+  if (focus.length > 0) {
+    const v = valueAt(tree, focus);
+    if (v === null) return `no ${resource === 'cpu' ? 'CPU' : 'memory'} data`;
+    return `${fmt(v)} in ${focusName}`;
+  }
   if (tree.used === null) return `${fmt(tree.root.value)} attributed of ${fmt(tree.capacity)}`;
   return `${fmt(tree.used)} of ${fmt(tree.capacity)} (${formatPercent(tree.used, tree.capacity)})`;
 }
@@ -40,6 +54,14 @@ export function agentAlertText(error: string, asOf?: number): string {
 export const NO_HOST_METRICS =
   'No host metrics for this node: the charts show only what Kubernetes and the agents report, against capacity.';
 
+/** A phone is a viewport whose short side is under 600 px. Portrait is not wider than tall. */
+function viewportKind(): { phone: boolean; portrait: boolean } {
+  return {
+    phone: Math.min(window.innerWidth, window.innerHeight) < 600,
+    portrait: window.innerWidth <= window.innerHeight,
+  };
+}
+
 /**
  * The size of an element, kept current with a ResizeObserver. In kiosk the element fills the
  * rest of the screen, so its own height is the room. Otherwise the room is what is left of the
@@ -48,13 +70,18 @@ export const NO_HOST_METRICS =
 function useBox(
   ref: React.RefObject<HTMLElement>,
   kiosk: boolean
-): { width: number; height: number } {
-  const [box, setBox] = React.useState({ width: 0, height: window.innerHeight });
+): { width: number; height: number; phone: boolean; portrait: boolean } {
+  const [box, setBox] = React.useState({
+    width: 0,
+    height: window.innerHeight,
+    ...viewportKind(),
+  });
   React.useEffect(() => {
     const el = ref.current;
     if (!el) return undefined;
     const update = () =>
       setBox({
+        ...viewportKind(),
         width: el.clientWidth,
         height: kiosk
           ? el.clientHeight
@@ -77,10 +104,22 @@ function useBox(
  * Landscape (wider than tall): CPU and Memory side by side, each as wide as half the width and
  * as tall as the room under its heading allows. Portrait: side by side when each is then at
  * least 45% of the width, else one above the other.
+ * On a phone the page scrolls, so the height does not limit the charts: in portrait they are
+ * stacked, each as wide as the room; in landscape they are side by side, half the width each.
+ * `portrait` is the viewport's, and defaults to the room being no wider than tall.
  */
-export function chartLayout(width: number, height: number): { size: number; twoUp: boolean } {
+export function chartLayout(
+  width: number,
+  height: number,
+  phone = false,
+  portrait = width <= height
+): { size: number; twoUp: boolean } {
   const clamp = (v: number) => Math.floor(Math.max(MIN_CHART, v));
-  const beside = Math.min((width - GAP) / 2, height - CHART_HEAD);
+  if (phone) {
+    return portrait
+      ? { size: clamp(width), twoUp: false }
+      : { size: clamp((width - GAP) / 2), twoUp: true };
+  }  const beside = Math.min((width - GAP) / 2, height - CHART_HEAD);
   if (width > height || beside >= 0.45 * width) return { size: clamp(beside), twoUp: true };
   return { size: clamp(Math.min(width, (height - 2 * CHART_HEAD - GAP) / 2)), twoUp: false };
 }
@@ -120,21 +159,33 @@ export function NodeView(props: {
     // The whole selection: all selected nodes, or the one node, with the server icon.
     return { ...root, kind: 'node' as const, icon: { kind: 'mdi' as const, name: 'server' } };
   }, [chosen, selection, cpu, mem, detail.path]);
-  const rootKind = cpu.nodeRing || mem.nodeRing ? 'Selection' : 'Node';
-  const rows = React.useMemo(() => childRows(cpu, mem, base), [cpu, mem, base]);
+  // The kind line names the node or the selection only at the root. A zoomed section keeps its own kind.
+  const rootKind = detail.path.length > 0 ? undefined : cpu.nodeRing || mem.nodeRing ? 'Selection' : 'Node';
+  const rows = React.useMemo(() => childRows(cpu, mem, base, detail.path), [
+    cpu,
+    mem,
+    base,
+    detail.path,
+  ]);
   const ref = React.useRef<HTMLDivElement>(null);
   const box = useBox(ref, kiosk);
-  const { size, twoUp } = chartLayout(box.width, box.height);
+  const { size, twoUp } = chartLayout(
+    box.width,
+    box.height,
+    // In kiosk the charts fill the screen and do not scroll, so the phone rule is for the page only.
+    box.phone && !kiosk,
+    box.portrait
+  );
   const centreSubject = { label: detail.focus.label, icon: detail.focus.icon };
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
 
   const chart = (resource: Resource, tree: NodeTree) => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0, flex: '0 0 auto' }}>
       <Typography variant="h6" component="h3">
         {resource === 'cpu' ? 'CPU' : 'Memory'}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontSize: 14 }}>
-        {usedText(tree, resource)}
+        {usedText(tree, resource, detail.path, detail.focus.label)}
       </Typography>
       <Sunburst
         tree={tree}
@@ -215,6 +266,8 @@ export function NodeView(props: {
         subject={subject}
         selected={chosen}
         rows={rows}
+        zoomed={detail.path.length > 0}
+        section={detail.focus.label}
         onSelect={key => onSelect([...base, key])}
       />
       <Box

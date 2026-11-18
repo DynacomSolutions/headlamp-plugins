@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ ApiProxy: { request: vi.fn() } }));
 vi.mock('@iconify/react', () => ({ Icon: () => null }));
 
-import { agentAlertText, chartLayout, threadHref } from './NodeView';
+import { formatCores } from '../units';
+import { figures } from './DetailPanel';
+import { agentAlertText, chartLayout, threadHref, usedText } from './NodeView';
+import type { NodeTree } from './tree';
 
 describe('chartLayout', () => {
   it('puts CPU and Memory side by side in landscape, half the width each', () => {
@@ -28,9 +31,76 @@ describe('chartLayout', () => {
     expect(chartLayout(100, 110).twoUp).toBe(false);
   });
 
+  it('stacks full width charts on a phone in portrait', () => {
+    expect(chartLayout(390, 700, true, true)).toEqual({ size: 390, twoUp: false });
+    // The page scrolls, so a short room does not shrink them.
+    expect(chartLayout(390, 250, true, true)).toEqual({ size: 390, twoUp: false });
+  });
+
+  it('puts the charts side by side on a phone in landscape, whatever the height', () => {
+    expect(chartLayout(844, 250, true, false)).toEqual({ size: 414, twoUp: true });
+    expect(chartLayout(844, 250, true)).toEqual({ size: 414, twoUp: true });
+  });
+
+  it('leaves the desktop layout alone when it is not a phone', () => {
+    expect(chartLayout(390, 700, false, true)).toEqual(chartLayout(390, 700));
+    expect(chartLayout(1800, 700, false, false)).toEqual({ size: 636, twoUp: true });
+  });
+
   it('never goes below 200 px, and has no upper limit', () => {
     expect(chartLayout(1000, 200).size).toBe(200);
     expect(chartLayout(6000, 3000).size).toBe(2936);
+  });
+});
+
+const tree: NodeTree = {
+  root: {
+    key: 'root',
+    label: 'root',
+    value: 4,
+    kind: 'category',
+    children: [{ key: 'sys', label: 'sys', displayName: 'System', value: 3, kind: 'system', children: [] }],
+  },
+  capacity: 8,
+  used: 4,
+  hostMetrics: true,
+};
+
+describe('usedText', () => {
+  it('shows used against capacity at the root', () => {
+    expect(usedText(tree, 'cpu')).toBe('4.00 cores of 8.00 cores (50%)');
+  });
+
+  it('shows the focus total when zoomed, with no capacity share', () => {
+    expect(usedText(tree, 'cpu', ['sys'], 'System')).toBe('3.00 cores in System');
+  });
+
+  it('says so when the tree does not have the focus', () => {
+    expect(usedText(tree, 'cpu', ['nope'], 'X')).toBe('no CPU data');
+    expect(usedText(tree, 'memory', ['nope'], 'X')).toBe('no memory data');
+  });
+});
+
+describe('detail figures', () => {
+  const info = { value: 2, ofCapacity: 0.25, ofParent: 0.5, ofRoot: 0.4 };
+  const fig = (zoomed: boolean, selected: boolean, i = info) =>
+    figures('CPU', formatCores, i, { zoomed, section: 'System', selected });
+
+  it('shows the share of capacity at the root', () => {
+    expect(fig(false, true)).toBe('CPU: 2.00 cores, 25% of capacity');
+    expect(fig(false, false)).toBe('CPU: 2.00 cores, 25% of capacity');
+  });
+
+  it('shows the share of the active section for a selection when zoomed', () => {
+    expect(fig(true, true)).toBe('CPU: 2.00 cores, 40% of System');
+  });
+
+  it('keeps unused capacity as a share of capacity', () => {
+    expect(fig(true, true, { ...info, ofRoot: null })).toBe('CPU: 2.00 cores, 25% of capacity');
+  });
+
+  it('shows the value only for the zoom root', () => {
+    expect(fig(true, false)).toBe('CPU: 2.00 cores');
   });
 });
 

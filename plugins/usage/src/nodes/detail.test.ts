@@ -142,6 +142,23 @@ describe('childRows', () => {
     expect(childRows(cpu, mem, ['t3']).map(r => r.key)).toEqual(['t3/p:x', 't3/p:y']);
   });
 
+  it('gives each child its share of capacity at the root', () => {
+    const rows = childRows(cpu, mem, ['t3']);
+    expect(rows[0]).toMatchObject({ key: 't3/p:x', cpuShare: 2 / 8, memShare: 50 / 1000 });
+  });
+
+  it('gives shares of the focus node in each tree when zoomed', () => {
+    const rows = childRows(cpu, mem, ['t3'], ['t3']);
+    expect(rows[0]).toMatchObject({ key: 't3/p:x', cpuShare: 2 / 3, memShare: 50 / 200 });
+    const y = rows.find(r => r.key === 't3/p:y');
+    expect(y).toMatchObject({ cpu: null, cpuShare: null, memShare: 100 / 200 });
+  });
+
+  it('sorts by share of the focus when zoomed', () => {
+    // Of capacity y is 0.1 and x is 0.3; of t3 (cpu 3, mem 200) x is 2/3 + 1/4, y is 1/2.
+    expect(childRows(cpu, mem, ['t3'], ['t3']).map(r => r.key)).toEqual(['t3/p:x', 't3/p:y']);
+  });
+
   it('shows friendly names and orders equal values by name', () => {
     const mk = (label: string, key: string, displayName?: string) =>
       n(key, 5, [], { label, displayName });

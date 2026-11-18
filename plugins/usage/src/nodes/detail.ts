@@ -19,6 +19,11 @@ function exact(tree: NodeTree, keys: string[]): SunNode | undefined {
   return p.length === keys.length + 1 ? p[p.length - 1] : undefined;
 }
 
+/** The value of the node at exactly `keys` in `tree`, or null when the tree does not have it. */
+export function valueAt(tree: NodeTree, keys: string[]): number | null {
+  return exact(tree, keys)?.value ?? null;
+}
+
 export function detailFor(cpu: NodeTree, mem: NodeTree, path: string[]): Detail {
   const cpuPath = findPath(cpu.root, path);
   const memPath = findPath(mem.root, path);
@@ -121,10 +126,25 @@ export interface ChildRow {
   icon?: SunNode['icon'];
   cpu: number | null;
   mem: number | null;
+  /** Share of the active section (see `childRows`). Null with no value or no base. */
+  cpuShare: number | null;
+  memShare: number | null;
 }
 
-/** The children of the node at `base` in either chart, biggest share of capacity first. */
-export function childRows(cpu: NodeTree, mem: NodeTree, base: string[]): ChildRow[] {
+/**
+ * The children of the node at `base` in either chart, biggest share first. The active section is
+ * the zoom focus `zoom`: when it is not the root, shares are of that node's value in each tree.
+ * At the root they are of capacity.
+ */
+export function childRows(
+  cpu: NodeTree,
+  mem: NodeTree,
+  base: string[],
+  zoom: string[] = []
+): ChildRow[] {
+  const baseOf = (tree: NodeTree) => (zoom.length > 0 ? valueAt(tree, zoom) ?? 0 : tree.capacity);
+  const cpuBase = baseOf(cpu);
+  const memBase = baseOf(mem);
   const rows = new Map<string, ChildRow>();
   const add = (tree: NodeTree, field: 'cpu' | 'mem') => {
     for (const ch of exact(tree, base)?.children ?? []) {
@@ -134,16 +154,19 @@ export function childRows(cpu: NodeTree, mem: NodeTree, base: string[]): ChildRo
         icon: ch.icon,
         cpu: null,
         mem: null,
+        cpuShare: null,
+        memShare: null,
       };
       row[field] = ch.value;
+      const of = field === 'cpu' ? cpuBase : memBase;
+      row[field === 'cpu' ? 'cpuShare' : 'memShare'] = of > 0 ? ch.value / of : null;
       rows.set(ch.key, row);
     }
   };
   add(cpu, 'cpu');
   add(mem, 'mem');
   const weight = (r: ChildRow) =>
-    (cpu.capacity > 0 ? (r.cpu ?? 0) / cpu.capacity : 0) +
-    (mem.capacity > 0 ? (r.mem ?? 0) / mem.capacity : 0);
+    (cpuBase > 0 ? (r.cpu ?? 0) / cpuBase : 0) + (memBase > 0 ? (r.mem ?? 0) / memBase : 0);
   return [...rows.values()].sort(
     (a, b) => weight(b) - weight(a) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0)
   );

@@ -268,16 +268,30 @@ describe('Sunburst', () => {
     expect(getByRole('img')).not.toBeNull();
   });
 
-  it('describes the focus in the centre: name, value, share of node and of parent', () => {
+  it('describes the zoomed focus in the centre: name and value only', () => {
     const { container } = render(
       <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={1200} />
     );
     const line = (k: string) => container.querySelector(`[data-centre-line="${k}"]`)?.textContent;
     expect(line('title')).toBe('p:x');
     expect(line('value')).toBe('2.00 cores');
-    expect(line('node')).toBe('13% of node');
-    expect(line('parent')).toBe('33% of parent');
+    expect(line('node')).toBeUndefined();
+    expect(line('parent')).toBeUndefined();
     expect(container.querySelector('foreignObject [data-icon="lucide:box"]')).not.toBeNull();
+  });
+
+  it('gives arc percentages of the focus when zoomed', () => {
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={['t3']} size={600} />
+    );
+    const labels = [...container.querySelectorAll('path[aria-label]')].map(p =>
+      p.getAttribute('aria-label')
+    );
+    expect(labels.length).toBeGreaterThan(0);
+    for (const l of labels) {
+      expect(l).toContain('of t3');
+      expect(l).not.toContain('of node');
+    }
   });
 
   it('has no share of parent at the root', () => {

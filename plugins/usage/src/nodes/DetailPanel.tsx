@@ -1,7 +1,7 @@
 /*
  * A compact strip under the toolbar with the details of the selected segment (or, with nothing
  * selected, of the zoom root): its icon, name, raw id and kind, the CPU and memory it holds with
- * the share of capacity, of its parent and of the zoom root, and a thread link. Under it a
+ * its share of the active section (the zoom focus, or capacity at the root), and a thread link. Under it a
  * horizontal, scrollable row of chips, one per child, sorted by value; tapping a chip selects that
  * child, as tapping its arc does. Touch sized.
  */
@@ -61,12 +61,31 @@ export function SegmentIcon(props: { icon?: Selection['icon']; size?: number }) 
   return <Icon icon={name} width={size} height={size} />;
 }
 
-function figures(label: string, fmt: (v: number) => string, info: SegmentInfo | null): string {
+/**
+ * The value and its share of the active section. At the root that is capacity. When zoomed it is
+ * the focus node (`section`); the zoom root itself then shows its value only.
+ */
+export function figures(
+  label: string,
+  fmt: (v: number) => string,
+  info: SegmentInfo | null,
+  opts: { zoomed: boolean; section: string; selected: boolean }
+): string {
   if (!info) return `${label}: no data`;
-  const parts = [`${fmt(info.value)}`, `${formatPercent(info.ofCapacity, 1)} of capacity`];
-  if (info.ofParent !== null) parts.push(`${formatPercent(info.ofParent, 1)} of parent`);
-  if (info.ofRoot !== null) parts.push(`${formatPercent(info.ofRoot, 1)} of root`);
+  const parts = [fmt(info.value)];
+  if (!opts.zoomed) parts.push(`${formatPercent(info.ofCapacity, 1)} of capacity`);
+  else if (opts.selected) {
+    parts.push(
+      info.ofRoot === null
+        ? `${formatPercent(info.ofCapacity, 1)} of capacity`
+        : `${formatPercent(info.ofRoot, 1)} of ${opts.section}`
+    );
+  }
   return `${label}: ${parts.join(', ')}`;
+}
+
+function withShare(value: string, share: number | null): string {
+  return share === null ? value : `${value} (${formatPercent(share, 1)})`;
 }
 
 export function DetailPanel(props: {
@@ -76,9 +95,14 @@ export function DetailPanel(props: {
   /** Kind line when nothing is selected (the zoom root). */
   rootKind?: string;
   rows: ChildRow[];
+  /** The zoom focus is not the root. */
+  zoomed?: boolean;
+  /** Name of the active section (the zoom focus). */
+  section: string;
   onSelect: (key: string) => void;
 }): JSX.Element {
-  const { subject, selected, rootKind, rows, onSelect } = props;
+  const { subject, selected, rootKind, rows, zoomed = false, section, onSelect } = props;
+  const opts = { zoomed, section, selected };
   return (
     <Box
       data-detail-panel
@@ -111,8 +135,8 @@ export function DetailPanel(props: {
               </Typography>
             )}
           </Box>
-          <Typography sx={{ fontSize: 14 }}>{figures('CPU', formatCores, subject.cpu)}</Typography>
-          <Typography sx={{ fontSize: 14 }}>{figures('Memory', formatBytes, subject.mem)}</Typography>
+          <Typography sx={{ fontSize: 14 }}>{figures('CPU', formatCores, subject.cpu, opts)}</Typography>
+          <Typography sx={{ fontSize: 14 }}>{figures('Memory', formatBytes, subject.mem, opts)}</Typography>
           {subject.href && /^https?:\/\//i.test(subject.href) && (
             <Button
               component="a"
@@ -148,8 +172,8 @@ export function DetailPanel(props: {
           >
             {r.label}
             <Box component="span" sx={{ ml: 1, color: 'text.secondary' }}>
-              {r.cpu === null ? 'no CPU' : formatCores(r.cpu)} /{' '}
-              {r.mem === null ? 'no memory' : formatBytes(r.mem)}
+              {r.cpu === null ? 'no CPU' : withShare(formatCores(r.cpu), r.cpuShare)} /{' '}
+              {r.mem === null ? 'no memory' : withShare(formatBytes(r.mem), r.memShare)}
             </Box>
           </Button>
         ))}

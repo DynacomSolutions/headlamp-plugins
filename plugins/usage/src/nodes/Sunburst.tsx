@@ -153,7 +153,11 @@ export function Sunburst(props: {
   // The selected arc is drawn last, so its outline and growth are not covered.
   const drawn = [...items].sort((a, b) => Number(isSelected('', a.arc)) - Number(isSelected('', b.arc)));
   const name = resource === 'cpu' ? 'CPU' : 'Memory';
-  const scope = tree.nodeRing ? 'of selection' : 'of node';
+  // Zoomed in, percentages are of the active section (the focus node), not of capacity.
+  const zoomed = focus.length > 0;
+  const sectionName = subject?.label ?? centre.title;
+  const scope = zoomed ? `of ${sectionName}` : tree.nodeRing ? 'of selection' : 'of node';
+  const base = zoomed ? focusNode.value : tree.capacity;
   // This chart has no data for the focus when its tree resolves a shorter path.
   const missing = shown.length < focus.length;
   const up = focus.length ? focus.slice(0, -1) : null;
@@ -200,10 +204,10 @@ export function Sunburst(props: {
           },
         };
 
-  const top = [...tree.root.children]
+  const top = [...(zoomed ? focusNode : tree.root).children]
     .sort((a, b) => b.value - a.value)
     .slice(0, 5)
-    .map(c => `${c.label} ${formatPercent(c.value, tree.capacity)}`)
+    .map(c => `${c.label} ${formatPercent(c.value, base)}`)
     .join(', ');
   const aria = `${name} usage by group: ${top}`;
   const fontSize = Math.max(MIN_FONT, size / 40);
@@ -222,6 +226,8 @@ export function Sunburst(props: {
         icon: !!centreIcon,
         ...(missing
           ? { value: `no ${resource === 'cpu' ? 'CPU' : 'memory'} data` }
+          : zoomed
+          ? { value: fmt(resource, centre.value) }
           : {
               value: fmt(resource, centre.value),
               node: `${formatPercent(centre.share, 1)} ${scope}`,
@@ -286,8 +292,8 @@ export function Sunburst(props: {
               tabIndex: 0,
               'aria-label': `${nameOf(arc.node)}: ${fmt(resource, arc.node.value)}, ${formatPercent(
                 arc.node.value,
-                tree.capacity
-              )} ${arc.gap ? 'of capacity' : scope}`,
+                base
+              )} ${arc.gap && !zoomed ? 'of capacity' : scope}`,
             };
         return (
           <g key={id}>
@@ -372,6 +378,8 @@ export function Sunburst(props: {
       />
       <g style={{ pointerEvents: 'none' }} textAnchor="middle" fill={theme.palette.text.primary}>
         {compact ? (
+          // Zoomed in, 100% of the focus says nothing, so the compact centre stays empty.
+          !zoomed && (
           <text
             y={0}
             dominantBaseline="central"
@@ -380,6 +388,7 @@ export function Sunburst(props: {
           >
             {Math.round(centre.share * 100)}%
           </text>
+          )
         ) : (
           lines.map(l =>
             l.kind === 'icon' ? (
