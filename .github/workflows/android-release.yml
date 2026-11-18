@@ -44,9 +44,9 @@ jobs:
         run: ./gradlew --no-daemon testDebugUnitTest bundleRelease
       - name: Verify the signer
         run: |
-          actual="$(keytool -printcert -jarfile android/app/build/outputs/bundle/release/app-release.aab | sed -n 's/^ *SHA256: *//p' | head -n 1)"
+          actual="$(keytool -printcert -jarfile android/app/build/outputs/bundle/release/app-release.aab | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -n 1)"
           if [ "$actual" != "$EXPECTED_SHA256" ]; then
-            echo "::error::The bundle signer does not match the expected upload certificate."
+            echo "::error::The bundle signer does not match the expected upload certificate. Actual SHA-256: ${actual:-none}"
             exit 1
           fi
           echo "Signer matches the expected upload certificate."
