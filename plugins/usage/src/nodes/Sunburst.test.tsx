@@ -30,10 +30,15 @@ const tree: NodeTree = {
   hostMetrics: true,
 };
 
-// jsdom has no PointerEvent: MouseEvent carries the coordinates the component reads.
-if (!window.PointerEvent) {
-  (window as unknown as { PointerEvent: typeof MouseEvent }).PointerEvent = MouseEvent;
+// jsdom has no PointerEvent: a MouseEvent subclass carries pointerId and the coordinates.
+class TestPointerEvent extends MouseEvent {
+  pointerId: number;
+  constructor(type: string, init: MouseEventInit & { pointerId?: number } = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 1;
+  }
 }
+(window as unknown as { PointerEvent: unknown }).PointerEvent = TestPointerEvent;
 
 afterEach(cleanup);
 
@@ -111,5 +116,42 @@ describe('Sunburst', () => {
     const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={600} />);
     expect(container.querySelectorAll('text[data-arc-label]').length).toBeGreaterThan(0);
     expect(container.querySelector('foreignObject [data-icon="lucide:box"]')).not.toBeNull();
+  });
+
+  it('ignores a pointerup from another pointer', () => {
+    const onFocus = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onFocus={onFocus} />
+    );
+    const arc = container.querySelector('path[data-key="k8s"]') as Element;
+    fireEvent.pointerDown(arc, { pointerId: 1 });
+    fireEvent.pointerUp(arc, { pointerId: 2 });
+    expect(onFocus).not.toHaveBeenCalled();
+    fireEvent.pointerUp(arc, { pointerId: 1 });
+    expect(onFocus).toHaveBeenCalledTimes(1);
+  });
+
+  it('pointercancel then pointerup does not focus', () => {
+    const onFocus = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onFocus={onFocus} />
+    );
+    const arc = container.querySelector('path[data-key="k8s"]') as Element;
+    fireEvent.pointerDown(arc, { pointerId: 1 });
+    fireEvent.pointerCancel(arc, { pointerId: 1 });
+    fireEvent.pointerUp(arc, { pointerId: 1 });
+    expect(onFocus).not.toHaveBeenCalled();
+  });
+
+  it('never draws text under 14 px and truncates long centre titles', () => {
+    const long: NodeTree = {
+      ...tree,
+      root: { ...tree.root, label: 'a-very-long-node-title-here' },
+    };
+    const { container } = render(<Sunburst tree={long} resource="cpu" focus={[]} size={300} />);
+    container.querySelectorAll('text').forEach(t => {
+      expect(Number(t.getAttribute('font-size'))).toBeGreaterThanOrEqual(14);
+    });
+    expect(container.textContent).toContain('\u2026');
   });
 });

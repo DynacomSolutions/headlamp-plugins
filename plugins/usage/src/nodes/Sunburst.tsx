@@ -13,6 +13,8 @@ import { useIconUrl } from './useIconUrl';
 
 const MOVE_LIMIT = 10;
 const CENTRE = 0.3;
+const MIN_FONT = 14;
+const CHAR_WIDTH = 0.6;
 const FALLBACK_ICON = { kind: 'mdi' as const, name: 'folder' };
 
 function fmt(resource: Resource, v: number): string {
@@ -55,7 +57,7 @@ export function Sunburst(props: {
   const theme = useTheme();
   const radius = size / 2;
   const [pressed, setPressed] = React.useState<string | null>(null);
-  const start = React.useRef<{ x: number; y: number } | null>(null);
+  const start = React.useRef<{ id: number; x: number; y: number } | null>(null);
 
   const { arcs, centre } = React.useMemo(
     () => layoutSunburst(tree, focus, { radius, rings, mode: theme.palette.mode }),
@@ -71,24 +73,32 @@ export function Sunburst(props: {
     .cornerRadius(2)
     .padAngle(0.004);
 
+  const release = (pointerId: number) => {
+    if (start.current && start.current.id !== pointerId) return;
+    start.current = null;
+    setPressed(null);
+  };
+
   const handlers = (id: string, target: string[] | null) =>
     compact
       ? {}
       : {
           onPointerDown: (e: React.PointerEvent) => {
-            start.current = { x: e.clientX, y: e.clientY };
+            if (start.current) return;
+            start.current = { id: e.pointerId, x: e.clientX, y: e.clientY };
             setPressed(id);
           },
           onPointerUp: (e: React.PointerEvent) => {
             const s = start.current;
+            if (!s || s.id !== e.pointerId) return;
             start.current = null;
             setPressed(null);
-            if (!s || !target) return;
+            if (!target) return;
             if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > MOVE_LIMIT) return;
             onFocus?.(target);
           },
-          onPointerLeave: () => setPressed(null),
-          onPointerCancel: () => setPressed(null),
+          onPointerLeave: (e: React.PointerEvent) => release(e.pointerId),
+          onPointerCancel: (e: React.PointerEvent) => release(e.pointerId),
         };
 
   const top = [...tree.root.children]
@@ -97,7 +107,13 @@ export function Sunburst(props: {
     .map(c => `${c.label} ${formatPercent(c.value, tree.capacity)}`)
     .join(', ');
   const aria = `${resource === 'cpu' ? 'CPU' : 'Memory'} usage by group: ${top}`;
-  const fontSize = Math.max(9, size / 40);
+  const fontSize = Math.max(MIN_FONT, size / 40);
+  const fits = (text: string, width: number) => text.length * fontSize * CHAR_WIDTH <= width;
+  const clip = (text: string, width: number) => {
+    const max = Math.max(1, Math.floor(width / (fontSize * CHAR_WIDTH)));
+    return text.length <= max ? text : `${text.slice(0, Math.max(1, max - 1))}\u2026`;
+  };
+  const discWidth = radius * CENTRE * 1.6;
 
   return (
     <svg
@@ -140,20 +156,23 @@ export function Sunburst(props: {
                 <ArcIcon icon={arc.node.icon} size={iconSize} />
               </g>
             )}
-            {!compact && arc.label && (
-              <text
-                data-arc-label
-                x={cx}
-                y={arc.showIcon && arc.node.icon ? cy + iconSize / 2 : cy}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize={fontSize}
-                fill={theme.palette.getContrastText(arc.fill)}
-                style={{ pointerEvents: 'none' }}
-              >
-                {arc.label}
-              </text>
-            )}
+            {!compact &&
+              arc.label &&
+              fits(arc.label, ((arc.x1 - arc.x0) * (arc.y0 + arc.y1)) / 2 - 4) &&
+              ringW >= fontSize + 4 && (
+                <text
+                  data-arc-label
+                  x={cx}
+                  y={arc.showIcon && arc.node.icon ? cy + iconSize / 2 : cy}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={fontSize}
+                  fill={theme.palette.getContrastText(arc.fill)}
+                  style={{ pointerEvents: 'none' }}
+                >
+                  {arc.label}
+                </text>
+              )}
           </g>
         );
       })}
@@ -168,15 +187,19 @@ export function Sunburst(props: {
       <g style={{ pointerEvents: 'none' }} textAnchor="middle" fill={theme.palette.text.primary}>
         {!compact && (
           <text y={-fontSize * 1.4} fontSize={fontSize} fill={theme.palette.text.secondary}>
-            {centre.title}
+            {clip(centre.title, discWidth)}
           </text>
         )}
-        <text y={compact ? 0 : fontSize * 0.4} fontSize={fontSize * 1.8} fontWeight={600}>
+        <text
+          y={compact ? 0 : fontSize * 0.4}
+          fontSize={Math.min(fontSize * 1.8, discWidth / 3 / CHAR_WIDTH)}
+          fontWeight={600}
+        >
           {Math.round(centre.share * 100)}%
         </text>
         {!compact && (
           <text y={fontSize * 2} fontSize={fontSize} fill={theme.palette.text.secondary}>
-            {fmt(resource, centre.value)}
+            {clip(fmt(resource, centre.value), discWidth)}
           </text>
         )}
       </g>
