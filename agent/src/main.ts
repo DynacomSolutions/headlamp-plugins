@@ -19,7 +19,10 @@ async function main(): Promise<void> {
       if (stopping) process.exit(1);
       stopping = true;
       // Readiness turns 503, new connections stop, and the running diagnosis finishes. No timer: the platform kill is the only limit.
-      void server.close().then(() => process.exit(0));
+      server
+        .close()
+        .catch(error => process.stderr.write(`shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`))
+        .finally(() => process.exit(0));
     };
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
