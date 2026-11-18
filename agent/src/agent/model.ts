@@ -114,6 +114,14 @@ export class ModelClient {
     return this.openai(r);
   }
 
+  /** Anthropic style: a prefix goes out as its own first block, as the upstream rejects it inside one string. */
+  private systemBlocks(text: string, mustCall?: string): string | Array<{ type: 'text'; text: string }> {
+    const prefix = this.route.systemPrefix;
+    if (!prefix) return this.system(text, mustCall);
+    const rest = mustCall ? `${text}\n\nYou must call the ${mustCall} tool now.` : text;
+    return [{ type: 'text', text: prefix }, { type: 'text', text: rest }];
+  }
+
   private system(text: string, mustCall?: string): string {
     const base = this.route.systemPrefix ? `${this.route.systemPrefix}\n\n${text}` : text;
     return mustCall ? `${base}\n\nYou must call the ${mustCall} tool now.` : base;
@@ -160,7 +168,7 @@ export class ModelClient {
     const body: any = {
       model: this.model,
       max_tokens: this.route.maxTokens,
-      system: this.system(req.system, req.mustCall),
+      system: this.systemBlocks(req.system, req.mustCall),
       messages,
       tools: req.tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters })),
     };
