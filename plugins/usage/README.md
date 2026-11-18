@@ -3,7 +3,9 @@
 A [Headlamp](https://headlamp.dev/) plugin built with the official
 `@kinvolk/headlamp-plugin` tooling (TypeScript + React). It adds a **Usage**
 entry to the sidebar (route `/usage`): a dashboard of donut charts that break
-down resource usage over a chosen period.
+down resource usage over a chosen period. A **Nodes** entry under it shows
+each node's CPU and memory as touch-friendly sunburst charts (see
+[Nodes page](#nodes-page)).
 
 ## What it shows
 
@@ -153,6 +155,62 @@ Notes:
 - A VictoriaMetrics that returns no series shows the "No usage metrics found"
   state rather than empty charts.
 
+## Nodes page
+
+A **Nodes** entry under **Usage** (route `/usage/nodes`) shows the CPU and
+memory of every cluster node as sunburst charts, made for a touch screen in a
+server cabinet: finger only, no mouse and no hover.
+
+- **Overview:** one card per node with its name, a small CPU sunburst and a
+  small memory sunburst, and the % used under each. Tap a card to open that
+  node.
+- **Node view:** the CPU and memory sunbursts side by side (stacked on a
+  portrait screen), as large as the screen allows. Each chart is sized against
+  the node's full capacity, so the unused share stays empty inside a dashed
+  outline. The rings go node > group (Kubernetes, each agent orchestrator,
+  System) > namespace or project > pod or thread > container or process, three
+  rings at a time.
+  - Tap an arc to zoom both charts to it (CPU and memory stay on the same
+    path). Tap the centre to go up one level. The breadcrumb above the charts
+    also steps back, and **All nodes** returns to the overview.
+  - The detail panel shows the focused arc's icon, name, cores, bytes, % of the
+    node and % of its parent, and lists every child as a large row (no top-N,
+    no "Other"). Tap a row to zoom to it; this is how to reach arcs too thin to
+    tap. Thread rows have a **thread** link when the agent backend gives one.
+  - **Full screen** uses the browser Fullscreen API.
+  - With no touch for the idle time (default 2 minutes) the page goes back to
+    the overview.
+- **Kiosk URL:** the whole view is in the query string, replaced (not pushed)
+  on every tap, so a cabinet browser can boot into a fixed view, for example
+  `/usage/nodes?node=worker-1&path=k8s/k8s%2Fns%3Amonitoring`. `node` is the
+  node name; `path` is the list of arc keys from the node down, each key
+  percent-encoded and joined with `/`.
+- **States:** a loader on the first load; an error if the first metrics query
+  fails; a warning banner when a refresh fails (the last data stays on screen);
+  a warning on one node only when its agent backend fails (the other nodes keep
+  rendering, and that node shows Kubernetes and System only); "No host
+  metrics" when a node has no node-exporter series (the charts then show only
+  what Kubernetes and the agents report).
+
+Data sources, refreshed every 10 seconds:
+
+- The metrics service (as above): node capacity and used CPU and memory from
+  node-exporter (`node_cpu_seconds_total`, `node_memory_MemTotal_bytes`,
+  `node_memory_MemAvailable_bytes`, or the macOS exporter equivalents, with
+  `kube_node_status_capacity` as a capacity fallback), and per-container CPU
+  and memory from cAdvisor.
+- The agent-memory backends (`/api/state`, read through the Kubernetes API
+  service proxy): the agent orchestrators, projects, threads and processes of
+  the node each backend runs on. CPU or memory not explained by Kubernetes or
+  the agents is shown as **System**.
+
+Settings (Headlamp **Settings > Plugins > usage**, stored in the browser):
+
+- **Agent backends:** comma-separated `service/<namespace>/<name>:<port>`
+  entries. Default `service/agent-memory/agent-memory:80`.
+- **Idle threshold (seconds):** how long without a touch before the page goes
+  back to the overview. Default 120, at least 30.
+
 ## Groups that cannot be placed (workload fallback)
 
 There is no "Other", "unknown" or "no label" bucket and no top-N: every group
@@ -174,8 +232,9 @@ counted twice.
 
 ## Permissions (RBAC)
 
-- `get` on the Services proxy (`services/proxy`) of the metrics service, and
-- `list` on Pods and Services (cluster-wide).
+- `get` on the Services proxy (`services/proxy`) of the metrics service,
+- `list` on Pods and Services (cluster-wide), and
+- for the Nodes page, `get` on the Services proxy of each agent-memory backend.
 
 The built-in `view` ClusterRole grants these.
 
