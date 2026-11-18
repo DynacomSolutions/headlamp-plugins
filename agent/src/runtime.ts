@@ -10,15 +10,15 @@ import type { DiagnosisStore } from './store.js';
 
 const MAX_BODY = 4 * 1024 * 1024;
 
-/** GET only, to in-cluster Service DNS names only, JSON only. */
-export async function serviceGet(url: string): Promise<unknown> {
+/** GET only, to in-cluster Service DNS names only, JSON only. Panels may raise the size limit. */
+export async function serviceGet(url: string, options: { maxBytes?: number } = {}): Promise<unknown> {
   const parsed = new URL(url);
   if (!/^https?:$/.test(parsed.protocol)) throw new Error('Only http and https service URLs are allowed');
   if (!/\.svc(\.cluster\.local)?$/.test(parsed.hostname)) throw new Error(`${parsed.hostname} is not an in-cluster Service name (*.svc)`);
   const res = await fetch(parsed, { method: 'GET', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000), redirect: 'error' });
   if (!res.ok) throw new Error(`${parsed.hostname} answered ${res.status}`);
   const text = await res.text();
-  if (text.length > MAX_BODY) throw new Error('Service response too large');
+  if (text.length > (options.maxBytes ?? MAX_BODY)) throw new Error('Service response too large');
   return JSON.parse(text);
 }
 
