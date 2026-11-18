@@ -38,7 +38,8 @@ registerRoute({
 });
 
 registerRoute({
-  path: '/usage/dashboard',
+  // Any number of trailing segments: the zoom path, one encoded arc key per segment.
+  path: '/usage/dashboard/:zoom*',
   sidebar: 'usage-dashboard',
   name: 'usage-dashboard',
   exact: true,

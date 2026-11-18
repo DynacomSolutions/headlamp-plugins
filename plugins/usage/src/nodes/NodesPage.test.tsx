@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, useHistory, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NodeMetrics } from './types';
 
@@ -50,13 +50,26 @@ function Probe() {
   return <output data-testid="url">{l.pathname + l.search}</output>;
 }
 
+let history: ReturnType<typeof useHistory>;
+function HistoryGrab() {
+  history = useHistory();
+  return null;
+}
+
 const mount = (url: string) =>
   render(
     <MemoryRouter initialEntries={[url]}>
       <NodesPage />
       <Probe />
+      <HistoryGrab />
     </MemoryRouter>
   );
+
+const selectArc = (container: HTMLElement, key: string) => {
+  const arc = container.querySelector(`path[data-key="${key}"]`) as Element;
+  fireEvent.pointerDown(arc, { clientX: 1, clientY: 1 });
+  fireEvent.pointerUp(arc, { clientX: 1, clientY: 1 });
+};
 
 const url = () => screen.getByTestId('url').textContent;
 
@@ -126,6 +139,7 @@ describe('NodesPage', () => {
     fireEvent.pointerUp(arc, { clientX: 1, clientY: 1 });
     expect(url()).toContain('sel=');
     expect(url()).not.toContain('path=');
+    expect(url()).toMatch(/^\/usage\/dashboard\?sel=/);
     // The details card names the segment with its shares.
     const panel = container.querySelector('[data-detail-panel]') as HTMLElement;
     expect(panel.textContent).toContain('Kubernetes');
@@ -134,7 +148,7 @@ describe('NodesPage', () => {
     expect(panel.textContent).not.toContain('of root');
     fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));
     // Two nodes show the node ring, so the path starts with the node arc.
-    expect(url()).toBe('/usage/dashboard?path=node%3Aworker-2%2Ck8s');
+    expect(url()).toBe('/usage/dashboard/node%3Aworker-2/k8s');
   });
 
   it('renders the kiosk overlay from ?kiosk=1 and Exit clears it', () => {
@@ -155,8 +169,8 @@ describe('NodesPage', () => {
   it('goes back to the root after the idle time, keeping the filters and the kiosk', () => {
     vi.useFakeTimers();
     try {
-      mount('/usage/dashboard?nodes=worker-1&kiosk=1&path=k8s&sel=k8s%2Fns%3Ans');
-      expect(url()).toContain('path=k8s');
+      mount('/usage/dashboard/k8s?nodes=worker-1&kiosk=1&sel=k8s%2Fns%3Ans');
+      expect(url()).toContain('/usage/dashboard/k8s');
       act(() => {
         vi.advanceTimersByTime(120_000);
       });
@@ -165,4 +179,63 @@ describe('NodesPage', () => {
       vi.useRealTimers();
     }
   });
+
+  it('pushes a zoom, and Back goes up one level, redrawing from the URL', () => {
+    const { container } = mount('/usage/dashboard?nodes=worker-1');
+    selectArc(container, 'k8s');
+    fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));
+    // The filter stays in the query on the zoomed entry.
+    expect(url()).toBe('/usage/dashboard/k8s?nodes=worker-1');
+    expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).toContain('Kubernetes');
+    expect(history.length).toBeGreaterThan(1);
+    act(() => history.goBack());
+    expect(url()).toBe('/usage/dashboard?nodes=worker-1&sel=k8s');
+    expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).not.toContain('Kubernetes');
+    act(() => history.goForward());
+    expect(url()).toBe('/usage/dashboard/k8s?nodes=worker-1');
+    expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).toContain('Kubernetes');
+  });
+
+  it('goes up one level per Back after two zooms', () => {
+    const { container } = mount('/usage/dashboard?nodes=worker-1');
+    selectArc(container, 'k8s');
+    fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));
+    selectArc(container, 'k8s/ns:ns');
+    fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));
+    expect(url()).toBe('/usage/dashboard/k8s/k8s%2Fns%3Ans?nodes=worker-1');
+    act(() => history.goBack());
+    expect(url().startsWith('/usage/dashboard/k8s')).toBe(true);
+    expect(url()).not.toContain('ns%3Ans/');
+    expect(parseCount(url())).toBe(1);
+  });
+
+  it('replaces, not pushes, on a filter change and resets the zoom to the root path', () => {
+    mount('/usage/dashboard/k8s?cats=k8s');
+    const before = history.length;
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Nodes' }));
+    fireEvent.click(screen.getByRole('option', { name: 'worker-2' }));
+    expect(url()).toBe('/usage/dashboard?nodes=worker-2&cats=k8s');
+    expect(history.length).toBe(before);
+  });
+
+  it('keeps the zoom path when the kiosk or selection changes, with replace', () => {
+    mount('/c/main/usage/dashboard/k8s');
+    const before = history.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+    expect(url()).toBe('/c/main/usage/dashboard/k8s?kiosk=1');
+    expect(history.length).toBe(before);
+  });
+
+  it('redirects an old ?path= link to segments with replace, keeping other params', () => {
+    mount('/c/main/usage/dashboard?nodes=worker-1&path=k8s%2Ck8s%2Fns%3Ans&kiosk=1');
+    expect(url()).toBe('/c/main/usage/dashboard/k8s/k8s%2Fns%3Ans?nodes=worker-1&kiosk=1');
+    expect(history.length).toBe(1);
+  });
+
+  it('parses a trailing slash and an empty path as the root view', () => {
+    mount('/usage/dashboard/');
+    expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).toContain('All nodes');
+  });
 });
+
+const parseCount = (u: string) => u.split('/usage/dashboard/')[1].split('/').length;
