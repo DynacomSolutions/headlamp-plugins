@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "panels": [
+    {"id": "uptime", "title": "Uptime", "description": "Up, degraded and down checks.", "plugin": "uptime", "link": "/c/{cluster}/uptime", "refreshSeconds": 900, "future": true},
+    {"id": "usage", "title": "Usage", "plugin": "usage"}
+  ],
+  "extra": {"ignored": 1}
+}

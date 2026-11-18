@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "id": "uptime",
+  "title": "Uptime",
+  "status": "crit",
+  "summary": "1 up, 0 degraded, 2 down",
+  "generatedAt": "2026-11-18T08:00:00Z",
+  "link": "/c/{cluster}/uptime",
+  "futureField": {"a": 1},
+  "stats": [
+    {"label": "Up", "value": "1", "status": "ok"},
+    {"label": "Down", "value": "2", "status": "crit"}
+  ],
+  "rows": [
+    {"label": "a.example.com", "detail": "HTTP 200, 120 ms", "value": "99.9%", "fraction": 0.999, "status": "ok", "link": "/c/{cluster}/uptime"},
+    {"label": "b.example.com", "detail": "down at site-1", "value": "50%", "fraction": 0.5, "status": "crit"},
+    {"label": "c.example.com", "value": "-", "status": "brand-new-status"},
+    {"label": "d.example.com", "detail": "slow", "value": "90%", "fraction": 1.7, "status": "warn"}
+  ],
+  "series": [{"label": "Response ms", "points": [120, 130.5, 110]}]
+}

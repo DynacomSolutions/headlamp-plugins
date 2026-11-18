@@ -254,6 +254,8 @@ fun errorText(kind: ErrorKind?): Int = when (kind) {
     ErrorKind.BAD_RESPONSE -> R.string.error_bad_response
     ErrorKind.INVALID_URL -> R.string.error_invalid_url
     ErrorKind.INSTANCE_MISSING -> R.string.error_instance_missing
+    ErrorKind.AGENT_MISSING -> R.string.error_agent_missing
+    ErrorKind.PANEL_FAILED -> R.string.error_panel_failed
     ErrorKind.UNREACHABLE, null -> R.string.error_unreachable
 }
 
@@ -273,7 +275,7 @@ class NodeUsageReceiver : GlanceAppWidgetReceiver() {
 
     override fun onDisabled(context: Context) {
         super.onDisabled(context)
-        RefreshWorker.cancelPeriodic(context)
+        RefreshWorker.cancelPeriodicIfIdle(context)
     }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {

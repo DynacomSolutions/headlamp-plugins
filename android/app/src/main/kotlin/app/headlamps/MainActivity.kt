@@ -53,7 +53,9 @@ class MainActivity : ComponentActivity() {
 fun InstancesScreen(repository: Repository) {
     val instances by repository.instances.collectAsState(initial = emptyList())
     var editing by remember { mutableStateOf<Instance?>(null) }
+    var choosing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val pinContext = androidx.compose.ui.platform.LocalContext.current
     Scaffold(
         topBar = {
             val appContext = androidx.compose.ui.platform.LocalContext.current
@@ -62,9 +64,7 @@ fun InstancesScreen(repository: Repository) {
                 title = { Text(androidx.compose.ui.res.stringResource(R.string.instances_title)) },
                 actions = {
                     if (instances.isNotEmpty() && manager.isRequestPinAppWidgetSupported) {
-                        TextButton(onClick = {
-                            manager.requestPinAppWidget(ComponentName(appContext, NodeUsageReceiver::class.java), null, null)
-                        }) { Text(androidx.compose.ui.res.stringResource(R.string.action_pin_widget)) }
+                        TextButton(onClick = { choosing = true }) { Text(androidx.compose.ui.res.stringResource(R.string.action_pin_widget)) }
                     }
                 },
             )
@@ -105,6 +105,26 @@ fun InstancesScreen(repository: Repository) {
                 }
             }
         }
+    }
+    if (choosing) {
+        AlertDialog(
+            onDismissRequest = { choosing = false },
+            title = { Text(androidx.compose.ui.res.stringResource(R.string.pin_choose_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        choosing = false
+                        AppWidgetManager.getInstance(pinContext).requestPinAppWidget(ComponentName(pinContext, NodeUsageReceiver::class.java), null, null)
+                    }) { Text(androidx.compose.ui.res.stringResource(R.string.pin_node_usage)) }
+                    TextButton(onClick = {
+                        choosing = false
+                        AppWidgetManager.getInstance(pinContext).requestPinAppWidget(ComponentName(pinContext, PanelWidgetReceiver::class.java), null, null)
+                    }) { Text(androidx.compose.ui.res.stringResource(R.string.pin_panel)) }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { choosing = false }) { Text(androidx.compose.ui.res.stringResource(R.string.action_cancel)) } },
+        )
     }
     editing?.let { current ->
         InstanceDialog(
