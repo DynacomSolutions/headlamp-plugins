@@ -3,9 +3,9 @@
 A [Headlamp](https://headlamp.dev/) plugin built with the official
 `@kinvolk/headlamp-plugin` tooling (TypeScript + React). It adds a **Usage**
 entry to the sidebar (route `/usage`): a dashboard of donut charts that break
-down resource usage over a chosen period. A **Nodes** entry under it shows
+down resource usage over a chosen period. A **Dashboard** entry under it shows
 each node's CPU and memory as touch-friendly sunburst charts (see
-[Nodes page](#nodes-page)).
+[Usage dashboard](#usage-dashboard)).
 
 ## What it shows
 
@@ -155,9 +155,9 @@ Notes:
 - A VictoriaMetrics that returns no series shows the "No usage metrics found"
   state rather than empty charts.
 
-## Nodes page
+## Usage dashboard
 
-A **Nodes** entry under **Usage** (route `/usage/nodes`) shows the CPU and
+A **Dashboard** entry under **Usage** (route `/usage/dashboard`) shows the CPU and
 memory of every cluster node as sunburst charts, made for a touch screen in a
 server cabinet: finger only, no mouse and no hover.
 
@@ -188,8 +188,9 @@ server cabinet: finger only, no mouse and no hover.
   - With no touch for the idle time (default 2 minutes) the page goes back to
     the overview.
 - **Kiosk URL:** the whole view is in the query string, replaced (not pushed)
-  on every tap, so a cabinet browser can boot into a fixed view, for example
-  `/usage/nodes?node=worker-1&path=k8s/k8s%2Fns%3Amonitoring`. `node` is the
+  on every tap, so a cabinet browser can boot into a fixed view. The old
+  `/usage/nodes` URL redirects here and keeps its query. For example
+  `/usage/dashboard?node=worker-1&path=k8s/k8s%2Fns%3Amonitoring`. `node` is the
   node name; `path` is the list of arc keys from the node down, each key
   percent-encoded and joined with `/`.
 - **States:** a loader on the first load; an error if the first metrics query
@@ -241,7 +242,7 @@ counted twice.
 
 - `get` on the Services proxy (`services/proxy`) of the metrics service,
 - `list` on Pods and Services (cluster-wide), and
-- for the Nodes page, `get` on the Services proxy of each agent-memory backend.
+- for the Usage dashboard, `get` on the Services proxy of each agent-memory backend.
 
 The built-in `view` ClusterRole grants these.
 

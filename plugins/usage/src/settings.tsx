@@ -24,7 +24,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={720}>
       <Typography variant="body2">
-        Settings for the Nodes page. Blank fields use the built-in default.
+        Settings for the Usage dashboard. Blank fields use the built-in default.
       </Typography>
       <TextField
         label="Agent backends"

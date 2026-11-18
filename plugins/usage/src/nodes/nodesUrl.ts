@@ -1,5 +1,5 @@
 /*
- * URL state of the Nodes page: ?node=<name>&path=<key/key/…>, so a cabinet browser can boot into a
+ * URL state of the Usage dashboard: ?node=<name>&path=<key/key/…>, so a cabinet browser can boot into a
  * fixed view. Tree keys contain "/" themselves, so each key is percent-encoded and the keys are
  * joined with a literal "/". That is why the query is read and written by hand, not with
  * URLSearchParams (which would decode %2F before the split).

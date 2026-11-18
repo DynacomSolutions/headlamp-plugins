@@ -1,5 +1,5 @@
 /*
- * The Nodes page (/usage/nodes), for a server-cabinet touch screen: an overview of every node as
+ * The Usage dashboard (/usage/dashboard), for a server-cabinet touch screen: an overview of every node as
  * a card with compact CPU and memory sunbursts, and one node full screen (?node=&path=). The URL
  * holds the whole view and is replaced, not pushed, as /usage does. With no touch for the idle
  * time the page goes back to the overview.
@@ -178,7 +178,7 @@ export function NodesPage(): JSX.Element {
   }
 
   return (
-    <SectionBox title="Nodes" headerProps={{ actions: [<FullscreenButton key="fullscreen" />] }}>
+    <SectionBox title="Usage dashboard" headerProps={{ actions: [<FullscreenButton key="fullscreen" />] }}>
       {data.stale && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           Refresh failed, showing the last data received: {data.metricsError}
