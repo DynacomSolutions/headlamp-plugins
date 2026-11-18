@@ -3,6 +3,7 @@
  * from the space they have, both zoomed to the same focus path, with a breadcrumb and, for a T3
  * thread, a link to open it. The details of the focus are in the centre of each chart.
  */
+import { Icon } from '@iconify/react';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Breadcrumbs from '@mui/material/Breadcrumbs';
@@ -11,7 +12,7 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
 import { childRows, detailFor, selectionFor } from './detail';
-import { DetailPanel, DETAILS_WIDTH, PANEL_HEIGHT } from './DetailPanel';
+import { DetailPanel } from './DetailPanel';
 import { Sunburst } from './Sunburst';
 import { NodeTree, Resource } from './tree';
 
@@ -19,7 +20,6 @@ const rootCrumb = (tree: NodeTree) => (tree.nodeRing ? 'All nodes' : tree.root.l
 
 const GAP = 16;
 const MIN_CHART = 200;
-const MAX_CHART = 1200;
 /** Room the heading and the used text above a chart need. */
 const CHART_HEAD = 64;
 
@@ -73,28 +73,16 @@ function useBox(
 }
 
 /**
- * Chart size and layout from the room the charts and details have. Landscape (wider than tall):
- * one row of CPU, Memory and the details column; each chart is as wide as fits and as tall as
- * the room under its heading. Portrait: the charts side by side when each is at least 45% of
- * the width, else one above the other, with the details below.
+ * Chart size and layout from the room the charts have, with no upper limit on the diameter.
+ * Landscape (wider than tall): CPU and Memory side by side, each as wide as half the width and
+ * as tall as the room under its heading allows. Portrait: side by side when each is then at
+ * least 45% of the width, else one above the other.
  */
-export function chartLayout(
-  width: number,
-  height: number
-): { size: number; twoUp: boolean; side: boolean } {
-  const clamp = (v: number) => Math.floor(Math.max(MIN_CHART, Math.min(MAX_CHART, v)));
-  if (width > height) {
-    const room = width - DETAILS_WIDTH - 2 * GAP;
-    return { size: clamp(Math.min(room / 2, height - CHART_HEAD)), twoUp: true, side: true };
-  }
-  const room = height - PANEL_HEIGHT - GAP;
-  const beside = Math.min((width - GAP) / 2, room - CHART_HEAD);
-  if (beside >= 0.45 * width) return { size: clamp(beside), twoUp: true, side: false };
-  return {
-    size: clamp(Math.min(width, (room - 2 * CHART_HEAD - GAP) / 2)),
-    twoUp: false,
-    side: false,
-  };
+export function chartLayout(width: number, height: number): { size: number; twoUp: boolean } {
+  const clamp = (v: number) => Math.floor(Math.max(MIN_CHART, v));
+  const beside = Math.min((width - GAP) / 2, height - CHART_HEAD);
+  if (width > height || beside >= 0.45 * width) return { size: clamp(beside), twoUp: true };
+  return { size: clamp(Math.min(width, (height - 2 * CHART_HEAD - GAP) / 2)), twoUp: false };
 }
 
 /** A thread link, only for http(s) URLs. */
@@ -112,11 +100,15 @@ export function NodeView(props: {
   /** Selected path ([] for none). */
   sel: string[];
   kiosk: boolean;
+  /** Filters, left of the breadcrumb in the top bar. */
+  toolbar?: React.ReactNode;
+  /** Controls at the right end of the top bar (Full screen or Exit full screen). */
+  trailing?: React.ReactNode;
   /** Zoom to a path; this clears the selection. */
   onPath: (path: string[]) => void;
   onSelect: (sel: string[]) => void;
 }) {
-  const { cpu, mem, alerts, path, sel, kiosk, onPath, onSelect } = props;
+  const { cpu, mem, alerts, path, sel, kiosk, toolbar, trailing, onPath, onSelect } = props;
   const detail = React.useMemo(() => detailFor(cpu, mem, path), [cpu, mem, path]);
   const selection = React.useMemo(() => selectionFor(cpu, mem, detail.path, sel), [cpu, mem, detail.path, sel]);
   const chosen = sel.length > 0 && selection !== null;
@@ -132,7 +124,7 @@ export function NodeView(props: {
   const rows = React.useMemo(() => childRows(cpu, mem, base), [cpu, mem, base]);
   const ref = React.useRef<HTMLDivElement>(null);
   const box = useBox(ref, kiosk);
-  const { size, twoUp, side } = chartLayout(box.width, box.height);
+  const { size, twoUp } = chartLayout(box.width, box.height);
   const centreSubject = { label: detail.focus.label, icon: detail.focus.icon };
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
 
@@ -158,9 +150,19 @@ export function NodeView(props: {
   );
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', flex: kiosk ? '1 1 0' : undefined, minHeight: 0 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
-        <Breadcrumbs aria-label="Focus" sx={{ flex: '1 1 0', minWidth: 0 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        flex: kiosk ? '1 1 0' : '1 1 auto',
+        width: '100%',
+        minWidth: 0,
+        minHeight: 0,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 2, rowGap: 1, mb: 1 }}>
+        {toolbar}
+        <Breadcrumbs aria-label="Focus" sx={{ flex: '1 1 240px', minWidth: 0 }}>
           <Button sx={crumb} onClick={() => onPath([])}>
             {rootCrumb(cpu)}
           </Button>
@@ -176,6 +178,27 @@ export function NodeView(props: {
             )
           )}
         </Breadcrumbs>
+        <Button
+          variant="outlined"
+          onClick={() => onPath(detail.path.slice(0, -1))}
+          disabled={detail.path.length === 0}
+          aria-label="Up one level"
+          startIcon={<Icon icon="mdi:arrow-up" width={24} height={24} />}
+          sx={{ minHeight: 48, minWidth: 48, fontSize: 16 }}
+        >
+          Up
+        </Button>
+        <Button
+          variant="contained"
+          onClick={() => onPath(sel)}
+          disabled={!chosen || !subject?.canOpen}
+          aria-label="Open the selected segment"
+          startIcon={<Icon icon="mdi:magnify-plus" width={24} height={24} />}
+          sx={{ minHeight: 48, minWidth: 48, fontSize: 16 }}
+        >
+          Open
+        </Button>
+        {trailing}
       </Box>
       {alerts.map(a => (
         <Alert key={a} severity="warning" sx={{ mb: 1 }}>
@@ -187,6 +210,13 @@ export function NodeView(props: {
           {NO_HOST_METRICS}
         </Typography>
       )}
+      <DetailPanel
+        rootKind={rootKind}
+        subject={subject}
+        selected={chosen}
+        rows={rows}
+        onSelect={key => onSelect([...base, key])}
+      />
       <Box
         ref={ref}
         onPointerUp={e => {
@@ -197,37 +227,14 @@ export function NodeView(props: {
           flex: kiosk ? '1 1 0' : '0 0 auto',
           minHeight: 0,
           display: 'flex',
-          flexDirection: side ? 'row' : 'column',
+          flexWrap: twoUp ? 'nowrap' : 'wrap',
+          justifyContent: 'center',
           alignItems: 'flex-start',
           gap: `${GAP}px`,
         }}
       >
-        <Box
-          sx={{
-            display: 'flex',
-            flexWrap: twoUp ? 'nowrap' : 'wrap',
-            gap: `${GAP}px`,
-            justifyContent: 'center',
-            flex: 'none',
-            maxWidth: '100%',
-            alignSelf: side ? 'flex-start' : 'center',
-          }}
-        >
-          {chart('cpu', cpu)}
-          {chart('memory', mem)}
-        </Box>
-        <DetailPanel
-          column={side}
-          maxHeight={side ? box.height : undefined}
-          rootKind={rootKind}
-          subject={subject}
-          selected={chosen}
-          rows={rows}
-          canGoUp={detail.path.length > 0}
-          onUp={() => onPath(detail.path.slice(0, -1))}
-          onOpen={() => onPath(sel)}
-          onSelect={key => onSelect([...base, key])}
-        />
+        {chart('cpu', cpu)}
+        {chart('memory', mem)}
       </Box>
     </Box>
   );

@@ -210,10 +210,10 @@ export function centreLines(
  * The size of the icon that fits an arc, centred on its centroid: limited by the ring thickness
  * and by the arc length at mid radius. Null when even the smallest icon (16 px) does not fit.
  */
-export function arcIconSize(a: ArcGeometry): number | null {
+export function arcIconSize(a: ArcGeometry, max = ICON_MAX): number | null {
   const rm = (a.y0 + a.y1) / 2;
   const room = Math.min(a.y1 - a.y0, (a.x1 - a.x0) * rm) - 2 * PAD;
-  const size = Math.min(ICON_MAX, Math.floor(room));
+  const size = Math.min(max, Math.floor(room));
   return size >= ICON_MIN ? size : null;
 }
 
