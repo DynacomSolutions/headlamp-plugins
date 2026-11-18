@@ -4,7 +4,8 @@
  * namespace, workload, Service, node, pod or label, from a Prometheus-compatible
  * metrics service. Adds a "Usage" sidebar entry and the /usage route.
  */
-import { registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
+import { registerPluginSettings, registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
+import { Settings } from './settings';
 import { UsagePage } from './UsagePage';
 
 registerSidebarEntry({
@@ -22,3 +23,5 @@ registerRoute({
   exact: true,
   component: UsagePage,
 });
+
+registerPluginSettings('usage', Settings, true);
