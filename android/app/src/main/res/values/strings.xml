@@ -3,6 +3,7 @@
     <string name="app_name">Headlamps</string>
     <string name="widget_description">CPU and memory use for each node.</string>
     <string name="widget_loading">Loading data.</string>
+    <string name="widget_choose">Tap to choose a cluster.</string>
     <string name="widget_no_nodes">No node data.</string>
     <string name="widget_refresh">Refresh</string>
     <string name="widget_updated">Updated %1$s</string>

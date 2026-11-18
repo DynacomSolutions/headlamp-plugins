@@ -2,6 +2,7 @@ package app.headlamps
 
 import android.content.Context
 import android.content.Intent
+import android.appwidget.AppWidgetManager
 import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -72,14 +73,14 @@ class NodeUsageWidget : GlanceAppWidget() {
         val link = if (config != null && instance != null) usagePageUrl(instance.baseUrl, config.cluster) else null
         provideContent {
             GlanceTheme {
-                WidgetBody(config?.cluster.orEmpty(), snapshot, link)
+                WidgetBody(widgetId, config != null, config?.cluster.orEmpty(), snapshot, link)
             }
         }
     }
 }
 
 @Composable
-private fun WidgetBody(cluster: String, snapshot: Snapshot?, link: String?) {
+private fun WidgetBody(widgetId: Int, configured: Boolean, cluster: String, snapshot: Snapshot?, link: String?) {
     val context = LocalContext.current
     val compact = LocalSize.current.let { it.width < LARGE.width || it.height < LARGE.height }
     val open = if (link != null) {
@@ -87,12 +88,21 @@ private fun WidgetBody(cluster: String, snapshot: Snapshot?, link: String?) {
     } else {
         GlanceModifier
     }
+    // A unique data URI per widget keeps the intent extras apart for each widget.
+    val configure = GlanceModifier.clickable(
+        actionStartActivity(
+            Intent(context, WidgetConfigActivity::class.java)
+                .setData(Uri.parse("headlamps://configure/$widgetId"))
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId),
+        ),
+    )
     Column(
         modifier = GlanceModifier.fillMaxSize().background(GlanceTheme.colors.widgetBackground).padding(8.dp),
     ) {
         Header(cluster, snapshot, compact)
         Spacer(GlanceModifier.height(4.dp))
         when {
+            !configured -> Message(context.getString(R.string.widget_choose), configure)
             snapshot == null -> Message(context.getString(R.string.widget_loading), open)
             snapshot.error != null -> Message(context.getString(errorText(snapshot.error)), open)
             snapshot.nodes.isEmpty() -> Message(context.getString(R.string.widget_no_nodes), open)
