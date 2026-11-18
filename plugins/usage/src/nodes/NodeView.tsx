@@ -11,14 +11,13 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
 import { childRows, detailFor, selectionFor } from './detail';
-import { DetailPanel, PANEL_HEIGHT } from './DetailPanel';
+import { DetailPanel, DETAILS_WIDTH, PANEL_HEIGHT } from './DetailPanel';
 import { Sunburst } from './Sunburst';
 import { NodeTree, Resource } from './tree';
 
 const GAP = 16;
 const MIN_CHART = 200;
 const MAX_CHART = 1200;
-const MIN_TWO_UP = 260;
 /** Room the heading and the used text above a chart need. */
 const CHART_HEAD = 64;
 
@@ -57,7 +56,7 @@ function useBox(
         width: el.clientWidth,
         height: kiosk
           ? el.clientHeight
-          : Math.max(0, window.innerHeight - el.getBoundingClientRect().top - PANEL_HEIGHT - 16),
+          : Math.max(0, window.innerHeight - el.getBoundingClientRect().top - 8),
       });
     update();
     window.addEventListener('resize', update);
@@ -71,18 +70,29 @@ function useBox(
   return box;
 }
 
-/** Chart size and layout from the room the charts have (width and height, in px). */
-export function chartLayout(width: number, height: number): { size: number; twoUp: boolean } {
-  const portrait = height > width;
-  const twoUp = !portrait && width >= 2 * MIN_TWO_UP + GAP;
-  let size = twoUp ? (width - GAP) / 2 : width;
-  // Both charts should fit without scrolling: side by side, or stacked sharing the height.
-  size = Math.min(
-    size,
-    twoUp ? height - CHART_HEAD : (height - 2 * CHART_HEAD - GAP) / 2
-  );
-  size = Math.max(MIN_CHART, Math.min(MAX_CHART, size));
-  return { size: Math.floor(size), twoUp };
+/**
+ * Chart size and layout from the room the charts and details have. Landscape (wider than tall):
+ * one row of CPU, Memory and the details column; each chart is as wide as fits and as tall as
+ * the room under its heading. Portrait: the charts side by side when each is at least 45% of
+ * the width, else one above the other, with the details below.
+ */
+export function chartLayout(
+  width: number,
+  height: number
+): { size: number; twoUp: boolean; side: boolean } {
+  const clamp = (v: number) => Math.floor(Math.max(MIN_CHART, Math.min(MAX_CHART, v)));
+  if (width > height) {
+    const room = width - DETAILS_WIDTH - 2 * GAP;
+    return { size: clamp(Math.min(room / 2, height - CHART_HEAD)), twoUp: true, side: true };
+  }
+  const room = height - PANEL_HEIGHT - GAP;
+  const beside = Math.min((width - GAP) / 2, room - CHART_HEAD);
+  if (beside >= 0.45 * width) return { size: clamp(beside), twoUp: true, side: false };
+  return {
+    size: clamp(Math.min(width, (room - 2 * CHART_HEAD - GAP) / 2)),
+    twoUp: false,
+    side: false,
+  };
 }
 
 /** A thread link, only for http(s) URLs. */
@@ -109,14 +119,19 @@ export function NodeView(props: {
   const selection = React.useMemo(() => selectionFor(cpu, mem, detail.path, sel), [cpu, mem, detail.path, sel]);
   const chosen = sel.length > 0 && selection !== null;
   const base = chosen ? sel : detail.path;
-  const subject = React.useMemo(
-    () => (chosen ? selection : selectionFor(cpu, mem, detail.path, detail.path)),
-    [chosen, selection, cpu, mem, detail.path]
-  );
+  const subject = React.useMemo(() => {
+    if (chosen) return selection;
+    const root = selectionFor(cpu, mem, detail.path, detail.path);
+    if (!root || detail.path.length > 0) return root;
+    // The whole selection: all selected nodes, or the one node, with the server icon.
+    const label = cpu.nodeRing || mem.nodeRing ? 'All selected nodes' : root.label;
+    return { ...root, label, kind: 'node' as const, icon: { kind: 'mdi' as const, name: 'server' } };
+  }, [chosen, selection, cpu, mem, detail.path]);
+  const rootKind = cpu.nodeRing || mem.nodeRing ? 'Selection' : 'Node';
   const rows = React.useMemo(() => childRows(cpu, mem, base), [cpu, mem, base]);
   const ref = React.useRef<HTMLDivElement>(null);
   const box = useBox(ref, kiosk);
-  const { size, twoUp } = chartLayout(box.width, box.height);
+  const { size, twoUp, side } = chartLayout(box.width, box.height);
   const centreSubject = { label: detail.focus.label, icon: detail.focus.icon };
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
 
@@ -181,24 +196,38 @@ export function NodeView(props: {
           flex: kiosk ? '1 1 0' : '0 0 auto',
           minHeight: 0,
           display: 'flex',
-          flexWrap: twoUp ? 'nowrap' : 'wrap',
-          alignContent: 'flex-start',
+          flexDirection: side ? 'row' : 'column',
+          alignItems: 'flex-start',
           gap: `${GAP}px`,
-          justifyContent: 'center',
         }}
       >
-        {chart('cpu', cpu)}
-        {chart('memory', mem)}
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: twoUp ? 'nowrap' : 'wrap',
+            gap: `${GAP}px`,
+            justifyContent: 'center',
+            flex: 'none',
+            maxWidth: '100%',
+            alignSelf: side ? 'flex-start' : 'center',
+          }}
+        >
+          {chart('cpu', cpu)}
+          {chart('memory', mem)}
+        </Box>
+        <DetailPanel
+          column={side}
+          maxHeight={side ? box.height : undefined}
+          rootKind={rootKind}
+          subject={subject}
+          selected={chosen}
+          rows={rows}
+          canGoUp={detail.path.length > 0}
+          onUp={() => onPath(detail.path.slice(0, -1))}
+          onOpen={() => onPath(sel)}
+          onSelect={key => onSelect([...base, key])}
+        />
       </Box>
-      <DetailPanel
-        subject={subject}
-        selected={chosen}
-        rows={rows}
-        canGoUp={detail.path.length > 0}
-        onUp={() => onPath(detail.path.slice(0, -1))}
-        onOpen={() => onPath(sel)}
-        onSelect={key => onSelect([...base, key])}
-      />
     </Box>
   );
 }

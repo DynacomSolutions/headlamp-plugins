@@ -15,6 +15,8 @@ import type { ChildRow, SegmentInfo,Selection } from './detail';
 import { useIconUrl } from './useIconUrl';
 
 export const PANEL_HEIGHT = 200;
+/** Width of the details column beside the charts in landscape. */
+export const DETAILS_WIDTH = 360;
 
 const KIND: Record<string, string> = {
   node: 'Node',
@@ -22,8 +24,8 @@ const KIND: Record<string, string> = {
   namespace: 'Namespace',
   pod: 'Pod',
   container: 'Container',
-  orchestrator: 'Orchestrator',
-  control: 'Control',
+  orchestrator: 'Agent orchestrator',
+  control: 'Control group',
   project: 'Project',
   thread: 'Thread',
   process: 'Process',
@@ -75,31 +77,52 @@ export function DetailPanel(props: {
   /** The selection, or the zoom root described as a selection. */
   subject: Selection | null;
   selected: boolean;
+  /** Landscape: a column of fixed width, details above the list, each with its own scroll. */
+  column?: boolean;
+  maxHeight?: number;
+  /** Kind line when nothing is selected (the zoom root). */
+  rootKind?: string;
   rows: ChildRow[];
   canGoUp: boolean;
   onUp: () => void;
   onOpen: () => void;
   onSelect: (key: string) => void;
 }): JSX.Element {
-  const { subject, selected, rows, canGoUp, onUp, onOpen, onSelect } = props;
+  const { subject, selected, column, maxHeight, rootKind, rows, canGoUp, onUp, onOpen, onSelect } =
+    props;
   const btn = { minHeight: 48, minWidth: 48, fontSize: 16 } as const;
   return (
     <Box
       data-detail-panel
-      sx={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 2,
-        mt: 1,
-        minHeight: PANEL_HEIGHT,
-        maxHeight: PANEL_HEIGHT,
-        overflow: 'hidden',
-      }}
+      sx={
+        column
+          ? {
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1,
+              flex: 'none',
+              width: DETAILS_WIDTH,
+              height: maxHeight,
+              minHeight: 0,
+              overflow: 'hidden',
+            }
+          : {
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              mt: 1,
+              minHeight: PANEL_HEIGHT,
+              maxHeight: PANEL_HEIGHT,
+              overflow: 'hidden',
+            }
+      }
     >
       <Box
         sx={{
-          flex: '1 1 420px',
+          flex: column ? '0 1 auto' : '1 1 420px',
           minWidth: 0,
+          minHeight: 0,
+          maxHeight: column ? '55%' : undefined,
           overflow: 'auto',
           border: 1,
           borderColor: 'divider',
@@ -115,7 +138,7 @@ export function DetailPanel(props: {
                 {subject.label}
               </Typography>
               <Typography sx={{ fontSize: 14 }} color="text.secondary">
-                {selected ? kindLabel(subject.kind) : `${kindLabel(subject.kind)}, shown`}
+                {selected ? kindLabel(subject.kind) : rootKind ?? kindLabel(subject.kind)}
               </Typography>
             </Box>
             <Typography sx={{ fontSize: 14, mt: 0.5 }}>
@@ -165,8 +188,9 @@ export function DetailPanel(props: {
         aria-label="Children"
         dense
         sx={{
-          flex: '1 1 320px',
+          flex: column ? '1 1 0' : '1 1 320px',
           minWidth: 0,
+          minHeight: 0,
           overflow: 'auto',
           border: 1,
           borderColor: 'divider',

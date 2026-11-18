@@ -261,7 +261,7 @@ describe('Sunburst', () => {
 
   it('describes the focus in the centre: name, value, share of node and of parent', () => {
     const { container } = render(
-      <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={800} />
+      <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={1200} />
     );
     const line = (k: string) => container.querySelector(`[data-centre-line="${k}"]`)?.textContent;
     expect(line('title')).toBe('p:x');
@@ -284,7 +284,7 @@ describe('Sunburst', () => {
         tree={tree}
         resource="cpu"
         focus={['t3', 'only-in-memory']}
-        size={800}
+        size={1200}
         onFocus={onFocus}
         subject={{ label: 'Memory only' }}
       />

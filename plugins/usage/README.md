@@ -163,9 +163,11 @@ in a server cabinet: finger only, no mouse and no hover. The page uses the
 whole width of the main area. The old `/usage/nodes` URL redirects here and
 keeps its query.
 
-- **Charts:** one **CPU** and one **Memory** sunburst, side by side on a
-  landscape screen and stacked on a portrait one, as large as the space allows
-  so both fit without scrolling. Each is sized against capacity, so the unused
+- **Charts:** one **CPU** and one **Memory** sunburst. On a landscape screen
+  the row is CPU, Memory and a details column (about 360 px) beside them, and
+  the charts take the rest of the width and height, so the page does not
+  scroll. On a portrait screen they sit side by side when each gets at least
+  45% of the width, else one above the other, with the details below. Each is sized against capacity, so the unused
   share is a real arc.
 - **Filters:** a bar at the top, with **Nodes** and **Category** (Kubernetes,
   T3 Code, Herdr, Other scopes, System). Nothing selected means all. With one

@@ -21,7 +21,7 @@ export interface ArcDatum {
 
 const TAU = 2 * Math.PI;
 /** Radius of the centre disc as a share of the chart radius. */
-export const CENTRE = 0.36;
+export const CENTRE = 0.24;
 
 /** Hue and saturation of a `#rrggbb` or `hsl(h, s%, l%)` colour, plus its lightness. */
 function toHsl(c: string): { h: number; s: number; l: number } {

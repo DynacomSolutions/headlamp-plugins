@@ -206,12 +206,14 @@ export function Sunburst(props: {
   const aria = `${name} usage by group: ${top}`;
   const fontSize = Math.max(MIN_FONT, size / 40);
   const centreR = radius * CENTRE;
+  // The centre text is 14 to 22 px: the hole is small, so it is kept compact.
+  const centreFont = Math.min(22, Math.max(14, size / 50));
 
   const title = subject?.label ?? centre.title;
   const centreIcon = subject ? subject.icon : focusNode.icon;
   const lines: CentreLine[] = compact
     ? []
-    : centreLines(centreR, fontSize, {
+    : centreLines(centreR, centreFont, {
         title,
         icon: !!centreIcon,
         ...(missing
@@ -256,7 +258,9 @@ export function Sunburst(props: {
             ? null
             : arcLabel(arc, arc.node.label, fontSize, iconSize !== null, iconSize ?? 0);
         // The icon wins: without room for both, the arc shows the icon alone.
-        const label = iconSize !== null && !fitted?.icon ? null : fitted;
+        // Without the full name beside it, an icon stands alone: no clipped stubs next to icons.
+        const whole = fitted && fitted.text === arc.node.label;
+        const label = iconSize !== null && !(fitted?.icon && whole) ? null : fitted;
         const lone = icon && iconSize !== null && !label ? arcCentroid(arc) : null;
         const a11y = compact
           ? {}

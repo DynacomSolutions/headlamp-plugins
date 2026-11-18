@@ -56,8 +56,8 @@ describe('layoutSunburst', () => {
     const a1 = arcs.find(a => a.depth === 1)!;
     const a2 = arcs.find(a => a.depth === 2)!;
     expect(a1.y0).toBeCloseTo(1000 * CENTRE);
-    expect(CENTRE).toBe(0.36);
-    expect(a1.y1).toBeCloseTo(360 + 640 / 3);
+    expect(CENTRE).toBe(0.24);
+    expect(a1.y1).toBeCloseTo(240 + 760 / 3);
     expect(a2.y0).toBeCloseTo(a1.y1);
   });
 

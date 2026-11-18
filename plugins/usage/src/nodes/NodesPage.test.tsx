@@ -63,6 +63,18 @@ const url = () => screen.getByTestId('url').textContent;
 afterEach(cleanup);
 
 describe('NodesPage', () => {
+  it('names the root card for the whole selection, not "7 nodes, shown"', () => {
+    const { container } = mount('/usage/dashboard');
+    const panel = container.querySelector('[data-detail-panel]') as HTMLElement;
+    expect(panel.textContent).toContain('All selected nodes');
+    expect(panel.textContent).not.toContain('shown');
+    expect(panel.querySelector('[data-icon="mdi:server"]')).not.toBeNull();
+    cleanup();
+    const one = mount('/usage/dashboard?nodes=worker-1');
+    const p1 = one.container.querySelector('[data-detail-panel]') as HTMLElement;
+    expect(p1.textContent).toContain('worker-1');
+  });
+
   it('shows the heading and one CPU and one memory chart', () => {
     mount('/usage/dashboard');
     expect(screen.getByText('Usage dashboard')).not.toBeNull();

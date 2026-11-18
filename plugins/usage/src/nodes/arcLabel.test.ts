@@ -6,6 +6,17 @@ const deep = { x0: 0.1, x1: 0.2, y0: 200, y1: 320 };
 // A wide, short arc: about 470 px wide at mid-radius, 30 px thick.
 const wide = { x0: 0, x1: 1.5, y0: 300, y1: 330 };
 
+describe('arcLabel clipping', () => {
+  it('never draws a stub of a few characters and an ellipsis', () => {
+    // Room for about 5 characters at 14 px: a long name is dropped, not clipped to "Kube…".
+    const small = { x0: 0, x1: 0.1, y0: 200, y1: 240 };
+    for (const name of ['Kubernetes', 'System', 'kube-system']) {
+      const l = arcLabel(small, name, 14);
+      if (l) expect(l.text === name || l.text.replace('\u2026', '').length >= 6).toBe(true);
+    }
+  });
+});
+
 describe('arcLabel', () => {
   it('runs text along the radius of a narrow, deep arc', () => {
     const l = arcLabel(deep, 'production', 14)!;

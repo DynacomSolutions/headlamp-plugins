@@ -8,7 +8,9 @@
 export const CHAR_WIDTH = 0.6;
 /** Room kept at each end of a label and between the label and the arc edges. */
 const PAD = 4;
-/** Labels shorter than this are hidden, unless the whole label fits. */
+/** A clipped label keeps at least this many characters, else it is not drawn. */
+const MIN_CLIPPED = 6;
+/** The centre title is clipped to at least this many characters, or the line is dropped. */
 const MIN_CHARS = 4;
 /** An icon needs at least this many label characters beside it. */
 const MIN_CHARS_WITH_ICON = 3;
@@ -80,7 +82,9 @@ export function arcLabel(
     const withIcon = iconFits ? chars(o.along - iconSize - ARC_ICON_GAP, fontSize) : 0;
     const icon = iconFits && withIcon >= Math.min(label.length, MIN_CHARS_WITH_ICON);
     const n = icon ? withIcon : plain;
-    if (n < Math.min(label.length, MIN_CHARS)) return null;
+    // A clipped name needs more than a stub: 5 characters and an ellipsis, or nothing.
+    if (n < label.length && n < MIN_CLIPPED) return null;
+    if (n < 1) return null;
     return { n, icon };
   };
   const r = option(radial);
