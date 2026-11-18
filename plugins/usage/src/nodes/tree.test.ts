@@ -461,3 +461,145 @@ describe('gapNodes', () => {
     expect(gapNodes(t, ns, false)).toEqual([]);
   });
 });
+
+describe('system breakdown', () => {
+  const cg = (unit: string, parent: string, mem: number, agentUnit = '') => ({
+    unit,
+    parent,
+    agentUnit,
+    cpuCores: mem / 10,
+    memBytes: mem,
+  });
+  const prog = (unit: string, program: string, mem: number) => ({
+    unit,
+    program,
+    cpuCores: mem / 10,
+    memBytes: mem,
+  });
+  const withSystem = (system: NodeMetrics['system'], over: Partial<NodeMetrics> = {}) =>
+    metrics({ memUsed: 100, pods: [], system, ...over });
+  const sysOf = (t: ReturnType<typeof buildNodeTree>) =>
+    t.root.children.find(c => c.key === 'system') as SunNode;
+
+  it('builds cgroups, child cgroups, programs and the remainder', () => {
+    const m = withSystem({
+      cgroups: [
+        cg('system.slice', '', 40),
+        cg('sshd.service', 'system.slice', 10),
+        cg('user.slice', '', 20),
+        cg('user-1000.slice', 'user.slice', 15),
+      ],
+      programs: [prog('sshd.service', 'sshd', 8)],
+      remainderMem: 30,
+      remainderCpu: null,
+    });
+    const sys = sysOf(buildNodeTree(m, null, 'memory', icon));
+    expect(sys.value).toBe(100);
+    expect(sys.children.map(c => [c.key, c.value])).toEqual([
+      ['system/cg:system.slice', 40],
+      ['system/kernel', 30],
+      ['system/cg:user.slice', 20],
+    ]);
+    const top = sys.children[0];
+    expect(top.children.map(c => [c.key, c.value])).toEqual([['system/cg:sshd.service', 10]]);
+    const ssh = top.children[0];
+    expect(ssh.displayName).toBe('sshd');
+    expect(ssh.label).toBe('sshd.service');
+    expect(ssh.children.map(c => [c.key, c.kind, c.value])).toEqual([
+      ['system/cg:sshd.service/prog:sshd', 'process', 8],
+    ]);
+    expect(ssh.children[0].icon).toEqual({ kind: 'mdi', name: 'ssh' });
+    const user = sys.children[2].children[0];
+    expect(user.displayName).toBe('User 1000 session');
+  });
+
+  it('subtracts agent cgroups from their parents and never counts them twice', () => {
+    const m = withSystem({
+      cgroups: [
+        cg('user.slice', '', 50),
+        cg('user-1000.slice', 'user.slice', 50),
+        cg('app-t3.scope', 'user-1000.slice', 30, 'agent-1'),
+        cg('child.scope', 'app-t3.scope', 10, 'agent-2'),
+      ],
+      programs: [prog('app-t3.scope', 'node', 5)],
+      remainderMem: null,
+      remainderCpu: null,
+    });
+    const sys = sysOf(buildNodeTree(m, null, 'memory', icon));
+    const user = sys.children[0];
+    expect(user.value).toBe(20);
+    expect(user.children[0].value).toBe(20);
+    // Agent cgroups and their programs are not drawn under System.
+    const flat: string[] = [];
+    const walk = (n: SunNode) => {
+      flat.push(n.key);
+      n.children.forEach(walk);
+    };
+    walk(sys);
+    expect(flat.some(k => k.includes('app-t3') || k.includes('child.scope'))).toBe(false);
+  });
+
+  it('subtracts an agent cgroup through an unexported parent', () => {
+    const m = withSystem({
+      cgroups: [cg('user.slice', '', 50), cg('app.scope', 'user.slice', 30, 'agent-1')],
+      programs: [],
+      remainderMem: null,
+      remainderCpu: null,
+    });
+    expect(sysOf(buildNodeTree(m, null, 'memory', icon)).children[0].value).toBe(20);
+  });
+
+  it('draws the kernel and cache remainder for the resource asked', () => {
+    const m = withSystem({
+      cgroups: [cg('system.slice', '', 10)],
+      programs: [],
+      remainderMem: 7,
+      remainderCpu: 0.5,
+    });
+    const mem = sysOf(buildNodeTree(m, null, 'memory', icon));
+    expect(mem.children.find(c => c.key === 'system/kernel')?.value).toBe(7);
+    expect(mem.children.find(c => c.key === 'system/kernel')?.label).toBe('Kernel and cache');
+    const cpu = sysOf(buildNodeTree({ ...m, cpuUsed: 5 }, null, 'cpu', icon));
+    expect(cpu.children.find(c => c.key === 'system/kernel')?.value).toBe(0.5);
+  });
+
+  it('falls back to the flat System arc without the series', () => {
+    const sys = sysOf(buildNodeTree(metrics(), null, 'memory', icon));
+    expect(sys.children).toEqual([]);
+    expect(sys.value).toBe(6);
+  });
+
+  it('scales children down to fit their parent', () => {
+    const m = withSystem(
+      {
+        cgroups: [cg('system.slice', '', 80), cg('a.service', 'system.slice', 60), cg('b.service', 'system.slice', 60)],
+        programs: [],
+        remainderMem: 100,
+        remainderCpu: null,
+      },
+      { memUsed: 100 }
+    );
+    const sys = sysOf(buildNodeTree(m, null, 'memory', icon));
+    const sum = (n: SunNode) => n.children.reduce((a, c) => a + c.value, 0);
+    expect(sum(sys)).toBeCloseTo(sys.value);
+    const top = sys.children.find(c => c.key === 'system/cg:system.slice') as SunNode;
+    expect(sum(top)).toBeLessThanOrEqual(top.value + 1e-9);
+  });
+
+  it('keeps the agent categories and adds no extra for agent cgroups', () => {
+    const m = withSystem({
+      cgroups: [cg('user.slice', '', 50), cg('app.scope', 'user.slice', 30, 'agent-1')],
+      programs: [],
+      remainderMem: null,
+      remainderCpu: null,
+    });
+    const h = host([
+      unit({ name: 'agent-1', orchestrator: 'herdr', role: 'agent', memBytes: 30, thread: 't' }),
+    ]);
+    const t = buildNodeTree(m, h, 'memory', icon);
+    const herdr = t.root.children.find(c => c.key === 'herdr') as SunNode;
+    expect(herdr.value).toBe(30);
+    expect(sysOf(t).value).toBe(70);
+    expect(t.root.children.reduce((a, c) => a + c.value, 0)).toBe(100);
+  });
+});

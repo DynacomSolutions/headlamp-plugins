@@ -15,6 +15,8 @@ import { DetailPanel, DETAILS_WIDTH, PANEL_HEIGHT } from './DetailPanel';
 import { Sunburst } from './Sunburst';
 import { NodeTree, Resource } from './tree';
 
+const rootCrumb = (tree: NodeTree) => (tree.nodeRing ? 'All nodes' : tree.root.label);
+
 const GAP = 16;
 const MIN_CHART = 200;
 const MAX_CHART = 1200;
@@ -124,8 +126,7 @@ export function NodeView(props: {
     const root = selectionFor(cpu, mem, detail.path, detail.path);
     if (!root || detail.path.length > 0) return root;
     // The whole selection: all selected nodes, or the one node, with the server icon.
-    const label = cpu.nodeRing || mem.nodeRing ? 'All selected nodes' : root.label;
-    return { ...root, label, kind: 'node' as const, icon: { kind: 'mdi' as const, name: 'server' } };
+    return { ...root, kind: 'node' as const, icon: { kind: 'mdi' as const, name: 'server' } };
   }, [chosen, selection, cpu, mem, detail.path]);
   const rootKind = cpu.nodeRing || mem.nodeRing ? 'Selection' : 'Node';
   const rows = React.useMemo(() => childRows(cpu, mem, base), [cpu, mem, base]);
@@ -161,7 +162,7 @@ export function NodeView(props: {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
         <Breadcrumbs aria-label="Focus" sx={{ flex: '1 1 0', minWidth: 0 }}>
           <Button sx={crumb} onClick={() => onPath([])}>
-            All nodes
+            {rootCrumb(cpu)}
           </Button>
           {detail.trail.slice(1).map((t, i, rest) =>
             i === rest.length - 1 ? (

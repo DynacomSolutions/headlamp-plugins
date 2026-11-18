@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { processLabel, unitLabel } from './labels';
+import { cgroupLabel, processLabel, unitLabel } from './labels';
 
 describe('processLabel', () => {
   it('uses the program basename', () => {
@@ -32,5 +32,16 @@ describe('unitLabel', () => {
     expect(unitLabel('foo-bar.scope', 'foo-')).toBe('bar');
     expect(unitLabel('herdr-.service')).toBe('herdr-');
     expect(unitLabel('.slice')).toBe('.slice');
+  });
+});
+
+describe('cgroupLabel', () => {
+  it('strips the unit suffix', () => {
+    expect(cgroupLabel('sshd.service')).toBe('sshd');
+    expect(cgroupLabel('system.slice')).toBe('system');
+    expect(cgroupLabel('init.scope')).toBe('init');
+  });
+  it('names user slices as sessions', () => {
+    expect(cgroupLabel('user-1000.slice')).toBe('User 1000 session');
   });
 });

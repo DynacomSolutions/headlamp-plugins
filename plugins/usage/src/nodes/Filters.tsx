@@ -17,12 +17,12 @@ export function Filters(props: {
   const { nodeOptions, nodes, cats, onNodes, onCats } = props;
   const labelOf = (id: string) => CATEGORIES.find(c => c.id === id)?.label ?? id;
   const option = { sx: { minHeight: 48, fontSize: 16 } };
-  const field = (label: string) => (params: object) =>
+  const field = (label: string, selected: boolean) => (params: object) =>
     (
       <TextField
         {...params}
         label={label}
-        placeholder="All"
+        placeholder={selected ? undefined : 'All'}
         InputLabelProps={{ sx: { fontSize: 16 } }}
       />
     );
@@ -39,7 +39,7 @@ export function Filters(props: {
         options={Array.from(new Set([...nodeOptions, ...nodes]))}
         value={nodes}
         onChange={(_, v) => onNodes(v)}
-        renderInput={field('Nodes')}
+        renderInput={field('Nodes', nodes.length > 0)}
         ListboxProps={option}
         sx={{ minWidth: 240, flex: '1 1 320px', '& .MuiInputBase-root': { fontSize: 16 } }}
       />
@@ -57,7 +57,7 @@ export function Filters(props: {
         }
         value={cats}
         onChange={(_, v) => onCats(v)}
-        renderInput={field('Category')}
+        renderInput={field('Category', cats.length > 0)}
         ListboxProps={option}
         sx={{ minWidth: 240, flex: '1 1 320px', '& .MuiInputBase-root': { fontSize: 16 } }}
       />

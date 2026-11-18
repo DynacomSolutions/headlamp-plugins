@@ -5,9 +5,9 @@
  */
 import type { AgentHost, AgentProc, AgentUnit } from './agents';
 import { GENERIC, iconForContainer, iconForNamespace, iconForProcess } from './appIcons';
-import { processLabel, unitLabel } from './labels';
+import { cgroupLabel, processLabel, unitLabel } from './labels';
 import { applyNames, NameContext, NO_NAMES } from './names';
-import type { NodeMetrics } from './types';
+import type { NodeMetrics, SystemUsage } from './types';
 
 export type Resource = 'cpu' | 'memory';
 
@@ -334,6 +334,72 @@ function otherScopes(units: AgentUnit[], r: Resource): SunNode | null {
   });
 }
 
+/**
+ * The System arc's children from the host cgroup series: top-level cgroups, their child cgroups
+ * and program groups, plus the kernel and cache remainder. Agent cgroups are not drawn here (the
+ * agent categories hold them), so their values are taken off every cgroup above them.
+ */
+function systemChildren(sys: SystemUsage, r: Resource): SunNode[] {
+  const val = (p: { cpuCores: number; memBytes: number }) =>
+    r === 'cpu' ? p.cpuCores : p.memBytes;
+  const all = new Map(sys.cgroups.map(c => [c.unit, c]));
+  const ancestorsOf = (unit: string): string[] => {
+    const out: string[] = [];
+    let p = all.get(unit)?.parent;
+    while (p && all.has(p) && !out.includes(p)) {
+      out.push(p);
+      p = all.get(p)?.parent;
+    }
+    return out;
+  };
+  const taken = new Map<string, number>();
+  for (const c of sys.cgroups) {
+    if (!c.agentUnit) continue;
+    const up = ancestorsOf(c.unit);
+    // Only the outermost agent cgroup: its value already holds the agent cgroups inside it.
+    if (up.some(a => all.get(a)?.agentUnit)) continue;
+    for (const a of up) taken.set(a, (taken.get(a) ?? 0) + val(c));
+  }
+  const plain = sys.cgroups.filter(c => !c.agentUnit);
+  const plainUnits = new Set(plain.map(c => c.unit));
+  const progs = new Map<string, SunNode[]>();
+  for (const p of sys.programs) {
+    if (!plainUnits.has(p.unit) || !(val(p) > 0)) continue;
+    const list = progs.get(p.unit) ?? [];
+    progs.set(p.unit, list);
+    list.push(
+      node(`system/cg:${p.unit}/prog:${p.program}`, p.program, 'process', val(p), [], {
+        icon: iconForProcess(p.program),
+        command: p.program,
+      })
+    );
+  }
+  const build = (c: (typeof plain)[number], seen: string[]): SunNode => {
+    const key = `system/cg:${c.unit}`;
+    const kids = plain
+      .filter(k => k.parent === c.unit && !seen.includes(k.unit))
+      .map(k => build(k, [...seen, c.unit, k.unit]))
+      .sort(byValue);
+    const value = Math.max(0, val(c) - (taken.get(c.unit) ?? 0));
+    const own = (progs.get(c.unit) ?? []).sort(byValue);
+    return node(key, c.unit, 'system', value, [...kids, ...own], {
+      icon: iconForProcess(cgroupLabel(c.unit)),
+      displayName: cgroupLabel(c.unit),
+    });
+  };
+  const roots = plain.filter(c => !plainUnits.has(c.parent) || c.parent === c.unit);
+  const out = roots.map(c => build(c, [c.unit])).sort(byValue);
+  const rest = r === 'cpu' ? sys.remainderCpu : sys.remainderMem;
+  if (rest !== null && rest > 0) {
+    out.push(
+      node('system/kernel', 'Kernel and cache', 'system', rest, [], {
+        icon: { kind: 'mdi', name: 'linux' },
+      })
+    );
+  }
+  return out.sort(byValue);
+}
+
 export function buildNodeTree(
   m: NodeMetrics,
   agents: AgentHost | null,
@@ -362,9 +428,16 @@ export function buildNodeTree(
   const attributed = sum(cats);
   if (used !== null) {
     cats.push(
-      node('system', 'System', 'system', Math.max(0, used - attributed), [], {
-        icon: { kind: 'mdi', name: 'cog' },
-      })
+      node(
+        'system',
+        'System',
+        'system',
+        Math.max(0, used - attributed),
+        m.system ? systemChildren(m.system, r) : [],
+        {
+          icon: { kind: 'mdi', name: 'cog' },
+        }
+      )
     );
   }
   // The root keeps the unfiltered total: a dropped category leaves its gap, nothing is rescaled.
@@ -386,6 +459,11 @@ export function findPath(root: SunNode, path: string[]): SunNode[] {
     cur = next;
   }
   return out;
+}
+
+/** A short name for a selection of nodes, small enough for the chart centre. */
+export function nodesLabel(count: number): string {
+  return `${count} nodes`;
 }
 
 /**
@@ -414,7 +492,7 @@ export function buildCombinedTree(
   const hostMetrics = trees.length > 0 && trees.every(x => x.t.hostMetrics);
   const total = sum(nodes);
   return {
-    root: node('root', 'All selected nodes', 'node', total, nodes),
+    root: node('root', nodesLabel(trees.length), 'node', total, nodes),
     capacity: trees.reduce((s, x) => s + x.t.capacity, 0),
     // Nodes without host metrics count by what is attributed to them.
     used: trees.some(x => x.t.used !== null) ? total : null,
