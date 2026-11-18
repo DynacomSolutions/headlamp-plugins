@@ -461,6 +461,11 @@ export function findPath(root: SunNode, path: string[]): SunNode[] {
   return out;
 }
 
+/** A short name for a selection of nodes, small enough for the chart centre. */
+export function nodesLabel(count: number): string {
+  return `${count} nodes`;
+}
+
 /**
  * One tree for the selected nodes. One node gives that node's tree. More than one gives a root
  * whose first ring is one arc per node (key `node:<name>`), each sized by its own total and drawn
@@ -487,7 +492,7 @@ export function buildCombinedTree(
   const hostMetrics = trees.length > 0 && trees.every(x => x.t.hostMetrics);
   const total = sum(nodes);
   return {
-    root: node('root', 'All selected nodes', 'node', total, nodes),
+    root: node('root', nodesLabel(trees.length), 'node', total, nodes),
     capacity: trees.reduce((s, x) => s + x.t.capacity, 0),
     // Nodes without host metrics count by what is attributed to them.
     used: trees.some(x => x.t.used !== null) ? total : null,

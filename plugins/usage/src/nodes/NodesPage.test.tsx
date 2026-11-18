@@ -66,13 +66,29 @@ describe('NodesPage', () => {
   it('names the root card for the whole selection, not "7 nodes, shown"', () => {
     const { container } = mount('/usage/dashboard');
     const panel = container.querySelector('[data-detail-panel]') as HTMLElement;
-    expect(panel.textContent).toContain('All selected nodes');
+    expect(panel.textContent).toContain('2 nodes');
     expect(panel.textContent).not.toContain('shown');
     expect(panel.querySelector('[data-icon="mdi:server"]')).not.toBeNull();
     cleanup();
     const one = mount('/usage/dashboard?nodes=worker-1');
     const p1 = one.container.querySelector('[data-detail-panel]') as HTMLElement;
     expect(p1.textContent).toContain('worker-1');
+  });
+
+  it('names the breadcrumb root after the only selected node, or All nodes', () => {
+    mount('/usage/dashboard?nodes=worker-1');
+    const crumbs = screen.getByRole('navigation', { name: 'Focus' });
+    expect(crumbs.textContent).toContain('worker-1');
+    expect(crumbs.textContent).not.toContain('All nodes');
+    cleanup();
+    mount('/usage/dashboard');
+    expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).toContain('All nodes');
+  });
+
+  it('hides the filter placeholder once something is selected', () => {
+    mount('/usage/dashboard?nodes=worker-1');
+    expect(screen.getByRole('combobox', { name: 'Nodes' }).getAttribute('placeholder')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Category' }).getAttribute('placeholder')).toBe('All');
   });
 
   it('shows the friendly name as the title and the raw id under it', () => {
