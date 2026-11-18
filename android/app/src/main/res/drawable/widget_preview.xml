@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Approximate preview for launchers that do not support previewLayout. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="160dp"
+    android:height="160dp"
+    android:viewportWidth="160"
+    android:viewportHeight="160">
+    <path android:fillColor="#FFF3F0F7" android:pathData="M24,0 H136 A24,24 0 0 1 160,24 V136 A24,24 0 0 1 136,160 H24 A24,24 0 0 1 0,136 V24 A24,24 0 0 1 24,0 Z" />
+    <path android:fillColor="#FF1D1B20" android:pathData="M14,14 H62 V22 H14 Z" />
+    <path android:fillColor="#FF6750A4" android:pathData="M112,14 H146 V22 H112 Z" />
+    <path android:fillColor="#FF1D1B20" android:pathData="M14,34 H50 V42 H14 Z M14,64 H50 V72 H14 Z" />
+    <path android:fillColor="#FFE7E0EC" android:pathData="M14,46 H146 V52 H14 Z M14,76 H146 V82 H14 Z M14,112 H76 V117 H14 Z M84,112 H146 V117 H84 Z M14,142 H76 V147 H14 Z M84,142 H146 V147 H84 Z" />
+    <path android:fillColor="#FF2E7D32" android:pathData="M14,46 H69 V52 H14 Z M14,76 H90 V82 H14 Z M84,112 H122 V117 H84 Z M14,142 H36 V147 H14 Z M84,142 H106 V147 H84 Z" />
+    <path android:fillColor="#FFF9A825" android:pathData="M14,112 H64 V117 H14 Z" />
+    <path android:fillColor="#FF1D1B20" android:pathData="M14,96 H54 V103 H14 Z M14,126 H54 V133 H14 Z" />
+</vector>

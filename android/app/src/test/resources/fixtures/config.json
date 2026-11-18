@@ -1,0 +1,7 @@
+{
+  "clusters": [
+    {"name": "prod-1", "server": "https://api.example.com:6443", "auth_type": ""},
+    {"name": "team a/staging", "meta_data": {"source": "kubeconfig"}}
+  ],
+  "isDynamicClusterEnabled": true
+}
