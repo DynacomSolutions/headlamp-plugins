@@ -107,7 +107,9 @@ export function selectionFor(
     kind: n.kind,
     icon: m?.node.icon ?? c?.node.icon,
     href: m?.node.href ?? c?.node.href,
-    canOpen: n.kind !== 'unused' && ((c?.node.children.length ?? 0) > 0 || (m?.node.children.length ?? 0) > 0),
+    canOpen:
+      n.kind !== 'unused' &&
+      ((c?.node.children.length ?? 0) > 0 || (m?.node.children.length ?? 0) > 0),
     cpu: segmentFor(cpu, zoom, sel),
     mem: segmentFor(mem, zoom, sel),
   };
@@ -126,7 +128,13 @@ export function childRows(cpu: NodeTree, mem: NodeTree, base: string[]): ChildRo
   const rows = new Map<string, ChildRow>();
   const add = (tree: NodeTree, field: 'cpu' | 'mem') => {
     for (const ch of exact(tree, base)?.children ?? []) {
-      const row = rows.get(ch.key) ?? { key: ch.key, label: nameOf(ch), icon: ch.icon, cpu: null, mem: null };
+      const row = rows.get(ch.key) ?? {
+        key: ch.key,
+        label: nameOf(ch),
+        icon: ch.icon,
+        cpu: null,
+        mem: null,
+      };
       row[field] = ch.value;
       rows.set(ch.key, row);
     }
@@ -136,5 +144,7 @@ export function childRows(cpu: NodeTree, mem: NodeTree, base: string[]): ChildRo
   const weight = (r: ChildRow) =>
     (cpu.capacity > 0 ? (r.cpu ?? 0) / cpu.capacity : 0) +
     (mem.capacity > 0 ? (r.mem ?? 0) / mem.capacity : 0);
-  return [...rows.values()].sort((a, b) => weight(b) - weight(a));
+  return [...rows.values()].sort(
+    (a, b) => weight(b) - weight(a) || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0)
+  );
 }

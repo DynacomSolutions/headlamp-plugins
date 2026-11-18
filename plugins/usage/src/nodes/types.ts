@@ -26,10 +26,20 @@ export interface ProgramUsage {
   memBytes: number;
 }
 
+/** One agent unit's exported usage, from the same series and window as the cgroups. */
+export interface AgentUnitUsage {
+  /** The agent unit name (not the cgroup path). */
+  unit: string;
+  cpuCores: number;
+  memBytes: number;
+}
+
 /** The host cgroup and process series of the agent-memory exporter. */
 export interface SystemUsage {
   cgroups: CgroupUsage[];
   programs: ProgramUsage[];
+  /** Every agent unit the exporter reports, on the same basis as `cgroups` and the node used. */
+  agentUnits: AgentUnitUsage[];
   /** Kernel, page cache and other memory no cgroup holds; null when not reported. */
   remainderMem: number | null;
   remainderCpu: number | null;

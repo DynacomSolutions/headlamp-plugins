@@ -1,5 +1,12 @@
 import { MetricSample, numberFromValue, queryMetrics } from '../metrics';
-import type { CgroupUsage, NodeMetrics, PodUsage, ProgramUsage, SystemUsage } from './types';
+import type {
+  AgentUnitUsage,
+  CgroupUsage,
+  NodeMetrics,
+  PodUsage,
+  ProgramUsage,
+  SystemUsage,
+} from './types';
 
 export type QueryKey =
   | 'cpuCount'
@@ -43,10 +50,8 @@ export const NODE_QUERIES: Record<QueryKey, string> = {
     'sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!=""})',
   cgroupInfo: 'max by (node, unit, parent, agent_unit) (agent_memory_cgroup_info)',
   cgroupCpu: 'sum by (node, unit) (rate(agent_memory_cgroup_cpu_seconds_total[2m]))',
-  cgroupMem:
-    'sum by (node, unit) (agent_memory_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',
-  programCpu:
-    'sum by (node, unit, program) (rate(agent_memory_process_cpu_seconds_total[2m]))',
+  cgroupMem: 'sum by (node, unit) (agent_memory_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',
+  programCpu: 'sum by (node, unit, program) (rate(agent_memory_process_cpu_seconds_total[2m]))',
   programMem: 'sum by (node, unit, program) (agent_memory_process_rss_bytes)',
   agentUnitCpu: 'sum by (node, unit) (rate(agent_memory_agent_unit_cpu_seconds_total[2m]))',
   agentUnitMem: 'sum by (node, unit) (agent_memory_agent_unit_memory_bytes)',
@@ -103,6 +108,7 @@ function assembleSystem(
     const sys = out.get(node) ?? {
       cgroups: [],
       programs: [],
+      agentUnits: [],
       remainderMem: v.remainderMem.get(node) ?? null,
       remainderCpu: v.remainderCpu.get(node) ?? null,
     };
@@ -127,6 +133,18 @@ function assembleSystem(
     add(progCpu.get(node), 'cpuCores');
     add(progMem.get(node), 'memBytes');
     sys.programs = [...progs.values()];
+    const units = new Map<string, AgentUnitUsage>();
+    const addUnit = (m: Map<string, number> | undefined, field: 'cpuCores' | 'memBytes') => {
+      for (const [id, value] of m ?? []) {
+        const [unit] = JSON.parse(id) as string[];
+        const u = units.get(unit) ?? { unit, cpuCores: 0, memBytes: 0 };
+        u[field] += value;
+        units.set(unit, u);
+      }
+    };
+    addUnit(agentCpu.get(node), 'cpuCores');
+    addUnit(agentMem.get(node), 'memBytes');
+    sys.agentUnits = [...units.values()];
   }
   return out;
 }
@@ -170,7 +188,7 @@ export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): 
 
   return [...names]
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-    .map((node) => {
+    .map(node => {
       const cpuCapacity = v.cpuCount.get(node) ?? v.kubeCpuCapacity.get(node) ?? 0;
       const memCapacity =
         v.memTotal.get(node) ?? v.macMemTotal.get(node) ?? v.kubeMemCapacity.get(node) ?? 0;

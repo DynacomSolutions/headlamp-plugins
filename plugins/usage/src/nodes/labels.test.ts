@@ -44,4 +44,11 @@ describe('cgroupLabel', () => {
   it('names user slices as sessions', () => {
     expect(cgroupLabel('user-1000.slice')).toBe('User 1000 session');
   });
+  it('uses the last segment of a path', () => {
+    expect(cgroupLabel('system.slice/k3s.service')).toBe('k3s');
+    expect(cgroupLabel('user.slice/user-1000.slice')).toBe('User 1000 session');
+    const manager = `user.slice/user-1000.slice/user${'@'}1000.service`;
+    expect(cgroupLabel(manager)).toBe('User 1000 services');
+    expect(cgroupLabel(`${manager}/app.slice/app-x\\x2dy.slice`)).toBe('app-x-y');
+  });
 });

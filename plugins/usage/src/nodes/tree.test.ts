@@ -435,10 +435,15 @@ describe('buildCombinedTree', () => {
     expect(w1.children.map(c => c.key)).toEqual(['k8s']);
     // The node arc keeps its total; the k8s arc keeps its value.
     expect(w1.value).toBe(6);
-    expect(w1.children[0].value).toBe(all.root.children.find(c => c.key === 'node:worker-1')!.children[0].value);
+    expect(w1.children[0].value).toBe(
+      all.root.children.find(c => c.key === 'node:worker-1')!.children[0].value
+    );
     expect(t.root.value).toBe(16);
     // The dropped share is a gap the layout can draw.
-    expect(gapNodes(t, w1, false)[0]).toMatchObject({ key: 'node:worker-1/~unattributed', kind: 'unused' });
+    expect(gapNodes(t, w1, false)[0]).toMatchObject({
+      key: 'node:worker-1/~unattributed',
+      kind: 'unused',
+    });
   });
 
   it('counts a node without host metrics by what is attributed to it', () => {
@@ -476,8 +481,11 @@ describe('system breakdown', () => {
     cpuCores: mem / 10,
     memBytes: mem,
   });
-  const withSystem = (system: NodeMetrics['system'], over: Partial<NodeMetrics> = {}) =>
-    metrics({ memUsed: 100, pods: [], system, ...over });
+  const withSystem = (
+    system: Omit<NonNullable<NodeMetrics['system']>, 'agentUnits'> &
+      Partial<Pick<NonNullable<NodeMetrics['system']>, 'agentUnits'>>,
+    over: Partial<NodeMetrics> = {}
+  ) => metrics({ memUsed: 100, pods: [], system: { agentUnits: [], ...system }, ...over });
   const sysOf = (t: ReturnType<typeof buildNodeTree>) =>
     t.root.children.find(c => c.key === 'system') as SunNode;
 
@@ -572,7 +580,11 @@ describe('system breakdown', () => {
   it('scales children down to fit their parent', () => {
     const m = withSystem(
       {
-        cgroups: [cg('system.slice', '', 80), cg('a.service', 'system.slice', 60), cg('b.service', 'system.slice', 60)],
+        cgroups: [
+          cg('system.slice', '', 80),
+          cg('a.service', 'system.slice', 60),
+          cg('b.service', 'system.slice', 60),
+        ],
         programs: [],
         remainderMem: 100,
         remainderCpu: null,
@@ -601,5 +613,121 @@ describe('system breakdown', () => {
     expect(herdr.value).toBe(30);
     expect(sysOf(t).value).toBe(70);
     expect(t.root.children.reduce((a, c) => a + c.value, 0)).toBe(100);
+  });
+
+  // An agent host shaped like a live one: the agents sit under user.slice, whose cgroup values
+  // include them, and the backend's own agent numbers come from another poll than the series.
+  describe('agent host with agents under user.slice', () => {
+    const AGENTS = 'app-agents.slice';
+    const manager = `user.slice/user-1000.slice/user${'@'}1000.service`;
+    const cgs = (mult: number) => [
+      { unit: 'system.slice', parent: '', agentUnit: '', cpuCores: 1 * mult, memBytes: 4 * GB },
+      { unit: 'user.slice', parent: '', agentUnit: '', cpuCores: 15.5 * mult, memBytes: 60 * GB },
+      {
+        unit: 'user.slice/user-1000.slice',
+        parent: 'user.slice',
+        agentUnit: '',
+        cpuCores: 15.5 * mult,
+        memBytes: 60 * GB,
+      },
+      {
+        unit: manager,
+        parent: 'user.slice/user-1000.slice',
+        agentUnit: '',
+        cpuCores: 15.5 * mult,
+        memBytes: 60 * GB,
+      },
+      {
+        unit: `${manager}/app.slice`,
+        parent: manager,
+        agentUnit: '',
+        cpuCores: 15 * mult,
+        memBytes: 58 * GB,
+      },
+      {
+        unit: `${manager}/app.slice/${AGENTS}`,
+        parent: `${manager}/app.slice`,
+        agentUnit: AGENTS,
+        cpuCores: 0,
+        memBytes: 0,
+      },
+    ];
+    const system = (agentCpu: number, agentMem: number) => ({
+      cgroups: cgs(1).map(c =>
+        c.agentUnit ? { ...c, cpuCores: agentCpu, memBytes: agentMem } : c
+      ),
+      programs: [],
+      agentUnits: [{ unit: AGENTS, cpuCores: agentCpu, memBytes: agentMem }],
+      remainderMem: 11 * GB,
+      remainderCpu: 4.5,
+    });
+    const agentHost = (cpu: number, mem: number) =>
+      host([
+        unit({
+          name: AGENTS,
+          kind: 'slice',
+          orchestrator: 't3',
+          role: 'agents',
+          cpuCores: cpu,
+          memBytes: mem,
+        }),
+        unit({
+          name: 'a1.scope',
+          orchestrator: 't3',
+          role: 'agent',
+          parent: AGENTS,
+          cpuCores: cpu,
+          memBytes: mem,
+          thread: 'T',
+        }),
+      ]);
+    const m = (agentCpu: number, agentMem: number) =>
+      metrics({
+        cpuUsed: 22.5,
+        memUsed: 150 * GB,
+        cpuCapacity: 32,
+        memCapacity: 256 * GB,
+        pods: [{ namespace: 'ns', pod: 'p', container: 'c', cpuCores: 1.5, memBytes: 37 * GB }],
+        system: system(agentCpu, agentMem),
+      });
+    const childSum = (n: SunNode) => n.children.reduce((a, c) => a + c.value, 0);
+
+    it('keeps System and subtracts the agents once', () => {
+      const t = buildNodeTree(m(9, 55 * GB), agentHost(9, 55 * GB), 'cpu', icon);
+      const sys = sysOf(t);
+      expect(sys.value).toBeCloseTo(22.5 - 1.5 - 9);
+      expect(t.root.children.reduce((a, c) => a + c.value, 0)).toBeCloseTo(22.5);
+      expect(childSum(sys)).toBeLessThanOrEqual(sys.value + 1e-9);
+      const user = sys.children.find(c => c.key === 'system/cg:user.slice') as SunNode;
+      expect(user.value).toBeCloseTo(15.5 - 9);
+      expect(sys.children.find(c => c.key === 'system/kernel')?.value).toBe(4.5);
+    });
+
+    it('does not let backend agent numbers from another poll empty System', () => {
+      // The backend says the agents use 30 cores, more than the node: the series say 9.
+      const t = buildNodeTree(m(9, 55 * GB), agentHost(30, 90 * GB), 'cpu', icon);
+      expect(sysOf(t).value).toBeCloseTo(22.5 - 1.5 - 9);
+      const mem = buildNodeTree(m(9, 55 * GB), agentHost(30, 90 * GB), 'memory', icon);
+      expect(mem.root.children.find(c => c.key === 't3')?.value).toBe(55 * GB);
+      expect(sysOf(mem).value).toBeCloseTo(150 * GB - 37 * GB - 55 * GB);
+    });
+
+    it('keeps System when its own cgroups hold more than is left', () => {
+      const t = buildNodeTree(m(9, 55 * GB), agentHost(9, 55 * GB), 'cpu', icon);
+      expect(sysOf(t)).toBeDefined();
+      const skewed = { ...m(9, 55 * GB), cpuUsed: 14 };
+      const s = sysOf(buildNodeTree(skewed, agentHost(9, 55 * GB), 'cpu', icon));
+      expect(s).toBeDefined();
+      expect(s.value).toBeGreaterThan(0);
+    });
+
+    it('labels cgroups by their last segment and keeps the path as the id', () => {
+      const sys = sysOf(buildNodeTree(m(9, 55 * GB), agentHost(9, 55 * GB), 'memory', icon));
+      const user = sys.children.find(c => c.key === 'system/cg:user.slice') as SunNode;
+      const session = user.children[0];
+      expect(session.label).toBe('user.slice/user-1000.slice');
+      expect(session.displayName).toBe('User 1000 session');
+      expect(session.children[0].displayName).toBe('User 1000 services');
+    });
   });
 });
