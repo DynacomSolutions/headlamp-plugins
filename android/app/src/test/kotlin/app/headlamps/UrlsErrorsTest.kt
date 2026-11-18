@@ -59,5 +59,7 @@ class UrlsErrorsTest {
     @Test
     fun missingInstanceHasOwnText() {
         assertEquals(R.string.error_instance_missing, errorText(ErrorKind.INSTANCE_MISSING))
+        assertEquals(R.string.error_agent_missing, panelErrorText(ErrorKind.AGENT_MISSING))
+        assertEquals(R.string.error_unauthorised, panelErrorText(ErrorKind.UNAUTHORIZED))
     }
 }

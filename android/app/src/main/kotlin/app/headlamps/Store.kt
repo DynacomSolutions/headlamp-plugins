@@ -148,4 +148,34 @@ class Repository(private val context: Context) {
     suspend fun saveSnapshot(widgetId: Int, snapshot: Snapshot) {
         context.dataStore.edit { it[stringPreferencesKey("snap_$widgetId")] = AppJson.encodeToString(Snapshot.serializer(), snapshot) }
     }
+
+    /** Emits again whenever the panel widget config, its instance or its snapshot changes. */
+    fun panelState(widgetId: Int): Flow<PanelWidgetState> = context.dataStore.data.map { prefs ->
+        val config = prefs[stringPreferencesKey("panel_$widgetId")]
+            ?.let { runCatching { AppJson.decodeFromString<PanelConfig>(it) }.getOrNull() }
+        val instance = config?.let { c -> decode(prefs[instancesKey]).firstOrNull { it.id == c.instanceId } }
+        val snapshot = prefs[stringPreferencesKey("panelsnap_$widgetId")]
+            ?.let { runCatching { AppJson.decodeFromString<PanelSnapshot>(it) }.getOrNull() }
+        PanelWidgetState(config, instance, snapshot)
+    }.distinctUntilChanged()
+
+    suspend fun panelConfig(widgetId: Int): PanelConfig? =
+        context.dataStore.data.first()[stringPreferencesKey("panel_$widgetId")]?.let {
+            runCatching { AppJson.decodeFromString<PanelConfig>(it) }.getOrNull()
+        }
+
+    suspend fun savePanelConfig(widgetId: Int, config: PanelConfig) {
+        context.dataStore.edit { it[stringPreferencesKey("panel_$widgetId")] = AppJson.encodeToString(PanelConfig.serializer(), config) }
+    }
+
+    suspend fun savePanelSnapshot(widgetId: Int, snapshot: PanelSnapshot) {
+        context.dataStore.edit { it[stringPreferencesKey("panelsnap_$widgetId")] = AppJson.encodeToString(PanelSnapshot.serializer(), snapshot) }
+    }
+
+    suspend fun removePanelWidget(widgetId: Int) {
+        context.dataStore.edit {
+            it.remove(stringPreferencesKey("panel_$widgetId"))
+            it.remove(stringPreferencesKey("panelsnap_$widgetId"))
+        }
+    }
 }

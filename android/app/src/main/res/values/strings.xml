@@ -19,6 +19,15 @@
     <string name="error_invalid_url">The address or the instance is not valid.</string>
     <string name="error_instance_missing">Instance removed. Configure the widget again.</string>
     <string name="action_pin_widget">Add widget</string>
+    <string name="error_agent_missing">headlamp-agent not found. Check that it runs in this cluster.</string>
+    <string name="error_panel_failed">The panel could not read its data.</string>
+    <string name="panel_widget_name">Headlamp panel</string>
+    <string name="panel_widget_description">A panel from the Headlamp plugins, such as uptime, alerts or disks.</string>
+    <string name="panel_config_title">Headlamp panel widget</string>
+    <string name="config_pick_panel">Panel</string>
+    <string name="pin_choose_title">Choose a widget</string>
+    <string name="pin_node_usage">Node usage</string>
+    <string name="pin_panel">Headlamp panel</string>
     <string name="instances_title">Headlamp instances</string>
     <string name="instances_empty">No instances yet. Tap + to add one.</string>
     <string name="warning_http">Warning: http:// sends data without encryption.</string>

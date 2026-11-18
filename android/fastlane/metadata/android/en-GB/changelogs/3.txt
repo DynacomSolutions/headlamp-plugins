@@ -1,0 +1,1 @@
+New widget: Headlamp panel. It shows uptime, alerts, disks and more from your cluster.
