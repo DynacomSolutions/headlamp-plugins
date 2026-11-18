@@ -14,7 +14,7 @@ import { formatBytes, formatCores, formatPercent } from '../units';
 import { childRows, detailFor, selectionFor, valueAt } from './detail';
 import { DetailPanel } from './DetailPanel';
 import { Sunburst } from './Sunburst';
-import { NodeTree, Resource } from './tree';
+import { capacityZoom, NodeTree, Resource } from './tree';
 
 const rootCrumb = (tree: NodeTree) => (tree.nodeRing ? 'All nodes' : tree.root.label);
 
@@ -25,7 +25,8 @@ const CHART_HEAD = 64;
 
 /**
  * The line under a chart heading. At the root: used against capacity. Zoomed in (`focus` not
- * empty): the total of the focus node in this tree, with no share of capacity.
+ * empty): the total of the focus node in this tree, with no share of capacity. Zoomed into one
+ * node of a node ring it reads like a single-node root: used against that node's capacity.
  */
 export function usedText(
   tree: NodeTree,
@@ -34,10 +35,16 @@ export function usedText(
   focusName = ''
 ): string {
   const fmt = resource === 'cpu' ? formatCores : formatBytes;
-  if (focus.length > 0) {
+  if (focus.length > 0 && capacityZoom(tree, focus) === null) {
     const v = valueAt(tree, focus);
     if (v === null) return `no ${resource === 'cpu' ? 'CPU' : 'memory'} data`;
     return `${fmt(v)} in ${focusName}`;
+  }
+  const cap = capacityZoom(tree, focus);
+  if (cap !== null) {
+    // One node of a node ring reads like a single-node root.
+    const v = valueAt(tree, focus) ?? 0;
+    return `${fmt(v)} of ${fmt(cap)} (${formatPercent(v, cap)})`;
   }
   if (tree.used === null) return `${fmt(tree.root.value)} attributed of ${fmt(tree.capacity)}`;
   return `${fmt(tree.used)} of ${fmt(tree.capacity)} (${formatPercent(tree.used, tree.capacity)})`;
@@ -150,6 +157,9 @@ export function NodeView(props: {
   const { cpu, mem, alerts, path, sel, kiosk, toolbar, trailing, onPath, onSelect } = props;
   const detail = React.useMemo(() => detailFor(cpu, mem, path), [cpu, mem, path]);
   const selection = React.useMemo(() => selectionFor(cpu, mem, detail.path, sel), [cpu, mem, detail.path, sel]);
+  // Zoomed into one node of a node ring: it reads like a single-node root, against its capacity.
+  const nodeZoom =
+    capacityZoom(cpu, detail.path) !== null || capacityZoom(mem, detail.path) !== null;
   const chosen = sel.length > 0 && selection !== null;
   const base = chosen ? sel : detail.path;
   const subject = React.useMemo(() => {
@@ -266,7 +276,7 @@ export function NodeView(props: {
         subject={subject}
         selected={chosen}
         rows={rows}
-        zoomed={detail.path.length > 0}
+        zoomed={detail.path.length > 0 && !nodeZoom}
         section={detail.focus.label}
         onSelect={key => onSelect([...base, key])}
       />

@@ -177,6 +177,87 @@ describe('layoutSunburst node ring', () => {
   });
 });
 
+describe('layoutSunburst node ring by capacity', () => {
+  const TAU = 2 * Math.PI;
+  const ring = (): NodeTree => ({
+    root: n('root', 12, 'node', [
+      {
+        ...n('node:a', 4, 'node', [n('k8s', 3, 'category'), n('system', 1, 'system')]),
+        span: 12,
+        capacity: 12,
+      },
+      { ...n('node:b', 2, 'node', [n('k8s', 2, 'category')]), span: 4, capacity: 4 },
+      { ...n('node:c', 6, 'node', [n('k8s', 6, 'category')]), span: 6, capacity: 4 },
+    ]),
+    capacity: 20,
+    used: 12,
+    hostMetrics: true,
+    nodeRing: true,
+  });
+  const arcOf = (key: string, o = opts, focus: string[] = []) =>
+    layoutSunburst(ring(), focus, o).arcs.find(a => a.key === key)!;
+
+  it('splits the whole circle by capacity, using the sum of spans', () => {
+    const a = arcOf('node:a');
+    const b = arcOf('node:b');
+    const c = arcOf('node:c');
+    expect(a.x0).toBe(0);
+    expect(a.x1).toBeCloseTo((TAU * 12) / 22);
+    expect(b.x1 - b.x0).toBeCloseTo((TAU * 4) / 22);
+    expect(c.x1).toBeCloseTo(TAU);
+    expect(a.gap).toBeUndefined();
+  });
+
+  it('keeps the node arc over its whole span and the children in the used share', () => {
+    const a = arcOf('node:a');
+    const k8s = arcOf('k8s');
+    expect(k8s.x0).toBe(0);
+    // Used 4 of span 12: the children fill the first third of the wedge.
+    expect(k8s.x1).toBeCloseTo(a.x1 * (4 / 12) * (3 / 4));
+    const sys = arcOf('system');
+    expect(sys.x1).toBeCloseTo(a.x1 / 3);
+  });
+
+  it('draws the unused gap from the used share to the wedge end, out to the rim', () => {
+    const a = arcOf('node:a');
+    const gap = arcOf('node:a/~unused');
+    expect(gap).toMatchObject({ gap: true, fill: 'none', depth: 2 });
+    expect(gap.x0).toBeCloseTo(a.x1 / 3);
+    expect(gap.x1).toBeCloseTo(a.x1);
+    expect(gap.y0).toBeCloseTo(1000 * (CENTRE + (1 - CENTRE) / 3));
+    expect(gap.y1).toBeCloseTo(1000);
+    expect(gap.node).toMatchObject({ label: 'Unused on node:a', kind: 'unused', value: 8 });
+  });
+
+  it('has no root unused arc and no gap for an overcommitted node', () => {
+    const { arcs } = layoutSunburst(ring(), [], opts);
+    expect(arcs.some(x => x.key === 'root/~unused')).toBe(false);
+    expect(arcs.some(x => x.key === 'node:c/~unused')).toBe(false);
+    const c = arcOf('node:c');
+    const k8s = arcs.filter(x => x.key === 'k8s').pop()!;
+    expect(k8s.x1).toBeCloseTo(c.x1);
+    expect(arcs.every(x => x.x1 >= x.x0)).toBe(true);
+  });
+
+  it('zooms into a node like a single-node root: use, then its unused gap to the circle end', () => {
+    const { arcs, centre } = layoutSunburst(ring(), ['node:a'], opts);
+    const k8s = arcs.find(x => x.key === 'k8s')!;
+    expect(k8s.x1).toBeCloseTo(TAU * (3 / 12));
+    const gap = arcs.find(x => x.key === 'node:a/~unused')!;
+    expect(gap).toMatchObject({ gap: true, depth: 1 });
+    expect(gap.x0).toBeCloseTo(TAU * (4 / 12));
+    expect(gap.x1).toBeCloseTo(TAU);
+    expect(gap.y0).toBeCloseTo(1000 * CENTRE);
+    expect(gap.y1).toBeCloseTo(1000);
+    expect(centre.share).toBeCloseTo(4 / 12);
+  });
+
+  it("keeps today's zoom below a node and uses node capacity only for the node", () => {
+    const { arcs } = layoutSunburst(ring(), ['node:a', 'k8s'], opts);
+    expect(arcs.some(x => x.key.endsWith('/~unused'))).toBe(false);
+  });
+});
+
 describe('shade', () => {
   it('is deterministic, keeps hue, varies lightness', () => {
     expect(shade('#0072B2', 2, 1)).toBe(shade('#0072B2', 2, 1));

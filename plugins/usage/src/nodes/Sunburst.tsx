@@ -25,7 +25,7 @@ import {
 } from './arcLabel';
 import { ArcDatum, CENTRE, layoutSunburst } from './layout';
 import { nameOf } from './names';
-import { NodeTree, Resource, SunNode } from './tree';
+import { capacityZoom, NodeTree, Resource, SunNode } from './tree';
 import { useIconUrl } from './useIconUrl';
 
 const MOVE_LIMIT = 10;
@@ -154,10 +154,18 @@ export function Sunburst(props: {
   const drawn = [...items].sort((a, b) => Number(isSelected('', a.arc)) - Number(isSelected('', b.arc)));
   const name = resource === 'cpu' ? 'CPU' : 'Memory';
   // Zoomed in, percentages are of the active section (the focus node), not of capacity.
-  const zoomed = focus.length > 0;
+  // Zoomed into one node of a node ring it reads like a single-node root, against that capacity.
+  const capZoom = capacityZoom(tree, shown);
+  const zoomed = focus.length > 0 && capZoom === null;
   const sectionName = subject?.label ?? centre.title;
-  const scope = zoomed ? `of ${sectionName}` : tree.nodeRing ? 'of selection' : 'of node';
-  const base = zoomed ? focusNode.value : tree.capacity;
+  const scope = zoomed
+    ? `of ${sectionName}`
+    : capZoom !== null
+    ? 'of capacity'
+    : tree.nodeRing
+    ? 'of selection'
+    : 'of node';
+  const base = zoomed ? focusNode.value : capZoom ?? tree.capacity;
   // This chart has no data for the focus when its tree resolves a shorter path.
   const missing = shown.length < focus.length;
   const up = focus.length ? focus.slice(0, -1) : null;
@@ -204,7 +212,7 @@ export function Sunburst(props: {
           },
         };
 
-  const top = [...(zoomed ? focusNode : tree.root).children]
+  const top = [...(zoomed || capZoom !== null ? focusNode : tree.root).children]
     .sort((a, b) => b.value - a.value)
     .slice(0, 5)
     .map(c => `${c.label} ${formatPercent(c.value, base)}`)
@@ -233,7 +241,7 @@ export function Sunburst(props: {
               node: `${formatPercent(centre.share, 1)} ${scope}`,
               nodeShort: formatPercent(centre.share, 1),
               parent:
-                centre.parentShare === null
+                centre.parentShare === null || capZoom !== null
                   ? undefined
                   : `${formatPercent(centre.parentShare, 1)} of parent`,
             }),

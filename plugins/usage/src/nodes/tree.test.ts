@@ -446,6 +446,31 @@ describe('buildCombinedTree', () => {
     });
   });
 
+  it('sizes each node wedge by capacity and keeps the use as the value', () => {
+    const t = buildCombinedTree(two, noHost, 'cpu', src);
+    expect(t.root.children.map(c => [c.key, c.span, c.capacity, c.value])).toEqual([
+      ['node:worker-2', 16, 16, 10],
+      ['node:worker-1', 8, 8, 6],
+    ]);
+  });
+
+  it('keeps an idle node and sorts the ring by capacity', () => {
+    const idle = metrics({ node: 'worker-3', cpuCapacity: 32, cpuUsed: 0, pods: [] });
+    const t = buildCombinedTree([two[0], idle], noHost, 'cpu', src);
+    expect(t.root.children.map(c => [c.key, c.span, c.value])).toEqual([
+      ['node:worker-3', 32, 0],
+      ['node:worker-1', 8, 6],
+    ]);
+  });
+
+  it('gives a node using more than its capacity a span equal to its use', () => {
+    const hot = metrics({ node: 'worker-3', cpuCapacity: 4, cpuUsed: 5, pods: [] });
+    const t = buildCombinedTree([two[0], hot], noHost, 'cpu', src);
+    const n = t.root.children.find(c => c.key === 'node:worker-3')!;
+    expect([n.span, n.capacity, n.value]).toEqual([5, 4, 5]);
+    expect(gapNodes(t, n, false).some(g => g.key.endsWith('/~unused'))).toBe(false);
+  });
+
   it('counts a node without host metrics by what is attributed to it', () => {
     const bare = metrics({ node: 'worker-3', cpuCapacity: 4, cpuUsed: null });
     const t = buildCombinedTree([two[0], bare], noHost, 'cpu', src);
@@ -464,6 +489,25 @@ describe('gapNodes', () => {
     expect(gaps.map(g => [g.key, g.value])).toEqual([['root/~unused', 2]]);
     const ns = t.root.children[0].children[0];
     expect(gapNodes(t, ns, false)).toEqual([]);
+  });
+});
+
+describe('gapNodes on a node ring', () => {
+  const src = (_node: string, id: string) => icon(id);
+  const two = [
+    metrics({ node: 'worker-1', cpuCapacity: 8, cpuUsed: 6 }),
+    metrics({ node: 'worker-2', cpuCapacity: 16, cpuUsed: 10 }),
+  ];
+  const t = buildCombinedTree(two, () => null, 'cpu', src);
+
+  it('has no unused arc at the root', () => {
+    expect(gapNodes(t, t.root, true).map(g => g.key)).toEqual([]);
+  });
+
+  it('gives each node wedge its own unused gap', () => {
+    const w1 = t.root.children.find(c => c.key === 'node:worker-1')!;
+    const un = gapNodes(t, w1, false).find(g => g.key === 'node:worker-1/~unused')!;
+    expect(un).toMatchObject({ label: 'Unused on worker-1', kind: 'unused', value: 2 });
   });
 });
 

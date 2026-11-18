@@ -5,7 +5,7 @@
  */
 import { colourAt, Mode } from '../palette';
 import { nameOf } from './names';
-import { findPath, gapNodes, NodeTree, SunNode, UNUSED } from './tree';
+import { capacityZoom, findPath, gapNodes, NodeTree, SunNode, UNUSED } from './tree';
 
 export interface ArcDatum {
   key: string;
@@ -93,6 +93,11 @@ export function layoutSunburst(
   const arcs: ArcDatum[] = [];
   const thickness = (radius * (1 - CENTRE)) / rings;
   const parent = atRoot ? null : path[path.length - 2];
+  // Zoomed into one node of a node ring: its capacity is the base, as at a single-node root.
+  const capScope = capacityZoom(
+    tree,
+    path.slice(1).map(n => n.key)
+  );
 
   const walk = (
     parent: SunNode,
@@ -102,14 +107,19 @@ export function layoutSunburst(
     absDepth: number,
     base: string | null
   ) => {
-    if (depth > rings || !(parent.value > 0)) return;
+    // At the root of a node ring each node wedge is sized by its span (capacity), not its use.
+    const ringRoot = tree.nodeRing === true && parent === tree.root;
+    const denom = ringRoot
+      ? parent.children.reduce((s, c) => s + (c.span ?? c.value), 0)
+      : parent.value;
+    if (depth > rings || !(denom > 0)) return;
     const y0 = radius * (CENTRE + (1 - CENTRE) * ((depth - 1) / rings));
     const y1 = y0 + thickness;
     let acc = 0;
     parent.children.forEach((child, i) => {
-      const c0 = x0 + (acc / parent.value) * (x1 - x0);
-      acc += child.value;
-      const c1 = x0 + (acc / parent.value) * (x1 - x0);
+      const c0 = x0 + (acc / denom) * (x1 - x0);
+      acc += ringRoot ? child.span ?? child.value : child.value;
+      const c1 = x0 + (acc / denom) * (x1 - x0);
       let colour = base;
       let fill: string;
       if (absDepth < catDepth) {
@@ -132,27 +142,89 @@ export function layoutSunburst(
         y1,
         fill,
       });
-      walk(child, c0, c1, depth + 1, absDepth + 1, colour);
+      if (ringRoot && child.span !== undefined && child.span > 0) {
+        // The children fill the used part of the wedge. The rest is empty, out to the rim.
+        const usedEnd = c0 + (child.value / child.span) * (c1 - c0);
+        walk(child, c0, usedEnd, depth + 1, absDepth + 1, colour);
+        const free = gapNodes(tree, child, false).find(g => g.key === `${child.key}/${UNUSED}`);
+        if (free && depth + 1 <= rings) {
+          const gy0 = radius * (CENTRE + (1 - CENTRE) * (depth / rings));
+          arcs.push({
+            key: free.key,
+            node: free,
+            depth: depth + 1,
+            x0: usedEnd,
+            x1: c1,
+            y0: gy0,
+            y1: radius,
+            fill: 'none',
+            gap: true,
+          });
+        }
+      } else {
+        walk(child, c0, c1, depth + 1, absDepth + 1, colour);
+      }
     });
+    if (ringRoot) return;
     // The empty space: what the children leave inside the parent, then (at the root) the
-    // capacity nothing uses, up to the full circle.
+    // capacity nothing uses, up to the full circle. A node ring fills the circle by node capacity
+    // instead, and each node wedge holds its own unused gap.
     let at = x0 + (acc / parent.value) * (x1 - x0);
     for (const g of gapNodes(tree, parent, parent === tree.root && atRoot)) {
+      // A node wedge's unused gap is drawn by its caller, and only at the root.
+      if (parent.span !== undefined && g.key.endsWith(`/${UNUSED}`)) continue;
       const end = g.key.endsWith(`/${UNUSED}`)
         ? TAU
         : Math.min(x1, at + (g.value / parent.value) * (x1 - x0));
       // Nothing is drawn below an empty arc, so it runs through every deeper ring to the rim.
-      arcs.push({ key: g.key, node: g, depth, x0: at, x1: end, y0, y1: radius, fill: 'none', gap: true });
+      arcs.push({
+        key: g.key,
+        node: g,
+        depth,
+        x0: at,
+        x1: end,
+        y0,
+        y1: radius,
+        fill: 'none',
+        gap: true,
+      });
       at = end;
     }
   };
 
-  if (atRoot) {
+  if (atRoot && tree.nodeRing) {
+    walk(tree.root, 0, TAU, 1, 1, null);
+  } else if (atRoot) {
     const total = tree.used ?? tree.root.value;
     const end = tree.capacity > 0 ? Math.min(TAU, (TAU * total) / tree.capacity) : 0;
     walk(tree.root, 0, end, 1, 1, null);
+  } else if (capScope !== null && focusNode.span !== undefined && focusNode.span > 0) {
+    // One node of a node ring reads like a single-node root: its use, then its unused gap.
+    const usedEnd = (TAU * focusNode.value) / focusNode.span;
+    walk(focusNode, 0, usedEnd, 1, path.length, null);
+    const free = gapNodes(tree, focusNode, false).find(g => g.key === `${focusNode.key}/${UNUSED}`);
+    if (free) {
+      arcs.push({
+        key: free.key,
+        node: free,
+        depth: 1,
+        x0: usedEnd,
+        x1: TAU,
+        y0: radius * CENTRE,
+        y1: radius,
+        fill: 'none',
+        gap: true,
+      });
+    }
   } else {
-    walk(focusNode, 0, TAU, 1, path.length, categoryOf ? categoryColour(categoryOf.key, mode) : null);
+    walk(
+      focusNode,
+      0,
+      TAU,
+      1,
+      path.length,
+      categoryOf ? categoryColour(categoryOf.key, mode) : null
+    );
   }
 
   return {
@@ -162,7 +234,7 @@ export function layoutSunburst(
     centre: {
       title: nameOf(focusNode),
       value: focusNode.value,
-      share: tree.capacity > 0 ? focusNode.value / tree.capacity : 0,
+      share: (capScope ?? tree.capacity) > 0 ? focusNode.value / (capScope ?? tree.capacity) : 0,
       parentShare: parent && parent.value > 0 ? focusNode.value / parent.value : parent ? 0 : null,
     },
   };
