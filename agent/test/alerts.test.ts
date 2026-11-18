@@ -30,4 +30,12 @@ describe('vmalert notifier payload', () => {
     gate.record();
     expect(gate.wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
   });
+  it('uses the shared count when one is given', () => {
+    let count = 0;
+    const gate = new AlertGate({ toolBudget: 5, severities: ['critical'], maxPerHour: 2, ignoreAlerts: [] }, () => count);
+    const alert = { name: 'X', severity: 'critical', labels: {}, annotations: {}, startsAt: '', fingerprint: 'f' };
+    expect(gate.wants(alert).ok).toBe(true);
+    count = 2;
+    expect(gate.wants(alert).ok).toBe(false);
+  });
 });

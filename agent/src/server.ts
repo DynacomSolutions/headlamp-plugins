@@ -281,7 +281,8 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   const store = new DiagnosisStore(config.dataDir, config.maxDiagnoses);
   const runtime = new Runtime(config, store);
   const runner = new Runner(runtime, store, config);
-  const gate = new AlertGate(config.diagnosis);
+  // Webhook diagnoses in the shared store, so a rollout or a second pod does not reset the hourly cap.
+  const gate = new AlertGate(config.diagnosis, since => store.list().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= since).length);
   const mcp = await mcpHandler(runtime, store, version);
   const mcpNode = toNodeHandler(mcp);
   let ready = true;
