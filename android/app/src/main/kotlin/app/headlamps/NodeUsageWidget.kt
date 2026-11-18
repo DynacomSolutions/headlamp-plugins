@@ -216,6 +216,7 @@ fun errorText(kind: ErrorKind?): Int = when (kind) {
     ErrorKind.SERVER -> R.string.error_server
     ErrorKind.BAD_RESPONSE -> R.string.error_bad_response
     ErrorKind.INVALID_URL -> R.string.error_invalid_url
+    ErrorKind.INSTANCE_MISSING -> R.string.error_instance_missing
     ErrorKind.UNREACHABLE, null -> R.string.error_unreachable
 }
 

@@ -55,4 +55,9 @@ class UrlsErrorsTest {
         assertEquals(ErrorKind.INVALID_URL, classify(IllegalArgumentException("bad url")))
         assertEquals(ErrorKind.UNAUTHORIZED, classify(FetchException(ErrorKind.UNAUTHORIZED, 401)))
     }
+
+    @Test
+    fun missingInstanceHasOwnText() {
+        assertEquals(R.string.error_instance_missing, errorText(ErrorKind.INSTANCE_MISSING))
+    }
 }

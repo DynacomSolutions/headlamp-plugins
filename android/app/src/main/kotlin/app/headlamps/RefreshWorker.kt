@@ -24,7 +24,7 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             val config = repository.widgetConfig(widgetId) ?: continue
             val instance = repository.instance(config.instanceId)
             val snapshot = if (instance == null) {
-                Snapshot(config.cluster, System.currentTimeMillis(), error = ErrorKind.INVALID_URL)
+                Snapshot(config.cluster, System.currentTimeMillis(), error = ErrorKind.INSTANCE_MISSING)
             } else {
                 client.snapshotOrError(instance.baseUrl, instance.token, config.cluster, System.currentTimeMillis())
             }

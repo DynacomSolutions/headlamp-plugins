@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 import java.io.IOException
 
 @Serializable
-enum class ErrorKind { UNREACHABLE, UNAUTHORIZED, METRICS_MISSING, NOT_FOUND, SERVER, BAD_RESPONSE, INVALID_URL }
+enum class ErrorKind { UNREACHABLE, UNAUTHORIZED, METRICS_MISSING, NOT_FOUND, SERVER, BAD_RESPONSE, INVALID_URL, INSTANCE_MISSING }
 
 class FetchException(val kind: ErrorKind, val code: Int? = null, cause: Throwable? = null) :
     Exception("Fetch failed: $kind", cause)

@@ -1,6 +1,8 @@
 package app.headlamps
 
 import android.os.Bundle
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -53,7 +55,20 @@ fun InstancesScreen(repository: Repository) {
     var editing by remember { mutableStateOf<Instance?>(null) }
     val scope = rememberCoroutineScope()
     Scaffold(
-        topBar = { TopAppBar(title = { Text(androidx.compose.ui.res.stringResource(R.string.instances_title)) }) },
+        topBar = {
+            val appContext = androidx.compose.ui.platform.LocalContext.current
+            val manager = remember { AppWidgetManager.getInstance(appContext) }
+            TopAppBar(
+                title = { Text(androidx.compose.ui.res.stringResource(R.string.instances_title)) },
+                actions = {
+                    if (instances.isNotEmpty() && manager.isRequestPinAppWidgetSupported) {
+                        TextButton(onClick = {
+                            manager.requestPinAppWidget(ComponentName(appContext, NodeUsageReceiver::class.java), null, null)
+                        }) { Text(androidx.compose.ui.res.stringResource(R.string.action_pin_widget)) }
+                    }
+                },
+            )
+        },
         floatingActionButton = {
             FloatingActionButton(onClick = { editing = Instance("", "", "https://", "") }) { Text("+") }
         },
