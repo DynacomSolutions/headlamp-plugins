@@ -169,3 +169,37 @@ describe('childRows', () => {
     expect(childRows(t, t, []).map(r => r.label)).toEqual(['Alpha', 'Beta']);
   });
 });
+
+describe('node ring by capacity', () => {
+  const ring = (): NodeTree => ({
+    root: n('root', 6, [
+      n('node:a', 4, [n('k8s', 3), n('system', 1)], { span: 12, capacity: 12, kind: 'node' }),
+      n('node:b', 2, [n('k8s', 2)], { span: 4, capacity: 4, kind: 'node' }),
+    ]),
+    capacity: 16,
+    used: 6,
+    hostMetrics: true,
+    nodeRing: true,
+  });
+  const t = ring();
+
+  it('selects the per-node unused gap, as a share of total capacity at the root', () => {
+    const sel = selectionFor(t, t, [], ['node:a', 'node:a/~unused'])!;
+    expect(sel).toMatchObject({ label: 'Unused on NODE:A', kind: 'unused', canOpen: false });
+    expect(sel.cpu).toEqual({ value: 8, ofCapacity: 0.5, ofParent: null, ofRoot: null });
+  });
+
+  it('measures shares against the node capacity when zoomed into a node', () => {
+    const sel = selectionFor(t, t, ['node:a'], ['node:a', 'node:a/~unused'])!;
+    expect(sel.cpu!.ofCapacity).toBeCloseTo(8 / 12);
+    const k = selectionFor(t, t, ['node:a'], ['node:a', 'k8s'])!;
+    expect(k.cpu!.ofCapacity).toBeCloseTo(3 / 12);
+    const rows = childRows(t, t, ['node:a'], ['node:a']);
+    expect(rows.find(r => r.key === 'k8s')!.cpuShare).toBeCloseTo(3 / 12);
+  });
+
+  it('keeps shares of the focus below a node', () => {
+    const k = selectionFor(t, t, ['node:a', 'k8s'], ['node:a', 'k8s'])!;
+    expect(k.cpu!.ofCapacity).toBeCloseTo(3 / 16);
+  });
+});

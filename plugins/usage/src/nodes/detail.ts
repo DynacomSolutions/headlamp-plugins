@@ -4,7 +4,7 @@
  * say), so the deeper of the two resolved paths wins, memory on a tie.
  */
 import { idOf, nameOf } from './names';
-import { findPath, gapNodes, NodeTree, SunNode, UNUSED } from './tree';
+import { capacityZoom, findPath, gapNodes, NodeTree, SunNode, UNUSED } from './tree';
 
 export interface Detail {
   /** The resolved focus path (the deepest prefix of the requested path either tree has). */
@@ -73,7 +73,8 @@ function segmentFor(tree: NodeTree, zoom: string[], sel: string[]): SegmentInfo 
   const share = (of: number) => (of > 0 ? r.node.value / of : 0);
   return {
     value: r.node.value,
-    ofCapacity: share(tree.capacity),
+    // Zoomed into one node of a node ring, shares are of that node's capacity.
+    ofCapacity: share(capacityZoom(tree, zoom) ?? tree.capacity),
     ofParent: r.parent && !capacityGap ? share(r.parent.value) : null,
     ofRoot: capacityGap ? null : share(zoomRoot.value),
   };
@@ -142,7 +143,8 @@ export function childRows(
   base: string[],
   zoom: string[] = []
 ): ChildRow[] {
-  const baseOf = (tree: NodeTree) => (zoom.length > 0 ? valueAt(tree, zoom) ?? 0 : tree.capacity);
+  const baseOf = (tree: NodeTree) =>
+    capacityZoom(tree, zoom) ?? (zoom.length > 0 ? valueAt(tree, zoom) ?? 0 : tree.capacity);
   const cpuBase = baseOf(cpu);
   const memBase = baseOf(mem);
   const rows = new Map<string, ChildRow>();

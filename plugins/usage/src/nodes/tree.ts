@@ -39,6 +39,13 @@ export interface SunNode {
   displayName?: string;
   /** The raw command line of a process, its id. */
   command?: string;
+  /**
+   * Node ring only: the angular size of the node's wedge, its capacity or its use when that is
+   * higher. `value` stays the use. Absent everywhere else.
+   */
+  span?: number;
+  /** Node ring only: the node's own capacity, which `span` exceeds when the node is overcommitted. */
+  capacity?: number;
   children: SunNode[];
 }
 
@@ -478,6 +485,17 @@ export function findPath(root: SunNode, path: string[]): SunNode[] {
   return out;
 }
 
+/**
+ * The capacity a zoom is measured against, or null. Zoomed straight into one node of a node ring
+ * (focus `node:<name>`), the view reads like a single-node root: shares are of that node's
+ * capacity. Any other focus, and any tree with no node ring, gives null.
+ */
+export function capacityZoom(tree: NodeTree, focus: string[]): number | null {
+  if (!tree.nodeRing || focus.length !== 1) return null;
+  const n = tree.root.children.find(c => c.key === focus[0]);
+  return n && n.span !== undefined ? n.capacity ?? n.span : null;
+}
+
 /** A short name for a selection of nodes, small enough for the chart centre. */
 export function nodesLabel(count: number): string {
   return `${count} nodes`;
@@ -485,8 +503,8 @@ export function nodesLabel(count: number): string {
 
 /**
  * One tree for the selected nodes. One node gives that node's tree. More than one gives a root
- * whose first ring is one arc per node (key `node:<name>`), each sized by its own total and drawn
- * against the sum of the capacities, so the unused share stays empty. An empty `categories` keeps
+ * whose first ring is one arc per node (key `node:<name>`). Each node's wedge is sized by its
+ * capacity (`span`), so the circle is split per node, and its value is its use. An empty `categories` keeps
  * every category.
  */
 export function buildCombinedTree(
@@ -503,13 +521,29 @@ export function buildCombinedTree(
   }));
   if (trees.length === 1) return trees[0].t;
   const nodes = trees
-    .map(({ m, t }) => ({ ...t.root, key: `node:${m.node}`, label: m.node, icon: GENERIC.node }))
-    .filter(n => n.value > 0)
-    .sort(byValue);
+    .map(({ m, t }) => ({
+      ...t.root,
+      key: `node:${m.node}`,
+      label: m.node,
+      icon: GENERIC.node,
+      // A node using more than its capacity still gets a fully drawn wedge.
+      span: Math.max(t.capacity, t.root.value),
+      capacity: t.capacity,
+    }))
+    // An idle node keeps its wedge: only a node with no capacity and no use has nothing to show.
+    .filter(n => n.span > 0)
+    .sort((a, b) => b.span - a.span || byValue(a, b));
   const hostMetrics = trees.length > 0 && trees.every(x => x.t.hostMetrics);
   const total = sum(nodes);
   return {
-    root: node('root', nodesLabel(trees.length), 'node', total, nodes),
+    // Built by hand: `node` would drop an idle node, which keeps its wedge.
+    root: {
+      key: 'root',
+      label: nodesLabel(trees.length),
+      kind: 'node',
+      value: total,
+      children: nodes,
+    },
     capacity: trees.reduce((s, x) => s + x.t.capacity, 0),
     // Nodes without host metrics count by what is attributed to them.
     used: trees.some(x => x.t.used !== null) ? total : null,
@@ -528,7 +562,8 @@ const MIN_GAP = 0.002;
 /**
  * The empty space under `parent` as nodes of their own, so it can be drawn and selected:
  * "Unattributed" where the children sum to less than the parent, and at the root "Unused", the
- * capacity nothing uses. Keys are `<parent key>/~unattributed` and `<parent key>/~unused`.
+ * capacity nothing uses (a node wedge of a node ring holds its own "Unused on <node>" instead).
+ * Keys are `<parent key>/~unattributed` and `<parent key>/~unused`.
  */
 export function gapNodes(tree: NodeTree, parent: SunNode, atRoot: boolean): SunNode[] {
   const out: SunNode[] = [];
@@ -545,7 +580,22 @@ export function gapNodes(tree: NodeTree, parent: SunNode, atRoot: boolean): SunN
       children: [],
     });
   }
-  if (atRoot) {
+  if (parent.span !== undefined) {
+    // A node wedge: the capacity the node's own use leaves free, drawn to the rim.
+    const free = parent.span - parent.value;
+    if (free / parent.span > MIN_GAP) {
+      out.push({
+        key: `${parent.key}/${UNUSED}`,
+        label: `Unused on ${parent.label}`,
+        kind: 'unused',
+        icon: EMPTY_ICON,
+        value: free,
+        children: [],
+      });
+    }
+  }
+  // A node ring has no root-level unused arc: each node wedge holds its own.
+  if (atRoot && !tree.nodeRing) {
     const free = tree.capacity - (tree.used ?? parent.value);
     if (tree.capacity > 0 && free / tree.capacity > MIN_GAP) {
       out.push({

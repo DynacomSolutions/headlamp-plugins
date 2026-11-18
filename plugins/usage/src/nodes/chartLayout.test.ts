@@ -59,7 +59,9 @@ const tree: NodeTree = {
     label: 'root',
     value: 4,
     kind: 'category',
-    children: [{ key: 'sys', label: 'sys', displayName: 'System', value: 3, kind: 'system', children: [] }],
+    children: [
+      { key: 'sys', label: 'sys', displayName: 'System', value: 3, kind: 'system', children: [] },
+    ],
   },
   capacity: 8,
   used: 4,
@@ -73,6 +75,20 @@ describe('usedText', () => {
 
   it('shows the focus total when zoomed, with no capacity share', () => {
     expect(usedText(tree, 'cpu', ['sys'], 'System')).toBe('3.00 cores in System');
+  });
+
+  it('reads zoomed into a node of a node ring like a single-node root', () => {
+    const ring: NodeTree = {
+      ...tree,
+      root: {
+        ...tree.root,
+        children: [
+          { key: 'node:a', label: 'a', value: 3, span: 8, capacity: 8, kind: 'node', children: [] },
+        ],
+      },
+      nodeRing: true,
+    };
+    expect(usedText(ring, 'cpu', ['node:a'], 'a')).toBe('3.00 cores of 8.00 cores (38%)');
   });
 
   it('says so when the tree does not have the focus', () => {
