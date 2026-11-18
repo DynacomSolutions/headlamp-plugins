@@ -33,9 +33,10 @@ export function exitBrowserFullscreen(): void {
 
 export function KioskOverlay(props: {
   onExit: () => void;
-  /** The filters bar, left of the Exit control. */
-  bar: React.ReactNode;
-  children: React.ReactNode;
+  /** The filters bar, left of the Exit control. Leave it out to place the Exit control yourself. */
+  bar?: React.ReactNode;
+  /** The content; a function receives the Exit control, to place it in its own top bar. */
+  children: React.ReactNode | ((exit: React.ReactNode) => React.ReactNode);
 }): JSX.Element {
   const { onExit, bar, children } = props;
   const exit = React.useRef(onExit);
@@ -68,6 +69,19 @@ export function KioskOverlay(props: {
     onExit();
   };
 
+  const exitButton = (
+    <Button
+      variant="contained"
+      onClick={leave}
+      aria-label="Exit full screen"
+      startIcon={<Icon icon="mdi:fullscreen-exit" width={24} height={24} />}
+      sx={{ minHeight: 56, minWidth: 48, fontSize: 16, flex: 'none' }}
+    >
+      Exit full screen
+    </Button>
+  );
+  const inline = typeof children === 'function';
+
   return (
     <Box
       data-kiosk-overlay
@@ -85,20 +99,14 @@ export function KioskOverlay(props: {
         boxSizing: 'border-box',
       })}
     >
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 1 }}>
-        <Box sx={{ flex: '1 1 0', minWidth: 0 }}>{bar}</Box>
-        <Button
-          variant="contained"
-          onClick={leave}
-          aria-label="Exit full screen"
-          startIcon={<Icon icon="mdi:fullscreen-exit" width={24} height={24} />}
-          sx={{ minHeight: 56, minWidth: 48, fontSize: 16, flex: 'none' }}
-        >
-          Exit full screen
-        </Button>
-      </Box>
+      {!inline && (
+        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 1 }}>
+          <Box sx={{ flex: '1 1 0', minWidth: 0 }}>{bar}</Box>
+          {exitButton}
+        </Box>
+      )}
       <Box sx={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {children}
+        {typeof children === 'function' ? children(exitButton) : children}
       </Box>
     </Box>
   );

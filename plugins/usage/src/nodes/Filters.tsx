@@ -30,7 +30,7 @@ export function Filters(props: {
     <Box
       role="search"
       aria-label="Filters"
-      sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, flex: '1 1 0' }}
+      sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, flex: '2 1 560px', minWidth: 0 }}
     >
       <Autocomplete
         multiple

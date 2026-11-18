@@ -163,12 +163,17 @@ in a server cabinet: finger only, no mouse and no hover. The page uses the
 whole width of the main area. The old `/usage/nodes` URL redirects here and
 keeps its query.
 
-- **Charts:** one **CPU** and one **Memory** sunburst. On a landscape screen
-  the row is CPU, Memory and a details column (about 360 px) beside them, and
-  the charts take the rest of the width and height, so the page does not
-  scroll. On a portrait screen they sit side by side when each gets at least
-  45% of the width, else one above the other, with the details below. Each is sized against capacity, so the unused
-  share is a real arc.
+- **Charts:** one **CPU** and one **Memory** sunburst. There is no side
+  column and no upper limit on the diameter. A top bar holds the **Nodes** and
+  **Category** filters, the breadcrumb, **Up**, **Open** and **Full screen**
+  (**Exit full screen** in the kiosk), wrapping on a narrow screen. Under it a
+  compact strip shows the selected segment (icon, name, raw id, kind, CPU and
+  memory with their shares, thread link) and a horizontal, scrollable row of
+  chips, one per child, sorted by value; tapping a chip selects that arc. The
+  charts then share the full width and the rest of the height, side by side on
+  a landscape screen and one above the other on a narrow one. Text and icons
+  in the charts grow with their size. Each is sized against capacity, so the
+  unused share is a real arc.
 - **Filters:** a bar at the top, with **Nodes** and **Category** (Kubernetes,
   T3 Code, Herdr, Other scopes, System). Nothing selected means all. With one
   node selected the rings are that node's tree. With more than one, the first

@@ -68,33 +68,6 @@ export function NodesPage(): JSX.Element {
     .filter(m => data.nodeErrors.has(m.node))
     .map(m => `${m.node}: ${agentAlertText(data.nodeErrors.get(m.node) ?? '', data.agentsAsOf.get(m.node))}`);
 
-  let body: React.ReactNode;
-  if (data.loading) {
-    body = <Loader title="Loading nodes" />;
-  } else if (data.metrics.length === 0 && data.metricsError) {
-    body = <Alert severity="error">Could not query the metrics service: {data.metricsError}</Alert>;
-  } else if (data.metrics.length === 0) {
-    body = (
-      <Alert severity="info">
-        No node metrics found. Check that node-exporter and cAdvisor metrics are scraped by the
-        metrics service.
-      </Alert>
-    );
-  } else {
-    body = (
-      <NodeView
-        cpu={trees.cpu}
-        mem={trees.mem}
-        alerts={alerts}
-        path={state.path}
-        sel={state.sel}
-        onSelect={setSel}
-        kiosk={state.kiosk}
-        onPath={setPath}
-      />
-    );
-  }
-
   const filters = (
     <Filters
       nodeOptions={data.metrics.map(m => m.node)}
@@ -103,6 +76,15 @@ export function NodesPage(): JSX.Element {
       onNodes={setNodes}
       onCats={setCats}
     />
+  );
+  const enter = () => {
+    enterBrowserFullscreen();
+    setKiosk(true);
+  };
+  const fullScreen = (
+    <Button variant="outlined" onClick={enter} sx={{ minHeight: 48, fontSize: 16 }}>
+      Full screen
+    </Button>
   );
   const banners = (
     <>
@@ -119,44 +101,54 @@ export function NodesPage(): JSX.Element {
     </>
   );
 
-  if (state.kiosk) {
+  // The top bar (filters, breadcrumb, Up, Open and the full screen control) belongs to the
+  // charts view. Without charts (loading, an error) the filters and the full screen control
+  // still show, in a bar of their own.
+  const render = (trailing: React.ReactNode) => {
+    if (data.loading || data.metrics.length === 0) {
+      let message: React.ReactNode;
+      if (data.loading) message = <Loader title="Loading nodes" />;
+      else if (data.metricsError)
+        message = <Alert severity="error">Could not query the metrics service: {data.metricsError}</Alert>;
+      else
+        message = (
+          <Alert severity="info">
+            No node metrics found. Check that node-exporter and cAdvisor metrics are scraped by the
+            metrics service.
+          </Alert>
+        );
+      return (
+        <>
+          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2, mb: 1 }}>
+            {filters}
+            {trailing}
+          </Box>
+          {banners}
+          {message}
+        </>
+      );
+    }
     return (
-      <KioskOverlay onExit={() => setKiosk(false)} bar={filters}>
+      <>
         {banners}
-        {body}
-      </KioskOverlay>
+        <NodeView
+          cpu={trees.cpu}
+          mem={trees.mem}
+          alerts={alerts}
+          path={state.path}
+          sel={state.sel}
+          onSelect={setSel}
+          kiosk={state.kiosk}
+          onPath={setPath}
+          toolbar={filters}
+          trailing={trailing}
+        />
+      </>
     );
-  }
-
-  const enter = () => {
-    enterBrowserFullscreen();
-    setKiosk(true);
   };
-  return (
-    <SectionBox
-      title="Usage dashboard"
-      headerProps={{
-        actions: [
-          <Button key="fullscreen" variant="outlined" onClick={enter} sx={{ minHeight: 48, fontSize: 16 }}>
-            Full screen
-          </Button>,
-        ],
-      }}
-    >
-      <Box
-        sx={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 2,
-          bgcolor: 'background.default',
-          pb: 1,
-          mb: 1,
-        }}
-      >
-        {filters}
-      </Box>
-      {banners}
-      {body}
-    </SectionBox>
-  );
+
+  if (state.kiosk) {
+    return <KioskOverlay onExit={() => setKiosk(false)}>{exit => render(exit)}</KioskOverlay>;
+  }
+  return <SectionBox title="Usage dashboard">{render(fullScreen)}</SectionBox>;
 }

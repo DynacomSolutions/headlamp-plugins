@@ -21,6 +21,7 @@ import {
   CentreLine,
   centreLines,
   CHAR_WIDTH,
+  ICON_MAX,
 } from './arcLabel';
 import { ArcDatum, CENTRE, layoutSunburst } from './layout';
 import { nameOf } from './names';
@@ -207,8 +208,10 @@ export function Sunburst(props: {
   const aria = `${name} usage by group: ${top}`;
   const fontSize = Math.max(MIN_FONT, size / 40);
   const centreR = radius * CENTRE;
-  // The centre text is 14 to 22 px: the hole is small, so it is kept compact.
-  const centreFont = Math.min(22, Math.max(14, size / 50));
+  // The centre text grows with the chart, from 14 px.
+  const centreFont = Math.max(14, size / 50);
+  // Arc icons grow with the chart too, so a big chart reads from across the room.
+  const iconMax = Math.max(ICON_MAX, Math.round(size / 28));
 
   const title = subject?.label ?? centre.title;
   const centreIcon = subject ? subject.icon : focusNode.icon;
@@ -264,7 +267,7 @@ export function Sunburst(props: {
         // Icons come first: an arc with an icon shows it as large as fits, and its name beside
         // or under it only when both fit.
         const icon = compact || arc.gap ? undefined : arc.node.icon;
-        const iconSize = icon ? arcIconSize(arc) : null;
+        const iconSize = icon ? arcIconSize(arc, iconMax) : null;
         // An arc with an icon shows the whole name or none: never a clipped stub. Without room
         // for the name beside it the icon stands alone. An arc with no icon may show a clipped
         // name when at least 8 characters fit.

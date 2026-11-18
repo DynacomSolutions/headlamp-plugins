@@ -43,6 +43,7 @@ registerRoute({
   name: 'usage-dashboard',
   exact: true,
   component: NodesPage,
+  isFullWidth: true,
 });
 
 registerRoute({
@@ -51,6 +52,7 @@ registerRoute({
   name: 'usage-nodes-redirect',
   exact: true,
   component: LegacyNodesRedirect,
+  isFullWidth: true,
 });
 
 registerPluginSettings('usage', Settings, true);
