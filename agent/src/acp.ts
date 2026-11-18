@@ -5,6 +5,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { loadConfig, modelConfigured } from './config.js';
 import { fingerprint } from './alerts.js';
 import { diagnose, type ToolHost } from './agent/engine.js';
+import { ModelCatalogue } from './agent/catalogue.js';
 import { ModelClient, type ToolSpec } from './agent/model.js';
 import { A2UI_MIME } from './a2ui/index.js';
 import { alertSchema, diagnosisMarkdown, type Alert, type Diagnosis } from './agent/report.js';
@@ -13,7 +14,7 @@ import { alertSchema, diagnosisMarkdown, type Alert, type Diagnosis } from './ag
  * The incident-diagnosis agent over the Agent Client Protocol (stdio,
  * newline-delimited JSON-RPC), for T3 Code, Zed or any other ACP client. It
  * gets its tools from the headlamp-agent MCP server (the session's MCP server
- * list, or HEADLAMP_AGENT_MCP_URL), its model from the AGENT_MODEL_* settings,
+ * list, or HEADLAMP_AGENT_MCP_URL), its model from the AGENT_MODEL_* settings (picked per session),
  * and publishes each finished diagnosis back to the server so Headlamp shows it.
  *
  * stdout carries the protocol; logs go to stderr.
@@ -23,7 +24,12 @@ interface Session {
   mcpUrl: string;
   mcpHeaders: Record<string, string>;
   abort?: AbortController;
+  /** The model id chosen for this session. Empty means the default. */
+  model: string;
 }
+
+/** How long session/new waits for the gateway model lists. */
+const LIST_WAIT_MS = 5000;
 
 const log = (message: string) => process.stderr.write(`[headlamp-agent acp] ${message}\n`);
 
@@ -135,8 +141,46 @@ async function publish(mcpUrl: string, headers: Record<string, string>, d: Diagn
   return ((await res.json()) as { id: string }).id;
 }
 
+/** The model picker for a session: one select option, grouped by route. T3 Code shows it as its model list. */
+export async function modelConfigOptions(catalogue: ModelCatalogue, current: string): Promise<any[]> {
+  const entries = await catalogue.list({ waitMs: LIST_WAIT_MS });
+  if (!entries.length) return [];
+  const groups = new Map<string, Array<{ value: string; name: string }>>();
+  for (const e of entries) {
+    const g = groups.get(e.route) ?? [];
+    g.push({ value: e.id, name: e.name });
+    groups.set(e.route, g);
+  }
+  return [
+    {
+      id: 'model',
+      name: 'Model',
+      category: 'model',
+      type: 'select',
+      currentValue: current,
+      options: [...groups].map(([route, options]) => ({ group: route, name: route, options })),
+    },
+  ];
+}
+
+/** The default model as a full id, taken from the listed entries so no extra call is made. */
+export async function defaultModelId(catalogue: ModelCatalogue): Promise<string> {
+  const def = catalogue.defaultModel;
+  const entries = await catalogue.list({ waitMs: LIST_WAIT_MS });
+  return entries.find(e => e.id === def)?.id ?? entries.find(e => !def.includes('/') && e.model === def)?.id ?? def;
+}
+
+/** Checks a picked model id against the listed ones. */
+export async function pickModel(catalogue: ModelCatalogue, value: unknown): Promise<string> {
+  if (typeof value !== 'string') throw new Error('The model value must be a string');
+  const entries = await catalogue.list({ waitMs: LIST_WAIT_MS });
+  if (!entries.some(e => e.id === value)) throw new Error(`Unknown model "${value}"`);
+  return value;
+}
+
 export function startAcp(): void {
   const config = loadConfig();
+  const catalogue = new ModelCatalogue(config.models);
   const sessions = new Map<string, Session>();
   const defaultUrl = process.env.HEADLAMP_AGENT_MCP_URL ?? '';
 
@@ -147,13 +191,26 @@ export function startAcp(): void {
       agentInfo: { name: 'headlamp-agent', title: 'Incident diagnosis (Headlamp agent layer)', version: '0.1.0' },
       authMethods: [],
     }))
-    .onRequest('session/new', ({ params }) => {
+    .onRequest('session/new', async ({ params }) => {
       const http = params.mcpServers.find((s: any) => 'url' in s && /headlamp|cluster|incident/i.test(s.name)) as any;
       const url = http?.url ?? defaultUrl;
       const headers = Object.fromEntries(((http?.headers ?? []) as Array<{ name: string; value: string }>).map(h => [h.name, h.value]));
       const sessionId = randomUUID();
-      sessions.set(sessionId, { mcpUrl: url, mcpHeaders: headers });
-      return { sessionId };
+      let current = '';
+      let configOptions: any[] = [];
+      if (catalogue.configured) {
+        current = await defaultModelId(catalogue);
+        configOptions = await modelConfigOptions(catalogue, current);
+      }
+      sessions.set(sessionId, { mcpUrl: url, mcpHeaders: headers, model: current });
+      return configOptions.length ? { sessionId, configOptions } : { sessionId };
+    })
+    .onRequest('session/set_config_option', async ({ params }) => {
+      const session = sessions.get(params.sessionId);
+      if (!session) throw new Error('Unknown session');
+      if (params.configId !== 'model') throw new Error(`Unknown config option "${params.configId}"`);
+      session.model = await pickModel(catalogue, (params as { value: unknown }).value);
+      return { configOptions: await modelConfigOptions(catalogue, session.model) };
     })
     .onNotification('session/cancel', ({ params }) => {
       sessions.get(params.sessionId)?.abort?.abort();
@@ -170,8 +227,16 @@ export function startAcp(): void {
         await say('No MCP server is configured. Add the headlamp-agent MCP server to the session, or set HEADLAMP_AGENT_MCP_URL.');
         return { stopReason: 'end_turn' };
       }
-      if (!modelConfigured(config.model)) {
-        await say('No model is configured. Set AGENT_MODEL, AGENT_MODEL_STYLE and AIS_GATEWAY_URL/AIS_GATEWAY_TOKEN (or AGENT_MODEL_BASE_URL/AGENT_MODEL_API_KEY).');
+      if (!modelConfigured(config.models)) {
+        await say('No model is configured. Set AGENT_MODEL and AGENT_MODEL_ROUTES_FILE (or AGENT_MODEL_ROUTES) with AIS_GATEWAY_* variables. For one route, set AIS_GATEWAY_URL, AIS_GATEWAY_TOKEN and AGENT_MODEL_STYLE.');
+        return { stopReason: 'end_turn' };
+      }
+      let modelClient: ModelClient;
+      try {
+        const resolved = await catalogue.resolve(session.model || undefined);
+        modelClient = new ModelClient(resolved.route, resolved.model);
+      } catch (error) {
+        await say(error instanceof Error ? error.message : String(error));
         return { stopReason: 'end_turn' };
       }
       const abort = new AbortController();
@@ -191,7 +256,7 @@ export function startAcp(): void {
         const result = await diagnose({
           alert,
           tools: mcp.host,
-          model: new ModelClient(config.model),
+          model: modelClient,
           budget: config.diagnosis.toolBudget,
           source: 'acp',
           host: process.env.HEADLAMP_AGENT_HOST_NAME ?? 'acp',
@@ -247,5 +312,5 @@ export function startAcp(): void {
 
   const stream = ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>);
   app.connect(stream);
-  log(`ready (MCP ${defaultUrl || 'from session'}, model ${config.model.model || 'unset'})`);
+  log(`ready (MCP ${defaultUrl || 'from session'}, model ${config.models.defaultModel || 'unset'}, routes ${config.models.routes.map(r => r.id).join(',') || 'none'})`);
 }

@@ -17,12 +17,12 @@ const gate = vi.hoisted(() => ({
 }));
 
 vi.mock('../src/agent/engine.js', () => ({
-  diagnose: vi.fn(async (opts: { id: string; alert: unknown; source: string; host: string; budget: number; signal?: AbortSignal; onEvent?: (e: unknown) => void }) => {
+  diagnose: vi.fn(async (opts: { id: string; alert: unknown; source: string; host: string; budget: number; signal?: AbortSignal; model?: { name: string }; onEvent?: (e: unknown) => void }) => {
     gate.started++;
     gate.ids.push(opts.id);
     gate.signal = opts.signal;
     if (gate.fail) throw new Error('boom');
-    const done = { id: opts.id, createdAt: 'x', status: 'done', source: opts.source, host: opts.host, alert: opts.alert, evidence: [], toolCalls: 0, toolBudget: opts.budget, model: 'm', a2ui: [] };
+    const done = { id: opts.id, createdAt: 'x', status: 'done', source: opts.source, host: opts.host, alert: opts.alert, evidence: [], toolCalls: 0, toolBudget: opts.budget, model: opts.model?.name ?? 'm', a2ui: [] };
     if (gate.progress) {
       gate.hook?.(opts.id);
       opts.onEvent?.({ type: 'progress', diagnosis: { ...done, status: 'running' } });
@@ -32,6 +32,12 @@ vi.mock('../src/agent/engine.js', () => ({
     return done;
   }),
 }));
+
+const legacyModels = () => ({
+  routes: [{ id: 'gateway', style: 'openai' as const, baseUrl: 'http://127.0.0.1:1', apiKey: 'k', headers: {}, systemPrefix: '', maxTokens: 10, timeoutMs: 500 }],
+  defaultModel: 'm',
+  skipped: [],
+});
 
 const { Runner, startServer } = await import('../src/server.js');
 
@@ -126,7 +132,7 @@ describe('two stores on one directory', () => {
 
   it('B takes over only after the lease ends, keeping the id', async () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: dir };
-    config.model = { ...config.model, baseUrl: 'http://127.0.0.1:1', apiKey: 'k', model: 'm' };
+    config.models = legacyModels();
     const a = new DiagnosisStore(dir, 50, { owner: 'A' });
     a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: live() }));
     const b = new DiagnosisStore(dir, 50, { owner: 'B' });
@@ -156,7 +162,7 @@ describe('two stores on one directory', () => {
 
   it('drain releases the lease of items that have not started', async () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: dir };
-    config.model = { ...config.model, baseUrl: 'http://127.0.0.1:1', apiKey: 'k', model: 'm' };
+    config.models = legacyModels();
     const a = new DiagnosisStore(dir, 50, { owner: 'A' });
     const runner = new Runner({ toolHost: () => ({}) } as never, a, config);
     const alert = diagnosis('x', 'queued').alert;
@@ -174,7 +180,7 @@ describe('two stores on one directory', () => {
 describe('review fixes', () => {
   const modelConfig = () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: dir };
-    config.model = { ...config.model, baseUrl: 'http://127.0.0.1:1', apiKey: 'k', model: 'm' };
+    config.models = legacyModels();
     return config;
   };
   const host = () => ({ toolHost: () => ({}) }) as never;
@@ -300,7 +306,7 @@ describe('restart and shutdown', () => {
   it('runs an interrupted diagnosis again with the same id, and close waits for it', async () => {
     writeFileSync(join(dir, 'diagnoses.json'), JSON.stringify([diagnosis('a', 'running')]));
     const config = base();
-    config.model = { ...config.model, baseUrl: 'http://127.0.0.1:1', apiKey: 'k', model: 'm' };
+    config.models = legacyModels();
     const server = await startServer(config, 'test');
     await until(() => gate.started === 1);
     expect(gate.ids).toEqual(['a']);
@@ -321,6 +327,7 @@ describe('restart and shutdown', () => {
 describe('Runner.drain', () => {
   it('waits for the running task and leaves later ones queued', async () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: '' };
+    config.models = legacyModels();
     const store = new DiagnosisStore('', 50);
     const runner = new Runner({ toolHost: () => ({}) } as never, store, config);
     const alert = diagnosis('x', 'queued').alert;
@@ -358,3 +365,71 @@ describe('hourly cap across pods', () => {
     expect(new AlertGate({ ...config, maxPerHour: 3 }, counter(b)).wants(alert).ok).toBe(true);
   });
 });
+
+describe('model choice per run', () => {
+  const two = () => {
+    const config = { ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir };
+    const route = (id: string, models: string[]) => ({ id, style: 'openai' as const, baseUrl: 'http://127.0.0.1:1', apiKey: 'k', headers: {}, systemPrefix: '', models, maxTokens: 10, timeoutMs: 500 });
+    config.models = { routes: [route('one', ['a', 'b']), route('two', ['c'])], defaultModel: 'one/a', skipped: [] };
+    return config;
+  };
+  const post = (port: number, path: string, body: unknown) => fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const alert = { name: 'NodeNotReady', severity: 'critical', labels: { alertname: 'NodeNotReady' }, annotations: {}, startsAt: '2026-11-18T04:59:00Z' };
+
+  it('lists the models on /api/models and counts them on /', async () => {
+    const server = await startServer(two(), 'test');
+    const res = await (await fetch(`http://127.0.0.1:${server.port}/api/models`)).json();
+    expect(res.default).toBe('one/a');
+    expect(res.models.map((m: { id: string }) => m.id)).toEqual(['one/a', 'one/b', 'two/c']);
+    const root = await (await fetch(`http://127.0.0.1:${server.port}/`)).json();
+    expect(root.diagnosis).toMatchObject({ model: 'one/a', models: 3, configured: true });
+    await server.close();
+  });
+
+  it('runs a diagnosis with the model that POST /api/diagnoses names, and records the full id', async () => {
+    gate.progress = true;
+    const server = await startServer(two(), 'test');
+    const res = await post(server.port, '/api/diagnoses', { alert, model: 'two/c' });
+    expect(res.status).toBe(202);
+    const { id } = await res.json();
+    await until(() => read(dir, id).status === 'done');
+    expect(read(dir, id).model).toBe('two/c');
+    await server.close();
+  });
+
+  it('answers 400 with the valid ids for an unknown model', async () => {
+    const server = await startServer(two(), 'test');
+    const res = await post(server.port, '/api/diagnoses', { alert, model: 'two/zzz' });
+    expect(res.status).toBe(400);
+    const { error } = await res.json();
+    expect(error).toContain('one/a');
+    expect(error).toContain('two/c');
+    expect(gate.started).toBe(0);
+    await server.close();
+  });
+
+  it('uses the agent_model label of a webhook alert, and the default when it is unknown', async () => {
+    gate.progress = true;
+    const server = await startServer(two(), 'test');
+    const labels = (n: string, m: string) => ({ alertname: 'NodeNotReady', severity: 'critical', node: n, agent_model: m });
+    await post(server.port, '/api/v2/alerts', [{ labels: labels('n1', 'two/c'), startsAt: '2026-11-18T04:59:00Z' }]);
+    await post(server.port, '/api/v2/alerts', [{ labels: labels('n2', 'nope'), startsAt: '2026-11-18T04:59:00Z' }]);
+    await until(() => gate.started === 2);
+    await server.close();
+    const models = readdirSync(join(dir, 'diagnoses')).map(f => read(dir, f.replace(/\.json$/, '')).model).sort();
+    expect(models).toEqual(['one/a', 'two/c']);
+  });
+
+  it('runs an interrupted diagnosis again with its recorded model', async () => {
+    gate.progress = true;
+    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
+    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past, model: 'two/c' }));
+    const runner = new Runner(host2(), new DiagnosisStore(dir, 50, { owner: 'B' }), two());
+    runner.scan();
+    await until(() => gate.started === 1);
+    await runner.drain();
+    expect(read(dir, 'x').model).toBe('two/c');
+  });
+});
+
+const host2 = () => ({ toolHost: () => ({}) }) as never;

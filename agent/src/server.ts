@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { loadConfig, modelConfigured, type Config } from './config.js';
 import { AlertGate, diagnosisIdFor, fingerprint, parseAlerts } from './alerts.js';
 import { diagnose } from './agent/engine.js';
+import { ModelCatalogue, UnknownModelError } from './agent/catalogue.js';
 import { ModelClient } from './agent/model.js';
 import { alertSchema, renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis } from './agent/report.js';
 import { mask, maskText } from './mask.js';
@@ -69,10 +70,11 @@ export class Runner {
     private readonly runtime: Runtime,
     private readonly store: DiagnosisStore,
     private readonly config: Config,
+    readonly catalogue: ModelCatalogue = new ModelCatalogue(config.models),
   ) {}
 
   get configured(): boolean {
-    return modelConfigured(this.config.model);
+    return modelConfigured(this.config.models);
   }
 
   /** Look for abandoned diagnoses now and every 30 s. */
@@ -159,10 +161,11 @@ export class Runner {
 
   /** Run again a diagnosis that a restart interrupted. It keeps its id and its creation time. */
   resume(interrupted: Diagnosis): void {
-    this.enqueue(interrupted.alert, interrupted.source, interrupted.id);
+    this.enqueue(interrupted.alert, interrupted.source, interrupted.id, interrupted.model || undefined);
   }
 
-  enqueue(alert: Alert, source: Diagnosis['source'], existingId?: string): Diagnosis {
+  /** `model` is a model id (`<route>/<model>`) the caller has checked. Without it the run uses the recorded model or the default. */
+  enqueue(alert: Alert, source: Diagnosis['source'], existingId?: string, model?: string): Diagnosis {
     const existing = existingId ? this.store.get(existingId) : undefined;
     // One firing alert has one diagnosis id, so a second pod or a repeated request finds the record and stops.
     const derived = !existingId && (source === 'webhook' || alert.startsAt) ? diagnosisIdFor(alert.fingerprint, alert.startsAt) : undefined;
@@ -176,7 +179,7 @@ export class Runner {
       evidence: [],
       toolCalls: 0,
       toolBudget: this.config.diagnosis.toolBudget,
-      model: this.config.model.model,
+      model: model ?? existing?.model ?? this.config.models.defaultModel,
       a2ui: [],
       owner: this.store.owner,
       leaseUntil: this.draining ? DiagnosisStore.released() : this.store.lease(),
@@ -207,11 +210,12 @@ export class Runner {
         if (!fresh || fresh.owner !== this.store.owner || this.store.expired(fresh)) return;
         this.running = queued.id;
         const abort = new AbortController();
-        const model = new ModelClient(this.config.model);
+        const resolved = await this.catalogue.resolve(queued.model || undefined);
+        const client = new ModelClient(resolved.route, resolved.model);
         const result = await diagnose({
           alert,
           tools: this.runtime.toolHost(),
-          model,
+          model: client,
           budget: this.config.diagnosis.toolBudget,
           source,
           host: 'cluster',
@@ -308,7 +312,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           mcp: '/mcp',
           tools: runtime.registry.tools.size,
           providers: runtime.registry.providers.map(p => p.name),
-          diagnosis: { model: config.model.model || null, configured: runner.configured, toolBudget: config.diagnosis.toolBudget },
+          diagnosis: { model: config.models.defaultModel || null, models: (await runner.catalogue.list({ waitMs: 2000 })).length, configured: runner.configured, toolBudget: config.diagnosis.toolBudget },
         });
       }
       // Alertmanager v2 API, the shape vmalert's notifier posts.
@@ -327,12 +331,34 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
             log('warn', 'alert not diagnosed: no model configured', { alert: alert.name });
             continue;
           }
+          // The alert may pick a model. An unknown one falls back to the default.
+          let model: string | undefined;
+          const wanted = alert.annotations.agent_model || alert.labels.agent_model;
+          if (wanted) {
+            try {
+              const r = await runner.catalogue.resolve(wanted);
+              model = `${r.route.id}/${r.model}`;
+            } catch (error) {
+              log('warn', 'alert asks for an unknown model, using the default', { alert: alert.name, model: wanted, error: error instanceof Error ? error.message : String(error) });
+            }
+          }
           gate.record();
-          runner.enqueue(alert, 'webhook');
+          runner.enqueue(alert, 'webhook', undefined, model);
           started++;
         }
         if (started) log('info', 'alerts received', { alerts: alerts.length, started });
         return send(res, 200, { status: 'success', started });
+      }
+      if (path === '/api/models' && req.method === 'GET') {
+        const models = await runner.catalogue.list({ waitMs: 5000 });
+        let def = config.models.defaultModel;
+        try {
+          const r = await runner.catalogue.resolve();
+          def = `${r.route.id}/${r.model}`;
+        } catch {
+          /* keep the configured value */
+        }
+        return send(res, 200, { default: def || null, models: models.map(({ id, route, name }) => ({ id, route, name })) });
       }
       if (path === '/api/widgets' && req.method === 'GET') return send(res, 200, listPanels());
       if (path.startsWith('/api/widgets/') && req.method === 'GET') {
@@ -379,7 +405,18 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           const parsed = alertSchema.safeParse(body.alert);
           if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
           const alert = { ...parsed.data, fingerprint: parsed.data.fingerprint || fingerprint({ alertname: parsed.data.name, ...parsed.data.labels }) };
-          const d = runner.enqueue(alert, 'api');
+          let model: string | undefined;
+          if (body.model !== undefined && body.model !== null && body.model !== '') {
+            if (typeof body.model !== 'string') throw new HttpError(400, 'model must be a string');
+            try {
+              const r = await runner.catalogue.resolve(body.model);
+              model = `${r.route.id}/${r.model}`;
+            } catch (error) {
+              if (error instanceof UnknownModelError) throw new HttpError(400, error.message);
+              throw error;
+            }
+          }
+          const d = runner.enqueue(alert, 'api', undefined, model);
           return send(res, 202, { id: d.id, status: d.status });
         }
         // Publish a diagnosis an agent made elsewhere (the ACP agent in T3 Code, a CLI run).
