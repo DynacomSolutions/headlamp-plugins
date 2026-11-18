@@ -103,6 +103,15 @@ API), `serviceGet` (GET JSON from a `*.svc` name) and `settings`, which holds
 this provider's entry from the provider config file. Settings keep
 cluster-specific names and URLs out of this repository.
 
+## Widget panels
+
+`GET /api/widgets` lists panels and `GET /api/widgets/<id>` returns one. Both are
+read-only, need no auth and answer from the same tools as MCP, with the same
+masking. The Headlamps phone app reads them through the Headlamp service proxy.
+Panels: `uptime`, `usage`, `alerts`, `disks`, `hardware`, `sites`, `updates`,
+`incidents` and `agent-memory`. An unknown id gives 404 and a failing backend
+gives 502 with a short reason. The `sites` panel takes `?q=<text>`.
+
 ## Incident diagnosis
 
 The method lives in [`skills/incident-diagnosis/SKILL.md`](skills/incident-diagnosis/SKILL.md).
@@ -218,6 +227,7 @@ diagnosed.
 | `METRICS_URL` | – | Prometheus-compatible endpoint (VictoriaMetrics) |
 | `VMALERT_URL` | – | vmalert, for rules and alerts |
 | `PROVIDER_CONFIG_FILE` | – | JSON with each provider's settings, `{"<provider>": {...}}` |
+| `AGENT_MEMORY_URL` | `http://agent-memory.agent-memory.svc/api/state` | State endpoint for the agent-memory panel |
 | `DATA_DIR` | memory only | Where the diagnoses are kept, one file each in `diagnoses/` |
 | `MAX_DIAGNOSES` | `200` | Diagnoses kept |
 | `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` |

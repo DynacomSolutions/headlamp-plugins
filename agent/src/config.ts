@@ -12,6 +12,8 @@ export interface Config {
   metricsUrl: string;
   /** vmalert HTTP API, for rules and active alerts. Empty disables those tools. */
   vmalertUrl: string;
+  /** The agent-memory state endpoint, for the agent-memory panel. */
+  agentMemoryUrl: string;
   /** JSON file with per-provider settings (`{"<provider>": {...}}`). */
   providerConfigFile: string;
   /** Browser origins allowed to call /mcp. Requests without an Origin header are always allowed. */
@@ -81,6 +83,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     kubeCaFile: env.KUBE_CA_FILE ?? '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt',
     metricsUrl: (env.METRICS_URL ?? '').replace(/\/+$/, ''),
     vmalertUrl: (env.VMALERT_URL ?? '').replace(/\/+$/, ''),
+    agentMemoryUrl: (env.AGENT_MEMORY_URL ?? 'http://agent-memory.agent-memory.svc/api/state').replace(/\/+$/, ''),
     providerConfigFile: env.PROVIDER_CONFIG_FILE ?? '',
     allowedOrigins: list(env.ALLOWED_ORIGINS, []),
     dataDir: env.DATA_DIR ?? '',
