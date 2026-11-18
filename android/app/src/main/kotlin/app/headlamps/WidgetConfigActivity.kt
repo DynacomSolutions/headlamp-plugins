@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import kotlinx.coroutines.launch
@@ -106,8 +108,15 @@ private fun ConfigScreen(
             }
             Text(stringResource(R.string.config_pick_instance), style = MaterialTheme.typography.titleMedium)
             instances.forEach { instance ->
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = current?.id == instance.id, onClick = { selected = instance })
+                Row(
+                    Modifier.fillMaxWidth().selectable(
+                        selected = current?.id == instance.id,
+                        role = Role.RadioButton,
+                        onClick = { selected = instance },
+                    ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = current?.id == instance.id, onClick = null)
                     Text(instance.name)
                 }
             }
@@ -115,8 +124,15 @@ private fun ConfigScreen(
                 Text(stringResource(R.string.config_pick_cluster), style = MaterialTheme.typography.titleMedium)
                 error?.let { Text(stringResource(errorText(it)), color = MaterialTheme.colorScheme.error) }
                 clusters.forEach { name ->
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = cluster == name, onClick = { cluster = name })
+                    Row(
+                        Modifier.fillMaxWidth().selectable(
+                            selected = cluster == name,
+                            role = Role.RadioButton,
+                            onClick = { cluster = name },
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = cluster == name, onClick = null)
                         Text(name)
                     }
                 }

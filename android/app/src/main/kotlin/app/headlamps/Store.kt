@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
@@ -61,6 +62,8 @@ object TokenCipher {
     }
 }
 
+data class WidgetState(val config: WidgetConfig?, val instance: Instance?, val snapshot: Snapshot?)
+
 data class Instance(val id: String, val name: String, val baseUrl: String, val token: String)
 
 @Serializable
@@ -84,6 +87,16 @@ class Repository(private val context: Context) {
             runCatching { AppJson.decodeFromString(listSerializer, text) }.getOrDefault(emptyList())
                 .map { Instance(it.id, it.name, it.baseUrl, TokenCipher.decrypt(it.token)) }
         }
+
+    /** Emits again whenever the widget config, its instance or its snapshot changes. */
+    fun widgetState(widgetId: Int): Flow<WidgetState> = context.dataStore.data.map { prefs ->
+        val config = prefs[stringPreferencesKey("widget_$widgetId")]
+            ?.let { runCatching { AppJson.decodeFromString<WidgetConfig>(it) }.getOrNull() }
+        val instance = config?.let { c -> decode(prefs[instancesKey]).firstOrNull { it.id == c.instanceId } }
+        val snapshot = prefs[stringPreferencesKey("snap_$widgetId")]
+            ?.let { runCatching { AppJson.decodeFromString<Snapshot>(it) }.getOrNull() }
+        WidgetState(config, instance, snapshot)
+    }.distinctUntilChanged()
 
     suspend fun instance(id: String): Instance? = instances.first().firstOrNull { it.id == id }
 

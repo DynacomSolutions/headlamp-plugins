@@ -5,6 +5,9 @@ import android.content.Intent
 import android.appwidget.AppWidgetManager
 import android.net.Uri
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -67,13 +70,15 @@ class NodeUsageWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val repository = Repository(context)
         val widgetId = GlanceAppWidgetManager(context).getAppWidgetId(id)
-        val config = repository.widgetConfig(widgetId)
-        val instance = config?.let { repository.instance(it.instanceId) }
-        val snapshot = repository.snapshot(widgetId)
-        val link = if (config != null && instance != null) usagePageUrl(instance.baseUrl, config.cluster) else null
+        val flow = repository.widgetState(widgetId)
+        val first = flow.first()
         provideContent {
+            // Read inside the composition, so that new data recomposes the widget.
+            val state by flow.collectAsState(initial = first)
+            val config = state.config
+            val link = if (config != null && state.instance != null) usagePageUrl(state.instance!!.baseUrl, config.cluster) else null
             GlanceTheme {
-                WidgetBody(widgetId, config != null, config?.cluster.orEmpty(), snapshot, link)
+                WidgetBody(widgetId, config != null, config?.cluster.orEmpty(), state.snapshot, link)
             }
         }
     }
