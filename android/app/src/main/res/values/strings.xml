@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Headlamps</string>
+    <string name="widget_description">CPU and memory use for each node.</string>
+    <string name="widget_loading">Loading data.</string>
+    <string name="widget_no_nodes">No node data.</string>
+    <string name="widget_refresh">Refresh</string>
+    <string name="widget_updated">Updated %1$s</string>
+    <string name="widget_total">Total: CPU %1$d%%, memory %2$d%%</string>
+    <string name="label_cpu">CPU</string>
+    <string name="label_memory">Mem</string>
+    <string name="error_unreachable">The server is not reachable.</string>
+    <string name="error_unauthorised">The server refused the token (401 or 403).</string>
+    <string name="error_metrics_missing">The metrics API is not available (404 or 503).</string>
+    <string name="error_not_found">The server did not find this address (404).</string>
+    <string name="error_server">The server returned an error.</string>
+    <string name="error_bad_response">The server sent data that the app cannot read.</string>
+    <string name="error_invalid_url">The address or the instance is not valid.</string>
+    <string name="instances_title">Headlamp instances</string>
+    <string name="instances_empty">No instances yet. Tap + to add one.</string>
+    <string name="warning_http">Warning: http:// sends data without encryption.</string>
+    <string name="dialog_add">Add instance</string>
+    <string name="dialog_edit">Edit instance</string>
+    <string name="field_name">Display name</string>
+    <string name="field_url">Base URL</string>
+    <string name="field_token">Bearer token (optional)</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_save">Save</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_test">Test connection</string>
+    <string name="action_add_widget">Add widget</string>
+    <string name="test_ok">Connected. Clusters: %1$s</string>
+    <string name="test_no_clusters">Connected, but the server lists no clusters.</string>
+    <string name="config_title">Node usage widget</string>
+    <string name="config_pick_instance">Instance</string>
+    <string name="config_pick_cluster">Cluster</string>
+    <string name="config_open_app">Add an instance</string>
+</resources>

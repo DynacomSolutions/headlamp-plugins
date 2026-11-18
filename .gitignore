@@ -7,3 +7,12 @@ dist/
 .identifiers-denylist
 .env
 .env.*
+
+# Android app
+android/build/
+android/app/build/
+android/.gradle/
+android/.kotlin/
+android/local.properties
+*.jks
+*.keystore

@@ -1,0 +1,9 @@
+{
+  "kind": "NodeList",
+  "apiVersion": "v1",
+  "items": [
+    {"metadata": {"name": "worker-1"}, "status": {"allocatable": {"cpu": "4", "memory": "16Gi", "pods": "110"}, "capacity": {"cpu": "4"}}},
+    {"metadata": {"name": "worker-2"}, "status": {"allocatable": {"cpu": "4", "memory": "4Gi"}}},
+    {"metadata": {"name": "worker-3"}, "status": {"allocatable": {"cpu": "2", "memory": "2Gi"}}}
+  ]
+}
