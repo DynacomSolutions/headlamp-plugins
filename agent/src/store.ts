@@ -19,8 +19,9 @@ export class DiagnosisStore {
     if (dataDir) {
       try {
         const parsed = JSON.parse(readFileSync(this.file(), 'utf8')) as Diagnosis[];
-        // A diagnosis that was running when the process stopped will never finish.
-        this.items = parsed.slice(0, max).map(d => (d.status === 'running' || d.status === 'queued' ? { ...d, status: 'failed', error: 'Interrupted by a restart' } : d));
+        // Queued and running diagnoses stay as they are. The server runs them again at start (see interrupted()).
+        // A resolved alert needs no new run, so those are closed as failed.
+        this.items = parsed.slice(0, max).map(d => ((d.status === 'running' || d.status === 'queued') && d.resolvedAt ? { ...d, status: 'failed', error: 'Interrupted by a restart' } : d));
       } catch {
         this.items = [];
       }
@@ -51,6 +52,11 @@ export class DiagnosisStore {
 
   list(): Diagnosis[] {
     return this.items;
+  }
+
+  /** Diagnoses that were queued or running when the process stopped, newest first. */
+  interrupted(): Diagnosis[] {
+    return this.items.filter(d => (d.status === 'queued' || d.status === 'running') && !d.resolvedAt);
   }
 
   findByFingerprint(fingerprint: string, startsAt: string): Diagnosis | undefined {

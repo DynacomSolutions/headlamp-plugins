@@ -50,9 +50,10 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /** Runs diagnoses one at a time, in arrival order, so a burst of alerts cannot overload the model quota. */
-class Runner {
+export class Runner {
   private chain: Promise<void> = Promise.resolve();
   private pending = 0;
+  private draining = false;
 
   constructor(
     private readonly runtime: Runtime,
@@ -64,10 +65,25 @@ class Runner {
     return modelConfigured(this.config.model);
   }
 
-  enqueue(alert: Alert, source: Diagnosis['source']): Diagnosis {
+  /**
+   * Stop starting work and resolve when the diagnosis that runs now has finished.
+   * Diagnoses that have not started stay `queued` in the store, so the next start runs them.
+   */
+  async drain(): Promise<void> {
+    this.draining = true;
+    while (this.pending > 0) await this.chain;
+  }
+
+  /** Run again a diagnosis that a restart interrupted. It keeps its id and its creation time. */
+  resume(interrupted: Diagnosis): void {
+    this.enqueue(interrupted.alert, interrupted.source, interrupted.id);
+  }
+
+  enqueue(alert: Alert, source: Diagnosis['source'], existingId?: string): Diagnosis {
+    const existing = existingId ? this.store.get(existingId) : undefined;
     const queued: Diagnosis = {
-      id: randomUUID(),
-      createdAt: new Date().toISOString(),
+      id: existing?.id ?? randomUUID(),
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
       status: 'queued',
       source,
       host: 'cluster',
@@ -80,13 +96,15 @@ class Runner {
     };
     queued.a2ui = renderDiagnosis(queued);
     this.store.put(queued);
-    if (this.pending >= 20) {
+    if (this.draining) return queued;
+    if (!existing && this.pending >= 20) {
       this.store.put({ ...queued, status: 'failed', error: 'Too many diagnoses queued', a2ui: renderDiagnosis({ ...queued, status: 'failed', error: 'Too many diagnoses queued' }) });
       return queued;
     }
     this.pending++;
     this.chain = this.chain.then(async () => {
       try {
+        if (this.draining) return;
         const model = new ModelClient(this.config.model);
         const result = await diagnose({
           alert,
@@ -100,8 +118,8 @@ class Runner {
             if (event.type === 'progress') this.store.put({ ...event.diagnosis, createdAt: queued.createdAt });
           },
         });
-        const existing = this.store.get(queued.id);
-        this.store.put({ ...result, createdAt: queued.createdAt, resolvedAt: existing?.resolvedAt });
+        const latest = this.store.get(queued.id);
+        this.store.put({ ...result, createdAt: queued.createdAt, resolvedAt: latest?.resolvedAt });
         log('info', 'diagnosis finished', { id: result.id, alert: alert.name, status: result.status, toolCalls: result.toolCalls, error: result.error });
       } catch (error) {
         log('error', 'diagnosis crashed', { id: queued.id, error: String(error) });
@@ -138,6 +156,17 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   const mcp = await mcpHandler(runtime, store, version);
   const mcpNode = toNodeHandler(mcp);
   let ready = true;
+
+  // Diagnoses that a hard kill interrupted run again, oldest first. They do not count against the hourly cap.
+  for (const interrupted of store.interrupted().reverse()) {
+    if (runner.configured) {
+      runner.resume(interrupted);
+      log('info', 'diagnosis resumed', { id: interrupted.id, alert: interrupted.alert.name });
+    } else {
+      const failed = { ...interrupted, status: 'failed' as const, error: 'Interrupted by a restart' };
+      store.put({ ...failed, a2ui: renderDiagnosis(failed) });
+    }
+  }
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -251,8 +280,13 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     port,
     async close() {
       ready = false;
-      await new Promise<void>(resolve => server.close(() => resolve()));
+      // Stop accepting connections, then let the running diagnosis finish. No timer: the platform kill is the only limit.
+      const closed = new Promise<void>(resolve => server.close(() => resolve()));
+      server.closeIdleConnections();
+      await runner.drain();
       await mcp.close();
+      server.closeIdleConnections();
+      await closed;
       store.flush();
     },
   };

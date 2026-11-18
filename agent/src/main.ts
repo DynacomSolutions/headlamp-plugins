@@ -13,12 +13,16 @@ async function main(): Promise<void> {
   if (command === 'acp') return startAcp();
   if (command === 'serve') {
     const server = await startServer(undefined, VERSION);
-    const stop = async () => {
-      // Leave the Service endpoints before closing (readiness turns 503 first).
-      setTimeout(() => void server.close().then(() => process.exit(0)), Number(process.env.SHUTDOWN_DELAY_MS ?? 3000));
+    let stopping = false;
+    const stop = () => {
+      // A second signal ends the process at once.
+      if (stopping) process.exit(1);
+      stopping = true;
+      // Readiness turns 503, new connections stop, and the running diagnosis finishes. No timer: the platform kill is the only limit.
+      void server.close().then(() => process.exit(0));
     };
-    process.once('SIGTERM', stop);
-    process.once('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    process.on('SIGINT', stop);
     return;
   }
   process.stderr.write('usage: headlamp-agent [serve|acp]\n');

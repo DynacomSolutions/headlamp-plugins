@@ -145,6 +145,9 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
 
 `GET /api/diagnoses` and `GET /api/diagnoses/<id>` serve the Incidents plugin.
 
+On shutdown the service finishes the running diagnosis before it exits, and it
+re-runs interrupted ones at start.
+
 ## Hosts
 
 **Claude Code** (MCP):
