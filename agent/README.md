@@ -1,0 +1,237 @@
+# headlamp-agent: the read-only data and agent layer
+
+One small service that lets any agent host see what Headlamp and its plugins
+see, and diagnose incidents from it.
+
+- **MCP server** (stateless, spec 2026-07-28): read-only tools over Kubernetes
+  resources, events and pod logs, metrics and alerts, and data that the plugins
+  add (SMART, disk performance and capacity, node temperatures, uptime probes,
+  the alerting backend's state, component updates, sites, usage).
+- **Plugin extension point**: each plugin can ship `agent/provider.ts` with
+  typed tools. The server publishes their schemas and validates, masks and
+  renders every result.
+- **Incident diagnosis**: a skill plus an engine that starts from an alert,
+  gathers evidence within a tool budget and returns the likely cause, the
+  evidence and suggested fixes. It runs in the cluster (started by a vmalert
+  webhook) or as an **ACP agent** in any Agent Client Protocol host.
+- **A2UI v1.0 at every layer**: tool results, diagnoses and ACP messages carry
+  A2UI next to structured JSON, and the [Incidents](../plugins/incidents) plugin
+  renders them in Headlamp.
+
+```
+ vmalert ──POST /api/v2/alerts──▶┐
+                                 │       ┌──────────── headlamp-agent (1 pod) ─────────────┐
+ Claude Code / OpenBot ──MCP────▶├──────▶│ /mcp  stateless MCP: tools, A2UI views, prompt,  │
+                                 │       │       incident-diagnosis skill                   │
+ T3 Code ──ACP (stdio)──▶ headlamp-agent acp ──MCP + POST /api/diagnoses──▶│                │
+                                 │       │ diagnosis engine ──▶ AI gateway (any model)      │
+ Headlamp Incidents ──service proxy GET /api/diagnoses──▶│                                   │
+                                         │ GET-only Kubernetes client · PromQL · vmalert API │
+                                         └──────────────────────────────────────────────────┘
+```
+
+## MCP
+
+`POST /mcp` speaks the 2026-07-28 stateless transport: every request carries
+its protocol version and capabilities, there is no `initialize` handshake and
+no session, so any replica can answer any request. Clients on 2025-era
+versions (`initialize`, then requests) work too, without a session id.
+Responses are plain JSON. `GET /mcp` returns 405, and browser requests from an
+origin that is not in `ALLOWED_ORIGINS` get 403.
+
+| Provider | Tools |
+| --- | --- |
+| kubernetes | `cluster_overview`, `list_resources`, `get_resource` (with events), `list_events`, `get_pod_logs`, `list_api_resources` |
+| metrics | `query_metrics`, `query_metrics_range` (cut to 40 points, peaks kept), `find_metrics`, `list_alerts`, `list_alert_rules` |
+| uptime | `uptime_status`: blackbox probe results per target and site, from `probe_*` series |
+| alerting | `alerting_watchdog_state`: the alerting backend's targets and down episodes |
+| disk_health | `disk_health_smart`, `disk_health_performance`, `disk_health_capacity` |
+| node_hardware | `node_hardware_thermals` |
+| sites | `sites_lookup`: URL to Mapping to Service |
+| updates | `updates_components` |
+| usage | `usage_top` |
+| diagnoses | `list_diagnoses`, `get_diagnosis` |
+
+Every tool is annotated `readOnlyHint: true` and has an `inputSchema` and
+`outputSchema`. A result holds:
+
+1. `structuredContent`, checked against the output schema;
+2. a text block: a one-line summary followed by the JSON, for text-only hosts;
+3. an embedded resource with MIME type `application/a2ui+json`: an A2UI
+   `updateDataModel` for the shared view template.
+
+The template is the resource `a2ui://headlamp-agent/views/summary-list`
+(`createSurface` plus `updateComponents` with data bindings). Each tool
+descriptor points at it in `_meta.ui`. Diagnoses are also resources
+(`a2ui://headlamp-agent/diagnoses/{id}`), each a self-contained surface.
+
+The server also offers the prompt `diagnose_incident` and the skill
+`incident-diagnosis` (MCP skills extension), so a host with its own model can
+run the same method without the engine.
+
+## Plugin data providers
+
+A plugin adds data for agents in `plugins/<plugin>/agent/provider.ts`:
+
+```ts
+import { defineProvider, defineTool, setting, z } from '../../../agent/src/sdk.js';
+
+const status = defineTool({
+  name: 'my_plugin_status',          // snake_case, starts with the provider name
+  title: 'My plugin status',
+  description: 'What it returns and when an agent should call it.',
+  input: z.object({ node: z.string().optional() }),
+  output: z.object({ rows: z.array(z.object({ node: z.string(), ok: z.boolean() })) }),
+  async run(args, ctx) {
+    const samples = await ctx.prom.query('up');             // read-only clients only
+    const rows = samples.map(s => ({ node: s.metric.node ?? '', ok: s.value === 1 }));
+    return {
+      data: { rows },                                       // validated against `output`
+      summary: `${rows.length} nodes.`,                     // one line for the model
+      view: { title: 'Status', rows: rows.map(r => ({ label: r.node, detail: '', status: r.ok ? 'ok' : 'down' })) },
+    };
+  },
+});
+
+export const provider = defineProvider({ name: 'my_plugin', title: 'My plugin', description: '…', tools: [status] });
+```
+
+Then list it in `src/providers/plugins.ts` (a test fails if a plugin ships a
+provider that is not listed). The tool context offers only read-only clients:
+`kube` (GET, never Secrets), `prom` (PromQL), `vmalert` (its `/api/v1/` read
+API), `serviceGet` (GET JSON from a `*.svc` name) and `settings`, which holds
+this provider's entry from the provider config file. Settings keep
+cluster-specific names and URLs out of this repository.
+
+## Incident diagnosis
+
+The method lives in [`skills/incident-diagnosis/SKILL.md`](skills/incident-diagnosis/SKILL.md).
+It is the engine's system prompt, the MCP prompt and the MCP skill. The engine
+([`src/agent/engine.ts`](src/agent/engine.ts)) works like this:
+
+1. **Evidence pack**: a fixed first look chosen from the alert's labels (the
+   rule, then the pod, its logs and events, the workload, node, disks or probes,
+   then recent warnings). It costs no budget, and its facts are numbered `e1`, `e2`, …
+2. **Investigation**: the model may make `AGENT_TOOL_BUDGET` more tool calls
+   (default 10). Each call must state the question it answers, and results are
+   numbered `t1`, `t2`, …
+3. **Answer**: once the budget is spent, the only tool left is
+   `submit_diagnosis`, and the model must call it. The answer holds the likely
+   cause, a summary, a confidence level, signals that cite fact ids, up to five
+   fixes and how to confirm the fix.
+4. **Checks the model cannot skip**: signals that cite unknown ids are dropped,
+   at most one fix is marked recommended, and a fix command must be read-only
+   (`kubectl get/describe/logs`, `smartctl -a`, and so on) or it is removed.
+   Everything is masked.
+
+The diagnosis is kept as JSON with an A2UI surface (the cause, the evidence,
+the fixes, an evidence-trail tab bound to the data model, and the alert).
+
+### Where diagnoses start
+
+- **vmalert**: `-notifier.url=http://headlamp-agent.<namespace>.svc`. vmalert
+  posts Alertmanager v2 alerts to `/api/v2/alerts`. A firing alert with a
+  severity in `AGENT_DIAGNOSE_SEVERITIES` (default warning and critical) starts
+  one diagnosis per activation, limited to `AGENT_MAX_DIAGNOSES_PER_HOUR`
+  (default 6). Diagnoses run one at a time. A resolved alert marks its
+  diagnoses resolved.
+- **API**: `POST /api/diagnoses {"alert": {...}}`.
+- **ACP**: `headlamp-agent acp` runs the engine in the host and takes its tools
+  from the MCP server. It streams each tool call, the thinking and the report
+  (Markdown plus an A2UI resource block), then publishes the result with
+  `POST /api/diagnoses {"diagnosis": {...}}` so Headlamp shows it. Send it an
+  alert as JSON or as `AlertName label=value …`, describe a symptom, or send
+  `diagnose` to take the most severe firing alert.
+
+`GET /api/diagnoses` and `GET /api/diagnoses/<id>` serve the Incidents plugin.
+
+## Hosts
+
+**Claude Code** (MCP):
+
+```sh
+claude mcp add --transport http headlamp-agent https://agent.example.com/mcp
+```
+
+Then ask, for example, "use the diagnose_incident prompt for KubePodCrashLooping
+namespace=shop pod=web-1", or call the tools directly.
+
+**T3 Code** (ACP): add a local ACP agent with this command:
+
+```sh
+node /path/to/headlamp-plugins/agent/dist/main.mjs acp
+```
+
+and this environment:
+
+```sh
+HEADLAMP_AGENT_MCP_URL=https://agent.example.com/mcp
+AGENT_MODEL=<model>  AGENT_MODEL_STYLE=openai|anthropic
+AIS_GATEWAY_URL=<gateway app URL>  AIS_GATEWAY_TOKEN=<app token>
+HEADLAMP_INCIDENTS_URL=https://headlamp.example.com/c/main/incidents   # optional link
+```
+
+**OpenBot or any always-on host**: point it at the MCP URL. Diagnoses that
+vmalert starts run in the cluster with no host.
+
+## Model
+
+The model is configuration only. There is no SDK and no provider is fixed in
+the code. Two API styles are supported:
+
+| Variable | Meaning |
+| --- | --- |
+| `AGENT_MODEL` | Model id, for example the gateway pool's model |
+| `AGENT_MODEL_STYLE` | `openai` (Chat Completions) or `anthropic` (Messages) |
+| `AIS_GATEWAY_URL` / `AGENT_MODEL_BASE_URL` | Base URL (`…/chat/completions` or `…/v1/messages` is appended) |
+| `AIS_GATEWAY_TOKEN` / `AGENT_MODEL_API_KEY` | Bearer token |
+| `AGENT_MODEL_HEADERS` | Extra headers, JSON. `{session}` becomes the diagnosis id, for example `{"x-opencode-session":"{session}"}` |
+| `AGENT_MODEL_SYSTEM_PREFIX` | Text put before the system prompt, for endpoints that need it |
+
+Without a model, the MCP server still works, and alerts are recorded but not
+diagnosed.
+
+## Read-only and masking
+
+- RBAC grants only `get`, `list` and `watch`, and no Secrets. The deployment
+  binds the built-in `view` role plus read access to cluster-scoped types.
+- The Kubernetes client sends `GET` only. It refuses any path whose resource
+  type contains `secret`, and it never lists Secrets in discovery. This still
+  holds if RBAC is too broad.
+- Every result, log line, report and A2UI payload is masked: JWTs, PEM private
+  keys, known token formats, bearer and basic credentials, `user:password@` in
+  URLs, credential query parameters, `key=value` pairs and env vars whose names
+  mean a secret.
+- Evidence is data, not instructions: the skill tells the model so, and the
+  model's output is checked before it is stored.
+
+## Configuration
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PORT` | `8080` | HTTP port |
+| `KUBE_API` | in-cluster | API server URL, for example `http://127.0.0.1:8001` with `kubectl proxy` |
+| `METRICS_URL` | – | Prometheus-compatible endpoint (VictoriaMetrics) |
+| `VMALERT_URL` | – | vmalert, for rules and alerts |
+| `PROVIDER_CONFIG_FILE` | – | JSON with each provider's settings, `{"<provider>": {...}}` |
+| `DATA_DIR` | memory only | Where `diagnoses.json` is kept |
+| `MAX_DIAGNOSES` | `200` | Diagnoses kept |
+| `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` |
+| `AGENT_TOOL_BUDGET` | `10` | Tool calls per diagnosis after the evidence pack |
+| `AGENT_DIAGNOSE_SEVERITIES` | `warning,critical` | Severities that start a diagnosis from the webhook |
+| `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Webhook diagnoses per hour |
+| `AGENT_IGNORE_ALERTS` | `Watchdog,InfoInhibitor` | Alert names that are never diagnosed |
+
+## Development
+
+```sh
+npm ci
+npm run tsc && npm test && npm run build      # dist/main.mjs plus skills/
+kubectl proxy --port 8001 &
+KUBE_API=http://127.0.0.1:8001 METRICS_URL=… node dist/main.mjs serve
+```
+
+The tests check masking, the Secret guard, A2UI payloads against the official
+v1.0 JSON schemas (vendored in `test/a2ui-v1`), report sanitising, alert
+parsing and gating, provider registration, the engine's budget, and the MCP
+endpoint end to end.
