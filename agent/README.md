@@ -109,7 +109,7 @@ cluster-specific names and URLs out of this repository.
 read-only, need no auth and answer from the same tools as MCP, with the same
 masking. The Headlamps phone app reads them through the Headlamp service proxy.
 Panels: `uptime`, `usage`, `alerts`, `disks`, `hardware`, `sites`, `updates`,
-`incidents` and `agent-memory`. An unknown id gives 404 and a failing backend
+`incidents`, `github-runners`, `registry`, `vm-images` and `agent-memory`. An unknown id gives 404 and a failing backend
 gives 502 with a short reason. The `sites` panel takes `?q=<text>`.
 
 ## Incident diagnosis
@@ -228,6 +228,7 @@ diagnosed.
 | `VMALERT_URL` | – | vmalert, for rules and alerts |
 | `PROVIDER_CONFIG_FILE` | – | JSON with each provider's settings, `{"<provider>": {...}}` |
 | `AGENT_MEMORY_URL` | `http://agent-memory.agent-memory.svc/api/state` | State endpoint for the agent-memory panel |
+| `REGISTRY_CATALOGUE_URL` | `http://registry-catalog.registry.svc/api/repositories` | Registry catalogue backend, for the registry and VM images panels. Set the namespace of your catalogue Service. |
 | `DATA_DIR` | memory only | Where the diagnoses are kept, one file each in `diagnoses/` |
 | `MAX_DIAGNOSES` | `200` | Diagnoses kept |
 | `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` |
