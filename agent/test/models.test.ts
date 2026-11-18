@@ -308,11 +308,34 @@ describe('model client', () => {
     const b = await new ModelClient(route('an', { style: 'anthropic', systemPrefix: 'You are Claude Code' }), 'claude-x').complete(req);
     expect(an[0].url).toBe('https://gw.example.com/an/v1/messages');
     expect(an[0].headers['x-api-key']).toBe('key-an');
-    expect(an[0].body.system.startsWith('You are Claude Code')).toBe(true);
+    expect(an[0].body.system).toEqual([{ type: 'text', text: 'You are Claude Code' }, { type: 'text', text: 'SYS' }]);
     expect(b).toMatchObject({ text: 'yo', usage: { input: 5, output: 1 } });
   });
 
+  it('sends a plain string system for anthropic without a prefix', async () => {
+    const calls = capture(() => json({ content: [], usage: {} }));
+    await new ModelClient(route('an2', { style: 'anthropic' }), 'm').complete(req);
+    expect(calls[0].body.system).toBe('SYS');
+  });
+
+  it('keeps the string system for openai and responses with a prefix', async () => {
+    const oa = capture(() => json({ choices: [{ message: { content: 'x' } }] }));
+    await new ModelClient(route('oa2', { systemPrefix: 'PRE' }), 'm').complete(req);
+    expect(oa[0].body.messages[0]).toEqual({ role: 'system', content: 'PRE\n\nSYS' });
+    vi.unstubAllGlobals();
+    const rs = capture(() => new Response(sse([{ type: 'response.completed', response: { status: 'completed', output: [], usage: {} } }])));
+    await new ModelClient(route('rs2', { style: 'responses', systemPrefix: 'PRE' }), 'm').complete(req);
+    expect(rs[0].body.instructions).toBe('PRE\n\nSYS');
+  });
+
   describe('forced tool', () => {
+    it('puts the forced-tool line in the second block when a prefix is set', async () => {
+      let n = 0;
+      const calls = capture(() => (n++ === 0 ? new Response('{"error":{"message":"tool_choice: type \\"tool\\" is not supported"}}', { status: 400 }) : json({ content: [], usage: {} })));
+      await new ModelClient(route('f6', { style: 'anthropic', systemPrefix: 'PRE' }), 'm').complete({ ...req, forceTool: 'q' });
+      expect(calls[1].body.system).toEqual([{ type: 'text', text: 'PRE' }, { type: 'text', text: 'SYS\n\nYou must call the q tool now.' }]);
+    });
+
     const two = [
       { name: 'q', description: 'd', parameters: { type: 'object' } },
       { name: 'other', description: 'o', parameters: { type: 'object' } },

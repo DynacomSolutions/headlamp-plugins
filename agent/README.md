@@ -236,7 +236,8 @@ AIS_GATEWAY_CLAUDE_TOKEN=<app token>
 
 Route fields: `id`, `style`, `urlEnv`, `tokenEnv`, and optional `headers`
 (`{session}` becomes the diagnosis id), `systemPrefix` (text put before the
-system prompt), `models` (allowlist, also the list used when the gateway cannot
+system prompt; the anthropic style sends it as its own first system block,
+because the upstream rejects it inside one string with 429), `models` (allowlist, also the list used when the gateway cannot
 list models), `maxTokens` and `timeoutMs`.
 
 Provider notes:
