@@ -86,11 +86,22 @@ export function ModelPicker(props: ModelPickerProps) {
   const current = Math.min(cursor, Math.max(0, flat.length - 1));
   const searching = query.trim() !== '';
 
-  // Keep the highlighted row visible (DOM sync).
-  React.useEffect(() => {
-    if (!anchor) return;
+  const scrollToHighlight = (block: ScrollLogicalPosition) => {
     const el = listRef.current?.querySelector('[data-highlighted="true"]');
-    (el as HTMLElement | null)?.scrollIntoView?.({ block: 'nearest' });
+    (el as HTMLElement | null)?.scrollIntoView?.({ block });
+  };
+  // The popover content mounts after the picker commits (portal), so the list is not in the
+  // DOM when an effect keyed on the anchor runs. A callback ref runs when the list mounts.
+  const setList = React.useCallback((el: HTMLDivElement | null) => {
+    listRef.current = el;
+    if (el)
+      (el.querySelector('[data-highlighted="true"]') as HTMLElement | null)?.scrollIntoView?.({
+        block: 'center',
+      });
+  }, []);
+  // Keep the highlighted row visible while the cursor, provider or search changes (DOM sync).
+  React.useEffect(() => {
+    if (anchor) scrollToHighlight('nearest');
   }, [anchor, current, active, query]);
 
   const open = (el: HTMLElement) => {
@@ -104,7 +115,12 @@ export function ModelPicker(props: ModelPickerProps) {
     const first = pickerRows(models, start, '', favourites).flatMap(r => r.models);
     setActive(start);
     setQuery('');
-    setCursor(Math.max(0, first.findIndex(m => m.id === value)));
+    setCursor(
+      Math.max(
+        0,
+        first.findIndex(m => m.id === value)
+      )
+    );
     setAnchor(el);
   };
   const close = () => setAnchor(null);
@@ -243,7 +259,7 @@ export function ModelPicker(props: ModelPickerProps) {
               />
             </Box>
             <Box
-              ref={listRef}
+              ref={setList}
               role="listbox"
               aria-label="Models"
               sx={{ flex: 1, overflow: 'auto', p: 0.5 }}

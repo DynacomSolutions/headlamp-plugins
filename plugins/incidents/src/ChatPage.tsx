@@ -388,6 +388,15 @@ export function ChatView({ id }: { id?: string }) {
   const model = picked ?? chat.data?.model ?? models.data?.default ?? '';
   const scroll = useStickToBottom(messages);
 
+  // The list is polled slowly: refresh it when the open chat starts or stops running.
+  const lastRunning = React.useRef<boolean | null>(null);
+  const refreshChats = chats.refresh;
+  React.useEffect(() => {
+    if (!chat.data) return;
+    if (lastRunning.current !== null && lastRunning.current !== running) refreshChats();
+    lastRunning.current = running;
+  }, [chat.data, running, refreshChats]);
+
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
     setSendError(null);
@@ -427,6 +436,7 @@ export function ChatView({ id }: { id?: string }) {
     run(async () => {
       if (id) await cancelChat(settings, id);
       chat.refresh();
+      chats.refresh();
     });
 
   const onDelete = (chatId: string) =>
