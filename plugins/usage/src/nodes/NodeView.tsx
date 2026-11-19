@@ -8,16 +8,20 @@ import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Breadcrumbs from '@mui/material/Breadcrumbs';
 import Button from '@mui/material/Button';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
 import { childRows, detailFor, selectionFor, valueAt } from './detail';
 import { DetailPanel } from './DetailPanel';
+import { MAX_RINGS, MIN_RINGS } from './nodesUrl';
 import { Sunburst } from './Sunburst';
 import { capacityZoom, NodeTree, Resource } from './tree';
 
 const rootCrumb = (tree: NodeTree) => (tree.nodeRing ? 'All nodes' : tree.root.label);
 
+const RING_OPTIONS = Array.from({ length: MAX_RINGS - MIN_RINGS + 1 }, (_, i) => MIN_RINGS + i);
 const GAP = 16;
 const MIN_CHART = 200;
 /** Room the heading and the used text above a chart need. */
@@ -146,6 +150,9 @@ export function NodeView(props: {
   /** Selected path ([] for none). */
   sel: string[];
   kiosk: boolean;
+  /** Rings drawn in both charts. */
+  rings: number;
+  onRings: (rings: number) => void;
   /** Filters, left of the breadcrumb in the top bar. */
   toolbar?: React.ReactNode;
   /** Controls at the right end of the top bar (Full screen or Exit full screen). */
@@ -154,7 +161,7 @@ export function NodeView(props: {
   onPath: (path: string[]) => void;
   onSelect: (sel: string[]) => void;
 }) {
-  const { cpu, mem, alerts, path, sel, kiosk, toolbar, trailing, onPath, onSelect } = props;
+  const { cpu, mem, alerts, path, sel, kiosk, rings, onRings, toolbar, trailing, onPath, onSelect } = props;
   const detail = React.useMemo(() => detailFor(cpu, mem, path), [cpu, mem, path]);
   const selection = React.useMemo(() => selectionFor(cpu, mem, detail.path, sel), [cpu, mem, detail.path, sel]);
   // Zoomed into one node of a node ring: it reads like a single-node root, against its capacity.
@@ -202,6 +209,7 @@ export function NodeView(props: {
         resource={resource}
         focus={detail.path}
         size={size}
+        rings={rings}
         onFocus={onPath}
         subject={centreSubject}
         selected={chosen ? sel : null}
@@ -259,6 +267,26 @@ export function NodeView(props: {
         >
           Open
         </Button>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Typography id="rings-label" sx={{ fontSize: 16 }}>
+            Rings
+          </Typography>
+          <ToggleButtonGroup
+            exclusive
+            size="small"
+            value={rings}
+            aria-labelledby="rings-label"
+            onChange={(_e, v: number | null) => {
+              if (v !== null) onRings(v);
+            }}
+          >
+            {RING_OPTIONS.map(n => (
+              <ToggleButton key={n} value={n} aria-label={`${n} rings`} sx={{ minHeight: 48, minWidth: 48, fontSize: 16 }}>
+                {n}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        </Box>
         {trailing}
       </Box>
       {alerts.map(a => (

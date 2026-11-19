@@ -72,7 +72,7 @@ describe('arc icons', () => {
   it('keeps the icon and drops the name when there is not room for both', () => {
     iconUrl.value = 'blob:x';
     // A small chart: the arcs are big enough for an icon but not for icon plus text.
-    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={260} />);
+    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={260} rings={3} />);
     const lone = container.querySelectorAll('[data-arc-icon]');
     expect(lone.length).toBeGreaterThan(0);
     lone.forEach(g => expect(g.parentElement?.querySelector('text[data-arc-label]')).toBeNull());

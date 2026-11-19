@@ -26,6 +26,24 @@ describe('nodesUrl', () => {
     }
   });
 
+  it('omits rings at the default and writes any other count', () => {
+    expect(parseNodesUrl('').rings).toBe(4);
+    expect(serialiseNodesUrl({ ...defaultNodesUrl(), rings: 4 })).toBe('');
+    expect(serialiseNodesUrl({ ...defaultNodesUrl(), rings: 6 })).toBe('?rings=6');
+    expect(serialiseNodesUrl(parseNodesUrl('?kiosk=1&rings=5'))).toBe('?kiosk=1&rings=5');
+  });
+
+  it('clamps rings to 2..6 and ignores junk', () => {
+    expect(parseNodesUrl('?rings=1').rings).toBe(2);
+    expect(parseNodesUrl('?rings=0').rings).toBe(2);
+    expect(parseNodesUrl('?rings=9').rings).toBe(6);
+    expect(parseNodesUrl('?rings=3').rings).toBe(3);
+    for (const junk of ['?rings=', '?rings=abc', '?rings=3.5', '?rings=-2', '?rings=NaN']) {
+      expect(parseNodesUrl(junk).rings).toBe(4);
+    }
+    expect(serialiseNodesUrl({ ...defaultNodesUrl(), rings: 99 })).toBe('?rings=6');
+  });
+
   it('round-trips the kiosk flag', () => {
     const s = { ...defaultNodesUrl(), kiosk: true };
     expect(serialiseNodesUrl(s)).toBe('?kiosk=1');
@@ -40,6 +58,7 @@ describe('nodesUrl', () => {
       path: ['node:worker 1,a/b:c', 'k8s/ns:a b/pod:x%y,z', 'ünï'],
       sel: ['node:worker 1,a/b:c', 'k8s/ns:a b/~unused'],
       kiosk: true,
+      rings: 5,
     };
     const pathname = buildNodesPath('/c/main/usage/dashboard', s.path);
     expect(parseNodesUrl(serialiseNodesUrl(s), pathname)).toEqual(s);
@@ -62,6 +81,7 @@ describe('nodesUrl', () => {
       path: [],
       sel: [],
       kiosk: false,
+      rings: 4,
     });
     expect(parseNodesUrl('?node=worker+1').nodes).toEqual(['worker 1']);
   });

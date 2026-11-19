@@ -59,6 +59,7 @@ export function NodesPage(): JSX.Element {
       search: serialiseNodesUrl({ ...state, path, sel: [] }),
     });
   const setSel = (sel: string[]) => replace({ ...state, sel });
+  const setRings = (rings: number) => replace({ ...state, rings });
   const setKiosk = (kiosk: boolean) => replace({ ...state, kiosk });
   const resetZoom = React.useCallback(() => replace({ ...state, path: [], sel: [] }), [replace, state]);
   useIdle(state.path.length > 0 || state.sel.length > 0, settings.idleSeconds, resetZoom);
@@ -159,6 +160,8 @@ export function NodesPage(): JSX.Element {
           sel={state.sel}
           onSelect={setSel}
           kiosk={state.kiosk}
+          rings={state.rings}
+          onRings={setRings}
           onPath={setPath}
           toolbar={filters}
           trailing={trailing}

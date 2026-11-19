@@ -9,11 +9,22 @@
  *   cats=k8s,t3 the selected categories (left out for all)
  *   sel=k,k     the selected segment, as arc keys from the root (it may differ from the zoom)
  *   kiosk=1     full screen kiosk view
+ *   rings=n     the number of rings in the charts, 2 to 6 (left out for the default, 4)
  * Lists are comma joined with "%" and "," escaped inside an item, and URLSearchParams does the
  * rest, so names and keys with commas, slashes, colons, spaces or unicode survive.
  * Old links redirect: ?path=a,b and ?node=<name>&path=<key/key> move to the segment form.
  */
 import { CATEGORIES } from './tree';
+
+export const DEFAULT_RINGS = 4;
+export const MIN_RINGS = 2;
+export const MAX_RINGS = 6;
+
+/** The ring count of a query value: a whole number clamped to 2..6, the default for junk. */
+export function parseRings(v: string | null): number {
+  if (v === null || !/^\s*\d+\s*$/.test(v)) return DEFAULT_RINGS;
+  return Math.min(MAX_RINGS, Math.max(MIN_RINGS, Number(v)));
+}
 
 export interface NodesUrlState {
   /** Selected node names; [] means every node. */
@@ -25,6 +36,8 @@ export interface NodesUrlState {
   /** Selected segment: arc keys from the root; [] for none. */
   sel: string[];
   kiosk: boolean;
+  /** Rings drawn in each chart. */
+  rings: number;
 }
 
 export const defaultNodesUrl = (): NodesUrlState => ({
@@ -33,6 +46,7 @@ export const defaultNodesUrl = (): NodesUrlState => ({
   path: [],
   sel: [],
   kiosk: false,
+  rings: DEFAULT_RINGS,
 });
 
 const escapeItem = (s: string): string => s.replace(/%/g, '%25').replace(/,/g, '%2C');
@@ -86,6 +100,7 @@ export function parseNodesUrl(search: string, pathname = ''): NodesUrlState {
     path: parseNodesPath(pathname).path,
     sel: splitList(p.get('sel')),
     kiosk: p.get('kiosk') === '1',
+    rings: parseRings(p.get('rings')),
   };
 }
 
@@ -96,6 +111,8 @@ export function serialiseNodesUrl(s: NodesUrlState): string {
   if (s.cats.length && s.cats.length < CATEGORIES.length) p.set('cats', joinList(s.cats));
   if (s.sel.length) p.set('sel', joinList(s.sel));
   if (s.kiosk) p.set('kiosk', '1');
+  const rings = Math.min(MAX_RINGS, Math.max(MIN_RINGS, Math.round(s.rings)));
+  if (rings !== DEFAULT_RINGS) p.set('rings', String(rings));
   const q = p.toString();
   return q ? `?${q}` : '';
 }

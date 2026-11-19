@@ -25,6 +25,7 @@ import {
 } from './arcLabel';
 import { ArcDatum, CENTRE, layoutSunburst } from './layout';
 import { nameOf } from './names';
+import { DEFAULT_RINGS } from './nodesUrl';
 import { capacityZoom, NodeTree, Resource, SunNode } from './tree';
 import { useIconUrl } from './useIconUrl';
 
@@ -121,7 +122,7 @@ export function Sunburst(props: {
     resource,
     focus,
     size,
-    rings = 3,
+    rings = DEFAULT_RINGS,
     onFocus,
     selected = null,
     onSelect,
