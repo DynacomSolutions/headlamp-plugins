@@ -8,6 +8,7 @@
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import { createTheme, ThemeProvider, useTheme } from '@mui/material/styles';
 import React from 'react';
 
 /** Asks the browser for full screen, where it can; a refusal is ignored. */
@@ -31,6 +32,9 @@ export function exitBrowserFullscreen(): void {
   }
 }
 
+/** Pure black, so an OLED screen switches its pixels off. */
+export const KIOSK_BLACK = '#000';
+
 export function KioskOverlay(props: {
   onExit: () => void;
   /** The filters bar, left of the Exit control. Leave it out to place the Exit control yourself. */
@@ -39,6 +43,17 @@ export function KioskOverlay(props: {
   children: React.ReactNode | ((exit: React.ReactNode) => React.ReactNode);
 }): JSX.Element {
   const { onExit, bar, children } = props;
+  const outer = useTheme();
+  const dark = outer.palette.mode === 'dark';
+  // In a dark theme everything inside paints black where it used the grey surfaces: the overlay,
+  // the centre discs and the arc gaps of the charts. A light theme stays as it is.
+  const theme = React.useMemo(
+    () =>
+      dark
+        ? createTheme(outer, { palette: { background: { default: KIOSK_BLACK, paper: KIOSK_BLACK } } })
+        : outer,
+    [dark, outer]
+  );
   const exit = React.useRef(onExit);
   exit.current = onExit;
 
@@ -83,6 +98,7 @@ export function KioskOverlay(props: {
   const inline = typeof children === 'function';
 
   return (
+    <ThemeProvider theme={theme}>
     <Box
       data-kiosk-overlay
       sx={theme => ({
@@ -109,5 +125,6 @@ export function KioskOverlay(props: {
         {typeof children === 'function' ? children(exitButton) : children}
       </Box>
     </Box>
+    </ThemeProvider>
   );
 }

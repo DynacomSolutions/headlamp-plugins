@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@iconify/react', () => ({ Icon: (p: { icon: string }) => <i data-icon={p.icon} /> }));
 
+import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { KioskOverlay } from './Kiosk';
 
 afterEach(() => {
@@ -85,5 +86,30 @@ describe('KioskOverlay', () => {
     );
     setFullscreen(false);
     expect(onExit).not.toHaveBeenCalled();
+  });
+});
+
+describe('KioskOverlay background', () => {
+  const colourOf = (mode: 'dark' | 'light') => {
+    const theme = createTheme({ palette: { mode } });
+    const { container } = render(
+      <ThemeProvider theme={theme}>
+        <KioskOverlay onExit={() => undefined}>x</KioskOverlay>
+      </ThemeProvider>
+    );
+    const overlay = container.querySelector('[data-kiosk-overlay]') as HTMLElement;
+    return { got: getComputedStyle(overlay).backgroundColor, theme };
+  };
+
+  it('is pure black in a dark theme', () => {
+    expect(colourOf('dark').got).toBe('rgb(0, 0, 0)');
+  });
+
+  it('keeps the theme background in a light theme', () => {
+    const { got, theme } = colourOf('light');
+    const probe = document.createElement('div');
+    probe.style.backgroundColor = theme.palette.background.default;
+    expect(got).toBe(probe.style.backgroundColor);
+    expect(got).not.toBe('rgb(0, 0, 0)');
   });
 });
