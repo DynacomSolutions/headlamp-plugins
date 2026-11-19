@@ -8,7 +8,7 @@
  * readers.
  */
 import { Icon } from '@iconify/react';
-import { useTheme } from '@mui/material/styles';
+import { lighten, useTheme } from '@mui/material/styles';
 import { arc as d3arc } from 'd3-shape';
 import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
@@ -79,7 +79,13 @@ function ArcIcon(props: {
             style={{ pointerEvents: 'none' }}
           />
         )}
-        <foreignObject x={off} y={off} width={inner} height={inner} style={{ pointerEvents: 'none' }}>
+        <foreignObject
+          x={off}
+          y={off}
+          width={inner}
+          height={inner}
+          style={{ pointerEvents: 'none' }}
+        >
           <Icon
             icon={`${i.kind}:${i.name}`}
             width={inner}
@@ -117,6 +123,11 @@ export function Sunburst(props: {
   /** Called with the tapped arc's path, or null to clear the selection. */
   onSelect?: (path: string[] | null) => void;
   compact?: boolean;
+  /**
+   * Quiet look for a touch screen: a selected arc grows and changes its fill, with no outline
+   * and no keyboard focus ring.
+   */
+  quiet?: boolean;
   /** The focused node by name and icon, for the centre when this tree does not have it. */
   subject?: { label: string; icon?: SunNode['icon'] };
 }) {
@@ -130,6 +141,7 @@ export function Sunburst(props: {
     selected = null,
     onSelect,
     compact = false,
+    quiet = false,
     subject,
   } = props;
   const theme = useTheme();
@@ -155,9 +167,12 @@ export function Sunburst(props: {
   const items = React.useMemo(() => withPaths(arcs, shown), [arcs, shown]);
   const selectedId = selected ? selected.join('\u0000') : null;
   const pathOf = new Map(items.map(i => [i.arc, i.path.join('\u0000')]));
-  const isSelected = (_key: string, a: ArcDatum) => selectedId !== null && pathOf.get(a) === selectedId;
+  const isSelected = (_key: string, a: ArcDatum) =>
+    selectedId !== null && pathOf.get(a) === selectedId;
   // The selected arc is drawn last, so its outline and growth are not covered.
-  const drawn = [...items].sort((a, b) => Number(isSelected('', a.arc)) - Number(isSelected('', b.arc)));
+  const drawn = [...items].sort(
+    (a, b) => Number(isSelected('', a.arc)) - Number(isSelected('', b.arc))
+  );
   const name = resource === 'cpu' ? 'CPU' : 'Memory';
   // Zoomed in, percentages are of the active section (the focus node), not of capacity.
   // Zoomed into one node of a node ring it reads like a single-node root, against that capacity.
@@ -270,11 +285,23 @@ export function Sunburst(props: {
         if (!compact && e.target === e.currentTarget) onSelect?.(null);
       }}
     >
-      <style>{`.sb-arc{outline:none}.sb-arc:focus-visible{stroke:${theme.palette.primary.main};stroke-width:3px;stroke-dasharray:none;stroke-opacity:1}`}</style>
+      <style>
+        {quiet
+          ? '.sb-arc{outline:none}'
+          : `.sb-arc{outline:none}.sb-arc:focus-visible{stroke:${theme.palette.primary.main};stroke-width:3px;stroke-dasharray:none;stroke-opacity:1}`}
+      </style>
       <defs>
-        <pattern id={hatchId} data-hatch width={HATCH_STEP} height={HATCH_STEP} patternUnits="userSpaceOnUse">
+        <pattern
+          id={hatchId}
+          data-hatch
+          width={HATCH_STEP}
+          height={HATCH_STEP}
+          patternUnits="userSpaceOnUse"
+        >
           <path
-            d={`M-1 -1L${HATCH_STEP + 1} ${HATCH_STEP + 1}M-1 ${HATCH_STEP + 1}L${HATCH_STEP + 1} -1`}
+            d={`M-1 -1L${HATCH_STEP + 1} ${HATCH_STEP + 1}M-1 ${HATCH_STEP + 1}L${
+              HATCH_STEP + 1
+            } -1`}
             stroke={theme.palette.text.primary}
             strokeOpacity={HATCH_OPACITY}
             strokeWidth={1}
@@ -328,28 +355,39 @@ export function Sunburst(props: {
               d={shape(arc) ?? ''}
               data-selected={chosen ? 'true' : undefined}
               data-gap={arc.gap ? 'true' : undefined}
-              fill={arc.gap ? `url(#${hatchId})` : arc.fill}
+              fill={
+                arc.gap ? `url(#${hatchId})` : chosen && quiet ? lighten(arc.fill, 0.3) : arc.fill
+              }
               stroke={
-                chosen
+                chosen && !quiet
                   ? theme.palette.primary.main
                   : arc.gap
                   ? theme.palette.text.secondary
                   : theme.palette.background.paper
               }
-              strokeWidth={chosen ? 3 : 1}
-              strokeDasharray={arc.gap && !chosen ? '2 4' : undefined}
-              strokeOpacity={arc.gap && !chosen ? 0.6 : 1}
+              strokeWidth={chosen && !quiet ? 3 : 1}
+              strokeDasharray={arc.gap && (!chosen || quiet) ? '2 4' : undefined}
+              strokeOpacity={arc.gap && (!chosen || quiet) ? 0.6 : 1}
               style={{
                 // An arc without fill still takes taps.
                 pointerEvents: 'all',
                 cursor: compact ? undefined : 'pointer',
                 transform: pressed === id ? 'scale(1.03)' : '',
-                transition: 'transform 80ms',
+                transition: quiet ? 'transform 150ms, fill 150ms' : 'transform 80ms',
               }}
               {...a11y}
               aria-pressed={compact ? undefined : chosen}
               {...handlers(id, () => onSelect?.(chosen ? null : path))}
             />
+            {quiet && chosen && arc.gap && (
+              <path
+                data-gap-tint
+                d={shape(arc) ?? ''}
+                fill={theme.palette.text.primary}
+                fillOpacity={0.16}
+                style={{ pointerEvents: 'none' }}
+              />
+            )}
             {lone && icon && iconSize !== null && (
               <g
                 data-arc-icon={arc.key}
@@ -402,45 +440,43 @@ export function Sunburst(props: {
         {...handlers('centre', up ? () => onFocus?.(up) : null)}
       />
       <g style={{ pointerEvents: 'none' }} textAnchor="middle" fill={theme.palette.text.primary}>
-        {compact ? (
-          // Zoomed in, 100% of the focus says nothing, so the compact centre stays empty.
-          !zoomed && (
-          <text
-            y={0}
-            dominantBaseline="central"
-            fontSize={Math.min(fontSize * 1.8, (centreR * 1.6) / 3 / CHAR_WIDTH)}
-            fontWeight={600}
-          >
-            {Math.round(centre.share * 100)}%
-          </text>
-          )
-        ) : (
-          lines.map(l =>
-            l.kind === 'icon' ? (
-              centreIcon && (
-                <g key="icon" transform={`translate(${-ARC_ICON / 2} ${l.y})`}>
-                  <ArcIcon icon={centreIcon} size={ARC_ICON} color={theme.palette.text.primary} />
-                </g>
-              )
-            ) : (
+        {compact
+          ? // Zoomed in, 100% of the focus says nothing, so the compact centre stays empty.
+            !zoomed && (
               <text
-                key={l.kind}
-                data-centre-line={l.kind}
-                y={l.y}
-                fontSize={l.fontSize}
-                fontWeight={l.kind === 'value' ? 600 : undefined}
-                fill={
-                  l.kind === 'title' || l.kind === 'value'
-                    ? theme.palette.text.primary
-                    : theme.palette.text.secondary
-                }
-                aria-hidden={up ? 'true' : undefined}
+                y={0}
+                dominantBaseline="central"
+                fontSize={Math.min(fontSize * 1.8, (centreR * 1.6) / 3 / CHAR_WIDTH)}
+                fontWeight={600}
               >
-                {l.text}
+                {Math.round(centre.share * 100)}%
               </text>
             )
-          )
-        )}
+          : lines.map(l =>
+              l.kind === 'icon' ? (
+                centreIcon && (
+                  <g key="icon" transform={`translate(${-ARC_ICON / 2} ${l.y})`}>
+                    <ArcIcon icon={centreIcon} size={ARC_ICON} color={theme.palette.text.primary} />
+                  </g>
+                )
+              ) : (
+                <text
+                  key={l.kind}
+                  data-centre-line={l.kind}
+                  y={l.y}
+                  fontSize={l.fontSize}
+                  fontWeight={l.kind === 'value' ? 600 : undefined}
+                  fill={
+                    l.kind === 'title' || l.kind === 'value'
+                      ? theme.palette.text.primary
+                      : theme.palette.text.secondary
+                  }
+                  aria-hidden={up ? 'true' : undefined}
+                >
+                  {l.text}
+                </text>
+              )
+            )}
       </g>
     </svg>
   );
