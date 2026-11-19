@@ -51,6 +51,23 @@ describe('layoutSunburst', () => {
     expect(arcs.some(a => a.key === 't3/p:x/t:a')).toBe(false);
   });
 
+  it('draws arcs up to the ring count and none beyond, with 4 and 6 rings', () => {
+    const deep = (d: number, key = 'k'): SunNode[] =>
+      d === 0 ? [] : [n(key, 1, 'thread', deep(d - 1, `${key}/x`))];
+    const t = tree();
+    t.root.children = [n('t3', 8, 'category', deep(7, 't3/a'))];
+    for (const rings of [4, 6]) {
+      const { arcs } = layoutSunburst(t, [], { ...opts, rings });
+      const real = arcs.filter(a => !a.gap);
+      expect(Math.max(...real.map(a => a.depth))).toBe(rings);
+      expect(Math.max(...arcs.map(a => a.depth))).toBeLessThanOrEqual(rings);
+      const outer = real.find(a => a.depth === rings)!;
+      expect(outer.y1).toBeCloseTo(1000);
+      const thick = (760 / rings);
+      expect(outer.y1 - outer.y0).toBeCloseTo(thick);
+    }
+  });
+
   it('uses the ring formula', () => {
     const { arcs } = layoutSunburst(tree(), [], opts);
     const a1 = arcs.find(a => a.depth === 1)!;

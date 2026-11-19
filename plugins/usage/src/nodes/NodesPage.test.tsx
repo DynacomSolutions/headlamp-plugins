@@ -226,6 +226,29 @@ describe('NodesPage', () => {
     expect(history.length).toBe(before);
   });
 
+  it('replaces, not pushes, when the ring count changes, and keeps the zoom path', () => {
+    mount('/c/main/usage/dashboard/k8s?nodes=worker-1&kiosk=1');
+    const before = history.length;
+    fireEvent.click(screen.getByRole('button', { name: '6 rings' }));
+    expect(url()).toBe('/c/main/usage/dashboard/k8s?nodes=worker-1&kiosk=1&rings=6');
+    expect(history.length).toBe(before);
+    fireEvent.click(screen.getByRole('button', { name: '4 rings' }));
+    expect(url()).toBe('/c/main/usage/dashboard/k8s?nodes=worker-1&kiosk=1');
+    expect(history.length).toBe(before);
+  });
+
+  it('shows the ring count from the URL, also in kiosk, and keeps it through zoom and filters', () => {
+    const { container } = mount('/usage/dashboard?nodes=worker-1&kiosk=1&rings=5');
+    expect(screen.getByRole('button', { name: '5 rings' }).getAttribute('aria-pressed')).toBe('true');
+    expect(container.querySelector('[data-kiosk-overlay]')).not.toBeNull();
+    selectArc(container, 'k8s');
+    fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));
+    expect(url()).toBe('/usage/dashboard/k8s?nodes=worker-1&kiosk=1&rings=5');
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Nodes' }));
+    fireEvent.click(screen.getByRole('option', { name: 'worker-2' }));
+    expect(url()).toBe('/usage/dashboard?nodes=worker-1%2Cworker-2&kiosk=1&rings=5');
+  });
+
   it('redirects an old ?path= link to segments with replace, keeping other params', () => {
     mount('/c/main/usage/dashboard?nodes=worker-1&path=k8s%2Ck8s%2Fns%3Ans&kiosk=1');
     expect(url()).toBe('/c/main/usage/dashboard/k8s/k8s%2Fns%3Ans?nodes=worker-1&kiosk=1');
