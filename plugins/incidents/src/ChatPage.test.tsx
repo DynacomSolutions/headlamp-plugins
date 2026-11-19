@@ -6,6 +6,10 @@ import { CHAT, MODELS } from './chat.fixture';
 const { request } = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
   ApiProxy: { request },
+  Router: {
+    createRouteURL: (name: string, params?: { id?: string }) =>
+      `/c/test/${name}${params?.id ? '/' + params.id : ''}`,
+  },
   ConfigStore: class {
     useConfig() {
       return () => ({ favourites: [] });
@@ -40,6 +44,10 @@ const renderAt = (path: string) =>
   render(
     <MemoryRouter initialEntries={[path]}>
       <Route path="/incidents/chat/:id?" component={ChatPage} />
+      <Route
+        path="/c/test"
+        render={({ location }) => <div data-testid="loc">{location.pathname}</div>}
+      />
     </MemoryRouter>
   );
 const posts = () => calls.filter(c => c.method === 'POST');
@@ -96,6 +104,16 @@ describe('ChatPage', () => {
     expect(posts()[0].body).toEqual({ model: 'claude/opus' });
     expect(posts()[1].url).toContain('/api/chats/new1/messages');
     expect(posts()[1].body).toEqual({ text: 'status?' });
+    expect((await screen.findByTestId('loc')).textContent).toBe(
+      '/c/test/incidents-chat-thread/new1'
+    );
+  });
+  it('links to the diagnosis and the chat list with cluster-scoped URLs', async () => {
+    renderAt('/incidents/chat/c1');
+    const link = await screen.findByRole('link', { name: 'd9' });
+    expect(link.getAttribute('href')).toBe('/c/test/incident/d9');
+    const newChat = screen.getByRole('link', { name: /New chat/ });
+    expect(newChat.getAttribute('href')).toBe('/c/test/incidents-chat');
   });
   it('sends a changed model with the next message', async () => {
     renderAt('/incidents/chat/c1');

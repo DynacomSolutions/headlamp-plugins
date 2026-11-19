@@ -24,6 +24,7 @@ import { ChatMarkdown } from './chat-markdown';
 import { ChatMessage, ChatSummary, cleanErrorText, relativeTime, Step } from './chat-model';
 import { useSettings } from './data';
 import { ModelPicker } from './ModelPicker';
+import { chatUrl, diagnosisUrl } from './routes';
 
 export const EXAMPLE_PROMPTS = [
   'Which pods are failing right now, and why?',
@@ -326,7 +327,7 @@ function ChatList(props: {
         >
           <Link
             component={RouterLink}
-            to={`/incidents/chat/${encodeURIComponent(c.id)}`}
+            to={chatUrl(c.id)}
             underline="none"
             color="inherit"
             aria-current={c.id === activeId ? 'page' : undefined}
@@ -407,7 +408,7 @@ export function ChatView({ id }: { id?: string }) {
           await sendMessage(settings, newId, text);
         } finally {
           chats.refresh();
-          history.push(`/incidents/chat/${encodeURIComponent(newId)}`);
+          history.push(chatUrl(newId));
         }
         return;
       }
@@ -432,7 +433,7 @@ export function ChatView({ id }: { id?: string }) {
     run(async () => {
       await deleteChat(settings, chatId);
       chats.refresh();
-      if (chatId === id) history.push('/incidents/chat');
+      if (chatId === id) history.push(chatUrl());
     });
 
   const fill = useFillHeight();
@@ -476,7 +477,7 @@ export function ChatView({ id }: { id?: string }) {
       >
         <Button
           component={RouterLink}
-          to="/incidents/chat"
+          to={chatUrl()}
           variant="outlined"
           color="inherit"
           startIcon={<Icon icon="mdi:plus" width={18} height={18} />}
@@ -505,10 +506,7 @@ export function ChatView({ id }: { id?: string }) {
             {chat.data?.diagnosisId && (
               <Typography variant="caption" color="text.secondary">
                 About incident{' '}
-                <Link
-                  component={RouterLink}
-                  to={`/incidents/${encodeURIComponent(chat.data.diagnosisId)}`}
-                >
+                <Link component={RouterLink} to={diagnosisUrl(chat.data.diagnosisId)}>
                   {chat.data.diagnosisId}
                 </Link>
               </Typography>

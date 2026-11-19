@@ -18,6 +18,7 @@ import { createChat } from './chat-data';
 import { ChatPage } from './ChatPage';
 import { useDiagnoses, useDiagnosis, useSettings } from './data';
 import { DiagnosisSummary, severityColour, Status } from './model';
+import { chatUrl, diagnosesUrl, diagnosisUrl } from './routes';
 
 const STATUS_COLOUR: Record<Status, 'default' | 'info' | 'success' | 'error'> = {
   queued: 'default',
@@ -33,16 +34,12 @@ function formatTime(iso: string): string {
 
 function Row({ d }: { d: DiagnosisSummary }) {
   const history = useHistory();
-  const open = () => history.push(`/incidents/${encodeURIComponent(d.id)}`);
+  const open = () => history.push(diagnosisUrl(d.id));
   return (
     <TableRow hover sx={{ cursor: 'pointer' }} onClick={open}>
       <TableCell>{formatTime(d.createdAt)}</TableCell>
       <TableCell>
-        <Link
-          component={RouterLink}
-          to={`/incidents/${encodeURIComponent(d.id)}`}
-          onClick={e => e.stopPropagation()}
-        >
+        <Link component={RouterLink} to={diagnosisUrl(d.id)} onClick={e => e.stopPropagation()}>
           {d.alertName || d.id}
         </Link>
       </TableCell>
@@ -119,7 +116,7 @@ function IncidentDetail({ id }: { id: string }) {
     setAskError(null);
     try {
       const chatId = await createChat(settings, { diagnosisId: id });
-      history.push(`/incidents/chat/${encodeURIComponent(chatId)}`);
+      history.push(chatUrl(chatId));
     } catch (e: any) {
       setAskError(String(e?.message || e));
     }
@@ -128,7 +125,7 @@ function IncidentDetail({ id }: { id: string }) {
     <SectionBox
       title={
         <Box display="flex" alignItems="center" gap={2}>
-          <Link component={RouterLink} to="/incidents">
+          <Link component={RouterLink} to={diagnosesUrl()}>
             Back to incidents
           </Link>
           <Typography variant="h5" component="span">
