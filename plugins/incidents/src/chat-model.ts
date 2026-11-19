@@ -208,3 +208,10 @@ export function relativeTime(iso: string, now: number = Date.now()): string {
   const d = Math.round(h / 24);
   return d < 30 ? `${d} d ago` : new Date(t).toLocaleDateString();
 }
+
+/** Turn an ApiProxy error into banner text: drop a leading list marker or whitespace. */
+export function cleanErrorText(e: unknown): string {
+  const raw = String((e as any)?.message || e || '');
+  const text = raw.replace(/^[\s\-*\u2022\u2013\u2014:]+/, '').trim();
+  return text || 'Something went wrong.';
+}

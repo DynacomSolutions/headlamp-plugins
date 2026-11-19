@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CHAT, MODELS } from './chat.fixture';
 import {
+  cleanErrorText,
   FAVOURITES,
   groupByProvider,
   parseChat,
@@ -66,5 +67,19 @@ describe('picker helpers', () => {
     expect(relativeTime('2026-11-19T11:30:00Z', now)).toBe('30 min ago');
     expect(relativeTime('2026-11-19T09:00:00Z', now)).toBe('3 h ago');
     expect(relativeTime('bad', now)).toBe('');
+  });
+});
+
+describe('cleanErrorText', () => {
+  it('strips a leading list marker and whitespace but keeps status and message', () => {
+    expect(cleanErrorText(new Error('- 502 Bad Gateway: upstream down'))).toBe(
+      '502 Bad Gateway: upstream down'
+    );
+    expect(cleanErrorText({ message: '  * 500 boom' })).toBe('500 boom');
+    expect(cleanErrorText('\n- 404 Not found')).toBe('404 Not found');
+  });
+  it('leaves clean text alone and never returns an empty string', () => {
+    expect(cleanErrorText(new Error('Network down'))).toBe('Network down');
+    expect(cleanErrorText(new Error('- '))).toBe('Something went wrong.');
   });
 });

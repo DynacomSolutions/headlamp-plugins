@@ -3,6 +3,7 @@ import React from 'react';
 import {
   ChatDetail,
   ChatSummary,
+  cleanErrorText,
   ModelList,
   parseChat,
   parseChats,
@@ -91,7 +92,7 @@ function useLoaded<T>(
         dataRef.current = data;
         if (alive) setState({ data, loading: false, error: null });
       } catch (e: any) {
-        if (alive) setState(s => ({ ...s, loading: false, error: String(e?.message || e) }));
+        if (alive) setState(s => ({ ...s, loading: false, error: cleanErrorText(e) }));
       }
       const wait = intervalMs(dataRef.current);
       if (alive && wait > 0) timer = setTimeout(load, wait);
