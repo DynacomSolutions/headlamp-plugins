@@ -36,7 +36,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
       />
       <TextField
         label="Idle threshold (seconds)"
-        helperText="At least 30."
+        helperText="Full screen (kiosk) only: with no touch for this time, the dashboard goes back to the overview. At least 30."
         value={(data as any)?.idleSeconds ?? ''}
         placeholder={String(DEFAULT_NODES_SETTINGS.idleSeconds)}
         onChange={e => set('idleSeconds', e.target.value)}
