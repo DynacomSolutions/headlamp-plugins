@@ -222,6 +222,11 @@ export function NodeView(props: {
   const centreSubject = { label: detail.focus.label, icon: detail.focus.icon };
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
 
+  // A double click or double tap opens the arc, as the Open button does, when it has children.
+  const openPath = (p: string[]) => {
+    if (selectionFor(cpu, mem, detail.path, p)?.canOpen) onPath(p);
+  };
+
   const chart = (resource: Resource, tree: NodeTree) => (
     <Box
       sx={{
@@ -248,6 +253,7 @@ export function NodeView(props: {
         subject={centreSubject}
         selected={chosen ? sel : null}
         onSelect={p => onSelect(p ?? [])}
+        onOpen={openPath}
         quiet={kiosk}
       />
     </Box>

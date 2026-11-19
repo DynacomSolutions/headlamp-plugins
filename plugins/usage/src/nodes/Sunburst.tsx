@@ -1,7 +1,9 @@
 /*
  * One node's CPU or memory sunburst as SVG, for a touch screen: pointer events only, no hover,
  * no tooltips. A tap on an arc selects it (it grows and gets an outline; a second tap or a tap
- * beside the chart clears it); a tap on the centre disc goes up one level. Empty space (unused
+ * beside the chart clears it); a double click or double tap on an arc opens it (`onOpen`); a tap on
+ * the centre disc goes up one level. Zoomed below a node, the centre names the whole node and its
+ * capacity, and the focus and its ancestors are thin rings at the node's capacity scale. Empty space (unused
  * capacity, unattributed) is an arc with a faint crosshatch fill that can be selected too. Labels and project
  * icons sit inside the arcs where they fit, and the centre disc describes the focus.
  * Every arc is also a focusable button with its value as its name, for keyboards and screen
@@ -30,6 +32,9 @@ import { capacityZoom, NodeTree, Resource, SunNode } from './tree';
 import { useIconUrl } from './useIconUrl';
 
 const MOVE_LIMIT = 10;
+/** Two taps on the same arc within this time (ms) and distance (px) are a double tap. */
+const DOUBLE_MS = 300;
+const DOUBLE_MOVE = 30;
 const MIN_FONT = 14;
 /** How far a selected arc grows outwards, and the room the chart keeps for it (px). */
 const SELECT_GROW = 7;
@@ -47,6 +52,8 @@ function fmt(resource: Resource, v: number): string {
 function withPaths(arcs: ArcDatum[], focus: string[]): { arc: ArcDatum; path: string[] }[] {
   const stack: string[] = [];
   return arcs.map(arc => {
+    // A thin context ring or the empty space beside it knows its own path.
+    if (arc.path) return { arc, path: arc.path };
     stack.length = arc.depth - 1;
     stack.push(arc.key);
     return { arc, path: [...focus, ...stack] };
@@ -122,6 +129,8 @@ export function Sunburst(props: {
   selected?: string[] | null;
   /** Called with the tapped arc's path, or null to clear the selection. */
   onSelect?: (path: string[] | null) => void;
+  /** Called with the arc's path on a double click or double tap (open it, zoom into it). */
+  onOpen?: (path: string[]) => void;
   compact?: boolean;
   /**
    * Quiet look for a touch screen: a selected arc grows and changes its fill, with no outline
@@ -140,6 +149,7 @@ export function Sunburst(props: {
     onFocus,
     selected = null,
     onSelect,
+    onOpen,
     compact = false,
     quiet = false,
     subject,
@@ -152,11 +162,15 @@ export function Sunburst(props: {
   const radius = size / 2 - pad;
   const [pressed, setPressed] = React.useState<string | null>(null);
   const start = React.useRef<{ id: number; x: number; y: number } | null>(null);
+  const lastTap = React.useRef<{ id: string; t: number; x: number; y: number } | null>(null);
+  // The last double tap, so the `dblclick` event that follows the pointer events does not repeat it.
+  const lastOpen = React.useRef<{ id: string; t: number } | null>(null);
 
   const {
     arcs,
     centre,
     focusNode,
+    nodeCentre,
     path: shown,
   } = React.useMemo(
     () => layoutSunburst(tree, focus, { radius, rings, mode: theme.palette.mode }),
@@ -205,7 +219,15 @@ export function Sunburst(props: {
     setPressed(null);
   };
 
-  const handlers = (id: string, act: (() => void) | null) =>
+  // `open` is the double click action. A double tap runs it instead of the second tap's `act`
+  // (so a second tap never clears the selection the first one made); with no `open` it does nothing.
+  const handlers = (
+    id: string,
+    act: (() => void) | null,
+    open: (() => void) | null = null,
+    // The tap already did what `open` does (the centre goes up): a double tap does it once.
+    sameAsTap = false
+  ) =>
     compact
       ? {}
       : {
@@ -222,7 +244,28 @@ export function Sunburst(props: {
             if (!act) return;
             if (Math.hypot(e.clientX - s.x, e.clientY - s.y) > MOVE_LIMIT) return;
             e.stopPropagation();
+            const now = Date.now();
+            const prev = lastTap.current;
+            if (
+              prev &&
+              prev.id === id &&
+              now - prev.t <= DOUBLE_MS &&
+              Math.hypot(e.clientX - prev.x, e.clientY - prev.y) <= DOUBLE_MOVE
+            ) {
+              lastTap.current = null;
+              lastOpen.current = { id, t: now };
+              if (!sameAsTap) open?.();
+              return;
+            }
+            lastTap.current = { id, t: now, x: e.clientX, y: e.clientY };
             act();
+          },
+          onDoubleClick: (e: React.MouseEvent) => {
+            e.stopPropagation();
+            const done = lastOpen.current;
+            lastOpen.current = null;
+            if (done && done.id === id && Date.now() - done.t < 1000) return;
+            open?.();
           },
           onPointerLeave: (e: React.PointerEvent) => release(e.pointerId),
           onPointerCancel: (e: React.PointerEvent) => release(e.pointerId),
@@ -246,8 +289,10 @@ export function Sunburst(props: {
   // Arc icons grow with the chart too, so a big chart reads from across the room.
   const iconMax = Math.max(ICON_MAX, Math.round(size / 28));
 
-  const title = subject?.label ?? centre.title;
-  const centreIcon = subject ? subject.icon : focusNode.icon;
+  // Below a node, the centre names the whole node and its capacity; the focus is the thin rings.
+  const wholeNode = nodeCentre && !missing ? nodeCentre : null;
+  const title = wholeNode ? nameOf(wholeNode.node) : subject?.label ?? centre.title;
+  const centreIcon = wholeNode ? wholeNode.node.icon : subject ? subject.icon : focusNode.icon;
   const lines: CentreLine[] = compact
     ? []
     : centreLines(centreR, centreFont, {
@@ -255,6 +300,12 @@ export function Sunburst(props: {
         icon: !!centreIcon,
         ...(missing
           ? { value: `no ${resource === 'cpu' ? 'CPU' : 'memory'} data` }
+          : wholeNode
+          ? {
+              value: fmt(resource, wholeNode.capacity),
+              node: `${formatPercent(wholeNode.share, 1)} used`,
+              nodeShort: formatPercent(wholeNode.share, 1),
+            }
           : zoomed
           ? { value: fmt(resource, centre.value) }
           : {
@@ -324,13 +375,13 @@ export function Sunburst(props: {
         const ink = arc.gap ? theme.palette.text.primary : theme.palette.getContrastText(arc.fill);
         // Icons come first: an arc with an icon shows it as large as fits, and its name beside
         // or under it only when both fit.
-        const icon = compact || arc.gap ? undefined : arc.node.icon;
+        const icon = compact || arc.gap || arc.context ? undefined : arc.node.icon;
         const iconSize = icon ? arcIconSize(arc, iconMax) : null;
         // An arc with an icon shows the whole name or none: never a clipped stub. Without room
         // for the name beside it the icon stands alone. An arc with no icon may show a clipped
         // name when at least 8 characters fit.
         const fitted =
-          compact || arc.gap
+          compact || arc.gap || arc.context
             ? null
             : arcLabel(arc, nameOf(arc.node), fontSize, iconSize !== null, iconSize ?? 0, 8);
         const whole = !!fitted && fitted.text === nameOf(arc.node);
@@ -342,10 +393,15 @@ export function Sunburst(props: {
           : {
               role: 'button',
               tabIndex: 0,
-              'aria-label': `${nameOf(arc.node)}: ${fmt(resource, arc.node.value)}, ${formatPercent(
-                arc.node.value,
-                base
-              )} ${arc.gap && !zoomed ? 'of capacity' : scope}`,
+              'aria-label': `${nameOf(arc.node)}: ${fmt(resource, arc.node.value)}, ${
+                arc.path && wholeNode
+                  ? `${formatPercent(arc.node.value, wholeNode.capacity)} of ${nameOf(
+                      wholeNode.node
+                    )}`
+                  : `${formatPercent(arc.node.value, base)} ${
+                      arc.gap && !zoomed ? 'of capacity' : scope
+                    }`
+              }`,
             };
         return (
           <g key={id}>
@@ -377,7 +433,11 @@ export function Sunburst(props: {
               }}
               {...a11y}
               aria-pressed={compact ? undefined : chosen}
-              {...handlers(id, () => onSelect?.(chosen ? null : path))}
+              {...handlers(
+                id,
+                () => onSelect?.(chosen ? null : path),
+                onOpen && !arc.gap ? () => onOpen(path) : null
+              )}
             />
             {quiet && chosen && arc.gap && (
               <path
@@ -437,7 +497,12 @@ export function Sunburst(props: {
               'aria-label': `${centreText}. Up one level`,
             }
           : {})}
-        {...handlers('centre', up ? () => onFocus?.(up) : null)}
+        {...handlers(
+          'centre',
+          up ? () => onFocus?.(up) : null,
+          up ? () => onFocus?.(up) : null,
+          true
+        )}
       />
       <g style={{ pointerEvents: 'none' }} textAnchor="middle" fill={theme.palette.text.primary}>
         {compact
