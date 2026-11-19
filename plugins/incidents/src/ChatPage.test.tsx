@@ -130,4 +130,58 @@ describe('ChatPage', () => {
     renderAt('/incidents/chat/c1');
     expect(await screen.findByText('model unavailable')).toBeTruthy();
   });
+  it('refreshes the chat list when the open chat stops running', async () => {
+    chat.running = true;
+    chat.messages[1].status = 'running';
+    renderAt('/incidents/chat/c1');
+    await screen.findByRole('button', { name: 'Stop' });
+    const listCalls = () => calls.filter(c => c.url.includes('/api/chats?')).length;
+    const before = listCalls();
+    chat.running = false;
+    chat.messages[1].status = 'done';
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull(), {
+      timeout: 3000,
+    });
+    await waitFor(() => expect(listCalls()).toBeGreaterThan(before));
+  });
+  it('opens the picker on the default model of a new chat, checked and scrolled into view', async () => {
+    const zai = [
+      '4.5',
+      '4.5-air',
+      '4.6',
+      '4.7',
+      '5',
+      '5-turbo',
+      '5.1',
+      '5.2',
+      '5.3',
+      '5.3-flash',
+      '5.3-flashx',
+      '5.3-flashx-legal',
+    ].map(v => ({ id: `zai/glm-${v}`, route: 'zai', model: `glm-${v}`, name: `glm-${v}` }));
+    const base = request.getMockImplementation()!;
+    request.mockImplementation(async (url: string, params?: any) =>
+      url.endsWith('/api/models')
+        ? { default: 'zai/glm-5.3', models: [...zai, ...MODELS] }
+        : base(url, params)
+    );
+    const scrolled: string[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.textContent ?? '');
+    };
+    try {
+      renderAt('/incidents/chat');
+      fireEvent.click(await screen.findByRole('button', { name: /^glm-5\.3$/ }));
+      const checked = await screen.findByRole('option', { selected: true });
+      expect(checked.textContent).toContain('zai/glm-5.3');
+      expect(checked.textContent).not.toContain('flash');
+      const lit = document.querySelectorAll('[data-highlighted="true"]');
+      expect(lit).toHaveLength(1);
+      expect(lit[0].textContent).toContain('zai/glm-5.3');
+      expect(scrolled.some(t => t.includes('zai/glm-5.3') && !t.includes('flash'))).toBe(true);
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
 });
