@@ -2,7 +2,7 @@
  * One node's CPU or memory sunburst as SVG, for a touch screen: pointer events only, no hover,
  * no tooltips. A tap on an arc selects it (it grows and gets an outline; a second tap or a tap
  * beside the chart clears it); a tap on the centre disc goes up one level. Empty space (unused
- * capacity, unattributed) is an arc without fill that can be selected too. Labels and project
+ * capacity, unattributed) is an arc with a faint crosshatch fill that can be selected too. Labels and project
  * icons sit inside the arcs where they fit, and the centre disc describes the focus.
  * Every arc is also a focusable button with its value as its name, for keyboards and screen
  * readers.
@@ -34,6 +34,9 @@ const MIN_FONT = 14;
 /** How far a selected arc grows outwards, and the room the chart keeps for it (px). */
 const SELECT_GROW = 7;
 const SELECT_PAD = SELECT_GROW + 3;
+/** The crosshatch on empty space: line spacing (px) and the opacity of the text colour. */
+const HATCH_STEP = 7;
+const HATCH_OPACITY = 0.07;
 const FALLBACK_ICON = { kind: 'mdi' as const, name: 'folder' };
 
 function fmt(resource: Resource, v: number): string {
@@ -130,6 +133,8 @@ export function Sunburst(props: {
     subject,
   } = props;
   const theme = useTheme();
+  // One pattern per chart instance, so two charts on a page never share an id.
+  const hatchId = `sb-hatch-${React.useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   // The chart keeps room for a selected arc to grow past the outer ring.
   const pad = compact ? 0 : SELECT_PAD;
   const radius = size / 2 - pad;
@@ -266,6 +271,17 @@ export function Sunburst(props: {
       }}
     >
       <style>{`.sb-arc{outline:none}.sb-arc:focus-visible{stroke:${theme.palette.primary.main};stroke-width:3px;stroke-dasharray:none;stroke-opacity:1}`}</style>
+      <defs>
+        <pattern id={hatchId} data-hatch width={HATCH_STEP} height={HATCH_STEP} patternUnits="userSpaceOnUse">
+          <path
+            d={`M-1 -1L${HATCH_STEP + 1} ${HATCH_STEP + 1}M-1 ${HATCH_STEP + 1}L${HATCH_STEP + 1} -1`}
+            stroke={theme.palette.text.primary}
+            strokeOpacity={HATCH_OPACITY}
+            strokeWidth={1}
+            fill="none"
+          />
+        </pattern>
+      </defs>
       <circle
         data-rim
         r={radius}
@@ -312,7 +328,7 @@ export function Sunburst(props: {
               d={shape(arc) ?? ''}
               data-selected={chosen ? 'true' : undefined}
               data-gap={arc.gap ? 'true' : undefined}
-              fill={arc.fill}
+              fill={arc.gap ? `url(#${hatchId})` : arc.fill}
               stroke={
                 chosen
                   ? theme.palette.primary.main
