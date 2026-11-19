@@ -100,9 +100,11 @@ export function ModelPicker(props: ModelPickerProps) {
       : favourites.some(f => models.some(m => m.id === f))
       ? FAVOURITES
       : providers[0]?.route ?? FAVOURITES;
+    // Highlight the selected model when it is in the opening list, else the first row.
+    const first = pickerRows(models, start, '', favourites).flatMap(r => r.models);
     setActive(start);
     setQuery('');
-    setCursor(0);
+    setCursor(Math.max(0, first.findIndex(m => m.id === value)));
     setAnchor(el);
   };
   const close = () => setAnchor(null);

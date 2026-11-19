@@ -37,6 +37,23 @@ describe('ModelPicker', () => {
     const selected = screen.getByRole('option', { selected: true });
     expect(selected.textContent).toContain('Claude Sonnet');
   });
+  it('highlights the selected model on open, not the first of the provider', () => {
+    setup();
+    openPicker();
+    const rows = Array.from(document.querySelectorAll('[data-highlighted]'));
+    const lit = rows.filter(r => r.getAttribute('data-highlighted') === 'true');
+    expect(lit).toHaveLength(1);
+    expect(lit[0].textContent).toContain('Claude Sonnet');
+    expect(within(lit[0] as HTMLElement).getByRole('option').querySelector('svg, span')).toBeTruthy();
+  });
+  it('moves the highlight to the first result when the search text changes', () => {
+    setup();
+    openPicker();
+    fireEvent.change(search(), { target: { value: 'claude' } });
+    const lit = Array.from(document.querySelectorAll('[data-highlighted="true"]'));
+    expect(lit).toHaveLength(1);
+    expect(lit[0].textContent).toContain('Claude Opus');
+  });
   it('switches provider from the sidebar', () => {
     setup();
     openPicker();
@@ -80,10 +97,10 @@ describe('ModelPicker', () => {
   it('selects with the keyboard and closes', () => {
     const props = setup();
     openPicker();
-    fireEvent.keyDown(search(), { key: 'ArrowDown' });
+    // The highlight starts on the selected Claude Sonnet (second row), ArrowUp moves to Claude Opus.
+    fireEvent.keyDown(search(), { key: 'ArrowUp' });
     fireEvent.keyDown(search(), { key: 'Enter' });
-    // First row is Claude Opus, ArrowDown moved to Claude Sonnet (second row).
-    expect(props.onChange).toHaveBeenCalledWith('claude/sonnet');
+    expect(props.onChange).toHaveBeenCalledWith('claude/opus');
   });
   it('switches provider with ArrowRight and selects the first row', () => {
     const props = setup();
