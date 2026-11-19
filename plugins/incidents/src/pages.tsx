@@ -1,6 +1,7 @@
 import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Link from '@mui/material/Link';
@@ -10,8 +11,11 @@ import TableCell from '@mui/material/TableCell';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Typography from '@mui/material/Typography';
+import React from 'react';
 import { Link as RouterLink, useHistory, useParams } from 'react-router-dom';
 import { A2uiRenderer } from './a2ui';
+import { createChat } from './chat-data';
+import { ChatPage } from './ChatPage';
 import { useDiagnoses, useDiagnosis, useSettings } from './data';
 import { DiagnosisSummary, severityColour, Status } from './model';
 
@@ -101,8 +105,25 @@ export function IncidentsPage() {
 
 export function IncidentPage() {
   const { id } = useParams<{ id: string }>();
+  // Safety net: if a router matches this page first, 'chat' is the chat page.
+  if (id === 'chat') return <ChatPage />;
+  return <IncidentDetail id={id} />;
+}
+
+function IncidentDetail({ id }: { id: string }) {
   const settings = useSettings();
+  const history = useHistory();
   const { data, loading, error } = useDiagnosis(settings, id);
+  const [askError, setAskError] = React.useState<string | null>(null);
+  const ask = async () => {
+    setAskError(null);
+    try {
+      const chatId = await createChat(settings, { diagnosisId: id });
+      history.push(`/incidents/chat/${encodeURIComponent(chatId)}`);
+    } catch (e: any) {
+      setAskError(String(e?.message || e));
+    }
+  };
   return (
     <SectionBox
       title={
@@ -113,9 +134,17 @@ export function IncidentPage() {
           <Typography variant="h5" component="span">
             Incident
           </Typography>
+          <Button size="small" variant="outlined" onClick={ask}>
+            Ask about this incident
+          </Button>
         </Box>
       }
     >
+      {askError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          Could not start a chat: {askError}
+        </Alert>
+      )}
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           Could not load the diagnosis: {error}

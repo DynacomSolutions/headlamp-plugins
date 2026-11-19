@@ -264,7 +264,7 @@ list shapes.
 
 **Choosing the model.**
 
-- `GET /api/models` returns `{ default, models: [{ id, route, name }] }`.
+- `GET /api/models` returns `{ default, models: [{ id, route, model, name }] }`.
 - `POST /api/diagnoses` accepts `"model": "<route>/<model>"`. An unknown id gets
   a 400 that lists the valid ids.
 - A webhook alert picks a model with the `agent_model` annotation or label. An
@@ -278,6 +278,40 @@ list shapes.
 
 Without a model, the MCP server still works, and alerts are recorded but not
 diagnosed.
+
+## Chat
+
+The Incidents plugin has a chat page. An operator talks to the agent about the
+cluster and about incidents. The agent uses the same read-only tools, masking and
+model routes as a diagnosis. There is no submit tool: a turn ends when the model
+answers without calling a tool. Each turn has the tool budget `AGENT_TOOL_BUDGET`.
+The whole history goes to the model on every turn. When it gets long, the oldest
+tool results are cut first. A chat can start from a diagnosis, and then the alert,
+the result and the evidence summaries are part of the system prompt.
+
+All routes answer JSON and have the same protection as `POST /api/diagnoses`.
+
+| Route | Answer |
+| --- | --- |
+| `GET /api/chats?limit=50` | `{ chats: [{ id, title, model, diagnosisId?, updatedAt, running }] }`, newest first |
+| `POST /api/chats` with `{ model?, diagnosisId? }` | 201 `{ id }`. An unknown model gets 400 with the valid ids. An unknown diagnosis gets 404 |
+| `GET /api/chats/<id>` | `{ id, title, model, diagnosisId?, createdAt, updatedAt, running, messages }` |
+| `POST /api/chats/<id>/messages` with `{ text, model? }` | 202 `{ messageId }`. `text` has 1 to 8000 characters. 409 when a turn runs in this chat. 429 above `AGENT_MAX_CHAT_TURNS`. A `model` switches the chat from this turn on |
+| `POST /api/chats/<id>/cancel` | 200. Stops the running turn, which gets the status `cancelled` |
+| `PATCH /api/chats/<id>` with `{ title?, model? }` | 200 with the chat summary |
+| `DELETE /api/chats/<id>` | 204 |
+
+A message is `{ id, role: "user"|"assistant", text, createdAt, status:
+"done"|"running"|"failed"|"cancelled", error?, model?, steps }`. A step is
+`{ id, tool, reason, ok?, summary?, status: "running"|"done" }` and belongs to an
+assistant message, in call order. There is no event stream: the client reads
+`GET /api/chats/<id>` every second while `running` is true. The store holds the
+text and the steps during the turn.
+
+Chats are one file each, `chats/<id>.json` under `DATA_DIR`, and live in memory
+without it. The title is the first user message, cut to 60 characters. A turn
+that a restart interrupted is marked `failed` with the error `interrupted by
+restart`.
 
 ## Read-only and masking
 
@@ -307,7 +341,9 @@ diagnosed.
 | `DATA_DIR` | memory only | Where the diagnoses are kept, one file each in `diagnoses/` |
 | `MAX_DIAGNOSES` | `200` | Diagnoses kept |
 | `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` |
-| `AGENT_TOOL_BUDGET` | `10` | Tool calls per diagnosis after the evidence pack |
+| `AGENT_TOOL_BUDGET` | `10` | Tool calls per diagnosis after the evidence pack, and per chat turn |
+| `AGENT_MAX_CHATS` | `200` | Chats kept in `chats/` under `DATA_DIR`. The oldest are dropped first |
+| `AGENT_MAX_CHAT_TURNS` | `3` | Chat turns that may run at once across all chats. More get a 429 |
 | `AGENT_DIAGNOSE_SEVERITIES` | `warning,critical` | Severities that start a diagnosis from the webhook |
 | `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Webhook diagnoses per hour |
 | `AGENT_IGNORE_ALERTS` | `Watchdog,InfoInhibitor` | Alert names that are never diagnosed |

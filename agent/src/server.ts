@@ -4,6 +4,8 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { z } from 'zod';
 import { loadConfig, modelConfigured, type Config } from './config.js';
 import { AlertGate, diagnosisIdFor, fingerprint, parseAlerts } from './alerts.js';
+import { ChatError, ChatService } from './agent/chat.js';
+import { ChatStore } from './chats.js';
 import { diagnose } from './agent/engine.js';
 import { ModelCatalogue, UnknownModelError } from './agent/catalogue.js';
 import { ModelClient } from './agent/model.js';
@@ -282,10 +284,21 @@ const publishSchema = z.object({
   }),
 });
 
+const createChatSchema = z.object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional() }).strict();
+const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional() });
+const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional() });
+
+async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<T> {
+  const parsed = schema.safeParse(await readBody(req));
+  if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
+  return parsed.data;
+}
+
 export async function startServer(config: Config = loadConfig(), version = '0.0.0'): Promise<{ close(): Promise<void>; port: number }> {
   const store = new DiagnosisStore(config.dataDir, config.maxDiagnoses);
   const runtime = new Runtime(config, store);
   const runner = new Runner(runtime, store, config);
+  const chats = new ChatService({ store: new ChatStore(config.dataDir, config.maxChats), diagnoses: store, tools: runtime.toolHost(), catalogue: runner.catalogue, budget: config.diagnosis.toolBudget, maxTurns: config.maxChatTurns });
   // Webhook diagnoses in the shared store, so a rollout or a second pod does not reset the hourly cap.
   const gate = new AlertGate(config.diagnosis, since => store.list().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= since).length);
   const mcp = await mcpHandler(runtime, store, version);
@@ -358,7 +371,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         } catch {
           /* keep the configured value */
         }
-        return send(res, 200, { default: def || null, models: models.map(({ id, route, name }) => ({ id, route, name })) });
+        return send(res, 200, { default: def || null, models: models.map(({ id, route, model, name }) => ({ id, route, model, name })) });
       }
       if (path === '/api/widgets' && req.method === 'GET') return send(res, 200, listPanels());
       if (path.startsWith('/api/widgets/') && req.method === 'GET') {
@@ -444,6 +457,36 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         store.put(d);
         return send(res, 201, { id: d.id });
       }
+      if (path === '/api/chats' || path.startsWith('/api/chats/')) {
+        const parts = path.split('/').slice(3).map(decodeURIComponent);
+        const [id, action] = parts;
+        if (parts.length > 2 || (action && action !== 'messages' && action !== 'cancel')) return send(res, 404, { error: 'not found' });
+        try {
+          if (!id && req.method === 'GET') {
+            const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
+            return send(res, 200, { chats: chats.list(limit) });
+          }
+          if (!id && req.method === 'POST') return send(res, 201, await chats.create(await chatBody(req, createChatSchema)));
+          if (id && !action && req.method === 'GET') return send(res, 200, chats.get(id));
+          if (id && !action && req.method === 'PATCH') return send(res, 200, await chats.patch(id, await chatBody(req, patchChatSchema)));
+          if (id && !action && req.method === 'DELETE') {
+            chats.delete(id);
+            res.writeHead(204, { 'cache-control': 'no-store' });
+            return void res.end();
+          }
+          if (id && action === 'messages' && req.method === 'POST') {
+            const body = await chatBody(req, sendSchema);
+            return send(res, 202, await chats.send(id, body.text, body.model));
+          }
+          if (id && action === 'cancel' && req.method === 'POST') {
+            chats.cancel(id);
+            return send(res, 200, { ok: true });
+          }
+        } catch (error) {
+          if (error instanceof ChatError) throw new HttpError(error.status, error.message);
+          throw error;
+        }
+      }
       if (path === '/mcp' || path.startsWith('/api/')) return send(res, 405, { error: 'method not allowed' });
       return send(res, 404, { error: 'not found' });
     } catch (error) {
@@ -465,6 +508,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       // Stop accepting connections, then let the running diagnosis finish. No timer: the platform kill is the only limit.
       const closed = new Promise<void>(resolve => server.close(() => resolve()));
       server.closeIdleConnections();
+      chats.shutdown();
       await runner.drain();
       await mcp.close();
       server.closeIdleConnections();

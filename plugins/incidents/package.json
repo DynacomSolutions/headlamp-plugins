@@ -2,7 +2,11 @@
   "name": "incidents",
   "version": "0.1.0",
   "license": "MIT",
-  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
+  "headlamp": {
+    "extraDist": {
+      "LICENSE": "../../LICENSE"
+    }
+  },
   "description": "Headlamp plugin: incident diagnoses from the headlamp-agent, rendered from A2UI",
   "scripts": {
     "start": "headlamp-plugin start",
@@ -38,5 +42,9 @@
   },
   "devDependencies": {
     "@kinvolk/headlamp-plugin": "^0.14.0"
+  },
+  "dependencies": {
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   }
 }
