@@ -23,6 +23,10 @@ export interface Config {
   /** Where diagnoses are kept across container restarts. Empty keeps them in memory only. */
   dataDir: string;
   maxDiagnoses: number;
+  /** Chats kept in the data directory. The oldest are dropped first. */
+  maxChats: number;
+  /** Chat turns that may run at once across all chats. */
+  maxChatTurns: number;
   models: ModelRoutesConfig;
   diagnosis: DiagnosisConfig;
 }
@@ -176,6 +180,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowedOrigins: list(env.ALLOWED_ORIGINS, []),
     dataDir: env.DATA_DIR ?? '',
     maxDiagnoses: int(env.MAX_DIAGNOSES, 200),
+    maxChats: int(env.AGENT_MAX_CHATS, 200),
+    maxChatTurns: int(env.AGENT_MAX_CHAT_TURNS, 3),
     models: loadModelRoutes(env),
     diagnosis: {
       toolBudget: int(env.AGENT_TOOL_BUDGET, 10),

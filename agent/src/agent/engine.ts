@@ -4,6 +4,7 @@ import { mask, maskText } from '../mask.js';
 import type { ModelClient, Message, ToolSpec } from './model.js';
 import { renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis, type EvidenceItem } from './report.js';
 import { readSkill } from './skill.js';
+import { clip, withReason } from './tools.js';
 
 /** Where tools come from: the in-process registry (server) or an MCP server (ACP agent). */
 export interface ToolHost {
@@ -31,11 +32,6 @@ export interface DiagnoseOptions {
 
 const SUBMIT = 'submit_diagnosis';
 const MAX_TURNS = 16;
-const RESULT_CHARS = 7000;
-
-function clip(text: string, limit = RESULT_CHARS): string {
-  return text.length <= limit ? text : `${text.slice(0, limit)}… [cut: ${text.length - limit} more characters; ask a narrower question]`;
-}
 
 /** The deterministic first look, chosen from the alert's labels; costs no budget. */
 export function evidencePlan(alert: Alert, available: Set<string>): Array<{ tool: string; reason: string; args: Record<string, unknown> }> {
@@ -198,14 +194,6 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
   emit({ type: 'progress', diagnosis });
   void started;
   return diagnosis;
-}
-
-function withReason(spec: ToolSpec): ToolSpec {
-  const params = structuredClone(spec.parameters) as { type?: string; properties?: Record<string, unknown>; required?: string[] };
-  params.type = 'object';
-  params.properties = { reason: { type: 'string', description: 'The one question this call should answer' }, ...(params.properties ?? {}) };
-  params.required = ['reason', ...(params.required ?? []).filter(r => r !== 'reason')];
-  return { ...spec, parameters: params as Record<string, unknown> };
 }
 
 function submitSchema(): Record<string, unknown> {
