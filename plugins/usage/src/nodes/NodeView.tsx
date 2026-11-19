@@ -19,6 +19,16 @@ import { MAX_RINGS, MIN_RINGS } from './nodesUrl';
 import { Sunburst } from './Sunburst';
 import { capacityZoom, NodeTree, Resource } from './tree';
 
+/** Hidden on screen, still read by screen readers. */
+const visuallyHidden = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  overflow: 'hidden',
+  clip: 'rect(0 0 0 0)',
+  whiteSpace: 'nowrap',
+} as const;
+
 const rootCrumb = (tree: NodeTree) => (tree.nodeRing ? 'All nodes' : tree.root.label);
 
 const RING_OPTIONS = Array.from({ length: MAX_RINGS - MIN_RINGS + 1 }, (_, i) => MIN_RINGS + i);
@@ -130,7 +140,8 @@ export function chartLayout(
     return portrait
       ? { size: clamp(width), twoUp: false }
       : { size: clamp((width - GAP) / 2), twoUp: true };
-  }  const beside = Math.min((width - GAP) / 2, height - CHART_HEAD);
+  }
+  const beside = Math.min((width - GAP) / 2, height - CHART_HEAD);
   if (width > height || beside >= 0.45 * width) return { size: clamp(beside), twoUp: true };
   return { size: clamp(Math.min(width, (height - 2 * CHART_HEAD - GAP) / 2)), twoUp: false };
 }
@@ -161,9 +172,25 @@ export function NodeView(props: {
   onPath: (path: string[]) => void;
   onSelect: (sel: string[]) => void;
 }) {
-  const { cpu, mem, alerts, path, sel, kiosk, rings, onRings, toolbar, trailing, onPath, onSelect } = props;
+  const {
+    cpu,
+    mem,
+    alerts,
+    path,
+    sel,
+    kiosk,
+    rings,
+    onRings,
+    toolbar,
+    trailing,
+    onPath,
+    onSelect,
+  } = props;
   const detail = React.useMemo(() => detailFor(cpu, mem, path), [cpu, mem, path]);
-  const selection = React.useMemo(() => selectionFor(cpu, mem, detail.path, sel), [cpu, mem, detail.path, sel]);
+  const selection = React.useMemo(
+    () => selectionFor(cpu, mem, detail.path, sel),
+    [cpu, mem, detail.path, sel]
+  );
   // Zoomed into one node of a node ring: it reads like a single-node root, against its capacity.
   const nodeZoom =
     capacityZoom(cpu, detail.path) !== null || capacityZoom(mem, detail.path) !== null;
@@ -177,13 +204,12 @@ export function NodeView(props: {
     return { ...root, kind: 'node' as const, icon: { kind: 'mdi' as const, name: 'server' } };
   }, [chosen, selection, cpu, mem, detail.path]);
   // The kind line names the node or the selection only at the root. A zoomed section keeps its own kind.
-  const rootKind = detail.path.length > 0 ? undefined : cpu.nodeRing || mem.nodeRing ? 'Selection' : 'Node';
-  const rows = React.useMemo(() => childRows(cpu, mem, base, detail.path), [
-    cpu,
-    mem,
-    base,
-    detail.path,
-  ]);
+  const rootKind =
+    detail.path.length > 0 ? undefined : cpu.nodeRing || mem.nodeRing ? 'Selection' : 'Node';
+  const rows = React.useMemo(
+    () => childRows(cpu, mem, base, detail.path),
+    [cpu, mem, base, detail.path]
+  );
   const ref = React.useRef<HTMLDivElement>(null);
   const box = useBox(ref, kiosk);
   const { size, twoUp } = chartLayout(
@@ -197,7 +223,15 @@ export function NodeView(props: {
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
 
   const chart = (resource: Resource, tree: NodeTree) => (
-    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0, flex: '0 0 auto' }}>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        minWidth: 0,
+        flex: '0 0 auto',
+      }}
+    >
       <Typography variant="h6" component="h3">
         {resource === 'cpu' ? 'CPU' : 'Memory'}
       </Typography>
@@ -214,6 +248,7 @@ export function NodeView(props: {
         subject={centreSubject}
         selected={chosen ? sel : null}
         onSelect={p => onSelect(p ?? [])}
+        quiet={kiosk}
       />
     </Box>
   );
@@ -229,7 +264,16 @@ export function NodeView(props: {
         minHeight: 0,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 2, rowGap: 1, mb: 1 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          columnGap: 2,
+          rowGap: 1,
+          mb: 1,
+        }}
+      >
         {toolbar}
         <Breadcrumbs aria-label="Focus" sx={{ flex: '1 1 240px', minWidth: 0 }}>
           <Button sx={crumb} onClick={() => onPath([])}>
@@ -268,7 +312,16 @@ export function NodeView(props: {
           Open
         </Button>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <Typography id="rings-label" sx={{ fontSize: 16 }}>
+          {kiosk ? (
+            <Icon
+              icon="mdi:chart-donut"
+              width={28}
+              height={28}
+             
+              aria-hidden="true"
+            />
+          ) : null}
+          <Typography id="rings-label" sx={kiosk ? visuallyHidden : { fontSize: 16 }}>
             Rings
           </Typography>
           <ToggleButtonGroup
@@ -281,7 +334,12 @@ export function NodeView(props: {
             }}
           >
             {RING_OPTIONS.map(n => (
-              <ToggleButton key={n} value={n} aria-label={`${n} rings`} sx={{ minHeight: 48, minWidth: 48, fontSize: 16 }}>
+              <ToggleButton
+                key={n}
+                value={n}
+                aria-label={`${n} rings`}
+                sx={{ minHeight: 48, minWidth: 48, fontSize: 16 }}
+              >
                 {n}
               </ToggleButton>
             ))}
@@ -301,6 +359,7 @@ export function NodeView(props: {
       )}
       <DetailPanel
         rootKind={rootKind}
+        kiosk={kiosk}
         subject={subject}
         selected={chosen}
         rows={rows}
