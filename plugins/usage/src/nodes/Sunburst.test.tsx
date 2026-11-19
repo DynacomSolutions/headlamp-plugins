@@ -73,6 +73,135 @@ describe('Sunburst', () => {
     expect(onFocus).not.toHaveBeenCalled();
   });
 
+  const tap = (el: Element, x = 5, y = 5) => {
+    fireEvent.pointerDown(el, { clientX: x, clientY: y });
+    fireEvent.pointerUp(el, { clientX: x, clientY: y });
+  };
+
+  it('opens an arc on a double tap with pointer events, and the first tap still selects', () => {
+    const onSelect = vi.fn();
+    const onOpen = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onSelect={onSelect} onOpen={onOpen} />
+    );
+    const arc = container.querySelector('path[data-key="p:x"]') as Element;
+    tap(arc);
+    expect(onSelect).toHaveBeenCalledWith(['t3', 'p:x']);
+    expect(onOpen).not.toHaveBeenCalled();
+    tap(arc, 8, 6);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledWith(['t3', 'p:x']);
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not open on two taps that are too slow, on different arcs or far apart', () => {
+    vi.useFakeTimers();
+    try {
+      const onOpen = vi.fn();
+      const { container } = render(
+        <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onOpen={onOpen} />
+      );
+      const x = container.querySelector('path[data-key="p:x"]') as Element;
+      const y = container.querySelector('path[data-key="p:y"]') as Element;
+      tap(x);
+      vi.advanceTimersByTime(400);
+      tap(x);
+      tap(y);
+      tap(y, 100, 100);
+      expect(onOpen).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('opens an arc on a double click event, once when pointer events came first', () => {
+    const onOpen = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onOpen={onOpen} />
+    );
+    const arc = container.querySelector('path[data-key="p:x"]') as Element;
+    fireEvent.doubleClick(arc);
+    expect(onOpen).toHaveBeenCalledWith(['t3', 'p:x']);
+    onOpen.mockClear();
+    tap(arc);
+    tap(arc);
+    fireEvent.doubleClick(arc);
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing on a double click of empty space', () => {
+    const onOpen = vi.fn();
+    const onSelect = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} onOpen={onOpen} onSelect={onSelect} />
+    );
+    const gap = container.querySelector('path[data-key="root/~unused"]') as Element;
+    tap(gap);
+    tap(gap);
+    fireEvent.doubleClick(gap);
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes up one level on a double click of the centre, once for a double tap', () => {
+    const onFocus = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={400} onFocus={onFocus} />
+    );
+    const centre = container.querySelector('circle[data-centre]') as Element;
+    fireEvent.doubleClick(centre);
+    expect(onFocus).toHaveBeenCalledWith(['t3']);
+    onFocus.mockClear();
+    tap(centre);
+    tap(centre);
+    fireEvent.doubleClick(centre);
+    expect(onFocus).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores double taps in compact mode', () => {
+    const onOpen = vi.fn();
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} compact onOpen={onOpen} />
+    );
+    const arc = container.querySelector('path[data-key="p:x"]') as Element;
+    tap(arc);
+    tap(arc);
+    fireEvent.doubleClick(arc);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it('zoomed below the node: centre names the node and capacity, focus is a thin ring', () => {
+    const onSelect = vi.fn();
+    const onOpen = vi.fn();
+    const { container } = render(
+      <Sunburst
+        tree={tree}
+        resource="cpu"
+        focus={['t3', 'p:x']}
+        size={1200}
+        subject={{ label: 'p:x' }}
+        onSelect={onSelect}
+        onOpen={onOpen}
+      />
+    );
+    const line = (k: string) => container.querySelector(`[data-centre-line="${k}"]`)?.textContent;
+    expect(line('title')).toBe('root');
+    expect(line('value')).toBe('16.00 cores');
+    expect(line('node')).toBe('50% used');
+    const rings = container.querySelectorAll('path[data-key="t3"], path[data-key="p:x"]');
+    expect(rings).toHaveLength(2);
+    // Tapping a thin ring selects it; double tap opens it.
+    const t3 = container.querySelector('path[data-key="t3"]') as Element;
+    tap(t3);
+    expect(onSelect).toHaveBeenCalledWith(['t3']);
+    tap(t3);
+    expect(onOpen).toHaveBeenCalledWith(['t3']);
+    // The empty space beside the focus selects the node's unused capacity.
+    const gap = container.querySelector('path[data-key="root/~unused"]') as Element;
+    tap(gap);
+    expect(onSelect).toHaveBeenLastCalledWith(['root/~unused']);
+  });
+
   it('grows and outlines the selected arc, and a second tap clears it', () => {
     const onSelect = vi.fn();
     const { container } = render(
@@ -271,16 +400,15 @@ describe('Sunburst', () => {
     expect(getByRole('img')).not.toBeNull();
   });
 
-  it('describes the zoomed focus in the centre: name and value only', () => {
+  it('describes the whole node in the centre when zoomed below it: name, capacity, share used', () => {
     const { container } = render(
       <Sunburst tree={tree} resource="cpu" focus={['t3', 'p:x']} size={1200} />
     );
     const line = (k: string) => container.querySelector(`[data-centre-line="${k}"]`)?.textContent;
-    expect(line('title')).toBe('p:x');
-    expect(line('value')).toBe('2.00 cores');
-    expect(line('node')).toBeUndefined();
+    expect(line('title')).toBe('root');
+    expect(line('value')).toBe('16.00 cores');
+    expect(line('node')).toBe('50% used');
     expect(line('parent')).toBeUndefined();
-    expect(container.querySelector('foreignObject [data-icon="lucide:box"]')).not.toBeNull();
   });
 
   it('gives arc percentages of the focus when zoomed', () => {
@@ -290,7 +418,9 @@ describe('Sunburst', () => {
     );
     expect(labels.length).toBeGreaterThan(0);
     for (const l of labels) {
-      expect(l).toContain('of t3');
+      // The thin ring of t3 and the unused gap are shares of the node, every other arc of t3.
+      expect(l).toMatch(/ of (root|t3)$/);
+      if (!/^(t3|Unused):/.test(l as string)) expect(l).toContain('of t3');
       expect(l).not.toContain('of node');
     }
   });

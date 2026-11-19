@@ -37,12 +37,13 @@ describe('layoutSunburst', () => {
     const x = arcs.find(a => a.key === 't3/p:x')!;
     const y = arcs.find(a => a.key === 't3/p:y')!;
     expect(x.x0).toBe(0);
-    expect(x.x1).toBeCloseTo((2 * Math.PI * 2) / 6);
+    // Zoomed below the node: angles are shares of node capacity (16), not of the focus.
+    expect(x.x1).toBeCloseTo((2 * Math.PI * 2) / 16);
     expect(y.x0).toBeCloseTo(x.x1);
-    expect(y.x1 - y.x0).toBeCloseTo((2 * Math.PI) / 6);
+    expect(y.x1 - y.x0).toBeCloseTo((2 * Math.PI) / 16);
     expect(centre.share).toBeCloseTo(6 / 16);
     const child = arcs.find(a => a.key === 't3/p:x/t:a')!;
-    expect(child.x1 - child.x0).toBeCloseTo((2 * Math.PI) / 6);
+    expect(child.x1 - child.x0).toBeCloseTo((2 * Math.PI) / 16);
   });
 
   it('returns only `rings` levels', () => {
@@ -269,9 +270,102 @@ describe('layoutSunburst node ring by capacity', () => {
     expect(centre.share).toBeCloseTo(4 / 12);
   });
 
-  it("keeps today's zoom below a node and uses node capacity only for the node", () => {
+  it('zoomed below a node draws against the node capacity, with the unused gap as the rest', () => {
     const { arcs } = layoutSunburst(ring(), ['node:a', 'k8s'], opts);
-    expect(arcs.some(x => x.key.endsWith('/~unused'))).toBe(false);
+    const thin = arcs.find(x => x.key === 'k8s' && x.context)!;
+    expect(thin.x1).toBeCloseTo(TAU * (3 / 12));
+    expect(arcs.find(x => x.key === 'node:a/~unused')!.gap).toBe(true);
+  });
+});
+
+describe('layoutSunburst zoom context against the node', () => {
+  const TAU = 2 * Math.PI;
+  const o = { radius: 1000, rings: 3, mode: 'light' as const };
+
+  it('draws the focus as a thin ring of its share of node capacity, children at that scale', () => {
+    const { arcs, nodeCentre, focusNode } = layoutSunburst(tree(), ['t3'], o);
+    expect(focusNode.key).toBe('t3');
+    const thin = arcs.find(a => a.key === 't3' && a.context)!;
+    expect(thin.x0).toBe(0);
+    expect(thin.x1).toBeCloseTo((TAU * 6) / 16);
+    expect(thin.path).toEqual(['t3']);
+    expect(thin.y0).toBeCloseTo(1000 * CENTRE);
+    const x = arcs.find(a => a.key === 't3/p:x')!;
+    expect(x.x1 - x.x0).toBeCloseTo((TAU * 2) / 16);
+    expect(x.y0).toBeCloseTo(thin.y1);
+    const y = arcs.find(a => a.key === 't3/p:y')!;
+    expect(y.x1 - y.x0).toBeCloseTo((TAU * 1) / 16);
+    expect(nodeCentre).toMatchObject({ capacity: 16, used: 8, share: 0.5 });
+    expect(nodeCentre!.node.key).toBe('root');
+  });
+
+  it('leaves the rest of the circle as a selectable unused gap to the rim', () => {
+    const { arcs } = layoutSunburst(tree(), ['t3'], o);
+    const gap = arcs.find(a => a.key === 'root/~unused')!;
+    expect(gap.gap).toBe(true);
+    expect(gap.x0).toBeCloseTo((TAU * 6) / 16);
+    expect(gap.x1).toBeCloseTo(TAU);
+    expect(gap.y1).toBeCloseTo(1000);
+    expect(gap.path).toEqual(['root/~unused']);
+  });
+
+  it('gives each ancestor and the focus its own thin ring, all at node capacity scale', () => {
+    const { arcs } = layoutSunburst(tree(), ['t3', 't3/p:x'], o);
+    const rings = arcs.filter(a => a.context);
+    expect(rings.map(a => a.key)).toEqual(['t3', 't3/p:x']);
+    expect(rings[0].x1).toBeCloseTo((TAU * 6) / 16);
+    expect(rings[1].x1).toBeCloseTo((TAU * 2) / 16);
+    expect(rings[1].y0).toBeCloseTo(rings[0].y1);
+    expect(rings[1].path).toEqual(['t3', 't3/p:x']);
+    expect(rings[0].fill).toBe(colourAt(1, 'light'));
+    const child = arcs.find(a => a.key === 't3/p:x/t:a')!;
+    expect(child.x1 - child.x0).toBeCloseTo((TAU * 1) / 16);
+    expect(child.y0).toBeCloseTo(rings[1].y1);
+  });
+
+  it('makes thin rings 0.3 of a normal ring, at least 6 px, and keeps the ring count', () => {
+    const { arcs } = layoutSunburst(tree(), ['t3', 't3/p:x'], o);
+    const [a, b] = arcs.filter(x => x.context);
+    const normal = arcs.find(x => x.key === 't3/p:x/t:a')!;
+    expect(b.y1 - b.y0).toBeCloseTo(0.3 * (normal.y1 - normal.y0));
+    expect(a.y1 - a.y0).toBeCloseTo(b.y1 - b.y0);
+    expect(normal.y1).toBeLessThanOrEqual(1000);
+    const small = layoutSunburst(tree(), ['t3'], { ...o, radius: 60 }).arcs.find(x => x.context)!;
+    expect(small.y1 - small.y0).toBeCloseTo(6);
+    const deeper = layoutSunburst(tree(), ['t3', 't3/p:x'], { ...o, rings: 1 });
+    expect(Math.max(...deeper.arcs.map(x => x.depth))).toBe(1);
+  });
+
+  it('uses the node capacity in a node ring, and keeps the node zoom as it is', () => {
+    const ring: NodeTree = {
+      root: n('root', 6, 'node', [
+        {
+          ...n('node:a', 4, 'node', [n('k8s', 3, 'category', [n('ns', 1, 'namespace')])]),
+          span: 12,
+          capacity: 12,
+        },
+        { ...n('node:b', 2, 'node'), span: 4, capacity: 4 },
+      ]),
+      capacity: 16,
+      used: 6,
+      hostMetrics: true,
+      nodeRing: true,
+    };
+    const { arcs, nodeCentre } = layoutSunburst(ring, ['node:a', 'k8s'], o);
+    const thin = arcs.find(a => a.key === 'k8s' && a.context)!;
+    expect(thin.x1).toBeCloseTo((TAU * 3) / 12);
+    expect(thin.path).toEqual(['node:a', 'k8s']);
+    const ns = arcs.find(a => a.key === 'ns')!;
+    expect(ns.x1 - ns.x0).toBeCloseTo((TAU * 1) / 12);
+    const gap = arcs.find(a => a.key === 'node:a/~unused')!;
+    expect(gap.path).toEqual(['node:a', 'node:a/~unused']);
+    expect(gap.x0).toBeCloseTo((TAU * 3) / 12);
+    expect(nodeCentre).toMatchObject({ capacity: 12, used: 4 });
+    expect(nodeCentre!.node.key).toBe('node:a');
+    // The node itself and the root draw no thin rings.
+    expect(layoutSunburst(ring, ['node:a'], o).nodeCentre).toBeUndefined();
+    expect(layoutSunburst(ring, [], o).nodeCentre).toBeUndefined();
+    expect(layoutSunburst(tree(), [], o).nodeCentre).toBeUndefined();
   });
 });
 

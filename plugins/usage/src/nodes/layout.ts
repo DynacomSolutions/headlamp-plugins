@@ -18,7 +18,18 @@ export interface ArcDatum {
   fill: string;
   /** Empty space (unused capacity or unattributed): drawn without fill, but still selectable. */
   gap?: boolean;
+  /**
+   * The key path from the root, when it is not the focus path plus the keys of the arcs above it:
+   * a thin context ring (an ancestor of the focus) and the empty space beside it.
+   */
+  path?: string[];
+  /** A thin ring around the centre: an ancestor of the focus, drawn against the node capacity. */
+  context?: boolean;
 }
+
+/** Thin context rings are this share of a normal ring, and never thinner than `MIN_THIN` px. */
+export const THIN_SHARE = 0.3;
+export const MIN_THIN = 6;
 
 const TAU = 2 * Math.PI;
 /** Radius of the centre disc as a share of the chart radius. */
@@ -82,6 +93,11 @@ export function layoutSunburst(
   path: string[];
   /** The focus node's value, its share of capacity and of its parent (null at the root). */
   centre: { title: string; value: number; share: number; parentShare: number | null };
+  /**
+   * Set when the focus lies below a node: the centre then names the whole node and its capacity,
+   * and the focus is drawn as thin rings against that capacity.
+   */
+  nodeCentre?: { node: SunNode; capacity: number; used: number; share: number };
 } {
   const { radius, rings, mode } = opts;
   const path = findPath(tree.root, focus);
@@ -91,7 +107,28 @@ export function layoutSunburst(
   const catDepth = tree.nodeRing ? 2 : 1;
   const categoryOf = path[catDepth];
   const arcs: ArcDatum[] = [];
-  const thickness = (radius * (1 - CENTRE)) / rings;
+  // Zoomed below a node, thin rings for the ancestors and the focus sit around the centre disc.
+  const nodeIdx = tree.nodeRing ? 1 : 0;
+  const nodeNode = path[nodeIdx];
+  const nodeCap = tree.nodeRing
+    ? nodeNode?.span !== undefined
+      ? nodeNode.capacity ?? nodeNode.span
+      : 0
+    : tree.capacity;
+  const context = path.length > nodeIdx + 1 && nodeCap > 0;
+  const thinCount = context ? path.length - nodeIdx - 1 : 0;
+  const avail = radius * (1 - CENTRE);
+  let thin = 0;
+  let thickness = avail / rings;
+  if (thinCount > 0) {
+    thickness = avail / (rings + THIN_SHARE * thinCount);
+    thin = thickness * THIN_SHARE;
+    if (thin < MIN_THIN) {
+      thin = MIN_THIN;
+      thickness = Math.max(1, (avail - MIN_THIN * thinCount) / rings);
+    }
+  }
+  const ringStart = radius * CENTRE + thin * thinCount;
   const parent = atRoot ? null : path[path.length - 2];
   // Zoomed into one node of a node ring: its capacity is the base, as at a single-node root.
   const capScope = capacityZoom(
@@ -113,7 +150,7 @@ export function layoutSunburst(
       ? parent.children.reduce((s, c) => s + (c.span ?? c.value), 0)
       : parent.value;
     if (depth > rings || !(denom > 0)) return;
-    const y0 = radius * (CENTRE + (1 - CENTRE) * ((depth - 1) / rings));
+    const y0 = ringStart + thickness * (depth - 1);
     const y1 = y0 + thickness;
     let acc = 0;
     parent.children.forEach((child, i) => {
@@ -148,7 +185,7 @@ export function layoutSunburst(
         walk(child, c0, usedEnd, depth + 1, absDepth + 1, colour);
         const free = gapNodes(tree, child, false).find(g => g.key === `${child.key}/${UNUSED}`);
         if (free && depth + 1 <= rings) {
-          const gy0 = radius * (CENTRE + (1 - CENTRE) * (depth / rings));
+          const gy0 = ringStart + thickness * depth;
           arcs.push({
             key: free.key,
             node: free,
@@ -192,7 +229,53 @@ export function layoutSunburst(
     }
   };
 
-  if (atRoot && tree.nodeRing) {
+  let nodeCentre: ReturnType<typeof layoutSunburst>['nodeCentre'];
+  if (context) {
+    const keys = path.slice(1).map(n => n.key);
+    const angle = (v: number) => Math.min(TAU, (TAU * v) / nodeCap);
+    for (let i = nodeIdx + 1; i < path.length; i++) {
+      const own = path[i];
+      const index = path[i - 1].children.indexOf(own);
+      const colour = categoryColour(path[nodeIdx + 1].key, mode);
+      arcs.push({
+        key: own.key,
+        node: own,
+        depth: 0,
+        x0: 0,
+        x1: angle(own.value),
+        y0: radius * CENTRE + thin * (i - nodeIdx - 1),
+        y1: radius * CENTRE + thin * (i - nodeIdx),
+        fill: i === nodeIdx + 1 ? colour : shade(colour, i, index),
+        path: keys.slice(0, i),
+        context: true,
+      });
+    }
+    const end = angle(focusNode.value);
+    walk(focusNode, 0, end, 1, path.length, categoryColour(path[nodeIdx + 1].key, mode));
+    // The rest of the circle is empty: the node's unused capacity, selectable, out to the rim.
+    const free = gapNodes(tree, nodeNode, !tree.nodeRing).find(g => g.key.endsWith(`/${UNUSED}`));
+    if (free && end < TAU) {
+      arcs.push({
+        key: free.key,
+        node: free,
+        depth: 1,
+        x0: end,
+        x1: TAU,
+        y0: ringStart,
+        y1: radius,
+        fill: 'none',
+        gap: true,
+        path: [...keys.slice(0, nodeIdx), free.key],
+      });
+    }
+    nodeCentre = {
+      node: nodeNode,
+      capacity: nodeCap,
+      used: tree.nodeRing ? nodeNode.value : tree.used ?? nodeNode.value,
+      share: 0,
+    };
+    nodeCentre.share = nodeCentre.used / nodeCap;
+  } else if (atRoot && tree.nodeRing) {
     walk(tree.root, 0, TAU, 1, 1, null);
   } else if (atRoot) {
     const total = tree.used ?? tree.root.value;
@@ -231,6 +314,7 @@ export function layoutSunburst(
     arcs,
     focusNode,
     path: path.slice(1).map(n => n.key),
+    nodeCentre,
     centre: {
       title: nameOf(focusNode),
       value: focusNode.value,
