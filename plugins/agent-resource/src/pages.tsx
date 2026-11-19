@@ -25,7 +25,7 @@ import {
   applyDefaults,
   applyLimits,
   describeError,
-  useAgentMemory,
+  useAgentResource,
   useChanges,
   useSettings,
 } from './data';
@@ -33,7 +33,7 @@ import {
   AgentDefault,
   agentLabel,
   agentLabelParts,
-  AgentMemoryState,
+  AgentResourceState,
   agentSlices,
   AgentTreeRow,
   alertsByUnit,
@@ -266,7 +266,7 @@ function AlertBadges({ alerts }: { alerts: MemAlert[] | undefined }) {
   );
 }
 
-function HostSummary({ state }: { state: AgentMemoryState }) {
+function HostSummary({ state }: { state: AgentResourceState }) {
   const { total, available } = state.host;
   const free = total > 0 ? available / total : 1;
   const low = free < state.policy.keepFree;
@@ -290,7 +290,7 @@ function HostSummary({ state }: { state: AgentMemoryState }) {
 }
 
 /** Warnings the backend sent to agents in the last 24 hours; older ones drop off. */
-function WarningsPanel({ state }: { state: AgentMemoryState }) {
+function WarningsPanel({ state }: { state: AgentResourceState }) {
   const { warnings, warningPolicy: p } = state;
   const interval = p.intervalSeconds ? formatSpan(p.intervalSeconds) : '30 min';
   const rule = `Agents are told only about a real memory problem in the window: hard-limit or soft-limit events, OOM kills, or full stall time of ${
@@ -410,7 +410,7 @@ function EditDialog({
   onApplied,
 }: {
   unit: MemUnit;
-  state: AgentMemoryState;
+  state: AgentResourceState;
   persistDefault: boolean;
   onClose: () => void;
   onApplied: (message: string) => void;
@@ -571,7 +571,7 @@ function DefaultsDialog({
 }: {
   o: Orchestrator;
   current: AgentDefault;
-  state: AgentMemoryState;
+  state: AgentResourceState;
   onClose: () => void;
   onApplied: (message: string) => void;
 }) {
@@ -741,7 +741,7 @@ const QOS_LABEL: Record<string, string> = {
 };
 
 /** Memory of the node's Kubernetes pods by QoS class, next to the agents. */
-function PodsPanel({ state }: { state: AgentMemoryState }) {
+function PodsPanel({ state }: { state: AgentResourceState }) {
   const p = state.pods;
   if (!p || p.error) return null;
   return (
@@ -1008,7 +1008,7 @@ function UnitRow({
   onEdit,
 }: {
   row: AgentTreeRow;
-  state: AgentMemoryState;
+  state: AgentResourceState;
   byUnit: Map<string, MemAlert[]>;
   expanded: ReadonlySet<string>;
   onToggle: (name: string) => void;
@@ -1164,7 +1164,7 @@ function AgentTree({
   onEdit,
   onEditDefault,
 }: {
-  state: AgentMemoryState;
+  state: AgentResourceState;
   filter: string;
   byUnit: Map<string, MemAlert[]>;
   expanded: ReadonlySet<string>;
@@ -1178,7 +1178,7 @@ function AgentTree({
   return (
     <Table
       size="small"
-      aria-label="Agent memory tree"
+      aria-label="Agent resource tree"
       sx={{
         tableLayout: 'fixed',
         width: '100%',
@@ -1418,9 +1418,9 @@ function DriftNote({ o }: { o: Orchestrator }) {
   );
 }
 
-export function AgentMemoryPage(): JSX.Element {
+export function AgentResourcePage(): JSX.Element {
   const settings = useSettings();
-  const { state, loading, error, refresh } = useAgentMemory(settings);
+  const { state, loading, error, refresh } = useAgentResource(settings);
   const [filter, setFilter] = React.useState('');
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(new Set());
   const toggleExpanded = (name: string) =>
@@ -1452,7 +1452,7 @@ export function AgentMemoryPage(): JSX.Element {
   const unit = state?.units.find(u => u.name === editing) ?? null;
 
   return (
-    <SectionBox title="Agent memory">
+    <SectionBox title="Agent resources">
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Memory limits of the agents on the agent host as a tree: host, orchestrator (T3 Code,
         Herdr), project and thread. Each orchestrator lists its own control unit and the slice that
@@ -1463,7 +1463,7 @@ export function AgentMemoryPage(): JSX.Element {
       {loading && !state && <CircularProgress size={24} />}
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          Could not reach the agent-memory backend: {error}
+          Could not reach the agent-resource backend: {error}
         </Alert>
       )}
       {notice && (

@@ -13,7 +13,7 @@ you need; each has its own release archive and configuration.
 | [GitHub Runners](#github-runners) | See runner capacity, active jobs and ARC resources together | [Resources and optional enrichment](plugins/github-runners/README.md) |
 | [Sites](#sites) | Find an application's URL and the Mappings behind it | [Hostname suffixes and access](plugins/sites/README.md) |
 | [Alerting](#alerting) | Configure notification channels, routes and test delivery | [CRDs, web push and GitOps](plugins/alerting/README.md) |
-| [Agent memory](#agent-memory) | Inspect and set T3 agent memory limits, pressure and recent kernel events | [Backend and permissions](plugins/agent-memory/README.md) |
+| [Agent resources](#agent-resources) | Inspect and set T3 agent memory limits, pressure and recent kernel events | [Backend and permissions](plugins/agent-resource/README.md) |
 | [Updates](#updates) | See which components have updates and what blocks them | [Data source and URLs](plugins/updates/README.md) |
 | [Registry](#registry) | Browse registry repositories, tags, digests and sizes | [Backend and settings](plugins/registry/README.md) |
 | [VM images](#vm-images) | See KubeVirt disks, VM images in the registry and what uses them | [Backend, settings and RBAC](plugins/vm-images/README.md) |
@@ -127,14 +127,14 @@ YAML** let you carry configuration into Git yourself; for resources already
 managed by GitOps, follow the [field ownership guidance](plugins/alerting/README.md#git-and-the-ui).
 Secret references are shown by name and key, without displaying their values.
 
-### Agent memory
+### Agent resources
 
 See the T3 Code agents slice and each agent session's scope alongside their
 soft and hard memory limits, the default limit for every agent, and the node's
 pod memory by QoS class. Usage bars, swap, recent kernel events and pressure stall information
 help explain whether a task is merely using memory or being throttled.
 
-![Agent memory dashboard with host headroom, anonymised task warnings, usage bars, memory limits and recent event counters](docs/screenshots/agent-memory.png)
+![Agent resources dashboard with host headroom, anonymised task warnings, usage bars, memory limits and recent event counters](docs/screenshots/agent-resource.png)
 
 **Example:** an agent slows down during a build. Filter by directory, session
 or command and compare usage and peak with `memory.high` and `memory.max`.
@@ -143,9 +143,9 @@ time. The amber marker is the soft limit; the red marker is the hard limit.
 
 With write access, **Edit** changes the limit for all agents (saved
 persistently) or for one agent (until it ends), and **Edit default** changes
-the default for every agent. This plugin requires the separate agent-memory backend;
+the default for every agent. This plugin requires the separate agent-resource backend;
 it does not derive host cgroup data from Kubernetes metrics. See the
-[backend setup and access guide](plugins/agent-memory/README.md).
+[backend setup and access guide](plugins/agent-resource/README.md).
 
 ### Updates
 

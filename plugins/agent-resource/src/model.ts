@@ -1,11 +1,13 @@
 /*
- * Pure logic for the agent-memory plugin: the backend payload types, size
+ * Pure logic for the agent-resource plugin: the backend payload types, size
  * parsing and formatting, edit validation (the same rules the backend enforces,
  * so mistakes are caught before a request is made), usage-bar geometry and
  * settings resolution. Nothing here touches React or the network.
  */
 
-export const CONFIG_KEY = 'agent-memory';
+export const CONFIG_KEY = 'agent-resource';
+/** The plugin name before the rename. Old browser settings and defaults.json files use it. */
+export const LEGACY_CONFIG_KEY = 'agent-memory';
 
 export interface Pressure {
   avg10: number;
@@ -172,7 +174,7 @@ export interface WarningPolicy {
   windowSeconds?: number;
 }
 
-export interface AgentMemoryState {
+export interface AgentResourceState {
   node: string;
   sampled: number;
   error: string;
@@ -303,7 +305,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  backend: 'service/agent-memory/agent-memory:80',
+  backend: 'service/agent-memory/agent-resource:80',
   refreshSeconds: 10,
 };
 
@@ -324,6 +326,29 @@ export function resolveSettings(
     backend: String(pick('backend')).trim(),
     refreshSeconds: Number.isFinite(refresh) ? Math.min(300, Math.max(2, refresh)) : 10,
   };
+}
+
+/** The Service name of the backend before the rename. */
+const LEGACY_SERVICE = 'agent-memory';
+const SERVICE = 'agent-resource';
+
+/**
+ * The backends to try, best first. A backend named agent-resource also has its
+ * agent-memory twin as a fallback, and the other way round, so the plugin
+ * works before and after the backend rollout. Any other name stays alone.
+ */
+export function backendCandidates(backend: string): string[] {
+  const b = backend.trim();
+  const m = /^(service\/[^/]+\/)([^/:]+)(.*)$/.exec(b);
+  if (!m || (m[2] !== SERVICE && m[2] !== LEGACY_SERVICE)) return [b];
+  const other = m[2] === SERVICE ? LEGACY_SERVICE : SERVICE;
+  const twin = `${m[1]}${other}${m[3]}`;
+  return m[2] === SERVICE ? [b, twin] : [twin, b];
+}
+
+/** The error to show when every candidate failed: the first one that is not a 404, else the first. */
+export function pickError<E extends { status?: number }>(errors: E[]): E | undefined {
+  return errors.find(e => e?.status !== 404) ?? errors[0];
 }
 
 /** Turns service/<ns>/<name>[:port] plus an API path into a Kubernetes service-proxy URL. */
@@ -708,7 +733,7 @@ export function arrangeRows(units: MemUnit[], query: string): MemUnit[] {
 
 /** The editable slices: every orchestrator's agents slice (the legacy agentSlice otherwise). */
 export function agentSlices(
-  state: Partial<Pick<AgentMemoryState, 'agentSlice' | 'orchestrators'>>
+  state: Partial<Pick<AgentResourceState, 'agentSlice' | 'orchestrators'>>
 ): string[] {
   const out = (state.orchestrators ?? []).map(o => o.agentsSlice).filter(Boolean);
   if (out.length === 0 && state.agentSlice) out.push(state.agentSlice);
@@ -718,8 +743,8 @@ export function agentSlices(
 /** Whether the page can edit this unit: an agents slice (persisted) or an agent scope (live). */
 export function canEdit(
   u: MemUnit,
-  state: Pick<AgentMemoryState, 'agentSlice' | 'writable'> &
-    Partial<Pick<AgentMemoryState, 'orchestrators'>>
+  state: Pick<AgentResourceState, 'agentSlice' | 'writable'> &
+    Partial<Pick<AgentResourceState, 'orchestrators'>>
 ): boolean {
   if (!state.writable) return false;
   if (u.kind === 'scope') return true;
@@ -1127,7 +1152,7 @@ export function parseWarnings(list: any, nowMs: number): AgentWarning[] {
 }
 
 /** Parses the backend's JSON, tolerating a missing or partial payload. */
-export function parseState(json: any): AgentMemoryState {
+export function parseState(json: any): AgentResourceState {
   const zero = { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 };
   const units: MemUnit[] = (Array.isArray(json?.units) ? json.units : []).map((u: any) => ({
     ...u,
@@ -1264,7 +1289,7 @@ function unitMatches(u: MemUnit, q: string): boolean {
  * orchestrator name keeps everything under it).
  */
 export function buildTree(
-  state: AgentMemoryState,
+  state: AgentResourceState,
   collapsed: ReadonlySet<string>,
   filter: string
 ): AgentTreeRow[] {

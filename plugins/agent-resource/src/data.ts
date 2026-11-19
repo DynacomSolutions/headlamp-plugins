@@ -1,34 +1,51 @@
 import { ApiProxy, ConfigStore } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
 import {
-  AgentMemoryState,
+  AgentResourceState,
+  backendCandidates,
   backendUrl,
   ChangeRecord,
   CONFIG_KEY,
   EditField,
+  LEGACY_CONFIG_KEY,
   parseState,
+  pickError,
   resolveSettings,
   Settings,
 } from './model';
 
 export const configStore = new ConfigStore<Partial<Settings>>(CONFIG_KEY);
+/** Settings saved under the plugin's old name stay in use until new ones are saved. */
+const legacyConfigStore = new ConfigStore<Partial<Settings>>(LEGACY_CONFIG_KEY);
 
 let defaultsPromise: Promise<Partial<Settings>> | null = null;
+
+async function fetchDefaults(key: string): Promise<Partial<Settings> | null> {
+  try {
+    const r = await fetch(`/plugins/${key}/defaults.json`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j && typeof j === 'object' ? (j as Partial<Settings>) : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Deployment-supplied defaults: an optional defaults.json served next to main.js. */
 function loadDefaults(): Promise<Partial<Settings>> {
   if (!defaultsPromise) {
-    defaultsPromise = fetch(`/plugins/${CONFIG_KEY}/defaults.json`)
-      .then(r => (r.ok ? r.json() : {}))
-      .then(j => (j && typeof j === 'object' ? (j as Partial<Settings>) : {}))
-      .catch(() => ({}));
+    defaultsPromise = fetchDefaults(CONFIG_KEY).then(
+      async d => d ?? (await fetchDefaults(LEGACY_CONFIG_KEY)) ?? {}
+    );
   }
   return defaultsPromise;
 }
 
 /** Browser-local overrides layered over the deployment defaults and built-ins. */
 export function useSettings(): Settings {
-  const stored = configStore.useConfig()() as Partial<Settings> | undefined;
+  const current = configStore.useConfig()() as Partial<Settings> | undefined;
+  const legacy = legacyConfigStore.useConfig()() as Partial<Settings> | undefined;
+  const stored = React.useMemo(() => ({ ...legacy, ...current }), [legacy, current]);
   const [defaults, setDefaults] = React.useState<Partial<Settings>>({});
   React.useEffect(() => {
     let alive = true;
@@ -41,14 +58,48 @@ export function useSettings(): Settings {
 }
 
 export interface StateResult {
-  state: AgentMemoryState | null;
+  state: AgentResourceState | null;
   loading: boolean;
   error: string | null;
   refresh: () => void;
 }
 
+/** The backend that answered last for each configured backend. */
+const answered = new Map<string, string>();
+
+/** The candidates in the order to try: the one that answered last first. */
+function orderedCandidates(backend: string): string[] {
+  const list = backendCandidates(backend);
+  const good = answered.get(backend);
+  return good && list.includes(good) ? [good, ...list.filter(c => c !== good)] : list;
+}
+
+/**
+ * GET through the Kubernetes API service proxy. The new Service agent-resource is
+ * tried first and the old agent-memory Service is the fallback, so the plugin works
+ * before and after the backend rollout. The one that answers is remembered.
+ */
+export async function requestBackend(backend: string, path: string): Promise<any> {
+  const errors: any[] = [];
+  for (const c of orderedCandidates(backend)) {
+    try {
+      const json = await ApiProxy.request(backendUrl(c, path));
+      answered.set(backend, c);
+      return json;
+    } catch (e) {
+      errors.push(e);
+    }
+  }
+  throw pickError(errors) ?? new Error('Request failed');
+}
+
+/** Where changes go: the backend that last answered a read, else the preferred one. */
+export function writeBackend(backend: string): string {
+  return orderedCandidates(backend)[0];
+}
+
 /** Polls the backend through the Kubernetes API service proxy while the page is mounted. */
-export function useAgentMemory(s: Settings): StateResult {
+export function useAgentResource(s: Settings): StateResult {
   const [res, setRes] = React.useState<Omit<StateResult, 'refresh'>>({
     state: null,
     loading: true,
@@ -57,16 +108,15 @@ export function useAgentMemory(s: Settings): StateResult {
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => {
     let alive = true;
-    let url: string;
     try {
-      url = backendUrl(s.backend, '/api/state');
+      backendUrl(s.backend, '/api/state');
     } catch (e: any) {
       setRes({ state: null, loading: false, error: String(e?.message || e) });
       return;
     }
     const load = async () => {
       try {
-        const json = await ApiProxy.request(url);
+        const json = await requestBackend(s.backend, '/api/state');
         if (alive) setRes({ state: parseState(json), loading: false, error: null });
       } catch (e: any) {
         if (alive) setRes(r => ({ ...r, loading: false, error: describeError(e) }));
@@ -89,7 +139,7 @@ export function useChanges(s: Settings, enabled: boolean, version: number): Chan
   React.useEffect(() => {
     if (!enabled) return;
     let alive = true;
-    ApiProxy.request(backendUrl(s.backend, '/api/changes'))
+    requestBackend(s.backend, '/api/changes')
       .then((j: any) => alive && setChanges(Array.isArray(j?.changes) ? j.changes : []))
       .catch(() => undefined);
     return () => {
@@ -107,6 +157,13 @@ export function describeError(e: any): string {
   }
   return msg.replace(/^[A-Za-z ]+ - /, '');
 }
+
+/** The write header of the backend, under its old and its new name. */
+const WRITE_HEADERS = {
+  'Content-Type': 'application/json',
+  'X-Agent-Memory-Write': '1',
+  'X-Agent-Resource-Write': '1',
+};
 
 export interface LimitUpdate {
   unit: string;
@@ -130,9 +187,9 @@ export async function applyLimits(s: Settings, u: LimitUpdate): Promise<any> {
     force: u.force,
   };
   if (u.reason.trim()) body.reason = u.reason.trim();
-  return ApiProxy.request(backendUrl(s.backend, '/api/limits'), {
+  return ApiProxy.request(backendUrl(writeBackend(s.backend), '/api/limits'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Agent-Memory-Write': '1' },
+    headers: WRITE_HEADERS,
     body: JSON.stringify(body),
   });
 }
@@ -153,9 +210,9 @@ export async function applyDefaults(s: Settings, u: DefaultsUpdate): Promise<any
   const body: Record<string, unknown> = { ...u.changes, force: u.force };
   if (u.orchestrator) body.orchestrator = u.orchestrator;
   if (u.reason.trim()) body.reason = u.reason.trim();
-  return ApiProxy.request(backendUrl(s.backend, '/api/defaults'), {
+  return ApiProxy.request(backendUrl(writeBackend(s.backend), '/api/defaults'), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Agent-Memory-Write': '1' },
+    headers: WRITE_HEADERS,
     body: JSON.stringify(body),
   });
 }

@@ -6,6 +6,7 @@ import {
   agentSlices,
   alertsByUnit,
   arrangeRows,
+  backendCandidates,
   backendUrl,
   barGeometry,
   buildTree,
@@ -28,6 +29,7 @@ import {
   parseSize,
   parseState,
   parseWarnings,
+  pickError,
   processCommands,
   processCount,
   processTotal,
@@ -242,6 +244,35 @@ describe('settings and payload', () => {
       '/api/v1/namespaces/ns/services/svc/proxy/api/state'
     );
     expect(() => backendUrl('https://example.com', '/x')).toThrow();
+  });
+  it('lists the new backend first and the old one as fallback', () => {
+    expect(backendCandidates('service/agent-memory/agent-resource:80')).toEqual([
+      'service/agent-memory/agent-resource:80',
+      'service/agent-memory/agent-memory:80',
+    ]);
+    expect(backendCandidates(' service/agent-memory/agent-memory:80 ')).toEqual([
+      'service/agent-memory/agent-resource:80',
+      'service/agent-memory/agent-memory:80',
+    ]);
+    expect(backendCandidates('service/ns/agent-resource')).toEqual([
+      'service/ns/agent-resource',
+      'service/ns/agent-memory',
+    ]);
+  });
+  it('keeps a custom backend alone', () => {
+    expect(backendCandidates('service/ns/other:80')).toEqual(['service/ns/other:80']);
+    expect(backendCandidates('not a backend')).toEqual(['not a backend']);
+  });
+  it('defaults to the new backend Service', () => {
+    expect(DEFAULT_SETTINGS.backend).toBe('service/agent-memory/agent-resource:80');
+  });
+  it('shows the first error that is not a 404', () => {
+    const notFound = { status: 404, message: 'new' };
+    const broken = { status: 500, message: 'old' };
+    expect(pickError([notFound, broken])).toBe(broken);
+    expect(pickError([broken, notFound])).toBe(broken);
+    expect(pickError([notFound, { status: 404, message: 'x' }])).toBe(notFound);
+    expect(pickError([])).toBeUndefined();
   });
   it('parses a partial payload', () => {
     const s = parseState({

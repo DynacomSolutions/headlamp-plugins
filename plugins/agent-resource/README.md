@@ -1,8 +1,11 @@
-# agent-memory
+# agent-resource
 
 A [Headlamp](https://headlamp.dev/) plugin that shows the memory restrictions
-on an agent host and lets you change them live. It adds an **Agent memory**
-sidebar entry with one page.
+on an agent host and lets you change them live. It adds an **Agent resources**
+sidebar entry with one page at `/agent-resource`.
+
+The plugin was called agent-memory before. The old route `/agent-memory`
+redirects to `/agent-resource` (history replace, query kept).
 
 The host runs agents under orchestrators (T3 Code, Herdr, ...) inside a
 systemd user manager. Every orchestrator has three layers: its own control
@@ -114,13 +117,24 @@ built-ins.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `backend` | `service/agent-memory/agent-memory:80` | Backend Service as `service/<namespace>/<name>:<port>` |
+| `backend` | `service/agent-memory/agent-resource:80` | Backend Service as `service/<namespace>/<name>:<port>` |
 | `refreshSeconds` | `10` | Refresh interval, 2 to 300 |
+
+The backend Service was called `agent-memory` before. When the Service is
+named `agent-resource`, the plugin falls back to the `agent-memory` Service in
+the same namespace if the new Service does not answer. When the setting names
+`agent-memory`, the plugin tries `agent-resource` first. The Service that
+answers is used for the next requests and for changes. This keeps the page
+working before and after the backend rollout.
+
+Settings saved under the old plugin name `agent-memory` stay in use until you
+save new ones. A `defaults.json` under the old plugin directory is read when
+the new directory has none.
 
 Example `defaults.json`:
 
 ```json
-{ "backend": "service/agent-memory/agent-memory:80", "refreshSeconds": 10 }
+{ "backend": "service/agent-memory/agent-resource:80", "refreshSeconds": 10 }
 ```
 
 ## Development
@@ -141,5 +155,5 @@ matching `SHA256SUMS` file, and extract it into Headlamp's plugins directory:
 ```bash
 sha256sum -c SHA256SUMS --ignore-missing
 mkdir -p /path/to/headlamp/plugins
-tar -xzf agent-memory-0.1.0.tar.gz -C /path/to/headlamp/plugins
+tar -xzf agent-resource-0.1.0.tar.gz -C /path/to/headlamp/plugins
 ```
