@@ -166,7 +166,7 @@ keeps its query.
 - **Charts:** one **CPU** and one **Memory** sunburst. There is no side
   column and no upper limit on the diameter. A top bar holds the **Nodes** and
   **Category** filters, the breadcrumb, **Up**, **Open** and **Full screen**
-  (**Exit full screen** in the kiosk), wrapping on a narrow screen. Under it a
+  (**Exit full screen** in the kiosk, which is pure black in a dark theme for OLED screens), wrapping on a narrow screen. Under it a
   compact strip shows the selected segment (icon, name, raw id, kind, CPU and
   memory with their shares, thread link) and a horizontal, scrollable row of
   chips, one per child, sorted by value; tapping a chip selects that arc. The
@@ -209,7 +209,7 @@ keeps its query.
   centre of a chart and the breadcrumb go up a level.
 - **Empty space:** the capacity nothing uses (**Unused**) and what a parent
   holds beyond its children (**Unattributed**) are arcs with a dotted outline
-  and no fill. They can be selected and show their value and shares, but they
+  and a very faint crosshatch fill. They can be selected and show their value and shares, but they
   cannot be opened.
   - Every arc is also a focusable button named with its value and share, so
     keyboards and screen readers reach every value (Enter or Space selects).

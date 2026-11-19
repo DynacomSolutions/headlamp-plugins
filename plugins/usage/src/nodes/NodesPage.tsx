@@ -96,6 +96,7 @@ export function NodesPage(): JSX.Element {
       cats={state.cats}
       onNodes={setNodes}
       onCats={setCats}
+      touch={state.kiosk}
     />
   );
   const enter = () => {

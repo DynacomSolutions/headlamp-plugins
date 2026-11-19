@@ -19,7 +19,9 @@ vi.mock('@kinvolk/headlamp-plugin/lib/CommonComponents', () => ({
   ),
 }));
 vi.mock('@iconify/react', () => ({ Icon: (p: { icon: string }) => <i data-icon={p.icon} /> }));
-vi.mock('../settings', () => ({ useNodesSettings: () => ({ idleSeconds: 120, displayNames: {} }) }));
+vi.mock('../settings', () => ({
+  useNodesSettings: () => ({ idleSeconds: 120, displayNames: {} }),
+}));
 
 const metric = (node: string, used: number): NodeMetrics => ({
   node,
@@ -101,7 +103,9 @@ describe('NodesPage', () => {
   it('hides the filter placeholder once something is selected', () => {
     mount('/usage/dashboard?nodes=worker-1');
     expect(screen.getByRole('combobox', { name: 'Nodes' }).getAttribute('placeholder')).toBeNull();
-    expect(screen.getByRole('combobox', { name: 'Category' }).getAttribute('placeholder')).toBe('All');
+    expect(screen.getByRole('combobox', { name: 'Category' }).getAttribute('placeholder')).toBe(
+      'All'
+    );
   });
 
   it('shows the friendly name as the title and the raw id under it', () => {
@@ -190,7 +194,9 @@ describe('NodesPage', () => {
     expect(history.length).toBeGreaterThan(1);
     act(() => history.goBack());
     expect(url()).toBe('/usage/dashboard?nodes=worker-1&sel=k8s');
-    expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).not.toContain('Kubernetes');
+    expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).not.toContain(
+      'Kubernetes'
+    );
     act(() => history.goForward());
     expect(url()).toBe('/usage/dashboard/k8s?nodes=worker-1');
     expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).toContain('Kubernetes');
@@ -239,12 +245,15 @@ describe('NodesPage', () => {
 
   it('shows the ring count from the URL, also in kiosk, and keeps it through zoom and filters', () => {
     const { container } = mount('/usage/dashboard?nodes=worker-1&kiosk=1&rings=5');
-    expect(screen.getByRole('button', { name: '5 rings' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '5 rings' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
     expect(container.querySelector('[data-kiosk-overlay]')).not.toBeNull();
     selectArc(container, 'k8s');
     fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));
     expect(url()).toBe('/usage/dashboard/k8s?nodes=worker-1&kiosk=1&rings=5');
-    fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Nodes' }));
+    // The kiosk filter is a big button that opens a touch sheet.
+    fireEvent.click(screen.getByRole('button', { name: /^Nodes filter/ }));
     fireEvent.click(screen.getByRole('option', { name: 'worker-2' }));
     expect(url()).toBe('/usage/dashboard?nodes=worker-1%2Cworker-2&kiosk=1&rings=5');
   });
@@ -258,6 +267,28 @@ describe('NodesPage', () => {
   it('parses a trailing slash and an empty path as the root view', () => {
     mount('/usage/dashboard/');
     expect(screen.getByRole('navigation', { name: 'Focus' }).textContent).toContain('All nodes');
+  });
+
+  it('uses touch buttons with icons in the kiosk, each at least 48 px high', () => {
+    const { container } = mount('/usage/dashboard?nodes=worker-1&kiosk=1');
+    const want: [string, string][] = [
+      ['Up one level', 'mdi:arrow-up'],
+      ['Open the selected segment', 'mdi:magnify-plus'],
+      ['Exit full screen', 'mdi:fullscreen-exit'],
+    ];
+    for (const [name, icon] of want) {
+      const b = screen.getByRole('button', { name });
+      expect(b.querySelector(`[data-icon="${icon}"]`)).not.toBeNull();
+      expect(Number.parseInt(getComputedStyle(b).minHeight, 10)).toBeGreaterThanOrEqual(48);
+    }
+    expect(container.querySelector('[data-icon="mdi:chart-donut"]')).not.toBeNull();
+    for (const name of [/^Nodes filter/, /^Category filter/]) {
+      const b = screen.getByRole('button', { name });
+      expect(b.querySelector('[data-icon]')).not.toBeNull();
+      expect(Number.parseInt(getComputedStyle(b).minHeight, 10)).toBeGreaterThanOrEqual(48);
+    }
+    // No text fields with dropdown arrows in the kiosk.
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 });
 

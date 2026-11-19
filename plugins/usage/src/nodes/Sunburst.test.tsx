@@ -47,7 +47,7 @@ describe('Sunburst', () => {
     const { container } = render(<Sunburst tree={tree} resource="cpu" focus={[]} size={400} />);
     expect(container.querySelectorAll('path[data-key]:not([data-gap])')).toHaveLength(5);
     const unused = container.querySelector('path[data-key="root/~unused"]') as SVGElement;
-    expect(unused.getAttribute('fill')).toBe('none');
+    expect(unused.getAttribute('fill')).toMatch(/^url\(#sb-hatch-/);
     expect(unused.style.pointerEvents).toBe('all');
     expect(unused.getAttribute('stroke-dasharray')).toBeTruthy();
     expect(container.querySelector('path[data-key="t3/~unattributed"]')).not.toBeNull();
@@ -91,7 +91,10 @@ describe('Sunburst', () => {
     expect(arc.getAttribute('stroke-width')).toBe('3');
     expect(other.getAttribute('data-selected')).toBeNull();
     // The selected arc reaches further out than an unselected one of the same ring.
-    const outer = (el: SVGElement) => Math.max(...(el.getAttribute('d') ?? '').match(/-?\d+\.?\d*/g)!.map(v => Math.abs(Number(v))));
+    const outer = (el: SVGElement) =>
+      Math.max(
+        ...(el.getAttribute('d') ?? '').match(/-?\d+\.?\d*/g)!.map(v => Math.abs(Number(v)))
+      );
     expect(outer(arc)).toBeGreaterThan(outer(other));
     fireEvent.pointerDown(arc);
     fireEvent.pointerUp(arc);
@@ -281,9 +284,7 @@ describe('Sunburst', () => {
   });
 
   it('gives arc percentages of the focus when zoomed', () => {
-    const { container } = render(
-      <Sunburst tree={tree} resource="cpu" focus={['t3']} size={600} />
-    );
+    const { container } = render(<Sunburst tree={tree} resource="cpu" focus={['t3']} size={600} />);
     const labels = [...container.querySelectorAll('path[aria-label]')].map(p =>
       p.getAttribute('aria-label')
     );
@@ -330,5 +331,36 @@ describe('Sunburst', () => {
       expect(['#fff', 'rgba(0, 0, 0, 0.87)']).toContain(t.getAttribute('fill'));
       expect(Number(t.getAttribute('font-size'))).toBeGreaterThanOrEqual(14);
     });
+  });
+
+  it('fills empty space with a crosshatch pattern that has its own id per chart', () => {
+    const { container } = render(
+      <>
+        <Sunburst tree={tree} resource="cpu" focus={[]} size={400} />
+        <Sunburst tree={tree} resource="memory" focus={[]} size={400} />
+      </>
+    );
+    const ids = Array.from(container.querySelectorAll('pattern[data-hatch]')).map(p => p.id);
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+    const svg = container.querySelector('svg') as Element;
+    const own = svg.querySelector('pattern[data-hatch]') as Element;
+    expect(own.querySelectorAll('path')).toHaveLength(1);
+    const gap = svg.querySelector('path[data-key="root/~unused"]') as Element;
+    expect(gap.getAttribute('fill')).toBe(`url(#${own.id})`);
+    expect(svg.querySelector('path[data-key="t3"]')?.getAttribute('fill')).not.toContain('url(');
+  });
+
+  it('in quiet mode a selected arc changes fill and has no outline or focus ring', () => {
+    const { container } = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} quiet selected={['t3']} />
+    );
+    const arc = container.querySelector('path[data-key="t3"]') as Element;
+    const plain = render(
+      <Sunburst tree={tree} resource="cpu" focus={[]} size={400} />
+    ).container.querySelector('path[data-key="t3"]') as Element;
+    expect(arc.getAttribute('fill')).not.toBe(plain.getAttribute('fill'));
+    expect(arc.getAttribute('stroke-width')).toBe('1');
+    expect(container.querySelector('style')?.textContent).not.toContain('focus-visible');
   });
 });

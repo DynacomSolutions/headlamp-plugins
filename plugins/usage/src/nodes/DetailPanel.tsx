@@ -9,10 +9,11 @@ import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Typography from '@mui/material/Typography';
+import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
-import type { ChildRow, SegmentInfo,Selection } from './detail';
+import type { ChildRow, SegmentInfo, Selection } from './detail';
+import { TOUCH_MIN, TouchChoice, TouchSheet } from './TouchSheet';
 import { useIconUrl } from './useIconUrl';
-
 
 const KIND: Record<string, string> = {
   node: 'Node',
@@ -88,7 +89,12 @@ function withShare(value: string, share: number | null): string {
   return share === null ? value : `${value} (${formatPercent(share, 1)})`;
 }
 
+/** Most chips the kiosk shows; the touch list under "All" holds the rest, so the row never scrolls. */
+export const KIOSK_CHIPS = 6;
+
 export function DetailPanel(props: {
+  /** Kiosk: no scrolling row. A few compact chips and a button that opens the full list. */
+  kiosk?: boolean;
   /** The selection, or the zoom root described as a selection. */
   subject: Selection | null;
   selected: boolean;
@@ -101,7 +107,18 @@ export function DetailPanel(props: {
   section: string;
   onSelect: (key: string) => void;
 }): JSX.Element {
-  const { subject, selected, rootKind, rows, zoomed = false, section, onSelect } = props;
+  const {
+    subject,
+    selected,
+    rootKind,
+    rows,
+    zoomed = false,
+    section,
+    onSelect,
+    kiosk = false,
+  } = props;
+  const [listOpen, setListOpen] = React.useState(false);
+  const shown = kiosk ? rows.slice(0, KIOSK_CHIPS) : rows;
   const opts = { zoomed, section, selected };
   return (
     <Box
@@ -116,7 +133,15 @@ export function DetailPanel(props: {
       }}
     >
       {subject && (
-        <Box sx={{ display: 'flex', alignItems: 'center', columnGap: 2, rowGap: 0.5, flexWrap: 'wrap' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            columnGap: 2,
+            rowGap: 0.5,
+            flexWrap: 'wrap',
+          }}
+        >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
             <SegmentIcon icon={subject.icon} size={24} />
             <Typography sx={{ fontSize: 18, fontWeight: 600, overflowWrap: 'anywhere' }}>
@@ -128,15 +153,24 @@ export function DetailPanel(props: {
             {subject.id && (
               <Typography
                 data-raw-id
-                sx={{ fontFamily: 'monospace', fontSize: 14, overflowWrap: 'anywhere', userSelect: 'text' }}
+                sx={{
+                  fontFamily: 'monospace',
+                  fontSize: 14,
+                  overflowWrap: 'anywhere',
+                  userSelect: 'text',
+                }}
                 color="text.secondary"
               >
                 {subject.id}
               </Typography>
             )}
           </Box>
-          <Typography sx={{ fontSize: 14 }}>{figures('CPU', formatCores, subject.cpu, opts)}</Typography>
-          <Typography sx={{ fontSize: 14 }}>{figures('Memory', formatBytes, subject.mem, opts)}</Typography>
+          <Typography sx={{ fontSize: 14 }}>
+            {figures('CPU', formatCores, subject.cpu, opts)}
+          </Typography>
+          <Typography sx={{ fontSize: 14 }}>
+            {figures('Memory', formatBytes, subject.mem, opts)}
+          </Typography>
           {subject.href && /^https?:\/\//i.test(subject.href) && (
             <Button
               component="a"
@@ -154,30 +188,83 @@ export function DetailPanel(props: {
       <Box
         role="list"
         aria-label="Children"
-        sx={{ display: 'flex', gap: 1, overflowX: 'auto', overflowY: 'hidden', pb: 0.5, minHeight: 52 }}
+        sx={
+          kiosk
+            ? { display: 'flex', flexWrap: 'wrap', gap: 1, minHeight: 52 }
+            : {
+                display: 'flex',
+                gap: 1,
+                overflowX: 'auto',
+                overflowY: 'hidden',
+                pb: 0.5,
+                minHeight: 52,
+              }
+        }
       >
         {rows.length === 0 && (
           <Typography sx={{ fontSize: 14, py: 1.5 }} color="text.secondary">
             Nothing below this segment.
           </Typography>
         )}
-        {rows.map(r => (
+        {shown.map(r => (
           <Button
             key={r.key}
             role="listitem"
             variant="outlined"
             onClick={() => onSelect(r.key)}
             startIcon={<SegmentIcon icon={r.icon} size={24} />}
-            sx={{ minHeight: 48, flex: 'none', textTransform: 'none', fontSize: 14, whiteSpace: 'nowrap' }}
+            sx={{
+              minHeight: 48,
+              flex: 'none',
+              textTransform: 'none',
+              fontSize: kiosk ? 16 : 14,
+              whiteSpace: 'nowrap',
+            }}
           >
             {r.label}
-            <Box component="span" sx={{ ml: 1, color: 'text.secondary' }}>
-              {r.cpu === null ? 'no CPU' : withShare(formatCores(r.cpu), r.cpuShare)} /{' '}
-              {r.mem === null ? 'no memory' : withShare(formatBytes(r.mem), r.memShare)}
-            </Box>
+            {!kiosk && (
+              <Box component="span" sx={{ ml: 1, color: 'text.secondary' }}>
+                {r.cpu === null ? 'no CPU' : withShare(formatCores(r.cpu), r.cpuShare)} /{' '}
+                {r.mem === null ? 'no memory' : withShare(formatBytes(r.mem), r.memShare)}
+              </Box>
+            )}
           </Button>
         ))}
+        {kiosk && rows.length > KIOSK_CHIPS && (
+          <Button
+            variant="contained"
+            onClick={() => setListOpen(true)}
+            aria-label={`Show all ${rows.length} children`}
+            startIcon={<Icon icon="mdi:format-list-bulleted" width={24} height={24} />}
+            sx={{
+              minHeight: TOUCH_MIN,
+              minWidth: TOUCH_MIN,
+              flex: 'none',
+              fontSize: 16,
+              textTransform: 'none',
+            }}
+          >
+            All {rows.length}
+          </Button>
+        )}
       </Box>
+      {kiosk && (
+        <TouchSheet open={listOpen} title="Children" onClose={() => setListOpen(false)}>
+          {rows.map(r => (
+            <TouchChoice
+              key={r.key}
+              label={`${r.label}  ${r.cpu === null ? 'no CPU' : formatCores(r.cpu)} / ${
+                r.mem === null ? 'no memory' : formatBytes(r.mem)
+              }`}
+              chosen={false}
+              onToggle={() => {
+                setListOpen(false);
+                onSelect(r.key);
+              }}
+            />
+          ))}
+        </TouchSheet>
+      )}
     </Box>
   );
 }
