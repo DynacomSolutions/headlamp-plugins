@@ -93,6 +93,13 @@ describe('usage_dashboard tool', () => {
     expect(data.rings[0].segments.map(s => s.key)).toContain('t3');
   });
 
+  it('tries both default backends and one answer is enough', async () => {
+    const fx = usageFixture();
+    const { data } = await run(fx.context());
+    expect(fx.urls).toEqual(['http://agent-resource.agent-memory.svc/api/state', AGENT_STATE_URL]);
+    expect(data.rings[0].segments.map(s => s.key)).toContain('t3');
+  });
+
   it('shows agent use under System when no agent host answers', async () => {
     const fx = usageFixture();
     const { data } = await run(fx.context({ serviceGet: async () => ({ units: 'not a list' }) }));

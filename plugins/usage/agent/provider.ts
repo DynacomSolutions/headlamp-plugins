@@ -47,7 +47,9 @@ const top = defineTool({
   },
 });
 
-const DEFAULT_AGENT_STATE_URL = 'http://agent-memory.agent-memory.svc/api/state';
+// The backend Service was renamed: the new name comes first, the old name is the rollout fallback.
+const DEFAULT_AGENT_STATE_URLS =
+  'http://agent-resource.agent-memory.svc/api/state,http://agent-memory.agent-memory.svc/api/state';
 /** Children below this share of the ring's capacity stay inside their parent's value. */
 const MIN_CHILD_SHARE = 0.002;
 export const MAX_CHILDREN = 60;
@@ -103,7 +105,7 @@ function ring(id: 'cpu' | 'memory', trees: NodeTree[]): z.infer<typeof ringSchem
   return { id, label: cores ? 'CPU' : 'Memory', unit: cores ? 'cores' : 'bytes', capacity: round(capacity), used: round(used), segments };
 }
 
-/** Reads the agent-memory state of each URL. A failed or invalid backend is skipped. */
+/** Reads the agent state of each URL. A failed or invalid backend is skipped. Hosts are keyed by node name, so two URLs that answer for the same node count once. */
 async function agentHosts(urls: string[], get: (url: string) => Promise<unknown>): Promise<Map<string, AgentHost>> {
   const results = await Promise.allSettled(urls.map(async url => parseAgentState(await get(url), url)));
   const hosts = new Map<string, AgentHost>();
@@ -132,7 +134,7 @@ const dashboard = defineTool({
     });
     const metrics = assembleNodeMetrics(results);
 
-    const urls = setting(ctx.settings, 'agentStateUrls', DEFAULT_AGENT_STATE_URL)
+    const urls = setting(ctx.settings, 'agentStateUrls', DEFAULT_AGENT_STATE_URLS)
       .split(',')
       .map(u => u.trim())
       .filter(Boolean);
