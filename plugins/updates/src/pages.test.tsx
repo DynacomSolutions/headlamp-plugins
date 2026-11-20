@@ -36,7 +36,7 @@ function Where() {
 function renderAt(url: string, state: LoadState, now = NOW) {
   return render(
     <MemoryRouter initialEntries={[url]}>
-      <Route path="/updates/:id?">
+      <Route path={['/c/:cluster/updates/:id?', '/updates/:id?']}>
         <UpdatesView state={state} now={now} />
       </Route>
       <Where />
@@ -96,6 +96,18 @@ describe('detail view', () => {
     fireEvent.click(screen.getByRole('link', { name: 'KubeVirt' }));
     expect(here).toBe('/updates/kubevirt?category=platform');
     expect(screen.getByText('Blocks')).toBeInTheDocument();
+  });
+  it('keeps the cluster prefix in the detail and back links', () => {
+    renderAt('/c/main/updates?category=platform', ok);
+    fireEvent.click(screen.getByRole('link', { name: 'KubeVirt' }));
+    expect(here).toBe('/c/main/updates/kubevirt?category=platform');
+    fireEvent.click(screen.getByRole('link', { name: 'Back to all components' }));
+    expect(here).toBe('/c/main/updates?category=platform');
+  });
+  it('keeps an encoded cluster name in the links', () => {
+    renderAt('/c/a%20b/updates/k3s', ok);
+    fireEvent.click(screen.getAllByRole('link', { name: 'KubeVirt' })[0]);
+    expect(decodeURI(here)).toBe('/c/a b/updates/kubevirt');
   });
   it('shows the component error', () => {
     renderAt('/updates/mystery', ok);

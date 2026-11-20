@@ -48,10 +48,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
@@ -283,14 +280,8 @@ class PanelWidgetReceiver : GlanceAppWidgetReceiver() {
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         super.onDeleted(context, appWidgetIds)
-        val pending = goAsync()
-        CoroutineScope(Dispatchers.Default).launch {
-            try {
-                val repository = Repository(context)
-                appWidgetIds.forEach { repository.removePanelWidget(it) }
-            } finally {
-                pending.finish()
-            }
+        removeWidgetData(context, appWidgetIds) { repository, id ->
+            repository.removePanelWidget(id)
         }
     }
 }

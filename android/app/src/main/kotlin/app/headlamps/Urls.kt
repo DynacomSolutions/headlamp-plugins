@@ -16,7 +16,7 @@ fun nodesUrl(base: String, cluster: String): String =
     "${normaliseBase(base)}/clusters/${segment(cluster)}/api/v1/nodes"
 
 fun usagePageUrl(base: String, cluster: String): String =
-    "${normaliseBase(base)}/c/${segment(cluster)}/usage/nodes"
+    "${normaliseBase(base)}/c/${segment(cluster)}/usage/dashboard"
 
 fun isCleartext(base: String): Boolean = base.trim().startsWith("http://", ignoreCase = true)
 

@@ -1,0 +1,1 @@
+Tapping a widget opens the usage dashboard again. Removing a widget from the home screen no longer stops the app.

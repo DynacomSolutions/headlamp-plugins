@@ -42,6 +42,14 @@ describe('panel list', () => {
   });
 });
 
+describe('usage panel links', () => {
+  it('open the dashboard path, not the old nodes path', () => {
+    for (const id of ['usage', 'usage-dashboard']) {
+      expect(PANELS.find(p => p.id === id)?.link).toBe('/c/{cluster}/usage/dashboard');
+    }
+  });
+});
+
 describe('sorting', () => {
   it('puts crit, warn, unknown, ok first and keeps the panel order inside a group', () => {
     const r = (label: string, status: Row['status']): Row => ({ label, detail: '', value: '', status });

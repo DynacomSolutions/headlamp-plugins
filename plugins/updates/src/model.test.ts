@@ -5,6 +5,7 @@ import {
   compareVersions,
   countsOf,
   DEFAULT_VIEW,
+  detailPath,
   filterComponents,
   formatAge,
   isStale,
@@ -13,6 +14,7 @@ import {
   pickConfigMap,
   reportAgeHours,
   sortComponents,
+  updatesBase,
   viewFromSearch,
   viewToSearch,
 } from './model';
@@ -129,5 +131,16 @@ describe('filters, sort and URL state', () => {
   });
   it('ignores invalid query values', () => {
     expect(viewFromSearch('?status=bogus&sort=nope&dir=up')).toEqual(DEFAULT_VIEW);
+  });
+});
+
+describe('updatesBase and detailPath', () => {
+  it('keeps the cluster prefix on the list and the detail page', () => {
+    expect(updatesBase('/updates', false)).toBe('/updates');
+    expect(updatesBase('/c/main/updates/', false)).toBe('/c/main/updates');
+    expect(updatesBase('/c/main/updates/k3s', true)).toBe('/c/main/updates');
+    expect(updatesBase('/updates/k3s', true)).toBe('/updates');
+    expect(detailPath('a/b', '/c/main/updates')).toBe('/c/main/updates/a%2Fb');
+    expect(detailPath('k3s')).toBe('/updates/k3s');
   });
 });
