@@ -794,13 +794,13 @@ describe('RunWarden runner hierarchy', () => {
     ...(runner ? { runner } : {}),
   });
   const job = (over: Partial<NonNullable<RunnerInfo['job']>> = {}): RunnerInfo => ({
-    tenant: 'DynacomSolutions..cluster',
+    tenant: 'ExampleOrg..dotrepo',
     pool: 'rw-linux',
     role: 'runner',
     job: {
-      owner: 'DynacomSolutions',
-      repo: '.cluster',
-      runsOn: 'k3s-runners',
+      owner: 'ExampleOrg',
+      repo: '.dotrepo',
+      runsOn: 'linux-runners',
       workflow: 'CI',
       job: 'build',
       runId: '42',
@@ -824,40 +824,40 @@ describe('RunWarden runner hierarchy', () => {
       chain.push(cur);
     }
     expect(chain.map(c => [c.kind, c.label])).toEqual([
-      ['runner', 'DynacomSolutions / k3s-runners'],
-      ['repo', '.cluster'],
+      ['runner', 'ExampleOrg / linux-runners'],
+      ['repo', '.dotrepo'],
       ['workflow', 'CI'],
       ['job', 'build'],
       ['run', '#42'],
       ['container', 'runner'],
     ]);
     expect(chain[chain.length - 1].key).toBe(
-      `k8s/ns:${NS}/rw:DynacomSolutions|k3s-runners/repo:.cluster/wf:CI/job:build/run:42/pod:rw-a/c:runner`
+      `k8s/ns:${NS}/rw:ExampleOrg|linux-runners/repo:.dotrepo/wf:CI/job:build/run:42/pod:rw-a/c:runner`
     );
     expect(chain.every(c => c.value === 5)).toBe(true);
   });
 
   it('splits the tenant on the first dot only', () => {
-    expect(splitTenant('DynacomSolutions..cluster')).toEqual({
-      owner: 'DynacomSolutions',
-      repo: '.cluster',
+    expect(splitTenant('ExampleOrg..dotrepo')).toEqual({
+      owner: 'ExampleOrg',
+      repo: '.dotrepo',
     });
     expect(splitTenant('Acme.web')).toEqual({ owner: 'Acme', repo: 'web' });
   });
 
   it('groups a pod with labels but no job under Waiting for job', () => {
     const ns = nsNode([
-      pod('rw-b', 2, { tenant: 'DynacomSolutions..cluster', pool: 'rw-linux', role: 'runner' }),
+      pod('rw-b', 2, { tenant: 'ExampleOrg..dotrepo', pool: 'rw-linux', role: 'runner' }),
     ]);
     const group = ns.children[0];
-    expect(group.label).toBe('DynacomSolutions / rw-linux');
-    expect(group.children[0].label).toBe('.cluster');
+    expect(group.label).toBe('ExampleOrg / rw-linux');
+    expect(group.children[0].label).toBe('.dotrepo');
     const waiting = group.children[0].children[0];
     expect(waiting.label).toBe('Waiting for job');
     expect(waiting.children[0].kind).toBe('pod');
     expect(waiting.children[0].label).toBe('rw-b');
     expect(waiting.children[0].children[0].key).toBe(
-      `k8s/ns:${NS}/rw:DynacomSolutions|rw-linux/repo:.cluster/wf:~waiting/pod:rw-b/c:runner`
+      `k8s/ns:${NS}/rw:ExampleOrg|rw-linux/repo:.dotrepo/wf:~waiting/pod:rw-b/c:runner`
     );
   });
 
@@ -880,7 +880,7 @@ describe('RunWarden runner hierarchy', () => {
       pod('rw-a', 5, job()),
       pod('rw-c', 3, job({ runId: '43' })),
       pod('rw-d', 4, job({ workflow: 'Release / deploy', job: 'a b' })),
-      pod('rw-b', 2, { tenant: 'DynacomSolutions..cluster', pool: 'rw-linux', role: 'runner' }),
+      pod('rw-b', 2, { tenant: 'ExampleOrg..dotrepo', pool: 'rw-linux', role: 'runner' }),
       pod('rw-w', 1, { tenant: '', pool: 'rw-linux', role: 'warm' }),
       pod('plain', 6),
     ];

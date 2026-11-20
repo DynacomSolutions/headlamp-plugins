@@ -155,7 +155,7 @@ describe('RunWarden runner info', () => {
       {
         namespace: 'runwarden-runners',
         pod: 'rw-a',
-        label_runwarden_io_tenant: 'DynacomSolutions..cluster',
+        label_runwarden_io_tenant: 'ExampleOrg..dotrepo',
         label_runwarden_io_pool: 'rw-linux',
         label_runwarden_io_role: 'runner',
       },
@@ -167,10 +167,10 @@ describe('RunWarden runner info', () => {
       {
         namespace: 'runwarden-runners',
         pod: 'rw-a',
-        owner: 'DynacomSolutions',
-        repo: '.cluster',
+        owner: 'ExampleOrg',
+        repo: '.dotrepo',
         pool: 'rw-linux',
-        runs_on: 'k3s-runners',
+        runs_on: 'linux-runners',
         workflow: 'CI',
         job: 'build',
         run_id: '42',
@@ -188,13 +188,13 @@ describe('RunWarden runner info', () => {
     const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels, runnerJobs: jobs }));
     const a = n.pods.find(p => p.pod === 'rw-a');
     expect(a?.runner).toEqual({
-      tenant: 'DynacomSolutions..cluster',
+      tenant: 'ExampleOrg..dotrepo',
       pool: 'rw-linux',
       role: 'runner',
       job: {
-        owner: 'DynacomSolutions',
-        repo: '.cluster',
-        runsOn: 'k3s-runners',
+        owner: 'ExampleOrg',
+        repo: '.dotrepo',
+        runsOn: 'linux-runners',
         workflow: 'CI',
         job: 'build',
         runId: '42',
