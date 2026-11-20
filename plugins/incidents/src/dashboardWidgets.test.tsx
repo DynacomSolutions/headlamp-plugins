@@ -21,11 +21,13 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 }));
 
 import {
+  fetchAllDiagnoses,
   INCIDENT_WIDGETS,
   incidentChatWidget,
   incidentListWidget,
   registerIncidentWidgets,
 } from './dashboardWidgets';
+import { summariseDiagnoses } from './model';
 import { selectIncident } from './selection';
 
 const diag = (id: string, alert: string, severity: string, status: string, resolved = false) => ({
@@ -63,14 +65,24 @@ const view = (ui: React.ReactNode) =>
 
 type Call = { url: string; method: string; body: any };
 let calls: Call[];
+let pageTotal: number | undefined;
 
 beforeEach(() => {
   calls = [];
+  pageTotal = undefined;
   request.mockReset();
   request.mockImplementation(async (url: string, params?: any) => {
     const method = params?.method ?? 'GET';
     calls.push({ url, method, body: params?.body ? JSON.parse(params.body) : undefined });
-    if (url.includes('/api/diagnoses')) return { diagnoses: DIAGNOSES };
+    if (url.includes('/api/diagnoses')) {
+      const q = new URL(url, 'http://x').searchParams;
+      const offset = Number(q.get('offset') ?? 0);
+      const limit = Number(q.get('limit') ?? 50);
+      return {
+        total: pageTotal ?? DIAGNOSES.length,
+        diagnoses: DIAGNOSES.slice(offset, offset + limit),
+      };
+    }
     if (url.endsWith('/api/models')) return { default: 'claude/opus', models: MODELS };
     if (method === 'POST' && url.endsWith('/api/chats')) return { id: 'c1' };
     if (method === 'POST') return { messageId: 'x' };
@@ -180,6 +192,39 @@ describe('incidents.list', () => {
     );
     expect(await screen.findByText(/Refresh failed, showing the last data/)).toBeTruthy();
     expect(screen.getByText('HighCPU')).toBeTruthy();
+  });
+});
+
+describe('fetchAllDiagnoses', () => {
+  const settings = { namespace: 'ns', serviceName: 'svc', servicePort: '80' };
+  it('reads every page, so the count is the real total and not the first page', async () => {
+    const many = Array.from({ length: 450 }, (_, i) =>
+      diag(String(i), `A${i}`, i % 2 ? 'critical' : 'warning', 'done')
+    );
+    request.mockReset();
+    request.mockImplementation(async (url: string) => {
+      const q = new URL(url, 'http://x').searchParams;
+      const offset = Number(q.get('offset') ?? 0);
+      const limit = Number(q.get('limit'));
+      return { total: many.length, diagnoses: many.slice(offset, offset + limit) };
+    });
+    const rows = await fetchAllDiagnoses(settings);
+    expect(rows).toHaveLength(450);
+    expect(summariseDiagnoses(rows).bySeverity).toEqual({ critical: 225, warning: 225, other: 0 });
+    expect(request).toHaveBeenCalledTimes(3);
+  });
+  it('stops after one short page for an agent that sends no total', async () => {
+    request.mockReset();
+    request.mockResolvedValue({ diagnoses: DIAGNOSES });
+    expect(await fetchAllDiagnoses(settings)).toHaveLength(3);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+  it('stops when an agent ignores offset and repeats a full page', async () => {
+    const full = Array.from({ length: 200 }, (_, i) => diag(String(i), 'A', 'warning', 'done'));
+    request.mockReset();
+    request.mockResolvedValue({ diagnoses: full });
+    expect(await fetchAllDiagnoses(settings)).toHaveLength(200);
+    expect(request).toHaveBeenCalledTimes(2);
   });
 });
 

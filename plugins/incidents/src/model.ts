@@ -104,6 +104,12 @@ export function parseList(json: unknown): DiagnosisSummary[] {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/** The total the agent reports for a list, or null for an agent that does not send one. */
+export function parseTotal(json: unknown): number | null {
+  const t = rec(json).total;
+  return typeof t === 'number' && Number.isFinite(t) && t >= 0 ? t : null;
+}
+
 export function parseDetail(json: unknown): DiagnosisDetail {
   const d = rec(json);
   const fixes = Array.isArray(rec(d.result).fixes) ? (rec(d.result).fixes as unknown[]) : [];

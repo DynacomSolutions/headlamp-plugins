@@ -39,6 +39,7 @@ import {
   filterDiagnoses,
   IncidentFilter,
   parseList,
+  parseTotal,
   Settings,
   summariseDiagnoses,
 } from './model';
@@ -68,6 +69,33 @@ interface Fetched {
   error: string | null;
 }
 
+const PAGE_SIZE = 200;
+const MAX_PAGES = 50;
+
+/**
+ * Every diagnosis, read page by page, so the summary counts the real total and not the first page.
+ * An agent that does not send `total` or ignore `offset` ends the loop as soon as a page is short
+ * or holds nothing new.
+ */
+export async function fetchAllDiagnoses(settings: Settings): Promise<DiagnosisSummary[]> {
+  const rows: DiagnosisSummary[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const json = await ApiProxy.request(
+      backendUrl(settings, `/api/diagnoses?limit=${PAGE_SIZE}&offset=${rows.length}`)
+    );
+    const batch = parseList(json);
+    const fresh = batch.filter(d => !seen.has(d.id));
+    fresh.forEach(d => seen.add(d.id));
+    rows.push(...fresh);
+    const total = parseTotal(json);
+    const done =
+      fresh.length === 0 || (total !== null ? rows.length >= total : batch.length < PAGE_SIZE);
+    if (done) break;
+  }
+  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 /**
  * The diagnoses. Fetches when the settings or the refresh signal change, never on its own timer.
  * The last good data stays on screen when a refresh fails.
@@ -78,13 +106,14 @@ export function useDiagnosesOnSignal(
   reportRefreshed: (at?: number) => void
 ): Fetched & { loading: boolean } {
   const [state, setState] = React.useState<Fetched>({ rows: null, error: null });
-  const url = backendUrl(settings, '/api/diagnoses?limit=100');
+  // A string key, so a new but equal settings object does not fetch again.
+  const key = backendUrl(settings, '/api/diagnoses');
   React.useEffect(() => {
     let live = true;
-    ApiProxy.request(url).then(
-      json => {
+    fetchAllDiagnoses(settings).then(
+      rows => {
         if (!live) return;
-        setState({ rows: parseList(json), error: null });
+        setState({ rows, error: null });
         reportRefreshed(Date.now());
       },
       (e: unknown) => live && setState(prev => ({ rows: prev.rows, error: cleanErrorText(e) }))
@@ -92,7 +121,9 @@ export function useDiagnosesOnSignal(
     return () => {
       live = false;
     };
-  }, [url, refreshSignal, reportRefreshed]);
+    // `key` covers every field of the settings that the request uses.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, refreshSignal, reportRefreshed]);
   return { ...state, loading: state.rows === null && state.error === null };
 }
 
