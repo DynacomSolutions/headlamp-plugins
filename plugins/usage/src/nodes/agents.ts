@@ -1,8 +1,8 @@
 /*
  * Agent hosts: reads the agent-resource backend (/api/state) through the Kubernetes API service
  * proxy. Plugins cannot share code, so the small helpers here are copies of the agent-resource
- * ones. The backend Service was called agent-memory before: agent-resource is tried first and
- * agent-memory is the fallback, so the dashboard works before and after the backend rollout.
+ * ones. The backend Service was called agent-memory before: the new place is tried first and
+ * the old namespace agent-memory is the fallback, so the dashboard works before and after the backend rollout.
  */
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import type { AgentHost } from './agentState';
@@ -19,7 +19,7 @@ export interface NodesSettings {
 }
 
 export const DEFAULT_NODES_SETTINGS: NodesSettings = {
-  agentBackends: ['service/agent-memory/agent-resource:80'],
+  agentBackends: ['service/agent-resource/agent-resource:80'],
   idleSeconds: 120,
   displayNames: {},
 };
@@ -40,15 +40,22 @@ function backendUrl(backend: string, path: string): string {
 
 const SERVICE = 'agent-resource';
 const LEGACY_SERVICE = 'agent-memory';
+const NAMESPACE = 'agent-resource';
+const LEGACY_NAMESPACE = 'agent-memory';
 
 /**
- * The backends to try, best first. A backend named agent-resource also has its agent-memory twin
- * as a fallback, and the other way round. Any other name stays alone.
+ * The backends to try, best first. The backend now runs as Service agent-resource in the
+ * namespace agent-resource. A backend in the new or the old namespace tries the new place first
+ * and the old place second. In another namespace, an agent-resource Service also has its
+ * agent-memory twin as a fallback, and the other way round. Any other name stays alone.
  */
 export function backendCandidates(backend: string): string[] {
   const b = backend.trim();
   const m = /^(service\/[^/]+\/)([^/:]+)(.*)$/.exec(b);
   if (!m || (m[2] !== SERVICE && m[2] !== LEGACY_SERVICE)) return [b];
+  if (m[1] === `service/${NAMESPACE}/` || m[1] === `service/${LEGACY_NAMESPACE}/`) {
+    return [`service/${NAMESPACE}/${SERVICE}${m[3]}`, `service/${LEGACY_NAMESPACE}/${SERVICE}${m[3]}`];
+  }
   const twin = `${m[1]}${m[2] === SERVICE ? LEGACY_SERVICE : SERVICE}${m[3]}`;
   return m[2] === SERVICE ? [b, twin] : [twin, b];
 }

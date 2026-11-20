@@ -263,13 +263,13 @@ describe('settings and payload', () => {
     expect(() => backendUrl('https://example.com', '/x')).toThrow();
   });
   it('lists the new backend first and the old one as fallback', () => {
-    expect(backendCandidates('service/agent-memory/agent-resource:80')).toEqual([
-      'service/agent-memory/agent-resource:80',
-      'service/agent-memory/agent-memory:80',
-    ]);
-    expect(backendCandidates(' service/agent-memory/agent-memory:80 ')).toEqual([
-      'service/agent-memory/agent-resource:80',
-      'service/agent-memory/agent-memory:80',
+    const both = ['service/agent-resource/agent-resource:80', 'service/agent-memory/agent-resource:80'];
+    expect(backendCandidates('service/agent-resource/agent-resource:80')).toEqual(both);
+    expect(backendCandidates('service/agent-memory/agent-resource:80')).toEqual(both);
+    expect(backendCandidates(' service/agent-memory/agent-memory:80 ')).toEqual(both);
+    expect(backendCandidates('service/agent-resource/agent-resource')).toEqual([
+      'service/agent-resource/agent-resource',
+      'service/agent-memory/agent-resource',
     ]);
     expect(backendCandidates('service/ns/agent-resource')).toEqual([
       'service/ns/agent-resource',
@@ -281,7 +281,7 @@ describe('settings and payload', () => {
     expect(backendCandidates('not a backend')).toEqual(['not a backend']);
   });
   it('defaults to the new backend Service', () => {
-    expect(DEFAULT_SETTINGS.backend).toBe('service/agent-memory/agent-resource:80');
+    expect(DEFAULT_SETTINGS.backend).toBe('service/agent-resource/agent-resource:80');
   });
   it('shows the first error that is not a 404', () => {
     const notFound = { status: 404, message: 'new' };

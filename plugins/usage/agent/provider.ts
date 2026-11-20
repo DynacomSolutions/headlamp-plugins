@@ -47,9 +47,10 @@ const top = defineTool({
   },
 });
 
-// The backend Service was renamed: the new name comes first, the old name is the rollout fallback.
+// The backend moved to the namespace agent-resource: the new place comes first, the old
+// namespace is the rollout fallback.
 const DEFAULT_AGENT_STATE_URLS =
-  'http://agent-resource.agent-memory.svc/api/state,http://agent-memory.agent-memory.svc/api/state';
+  'http://agent-resource.agent-resource.svc/api/state,http://agent-resource.agent-memory.svc/api/state';
 const segmentSchema = z.object({
   key: z.string(),
   label: z.string(),

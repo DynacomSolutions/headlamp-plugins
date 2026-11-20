@@ -7,7 +7,7 @@ import type { PromClient, Sample } from '../src/prom.js';
 import type { ToolContext } from '../src/sdk.js';
 import { NODE_QUERIES, type QueryKey } from '../../plugins/usage/src/nodes/nodeMetrics.js';
 
-export const AGENT_STATE_URL = 'http://agent-memory.agent-memory.svc/api/state';
+export const AGENT_STATE_URL = 'http://agent-resource.agent-memory.svc/api/state';
 export const GIB = 2 ** 30;
 export const CORES_PER_NODE = 16;
 export const MEMORY_PER_NODE = 64 * GIB;

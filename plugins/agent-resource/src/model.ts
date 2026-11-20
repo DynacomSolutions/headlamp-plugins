@@ -341,7 +341,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  backend: 'service/agent-memory/agent-resource:80',
+  backend: 'service/agent-resource/agent-resource:80',
   refreshSeconds: 10,
 };
 
@@ -364,19 +364,26 @@ export function resolveSettings(
   };
 }
 
-/** The Service name of the backend before the rename. */
+/** The Service name and namespace of the backend before the rename. */
 const LEGACY_SERVICE = 'agent-memory';
 const SERVICE = 'agent-resource';
+const LEGACY_NAMESPACE = 'agent-memory';
+const NAMESPACE = 'agent-resource';
 
 /**
- * The backends to try, best first. A backend named agent-resource also has its
- * agent-memory twin as a fallback, and the other way round, so the plugin
- * works before and after the backend rollout. Any other name stays alone.
+ * The backends to try, best first. The backend now runs as Service agent-resource in the
+ * namespace agent-resource. A backend in either the new or the old namespace, under either the
+ * new or the old Service name, tries the new place first and the old place second, so the plugin
+ * works before and after the backend rollout. In another namespace, an agent-resource Service
+ * also has its agent-memory twin as a fallback, and the other way round. Any other name stays alone.
  */
 export function backendCandidates(backend: string): string[] {
   const b = backend.trim();
   const m = /^(service\/[^/]+\/)([^/:]+)(.*)$/.exec(b);
   if (!m || (m[2] !== SERVICE && m[2] !== LEGACY_SERVICE)) return [b];
+  if (m[1] === `service/${NAMESPACE}/` || m[1] === `service/${LEGACY_NAMESPACE}/`) {
+    return [`service/${NAMESPACE}/${SERVICE}${m[3]}`, `service/${LEGACY_NAMESPACE}/${SERVICE}${m[3]}`];
+  }
   const other = m[2] === SERVICE ? LEGACY_SERVICE : SERVICE;
   const twin = `${m[1]}${other}${m[3]}`;
   return m[2] === SERVICE ? [b, twin] : [twin, b];

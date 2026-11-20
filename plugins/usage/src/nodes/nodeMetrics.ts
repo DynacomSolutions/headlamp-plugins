@@ -78,15 +78,15 @@ export const NODE_QUERIES: Record<QueryKey, string> = {
   // exported_job. Copy them back when present. A scrape with honor_labels keeps pod and job as they are.
   runnerJobs:
     'max by (namespace, pod, owner, repo, pool, runs_on, workflow, job, run_id) (label_replace(label_replace(runwarden_runner_job_info, "pod", "$1", "exported_pod", "(.+)"), "job", "$1", "exported_job", "(.+)"))',
-  cgroupInfo: 'max by (node, unit, parent, agent_unit) (agent_memory_cgroup_info)',
-  cgroupCpu: 'sum by (node, unit) (rate(agent_memory_cgroup_cpu_seconds_total[2m]))',
-  cgroupMem: 'sum by (node, unit) (agent_memory_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',
-  programCpu: 'sum by (node, unit, program) (rate(agent_memory_process_cpu_seconds_total[2m]))',
-  programMem: 'sum by (node, unit, program) (agent_memory_process_rss_bytes)',
-  agentUnitCpu: 'sum by (node, unit) (rate(agent_memory_agent_unit_cpu_seconds_total[2m]))',
-  agentUnitMem: 'sum by (node, unit) (agent_memory_agent_unit_memory_bytes)',
-  remainderCpu: 'max by (node) (agent_memory_node_remainder_cpu_cores)',
-  remainderMem: 'max by (node) (agent_memory_node_remainder_memory_bytes)',
+  cgroupInfo: 'max by (node, unit, parent, agent_unit) (agent_resource_cgroup_info)',
+  cgroupCpu: 'sum by (node, unit) (rate(agent_resource_cgroup_cpu_seconds_total[2m]))',
+  cgroupMem: 'sum by (node, unit) (agent_resource_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',
+  programCpu: 'sum by (node, unit, program) (rate(agent_resource_process_cpu_seconds_total[2m]))',
+  programMem: 'sum by (node, unit, program) (agent_resource_process_rss_bytes)',
+  agentUnitCpu: 'sum by (node, unit) (rate(agent_resource_agent_unit_cpu_seconds_total[2m]))',
+  agentUnitMem: 'sum by (node, unit) (agent_resource_agent_unit_memory_bytes)',
+  remainderCpu: 'max by (node) (agent_resource_node_remainder_cpu_cores)',
+  remainderMem: 'max by (node) (agent_resource_node_remainder_memory_bytes)',
 };
 
 type NodeValues = Map<string, number>;

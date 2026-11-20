@@ -75,8 +75,8 @@ function orderedCandidates(backend: string): string[] {
 }
 
 /**
- * GET through the Kubernetes API service proxy. The new Service agent-resource is
- * tried first and the old agent-memory Service is the fallback, so the plugin works
+ * GET through the Kubernetes API service proxy. The new Service agent-resource in the
+ * namespace agent-resource is tried first and the old place is the fallback, so the plugin works
  * before and after the backend rollout. The one that answers is remembered.
  */
 export async function requestBackend(backend: string, path: string): Promise<any> {
