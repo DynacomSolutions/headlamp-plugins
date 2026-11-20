@@ -51,7 +51,14 @@ export function PaletteDrawer(props: PaletteDrawerProps): JSX.Element {
   const [added, setAdded] = React.useState('');
   const groups = React.useMemo(() => groupWidgets(definitions, query), [definitions, query]);
   return (
-    <Drawer anchor="right" open={open} onClose={onClose} ModalProps={{ keepMounted: false }}>
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      ModalProps={{ keepMounted: false }}
+      // Headlamp's top bar sits above the default drawer level and would hide the header of the palette.
+      sx={{ zIndex: theme => theme.zIndex.modal }}
+    >
       <Box role="region" aria-label="Widget palette" sx={{ width: 360, maxWidth: '100vw', p: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
           <Typography variant="h6" component="h2" sx={{ flex: 1 }}>
