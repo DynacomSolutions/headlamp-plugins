@@ -94,7 +94,7 @@ export function addTab(
 export function updateTab(
   spec: DashboardSpec,
   tabId: string,
-  patch: Partial<Pick<Tab, 'label' | 'icon'>>
+  patch: Partial<Pick<Tab, 'label' | 'icon' | 'fitHeight'>>
 ): DashboardSpec {
   return mapTab(spec, tabId, t => ({ ...t, ...patch }));
 }

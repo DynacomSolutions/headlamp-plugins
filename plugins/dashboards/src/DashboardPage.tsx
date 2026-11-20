@@ -33,6 +33,7 @@ import { FrameActions } from './components/WidgetFrame';
 import { WidgetSettingsDialog, WidgetSettingsResult } from './components/WidgetSettingsDialog';
 import { DashboardContext, DashboardContextValue } from './context';
 import type { DashboardFilters, WidgetDefinition } from './contract';
+import { scalableRows, useFillRowHeight } from './fillHeight';
 import {
   useCanWrite,
   useClusterNames,
@@ -71,6 +72,7 @@ import {
   HEADER_ID,
   isBandId,
   sameFilters,
+  tabFitsHeight,
 } from './spec/model';
 import { ConflictError, StoredDashboard } from './storage/storage';
 import {
@@ -375,6 +377,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       add: () => edit(s => addTab(s).spec),
       rename: (id, label) => edit(s => updateTab(s, id, { label })),
       setIcon: (id, icon) => edit(s => updateTab(s, id, { icon })),
+      setFitHeight: (id, fitHeight) => edit(s => updateTab(s, id, { fitHeight })),
       move: (from, to) => edit(s => reorderTabs(s, from, to)),
       remove: id => edit(s => deleteTab(s, id)),
       setPosition: tabPosition => edit(s => ({ ...s, tabPosition })),
@@ -393,6 +396,16 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       reportRefreshed: refresh.report,
     }),
     [filters, signal, editing, save.saving, query.kiosk, refresh]
+  );
+
+  // Fit to screen height: the grid rows of the tab stretch to fill the screen. It is off while
+  // editing, so a drag or a resize works on rows that stay still.
+  const fitOn =
+    !!spec && !!activeTab && tabFitsHeight(spec, activeTab) && !(editing && !save.saving);
+  const fill = useFillRowHeight(
+    fitOn,
+    activeTab ? scalableRows(activeTab.sections) : 0,
+    `${activeTabId}|${query.kiosk}`
   );
 
   // ---- render ----
@@ -557,18 +570,26 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   const sections = (
     <Box sx={{ flex: 1, minWidth: 0 }}>
-      {sectionsOfTab.map((section, i) => (
-        <SectionView
-          key={section.id}
-          section={section}
-          index={i}
-          count={sectionsOfTab.length}
-          editing={editing && !save.saving}
-          kiosk={query.kiosk}
-          frameActions={frameActions}
-          actions={sectionActions}
-        />
-      ))}
+      <Box
+        ref={fill.ref}
+        data-fill-height={fitOn ? fill.rowHeight : undefined}
+        sx={{ display: 'flow-root' }}
+      >
+        {sectionsOfTab.map((section, i) => (
+          <SectionView
+            fit={fitOn}
+            rowHeight={fill.rowHeight}
+            key={section.id}
+            section={section}
+            index={i}
+            count={sectionsOfTab.length}
+            editing={editing && !save.saving}
+            kiosk={query.kiosk}
+            frameActions={frameActions}
+            actions={sectionActions}
+          />
+        ))}
+      </Box>
     </Box>
   );
 
@@ -652,9 +673,10 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           title={spec.title}
           description={spec.description}
           kioskShowFilters={spec.kioskShowFilters}
+          fitHeight={spec.fitHeight}
           onCancel={() => setSettingsOpen(false)}
-          onApply={(title, description, kioskShowFilters) => {
-            edit(s => ({ ...s, title, description, kioskShowFilters }));
+          onApply={(title, description, kioskShowFilters, fitHeight) => {
+            edit(s => ({ ...s, title, description, kioskShowFilters, fitHeight }));
             setSettingsOpen(false);
           }}
         />
@@ -759,7 +781,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   }
 
   return (
-    <Box sx={{ p: 2 }}>
+    <Box data-dashboard-page sx={{ p: 2 }}>
       {dialogs}
       <Box
         data-title-bar

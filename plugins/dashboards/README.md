@@ -115,10 +115,26 @@ data:
   dashboard.json: '{"version":1,"title":"Ops overview", ...}'
 ```
 
-- The JSON has a `version` field (now 2). `migrateSpec` (`src/spec/model.ts`) upgrades older versions
+- The JSON has a `version` field (now 3). `migrateSpec` (`src/spec/model.ts`) upgrades older versions
   step by step and fills defaults. Version 2 adds `header`, `footer` and `tabRail`; a version 1 spec gets an empty
-  header and footer and `tabRail: "compact"`, and nothing else changes. A spec from a newer plugin version is shown as an error and is
+  header and footer and `tabRail: "compact"`, and nothing else changes. Version 3 adds `fitHeight` (see
+  "Fit to screen height"); an older spec gets `fitHeight: false`, so it looks the same. A spec from a newer plugin version is shown as an error and is
   never overwritten.
+### Fit to screen height
+
+The grid has a fixed row height (30 px), so a dashboard can leave an empty band under the last row on a tall
+screen. With `fitHeight` on, the grid rows of a tab stretch so its widgets fill the height under the title
+bar and above the footer, in the normal view and in the kiosk. It measures again after a resize, a full
+screen change and a tab change. The row height never goes below 30 px, so a small screen scrolls instead
+of squashing the widgets, and it never goes above 240 px.
+
+- Spec key: `fitHeight` (boolean) on the dashboard, and an optional `fitHeight` on a tab that overrides it.
+  A new dashboard has it on. A spec migrated from version 2 or older has it off until you turn it on.
+- Edit it in Edit, Dashboard settings, "Fit to screen height", and per tab in Tabs, "Fit height".
+- A self-scroll section gives up its fixed pixel height while its tab fits the screen, because that fixed
+  height is what leaves the gap. The rows set the height instead.
+- The stretch is off while you edit, so a drag or a resize works on rows that stay still.
+
 - A save sends the ConfigMap `resourceVersion`. If someone else saved first, the API server
   answers HTTP 409 and the page shows a conflict message with two choices: reload (discard
   your changes) or overwrite with your changes. It never overwrites silently.

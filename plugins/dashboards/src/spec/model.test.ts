@@ -11,6 +11,7 @@ import {
   SPEC_VERSION,
   SpecError,
   SpecVersionError,
+  tabFitsHeight,
   uniqueSlug,
 } from './model';
 
@@ -229,7 +230,7 @@ describe('header, footer and tab rail (spec version 2)', () => {
       tabs: [{ id: 'a', label: 'A', sections: [{ id: 's', widgets: [{ id: 'w', type: 'x' }] }] }],
     });
     expect(migrated).toBe(true);
-    expect(spec.version).toBe(2);
+    expect(spec.version).toBe(SPEC_VERSION);
     expect(spec.header).toEqual({
       sticky: false,
       show: 'both',
@@ -294,5 +295,60 @@ describe('header, footer and tab rail (spec version 2)', () => {
       tabs: [{ id: 't', label: 'T', sections: [{ id: '@header', widgets: [] }] }],
     });
     expect(spec.tabs[0].sections[0].id).not.toBe('@header');
+  });
+});
+
+describe('fit to screen height (spec version 3)', () => {
+  it('is on in a new dashboard', () => {
+    expect(emptySpec('New').fitHeight).toBe(true);
+    expect(SPEC_VERSION).toBe(3);
+  });
+
+  it('turns it off for a version 2 spec, so it looks the same, without the older format notice', () => {
+    const { spec, migrated } = migrateSpec({
+      version: 2,
+      title: 'Ops',
+      tabs: [{ id: 'a', label: 'A', sections: [{ id: 's', widgets: [] }] }],
+    });
+    expect(spec.version).toBe(3);
+    expect(spec.fitHeight).toBe(false);
+    expect(migrated).toBe(false);
+  });
+
+  it('turns it off for a version 1 spec, which still gets the older format notice', () => {
+    const { spec, migrated } = migrateSpec({ version: 1, title: 'Old' });
+    expect(spec.fitHeight).toBe(false);
+    expect(migrated).toBe(true);
+  });
+
+  it('keeps the saved value of a version 3 spec', () => {
+    expect(migrateSpec({ version: 3, title: 'D', fitHeight: true }).spec.fitHeight).toBe(true);
+    expect(migrateSpec({ version: 3, title: 'D', fitHeight: false }).spec.fitHeight).toBe(false);
+    expect(migrateSpec({ version: 3, title: 'D' }).spec.fitHeight).toBe(true);
+  });
+
+  it('survives a save and load', () => {
+    const fresh = { ...emptySpec('New'), fitHeight: false };
+    const again = migrateSpec(JSON.parse(serialiseSpec(fresh)));
+    expect(again.spec.fitHeight).toBe(false);
+    expect(again.migrated).toBe(false);
+  });
+
+  it('lets a tab override the dashboard, and ignores a value that is not a boolean', () => {
+    const { spec } = migrateSpec({
+      version: 3,
+      title: 'D',
+      fitHeight: true,
+      tabs: [
+        { id: 'a', label: 'A', fitHeight: false, sections: [] },
+        { id: 'b', label: 'B', sections: [] },
+        { id: 'c', label: 'C', fitHeight: 'yes', sections: [] },
+      ],
+    });
+    expect(spec.tabs[0].fitHeight).toBe(false);
+    expect(spec.tabs[1].fitHeight).toBeUndefined();
+    expect(spec.tabs[2].fitHeight).toBeUndefined();
+    expect(spec.tabs.map(t => tabFitsHeight(spec, t))).toEqual([false, true, true]);
+    expect(tabFitsHeight({ fitHeight: false }, { fitHeight: true })).toBe(true);
   });
 });

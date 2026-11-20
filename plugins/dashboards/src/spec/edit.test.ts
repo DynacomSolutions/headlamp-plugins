@@ -18,6 +18,7 @@ import {
   saveView,
   sectionsOf,
   updateBand,
+  updateTab,
   updateWidget,
 } from './edit';
 import { defaultFilters, emptySpec, FOOTER_ID, HEADER_ID } from './model';
@@ -219,5 +220,17 @@ describe('header and footer', () => {
     const copy = cloneSpec(a.spec, 'Copy');
     expect(copy.footer.section.widgets).toHaveLength(1);
     expect(copy.footer).not.toBe(a.spec.footer);
+  });
+});
+
+describe('tab fit height', () => {
+  it('sets and clears the override of one tab', () => {
+    const spec = emptySpec('X');
+    const id = spec.tabs[0].id;
+    const on = updateTab(spec, id, { fitHeight: false });
+    expect(on.tabs[0].fitHeight).toBe(false);
+    const cleared = updateTab(on, id, { fitHeight: undefined });
+    expect(cleared.tabs[0].fitHeight).toBeUndefined();
+    expect(JSON.parse(JSON.stringify(cleared.tabs[0]))).not.toHaveProperty('fitHeight');
   });
 });
