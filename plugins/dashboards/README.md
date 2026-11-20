@@ -281,3 +281,64 @@ and a live preview that uses the real cluster data.
 - **Kiosk**: the widget uses the black background, larger rows and no scrollbars.
 
 Users need `list` (and `watch`) access to the chosen kind. A refused list shows a message in the widget.
+
+## PromQL widgets
+
+Five widgets in the **Monitoring** group query a Prometheus-compatible service (VictoriaMetrics,
+Prometheus). They use the plain HTTP API (`/api/v1/query` and `/api/v1/query_range`) through the
+Kubernetes API service proxy, as the other plugins do. The signed in user needs the `get` verb on
+`services/proxy` for that Service.
+
+Set where the service is in the plugin settings (blank fields use the defaults): namespace
+(`monitoring`), service (`victoria-metrics`), port (`8428`) and an optional path prefix such as
+`/prometheus`.
+
+| Type | What it shows |
+| --- | --- |
+| `promql.timeseries` | Line, area, stacked area or bars from a range query. Several queries per chart. |
+| `promql.stat` | One value, an optional sparkline and thresholds. |
+| `promql.gauge` | One value against a scale, with thresholds. |
+| `promql.table` | One row per series of an instant query. Pick the label columns. Sortable. |
+| `promql.breakdown` | A pie (donut) or bars from an instant query, grouped by a label. |
+
+**Template variables.** They follow the filter bar, so one query serves every filter. An unknown
+`$name` stays as typed. Use double quotes around them.
+
+| Variable | Value |
+| --- | --- |
+| `$namespace` | The chosen namespaces as a regex, for `namespace=~"$namespace"`. None chosen gives `.*`. |
+| `$node` | The same for nodes. Dots and other regex characters are escaped. |
+| `$range` | The time range as a PromQL duration, for example `[$range]`. |
+| `$step` | The query step, for example `30s`. |
+| `$rate` | A window for `rate()`: four steps, at least one minute. |
+| `$selector` | The label selector as PromQL matchers, for `up{$selector}`. |
+
+**Several queries.** In the time series chart and the table, put a line with only `---` between
+queries. A first line `# {{pod}}` names the series from labels (chart). In the table, a first line
+such as `# Memory | bytes` names the value column and sets its unit. The `#` line is a PromQL comment
+and is removed before the query runs.
+
+**Units.** Plain (1.5k, 2.5M), bytes (KiB, MiB, GiB), CPU cores, percent (0 to 100), ratio (0 to 1,
+shown as percent) and seconds (ms, s, min, h, d).
+
+**Thresholds.** `70:warning, 90:critical` gives the status from a value up. Below the first step the
+status is good. The statuses are good, warning, serious and critical. "A lower value is worse" reads
+the steps as "or less". A status always shows an icon and a word, so colour is never the only cue.
+
+**Performance and behaviour.**
+
+- The step comes from the chart width and the range, so a series has at most 300 points. The width is
+  read when a fetch starts. Moving or resizing a widget never fetches again. A filter change, a query
+  change or a refresh does.
+- The request in flight is aborted when a new one starts and when the widget unmounts. The previous
+  picture stays on screen, dimmed, while new data loads.
+- The chart has a legend (click an entry to hide a series), a crosshair that snaps to the nearest time
+  (pointer, touch or the arrow keys) and one tooltip with every series at that time. "Show table" lists
+  the last, minimum, average and maximum of each series.
+- In the breakdown every group is its own slice or bar at its real size. There is no "Other" group and no
+  top-N. After eight groups the colours are generated, and the list names every group with its value and
+  share.
+- The kiosk (black background) uses light ink, no scrollbars and no focus rings.
+
+Each widget settings dialog has a multiline query editor and a **Run** button. The preview is an
+instant query with no filters, so it shows every namespace and node.
