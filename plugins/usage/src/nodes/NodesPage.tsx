@@ -16,7 +16,7 @@ import { useNodesSettings } from '../settings';
 import { iconUrl } from './agents';
 import { Filters } from './Filters';
 import { enterBrowserFullscreen, KioskOverlay } from './Kiosk';
-import { NameContext, useNamespaceNames } from './names';
+import type { NameContext } from './names';
 import {
   buildNodesPath,
   legacyPathRedirect,
@@ -28,6 +28,7 @@ import {
 import { agentAlertText, NodeView } from './NodeView';
 import { buildCombinedTree } from './tree';
 import { useIdle } from './useIdle';
+import { useNamespaceNames } from './useNamespaceNames';
 import { useNodesData } from './useNodesData';
 
 export function NodesPage(): JSX.Element {

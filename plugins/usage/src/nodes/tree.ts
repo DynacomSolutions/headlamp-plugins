@@ -3,7 +3,7 @@
  * including descendants, so a parent may exceed the sum of its children (the gap stays empty).
  * Children that sum to more than their parent (sampling skew) are scaled down to fit.
  */
-import type { AgentHost, AgentProc, AgentUnit } from './agents';
+import type { AgentHost, AgentProc, AgentUnit } from './agentState';
 import { GENERIC, iconForContainer, iconForNamespace, iconForProcess } from './appIcons';
 import { cgroupLabel, processLabel, unitLabel } from './labels';
 import { applyNames, NameContext, NO_NAMES } from './names';
