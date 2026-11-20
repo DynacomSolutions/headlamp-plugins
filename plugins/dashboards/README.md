@@ -187,6 +187,7 @@ Quote literal text in single quotes, for example `'Week' d`. Examples: `EEE d MM
 | Setting | Meaning |
 | --- | --- |
 | Namespace | The namespace that holds the dashboard ConfigMaps. Blank uses `headlamp-dashboards`. |
+| Panel sources | The places the panel widgets read panels from. See [Panel sources](#panel-sources). |
 
 ## Development
 
@@ -200,29 +201,87 @@ picker and the built-in widgets are bundled (`node scripts/gen-icons.mjs` rewrit
 `src/icons/bundledIcons.generated.ts`). Any other `mdi:` icon name still works where the browser can reach the
 Iconify service.
 
-## Agent panels and sunburst
+## Panel sources
 
-### Agent panel (`agent.panel`)
+The panel widgets read panels from a **source**. The agent layer is the built-in source. Any app that serves the
+same panel API can be another source, and there can be any number of sources.
 
-Shows one panel of the agent layer. The agent serves its panels on `GET /api/widgets` (the list) and
-`GET /api/widgets/<id>` (one panel model). The widget settings list the panels, and the user picks one.
+### The panel API (version 1)
 
-- **Where the agent is**: the Dashboards settings page has three fields (agent namespace, service and port).
-  Blank fields use `headlamp-agent`, `headlamp-agent` and `80`. The requests go through the Kubernetes API
-  service proxy, the same way as the Incidents plugin.
+A source serves two read-only JSON paths:
+
+- `GET /api/widgets` gives `{ "version": 1, "panels": [{ id, title, description, plugin, link, refreshSeconds }] }`.
+- `GET /api/widgets/<id>` gives one panel: `{ "version": 1, id, title, generatedAt, link, status, summary, stats, rows, series?, rings?, tables? }`.
+  The agent README describes the fields (`agent/README.md`, "Widget panels").
+
+The plugin checks the shape. A response with no `version`, with another version or with the wrong shape gives an
+error card, not a broken widget. Unknown extra fields are ignored.
+
+### Sources (settings)
+
+The Dashboards settings page has a **Panel sources** section. Each source has an id (lower case letters, digits,
+dashes and underscores), a title, an optional `mdi:` icon and a kind:
+
+| Kind | Fields | How it is reached |
+| --- | --- | --- |
+| `service` | namespace, service, port, path prefix (default empty) | The Kubernetes API service proxy: `/api/v1/namespaces/<ns>/services/<svc>:<port>/proxy<prefix>/api/widgets`. Kubernetes RBAC is the guard. |
+| `url` | base URL | The browser calls the URL directly with `fetch` and `credentials: 'include'`, so the cookie login of the app works. The app must allow the Headlamp origin with credentials (CORS). No token is stored in the settings. |
+
+- **The agent** is always the first source, with the id `agent`. It uses the three agent fields of earlier versions
+  (`agentNamespace`, `agentService`, `agentPort`), kept under the same keys, so an old setting works with no change.
+  Blank fields use `headlamp-agent`, `headlamp-agent` and `80`.
+- **Other sources** are stored as a list under `panelSources`. An entry with an invalid or repeated id is ignored.
+- **Test**: each source has a Test button. It calls `/api/widgets` and shows the panel count or the error.
+- **Errors**: a wrong shape, a CORS or network failure, 401, 403 and 404 each give a clear message on the widget
+  and on the Test button.
+
+### Panel widget (`agent.panel`)
+
+Shows one panel of a source. The widget settings pick a **source**, then a **panel** of that source. The config is
+`{ source, panel }`. A saved widget with no `source` uses `agent`, so saved dashboards keep working.
+
+- **Palette**: besides the base entry, the palette has "Panel from <source title>" and "Sunburst from <source title>"
+  for each extra source. They are widget types `agent.panel.<source id>` and `agent.sunburst.<source id>` that
+  pre-select the source. A saved widget keeps its own `source`. A removed source leaves its entry until the page
+  reloads.
 - **What it draws**: the status and summary, the stats as tiles, the rows as a table (a fraction bar and a link
-  when the row has them), the series as sparklines and the rings as sunbursts. A status is a shape and a word,
-  never colour alone. A link must be a web or path link: other schemes are dropped. Links are off in edit mode.
+  when the row has them), the series as sparklines, the rings as sunbursts and the tables. A status is a shape and a
+  word, never colour alone. A link must be a web or path link: other schemes are dropped. Links are off in edit mode.
 - **Refresh**: the widget fetches when the dashboard refresh signal changes, and reports the time with
-  `reportRefreshed`. The `refreshSeconds` of the panel is the minimum time between two fetches, so a short
-  dashboard interval never polls a panel faster than the panel allows. The last good data stays on screen when
-  a refresh fails, with a warning.
-- **States**: a spinner while the first load runs, an error with a short reason, a hint when no panel is
-  chosen and a hint when the panel has nothing to show.
+  `reportRefreshed`. The `refreshSeconds` of the panel is the minimum time between two fetches. The last good data
+  stays on screen when a refresh fails, with a warning.
+- **Shared requests**: requests are shared per source. Ten widgets on one source cause one list call (kept for one
+  minute). A panel request is shared while it runs and is reused for the `refreshSeconds` of the panel. A failed
+  request is not kept.
+- **States**: a spinner while the first load runs, an error card with a short reason, a hint when no panel is
+  chosen, an error card when the source is not configured and a hint when the panel has nothing to show.
+
+### Optional `tables` field (v1 extension)
+
+A panel may add `tables`. A source that does not send it is still valid version 1.
+
+```json
+"tables": [
+  {
+    "title": "Hosts",
+    "columns": [
+      { "key": "name", "label": "Name" },
+      { "key": "load", "label": "Load", "align": "right" }
+    ],
+    "rows": [{ "name": "worker-1", "load": 0.42 }, { "name": "worker-2", "load": 1.8 }]
+  }
+]
+```
+
+- `columns[].align` is `left` (default) or `right`. A column with no `key` is dropped.
+- A row is an object. Each cell is a string or a number, read by the column `key`. Other values show as empty.
+- The widget draws each table with a heading that sorts on click (numbers as numbers, text in natural order, a
+  second click reverses it). The heading has `aria-sort`. A panel with only tables is not empty.
 
 ### Agent sunburst (`agent.sunburst`)
 
-Draws one ring (`cpu` or `memory`) of a panel that has rings, by default `usage-dashboard`.
+Draws one ring (`cpu` or `memory`, or the first ring) of a panel that has rings, from any source, by default
+`usage-dashboard` on the agent. It has the same source and panel settings as the panel widget.
 
 ### The sunburst component
 
