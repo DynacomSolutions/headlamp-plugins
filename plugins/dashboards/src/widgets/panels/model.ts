@@ -15,6 +15,12 @@ export interface Stat {
   status: PanelStatus;
 }
 
+/** The icon of a row. `src` is a safe relative path (see `safeIconPath`); `alt` is the engine kind. */
+export interface PanelRowIcon {
+  src: string;
+  alt: string;
+}
+
 export interface PanelRow {
   label: string;
   detail: string;
@@ -23,6 +29,11 @@ export interface PanelRow {
   fraction?: number;
   status: PanelStatus;
   link?: string;
+  /**
+   * An optional v1 extension (also in `agent/src/widgets.ts`). `src` is relative to the source's
+   * `/api/widgets/` base, for example `icons/postgresql.svg`. A bad value drops the icon, never the row.
+   */
+  icon?: PanelRowIcon;
 }
 
 export interface PanelSeries {
@@ -99,6 +110,34 @@ export function safeLink(href: unknown): string | undefined {
   if (/^https?:\/\//i.test(v)) return v;
   if (v.startsWith('/') && !v.startsWith('//')) return v;
   return undefined;
+}
+
+const ICON_PATH_MAX = 200;
+const ICON_ALT_MAX = 80;
+const ICON_SEGMENT = /^[A-Za-z0-9._~-]+$/;
+
+/**
+ * An icon path is safe when it is relative to the source's `/api/widgets/` base: no scheme, no
+ * leading slash, no backslash, no empty, `.` or `..` segment, no query or fragment, only URL-safe
+ * characters, a `.svg` or `.png` ending and a limited length. Anything else gives undefined.
+ */
+export function safeIconPath(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined;
+  const path = v.trim();
+  if (path === '' || path.length > ICON_PATH_MAX) return undefined;
+  if (!/\.(svg|png)$/i.test(path)) return undefined;
+  const segments = path.split('/');
+  const ok = segments.every(seg => seg !== '.' && seg !== '..' && ICON_SEGMENT.test(seg));
+  return ok ? path : undefined;
+}
+
+/** The icon of a row, or undefined for a missing or unsafe one. `alt` defaults to the row label. */
+export function parseRowIcon(raw: unknown, label: string): PanelRowIcon | undefined {
+  if (!isObject(raw)) return undefined;
+  const src = safeIconPath(raw.src);
+  if (src === undefined) return undefined;
+  const alt = str(raw.alt).trim().slice(0, ICON_ALT_MAX);
+  return { src, alt: alt === '' ? label : alt };
 }
 
 function parseSegment(raw: unknown, depth: number): RingSegment | null {
@@ -192,13 +231,15 @@ export function parsePanel(json: unknown): PanelModel {
           typeof r.fraction === 'number' && Number.isFinite(r.fraction)
             ? Math.min(1, Math.max(0, r.fraction))
             : undefined;
+        const label = str(r.label);
         return {
-          label: str(r.label),
+          label,
           detail: str(r.detail),
           value: str(r.value),
           fraction,
           status: status(r.status),
           link: safeLink(r.link),
+          icon: parseRowIcon(r.icon, label),
         };
       }),
     series: array(json.series)

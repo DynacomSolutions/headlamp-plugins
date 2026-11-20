@@ -25,6 +25,8 @@ export interface Row {
   fraction?: number;
   status: PanelStatus;
   link?: string;
+  /** Optional. `src` is relative to `/api/widgets/` (for example `icons/postgresql.svg`); `alt` is the kind. */
+  icon?: { src: string; alt: string };
 }
 
 export interface Series {

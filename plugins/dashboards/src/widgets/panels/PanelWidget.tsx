@@ -77,7 +77,13 @@ export function PanelWidget({
         </Alert>
       )}
       {state.panel && (
-        <PanelView panel={state.panel} kiosk={kiosk} editing={editing} display={display} />
+        <PanelView
+          panel={state.panel}
+          kiosk={kiosk}
+          editing={editing}
+          display={display}
+          source={source}
+        />
       )}
     </Box>
   );

@@ -344,6 +344,16 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
 - **What it draws**: the status and summary, the stats as tiles, the rows as a table (a fraction bar and a link
   when the row has them), the series as sparklines, the rings as sunbursts and the tables. A status is a shape and a
   word, never colour alone. A link must be a web or path link: other schemes are dropped. Links are off in edit mode.
+- **Row icons**: a row may have `icon: { src, alt }`. `src` is a path relative to the source's `/api/widgets/`
+  base, for example `icons/postgresql.svg` (for a service source that is the service proxy path, for a URL source
+  it is relative to the base URL). `alt` is the kind, for example `PostgreSQL`, and defaults to the row label. A
+  safe `src` has no scheme, no leading `/`, no `\`, no `.` or `..` segment, no query or fragment, only letters,
+  digits and `. _ ~ -`, a `.svg` or `.png` ending and at most 200 characters. A bad value drops the icon and keeps
+  the row. The plugin fetches the icon through the same request path as the panel (so the Headlamp login applies),
+  accepts only `image/svg+xml` or `image/png` of at most 64 KiB, and shows it as a 20 px `<img>` from an object
+  URL before the row label, in the list and in grouped bars. It fetches each icon once per page session. When
+  some rows have icons, every row keeps an empty slot of the same size so the labels line up. A failed fetch
+  shows nothing.
 - **Display options**: `showSummary` (default true) shows the status and summary line, `showStats` (default
   true) shows the stat tiles, and `rowLayout` is `list` (default, the table above) or `grouped-bars`. A saved
   widget without these keys uses the defaults.
