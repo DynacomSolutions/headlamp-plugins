@@ -54,7 +54,7 @@ import {
 } from './spec/edit';
 import { DashboardSpec, sameFilters } from './spec/model';
 import { ConflictError, StoredDashboard } from './storage/storage';
-import { BASE_PATH, baseFilters, buildPath, parsePath, parseQuery, resolveFilters, serialiseQuery } from './urlState';
+import { baseFilters, buildPath, parsePath, parseQuery, pathBase, resolveFilters, serialiseQuery } from './urlState';
 
 type SaveState = { saving: boolean; error?: string; conflict: boolean };
 
@@ -134,7 +134,9 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     history.replace({ pathname: location.pathname, search: serialiseQuery(merged, base) });
   };
 
-  const goTab = (id: string) => history.push({ pathname: buildPath({ name, tab: id }), search: location.search });
+  const base = pathBase(location.pathname);
+  const listPath = buildPath({ name: '', tab: '' }, base);
+  const goTab = (id: string) => history.push({ pathname: buildPath({ name, tab: id }, base), search: location.search });
 
   // ---- refresh ----
 
@@ -265,7 +267,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   if (!stored || !spec || !activeTab) {
     return (
       <Box sx={{ p: 2 }}>
-        <Alert severity="error" action={<Button color="inherit" component={RouterLink} to={BASE_PATH}>All dashboards</Button>}>
+        <Alert severity="error" action={<Button color="inherit" component={RouterLink} to={listPath}>All dashboards</Button>}>
           {loaded.error?.message ?? 'The dashboard could not be loaded.'}
         </Alert>
       </Box>
@@ -274,7 +276,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   if (stored.error) {
     return (
       <Box sx={{ p: 2 }}>
-        <Alert severity="error" action={<Button color="inherit" component={RouterLink} to={BASE_PATH}>All dashboards</Button>}>
+        <Alert severity="error" action={<Button color="inherit" component={RouterLink} to={listPath}>All dashboards</Button>}>
           This dashboard cannot be shown. {stored.error}
         </Alert>
       </Box>

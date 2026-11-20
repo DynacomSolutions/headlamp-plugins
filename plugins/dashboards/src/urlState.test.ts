@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { saveView } from './spec/edit';
 import { defaultFilters, emptySpec } from './spec/model';
-import { baseFilters, buildPath, parsePath, parseQuery, resolveFilters, serialiseQuery } from './urlState';
+import { baseFilters, buildPath, parsePath, parseQuery, pathBase, resolveFilters, serialiseQuery } from './urlState';
 
 describe('paths', () => {
   it('parses the list, a dashboard and a tab', () => {
@@ -16,6 +16,20 @@ describe('paths', () => {
       expect(parsePath(buildPath(p))).toEqual(p);
     }
     expect(buildPath({ name: 'ops', tab: 'nodes' })).toBe('/dashboards/ops/nodes');
+  });
+  it('keeps the Headlamp cluster prefix', () => {
+    expect(pathBase('/dashboards/ops')).toBe('');
+    expect(pathBase('/c/main/dashboards')).toBe('/c/main');
+    expect(pathBase('/c/main/dashboards/ops/nodes')).toBe('/c/main');
+    expect(parsePath('/c/main/dashboards')).toEqual({ name: '', tab: '' });
+    expect(parsePath('/c/main/dashboards/ops')).toEqual({ name: 'ops', tab: '' });
+    expect(parsePath('/c/main/dashboards/ops/nodes')).toEqual({ name: 'ops', tab: 'nodes' });
+    expect(buildPath({ name: '', tab: '' }, '/c/main')).toBe('/c/main/dashboards');
+    expect(buildPath({ name: 'ops', tab: 'nodes' }, '/c/main')).toBe('/c/main/dashboards/ops/nodes');
+  });
+  it('reads a cluster that is called dashboards', () => {
+    expect(parsePath('/c/dashboards/dashboards/ops')).toEqual({ name: 'ops', tab: '' });
+    expect(pathBase('/c/dashboards/dashboards/ops')).toBe('/c/dashboards');
   });
 });
 

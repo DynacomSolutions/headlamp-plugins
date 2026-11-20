@@ -50,16 +50,25 @@ const safeDecode = (s: string): string => {
   }
 };
 
+/** Headlamp puts every cluster route under /c/<cluster>. The pattern keeps that prefix apart. */
+const PATH_PATTERN = /^((?:\/c\/[^/]+)?)\/dashboards(?:\/(.*))?$/;
+
+/** The part of the path before /dashboards: "/c/<cluster>" in Headlamp, or "" outside a cluster. */
+export function pathBase(pathname: string): string {
+  return PATH_PATTERN.exec(pathname)?.[1] ?? '';
+}
+
 export function parsePath(pathname: string): DashboardPath {
-  const rest = pathname.replace(/^\/dashboards\/?/, '');
+  const rest = PATH_PATTERN.exec(pathname)?.[2] ?? '';
   const [name = '', tab = ''] = rest.split('/').filter(Boolean).map(safeDecode);
   return { name, tab };
 }
 
-export function buildPath(p: DashboardPath): string {
-  if (!p.name) return BASE_PATH;
+/** A path to the list or to a dashboard. `base` is the cluster prefix from `pathBase`. */
+export function buildPath(p: DashboardPath, base = ''): string {
+  if (!p.name) return `${base}${BASE_PATH}`;
   const tab = p.tab ? `/${encodeURIComponent(p.tab)}` : '';
-  return `${BASE_PATH}/${encodeURIComponent(p.name)}${tab}`;
+  return `${base}${BASE_PATH}/${encodeURIComponent(p.name)}${tab}`;
 }
 
 const sameList = (a: string[], b: string[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);

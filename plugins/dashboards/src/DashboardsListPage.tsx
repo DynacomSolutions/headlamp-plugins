@@ -19,12 +19,12 @@ import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Link as RouterLink, useHistory } from 'react-router-dom';
+import { Link as RouterLink, useHistory, useLocation } from 'react-router-dom';
 import { useCanWrite, useDashboardList, useStorage } from './hooks';
 import { cloneSpec } from './spec/edit';
 import { countWidgets, emptySpec, slugify, uniqueSlug } from './spec/model';
 import { StoredDashboard } from './storage/storage';
-import { buildPath } from './urlState';
+import { buildPath, pathBase } from './urlState';
 
 type Dialogue =
   | { kind: 'create' }
@@ -61,6 +61,7 @@ function NameDialog(props: { title: string; label: string; initial: string; acti
 
 export function DashboardsListPage(): JSX.Element {
   const history = useHistory();
+  const base = pathBase(useLocation().pathname);
   const storage = useStorage();
   const list = useDashboardList(storage);
   const canWrite = useCanWrite(storage.namespace);
@@ -88,13 +89,13 @@ export function DashboardsListPage(): JSX.Element {
   const create = (title: string) =>
     run(async () => {
       const created = await storage.create(freeName(title), emptySpec(title));
-      history.push(buildPath({ name: created.name, tab: '' }) + '?edit=1');
+      history.push(buildPath({ name: created.name, tab: '' }, base) + '?edit=1');
     });
   const duplicate = (item: StoredDashboard, title: string) =>
     run(async () => {
       const created = await storage.create(freeName(title), cloneSpec(item.spec, title));
       list.reload();
-      history.push(buildPath({ name: created.name, tab: '' }));
+      history.push(buildPath({ name: created.name, tab: '' }, base));
     });
   const rename = (item: StoredDashboard, title: string) =>
     run(async () => {
@@ -168,7 +169,7 @@ export function DashboardsListPage(): JSX.Element {
             {items.map(item => (
               <TableRow key={item.name} hover>
                 <TableCell>
-                  <RouterLink to={buildPath({ name: item.name, tab: '' })}>{item.spec.title}</RouterLink>
+                  <RouterLink to={buildPath({ name: item.name, tab: '' }, base)}>{item.spec.title}</RouterLink>
                   {item.error && (
                     <Typography variant="caption" color="error" component="div">
                       {item.error}
