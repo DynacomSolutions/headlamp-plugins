@@ -114,6 +114,6 @@ describe('moveHardwareProfileSection', () => {
     const l: unknown[] = ['text', null, { id: 'METADATA' }, p];
     const out = moveHardwareProfileSection('Node', l, profile);
     expect(out).toHaveLength(4);
-    expect(out.indexOf(p)).toBe(2);
+    expect(out).toBe(l);
   });
 });
