@@ -55,7 +55,7 @@ export interface AgentUnitUsage {
   memBytes: number;
 }
 
-/** The host cgroup and process series of the agent-resource exporter (the series keep their old agent_memory_ prefix). */
+/** The host cgroup and process series of the agent-resource exporter. */
 export interface SystemUsage {
   cgroups: CgroupUsage[];
   programs: ProgramUsage[];

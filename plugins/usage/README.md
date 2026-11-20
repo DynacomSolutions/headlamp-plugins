@@ -263,10 +263,12 @@ Data sources, refreshed every 10 seconds:
 Settings (Headlamp **Settings > Plugins > usage**, stored in the browser):
 
 - **Agent backends:** comma-separated `service/<namespace>/<name>:<port>`
-  entries. Default `service/agent-memory/agent-resource:80`. The backend
-  Service was called `agent-memory` before. When the Service is named
-  `agent-resource`, the plugin falls back to the `agent-memory` Service in the
-  same namespace if the new one does not answer.
+  entries. Default `service/agent-resource/agent-resource:80`. The backend
+  ran in the namespace `agent-memory` before. When the Service is in the
+  namespace `agent-resource` or `agent-memory`, the plugin falls back to
+  `service/agent-memory/agent-resource` if the new place does not answer.
+  In any other namespace, an `agent-resource` Service falls back to an
+  `agent-memory` Service of the same namespace.
 - **Idle threshold (seconds):** how long without a touch before the page goes
   back to the overview. Default 120, at least 30.
 
@@ -309,7 +311,7 @@ counted twice.
 
 - `get` on the Services proxy (`services/proxy`) of the metrics service,
 - `list` on Pods and Services (cluster-wide), and
-- for the Usage dashboard, `get` on the Services proxy of each agent-resource backend. Grant it on the old `agent-memory` Service too until the backend rollout is complete.
+- for the Usage dashboard, `get` on the Services proxy of each agent-resource backend. Grant it on the old namespace `agent-memory` too until the backend rollout is complete.
 
 The built-in `view` ClusterRole grants these.
 

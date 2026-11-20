@@ -119,6 +119,14 @@ describe('backend fallback', () => {
   });
   it('defaults to the new Service', () => {
     expect(DEFAULT_NODES_SETTINGS.agentBackends).toEqual([
+      'service/agent-resource/agent-resource:80',
+    ]);
+    expect(backendCandidates('service/agent-resource/agent-resource:80')).toEqual([
+      'service/agent-resource/agent-resource:80',
+      'service/agent-memory/agent-resource:80',
+    ]);
+    expect(backendCandidates('service/agent-memory/agent-memory:80')).toEqual([
+      'service/agent-resource/agent-resource:80',
       'service/agent-memory/agent-resource:80',
     ]);
   });
