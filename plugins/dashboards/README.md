@@ -22,10 +22,14 @@ and a header or divider.
   "Self-scroll content" option. Move a widget to another section by dropping it there or
   with its menu. Reorder sections with the arrows in the section header.
 - **Tabs**: several tabs per dashboard, each with a label and a Material Design icon
-  (searchable picker). The tab bar sits at the top or on the left, per dashboard.
+  (searchable picker). The tab bar sits at the top or on the left, per dashboard. On the left it is
+  a compact rail by default (see [Header, footer and tab rail](#header-footer-and-tab-rail)).
+- **Header and footer**: a dashboard level header above, and footer below, the tab content. They show
+  with every tab (see [Header, footer and tab rail](#header-footer-and-tab-rail)).
 - **Kiosk**: the Full screen button shows only the dashboard over the whole screen on a
-  black background, asks the browser for full screen and has an Exit control and a clock.
-  The styles are quiet and touch friendly. The code is a copy of the Usage plugin kiosk.
+  black background, asks the browser for full screen and has the title, a refresh button and an Exit
+  control. It has no clock of its own: put a clock widget in the header.
+  The styles are quiet and touch friendly. The code is adapted from the Usage plugin kiosk.
 - **Refresh**: a Refresh button, an automatic interval per dashboard (off, 10 s, 30 s, 1 min,
   5 min, 15 min) and a "Refreshed 12 s ago" text that updates on its own. Its tooltip gives the
   exact time. Widgets get a shared refresh signal and report their own fetch time.
@@ -52,6 +56,42 @@ when they have their default value.
 
 A filter key in the URL overrides the saved view, even with an empty value.
 
+## Header, footer and tab rail
+
+### Header and footer
+
+Each dashboard has a **header** and a **footer**. Each is one section with its own 12 column grid. It is
+edited like any section: drag and resize widgets, add them from the palette (choose "Header (every tab)" or
+"Footer (every tab)" as the target section), open the widget settings, duplicate, delete or move a widget to
+another section from its menu. The header sits above the tabs and the footer below the tab content, so they
+stay when the tab changes (a clock keeps ticking, and nothing is fetched again).
+
+| Option | Values | Meaning |
+| --- | --- | --- |
+| Sticky | on or off (default off) | The header stays at the top and the footer at the bottom of the scrolling view. Sticky is off while you edit. |
+| Show in | `both` (default), `normal`, `kiosk` | Where the band draws: in the normal view and the kiosk, in the normal view only, or in the kiosk only. |
+
+A band with no widgets draws nothing in view mode. In edit mode it always shows, with its two options.
+
+### A clock in the header (kiosk)
+
+The kiosk no longer draws its own clock at the top right. Older dashboards lose that clock, and nothing adds
+a replacement, so add one yourself:
+
+1. Open the dashboard and press Edit.
+2. Press **Add widget**, choose the **Clock** widget, and set the target section to **Header (every tab)**.
+3. Resize it (for example 4 columns wide and 3 rows high), set its time, date and size in the widget settings
+   (the `xlarge` size suits a wall screen), and drag it to the right.
+4. Leave **Show header in** at "Normal view and kiosk", or choose "Kiosk only" to show the clock only on the wall
+   screen. Turn on **Sticky at the top** to keep it in view while the page scrolls. Press Save.
+
+### Left tab rail
+
+When the tabs sit on the left, each tab is an icon with its label under it, in a rail about 80 px wide (the
+label wraps to two lines at most, and a tooltip gives the full label). Choose the **Tabs** button in edit mode,
+set "Tab bar position" to "Left side", then set "Left tab style" to "Compact rail" (default) or "Wide" (the
+earlier wide tabs, icon beside the label). Top tabs are not changed.
+
 ## Storage
 
 One ConfigMap per dashboard, in the namespace set in the plugin settings (default
@@ -69,8 +109,9 @@ data:
   dashboard.json: '{"version":1,"title":"Ops overview", ...}'
 ```
 
-- The JSON has a `version` field. `migrateSpec` (`src/spec/model.ts`) upgrades older versions
-  step by step and fills defaults. A spec from a newer plugin version is shown as an error and is
+- The JSON has a `version` field (now 2). `migrateSpec` (`src/spec/model.ts`) upgrades older versions
+  step by step and fills defaults. Version 2 adds `header`, `footer` and `tabRail`; a version 1 spec gets an empty
+  header and footer and `tabRail: "compact"`, and nothing else changes. A spec from a newer plugin version is shown as an error and is
   never overwritten.
 - A save sends the ConfigMap `resourceVersion`. If someone else saved first, the API server
   answers HTTP 409 and the page shows a conflict message with two choices: reload (discard
@@ -297,6 +338,16 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
 - **What it draws**: the status and summary, the stats as tiles, the rows as a table (a fraction bar and a link
   when the row has them), the series as sparklines, the rings as sunbursts and the tables. A status is a shape and a
   word, never colour alone. A link must be a web or path link: other schemes are dropped. Links are off in edit mode.
+- **Display options**: `showSummary` (default true) shows the status and summary line, `showStats` (default
+  true) shows the stat tiles, and `rowLayout` is `list` (default, the table above) or `grouped-bars`. A saved
+  widget without these keys uses the defaults.
+- **Grouped bars**: rows are grouped by `label` (for example the account), in order of first sight. A group is one
+  horizontal bar with one segment for each row. The segment is filled to the `fraction` of the row, and its tooltip
+  gives the group, the limit (the row `detail`) and the value. Each limit name has its own colour, the same in every
+  group, from the eight validated categorical hues of the data visualisation palette (light and dark), in order of
+  first sight. A legend maps the colours to the limit names. A small status marker (shape and word) sits under each
+  segment, and the limit colours are never status colours. Every group and segment shows: there is no top-N and no
+  "Other" group. From the ninth limit name the hues repeat at lower opacity, and the legend names every one.
 - **Refresh**: the widget fetches when the dashboard refresh signal changes, and reports the time with
   `reportRefreshed`. The `refreshSeconds` of the panel is the minimum time between two fetches. The last good data
   stays on screen when a refresh fails, with a warning.
