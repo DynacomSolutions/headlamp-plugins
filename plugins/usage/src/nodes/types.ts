@@ -1,9 +1,30 @@
+/** What RunWarden says about one runner pod, from its pod labels and its job info series. */
+export interface RunnerInfo {
+  /** Tenant label `Owner.Repo` as given, '' when the pod has none (a warm pod). */
+  tenant: string;
+  /** Pool label, for example `rw-linux`. */
+  pool: string;
+  /** Pod role: runner, warm or job. */
+  role: string;
+  /** Job info, present only when RunWarden reports a job for the pod. */
+  job?: {
+    owner: string;
+    repo: string;
+    runsOn: string;
+    workflow: string;
+    job: string;
+    runId: string;
+  };
+}
+
 export interface PodUsage {
   namespace: string;
   pod: string;
   container: string;
   cpuCores: number;
   memBytes: number;
+  /** Set on pods RunWarden manages. */
+  runner?: RunnerInfo;
 }
 
 /** One systemd cgroup. Values are hierarchical: a parent includes its children. */

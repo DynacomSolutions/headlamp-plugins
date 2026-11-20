@@ -8,6 +8,7 @@ import type {
   NodeMetrics,
   PodUsage,
   ProgramUsage,
+  RunnerInfo,
   SystemUsage,
 } from './types';
 
@@ -43,6 +44,8 @@ export type QueryKey =
   | 'kubeMemCapacity'
   | 'podCpu'
   | 'podMem'
+  | 'runnerLabels'
+  | 'runnerJobs'
   | 'cgroupInfo'
   | 'cgroupCpu'
   | 'cgroupMem'
@@ -69,6 +72,10 @@ export const NODE_QUERIES: Record<QueryKey, string> = {
     'sum by (node, namespace, pod, container) (rate(container_cpu_usage_seconds_total{container!=""}[2m]))',
   podMem:
     'sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!=""})',
+  runnerLabels:
+    'max by (namespace, pod, label_runwarden_io_tenant, label_runwarden_io_pool, label_runwarden_io_role) (kube_pod_labels{label_runwarden_io_managed_by="runwarden"})',
+  runnerJobs:
+    'max by (namespace, pod, owner, repo, pool, runs_on, workflow, job, run_id) (runwarden_runner_job_info)',
   cgroupInfo: 'max by (node, unit, parent, agent_unit) (agent_memory_cgroup_info)',
   cgroupCpu: 'sum by (node, unit) (rate(agent_memory_cgroup_cpu_seconds_total[2m]))',
   cgroupMem: 'sum by (node, unit) (agent_memory_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',
@@ -170,6 +177,40 @@ function assembleSystem(
   return out;
 }
 
+/** Queries whose failure or empty result only means "no data": the rest of the page still works. */
+export const OPTIONAL_QUERIES: QueryKey[] = ['runnerLabels', 'runnerJobs'];
+
+/** RunWarden info per pod (key `namespace/pod`): pod labels first, job info on top. */
+function assembleRunners(results: Record<QueryKey, MetricSample[]>): Map<string, RunnerInfo> {
+  const out = new Map<string, RunnerInfo>();
+  for (const { metric: m } of results.runnerLabels ?? []) {
+    if (!m.namespace || !m.pod) continue;
+    out.set(`${m.namespace}/${m.pod}`, {
+      tenant: m.label_runwarden_io_tenant ?? '',
+      pool: m.label_runwarden_io_pool ?? '',
+      role: m.label_runwarden_io_role ?? '',
+    });
+  }
+  for (const { metric: m } of results.runnerJobs ?? []) {
+    if (!m.namespace || !m.pod) continue;
+    const id = `${m.namespace}/${m.pod}`;
+    const known = out.get(id) ?? { tenant: '', pool: m.pool ?? '', role: 'runner' };
+    out.set(id, {
+      ...known,
+      pool: known.pool || (m.pool ?? ''),
+      job: {
+        owner: m.owner ?? '',
+        repo: m.repo ?? '',
+        runsOn: m.runs_on ?? '',
+        workflow: m.workflow ?? '',
+        job: m.job ?? '',
+        runId: m.run_id ?? '',
+      },
+    });
+  }
+  return out;
+}
+
 export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): NodeMetrics[] {
   const v = {} as Record<QueryKey, NodeValues>;
   for (const key of Object.keys(NODE_QUERIES) as QueryKey[]) {
@@ -196,6 +237,7 @@ export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): 
   addPods(results.podMem ?? [], 'memBytes');
 
   const system = assembleSystem(results, v);
+  const runners = assembleRunners(results);
 
   const names = new Set<string>();
   for (const map of Object.values(v)) {
@@ -239,7 +281,10 @@ export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): 
         cpuUsed,
         memCapacity,
         memUsed,
-        pods: [...(pods.get(node)?.values() ?? [])],
+        pods: [...(pods.get(node)?.values() ?? [])].map(p => {
+          const runner = runners.get(`${p.namespace}/${p.pod}`);
+          return runner ? { ...p, runner } : p;
+        }),
         ...(system.has(node) ? { system: system.get(node) } : {}),
       };
     });

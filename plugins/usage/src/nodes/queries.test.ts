@@ -139,3 +139,75 @@ describe('assembleNodeMetrics system series', () => {
     expect(n.system).toBeUndefined();
   });
 });
+
+describe('RunWarden runner info', () => {
+  const pod = (namespace: string, name: string) => ({ node: 'n1', namespace, pod: name, container: 'runner' });
+  const base = {
+    kubeCpuCapacity: [s({ node: 'n1' }, 4)],
+    podCpu: [
+      s(pod('runwarden-runners', 'rw-a'), 1),
+      s(pod('runwarden-runners', 'rw-b'), 1),
+      s(pod('other', 'x'), 1),
+    ],
+  };
+  const labels = [
+    s(
+      {
+        namespace: 'runwarden-runners',
+        pod: 'rw-a',
+        label_runwarden_io_tenant: 'ExampleOrg..dotrepo',
+        label_runwarden_io_pool: 'rw-linux',
+        label_runwarden_io_role: 'runner',
+      },
+      1
+    ),
+  ];
+  const jobs = [
+    s(
+      {
+        namespace: 'runwarden-runners',
+        pod: 'rw-a',
+        owner: 'ExampleOrg',
+        repo: '.dotrepo',
+        pool: 'rw-linux',
+        runs_on: 'linux-runners',
+        workflow: 'CI',
+        job: 'build',
+        run_id: '42',
+      },
+      1
+    ),
+  ];
+
+  it('queries pod labels and job info', () => {
+    expect(NODE_QUERIES.runnerLabels).toContain('label_runwarden_io_managed_by="runwarden"');
+    expect(NODE_QUERIES.runnerJobs).toContain('runwarden_runner_job_info');
+  });
+
+  it('attaches labels and job info to pods', () => {
+    const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels, runnerJobs: jobs }));
+    const a = n.pods.find(p => p.pod === 'rw-a');
+    expect(a?.runner).toEqual({
+      tenant: 'ExampleOrg..dotrepo',
+      pool: 'rw-linux',
+      role: 'runner',
+      job: {
+        owner: 'ExampleOrg',
+        repo: '.dotrepo',
+        runsOn: 'linux-runners',
+        workflow: 'CI',
+        job: 'build',
+        runId: '42',
+      },
+    });
+    expect(n.pods.find(p => p.pod === 'rw-b')?.runner).toBeUndefined();
+    expect(n.pods.find(p => p.pod === 'x')?.runner).toBeUndefined();
+  });
+
+  it('treats an empty job result as no job info', () => {
+    const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels }));
+    const a = n.pods.find(p => p.pod === 'rw-a');
+    expect(a?.runner?.job).toBeUndefined();
+    expect(a?.runner?.pool).toBe('rw-linux');
+  });
+});

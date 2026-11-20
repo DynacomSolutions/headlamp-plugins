@@ -8,7 +8,7 @@ import { GENERIC, iconForContainer, iconForNamespace, iconForProcess } from './a
 import { cpuNote } from './cpuNote';
 import { cgroupLabel, processLabel, unitLabel } from './labels';
 import { applyNames, NameContext, NO_NAMES } from './names';
-import type { NodeMetrics, SystemUsage } from './types';
+import type { NodeMetrics, RunnerInfo, SystemUsage } from './types';
 
 export type Resource = 'cpu' | 'memory';
 
@@ -21,6 +21,11 @@ export interface SunNode {
     | 'category'
     | 'namespace'
     | 'pod'
+    | 'runner'
+    | 'repo'
+    | 'workflow'
+    | 'job'
+    | 'run'
     | 'container'
     | 'orchestrator'
     | 'control'
@@ -107,18 +112,119 @@ function fitChildren(parent: SunNode): void {
   for (const c of parent.children) fitChildren(c);
 }
 
+const rwIcon = {
+  runner: { kind: 'mdi', name: 'dns' },
+  repo: { kind: 'simple-icons', name: 'github' },
+  workflow: { kind: 'mdi', name: 'code-braces' },
+  job: { kind: 'mdi', name: 'hammer-wrench' },
+  run: { kind: 'mdi', name: 'console' },
+  warm: { kind: 'mdi', name: 'folder-outline' },
+} as const satisfies Record<string, NonNullable<SunNode['icon']>>;
+
+const WAITING = 'Waiting for job';
+const UNKNOWN = 'unknown';
+
+/** A RunWarden tenant label `Owner.Repo`, split on the first dot only (a repo may start with one). */
+export function splitTenant(tenant: string): { owner: string; repo: string } {
+  const i = tenant.indexOf('.');
+  if (i < 0) return { owner: tenant, repo: '' };
+  return { owner: tenant.slice(0, i), repo: tenant.slice(i + 1) };
+}
+
+/** Where a runner pod sits in the RunWarden rings: the group labels from the outer ring inwards. */
+interface RunnerPath {
+  /** Key, label and kind of each ring from the first one inside the namespace down. */
+  rings: { key: string; label: string; kind: SunNode['kind']; icon: SunNode['icon'] }[];
+  /** True when the containers sit straight under the last ring (a job run); else a pod arc holds them. */
+  podLeaf: boolean;
+}
+
+/** The rings for a pod RunWarden manages, or null when it has too little to group by. */
+function runnerPath(r: RunnerInfo): RunnerPath | null {
+  const { tenant, pool, job } = r;
+  if (job) {
+    const t = splitTenant(tenant);
+    const owner = job.owner || t.owner || UNKNOWN;
+    const label = job.runsOn || pool || UNKNOWN;
+    const repo = job.repo || t.repo || UNKNOWN;
+    const wf = job.workflow || UNKNOWN;
+    const jb = job.job || UNKNOWN;
+    return {
+      rings: [
+        { key: `rw:${owner}|${label}`, label: `${owner} / ${label}`, kind: 'runner', icon: rwIcon.runner },
+        { key: `repo:${repo}`, label: repo, kind: 'repo', icon: rwIcon.repo },
+        { key: `wf:${wf}`, label: wf, kind: 'workflow', icon: rwIcon.workflow },
+        { key: `job:${jb}`, label: jb, kind: 'job', icon: rwIcon.job },
+        { key: `run:${job.runId || UNKNOWN}`, label: `#${job.runId || UNKNOWN}`, kind: 'run', icon: rwIcon.run },
+      ],
+      podLeaf: true,
+    };
+  }
+  if (tenant) {
+    const t = splitTenant(tenant);
+    const owner = t.owner || UNKNOWN;
+    const label = pool || UNKNOWN;
+    const repo = t.repo || tenant;
+    return {
+      rings: [
+        { key: `rw:${owner}|${label}`, label: `${owner} / ${label}`, kind: 'runner', icon: rwIcon.runner },
+        { key: `repo:${repo}`, label: repo, kind: 'repo', icon: rwIcon.repo },
+        { key: 'wf:~waiting', label: WAITING, kind: 'workflow', icon: rwIcon.workflow },
+      ],
+      podLeaf: false,
+    };
+  }
+  if (pool || r.role === 'warm') {
+    return {
+      rings: [
+        { key: 'rw:~warm', label: 'Warm pool', kind: 'runner', icon: rwIcon.warm },
+        { key: `pool:${pool || UNKNOWN}`, label: pool || UNKNOWN, kind: 'runner', icon: rwIcon.warm },
+      ],
+      podLeaf: false,
+    };
+  }
+  return null;
+}
+
+/** The own value of a subtree: leaves keep theirs, a group is the sum of its children. */
+function rollUp(n: SunNode): number {
+  if (n.children.length > 0) n.value = n.children.reduce((s, c) => s + rollUp(c), 0);
+  return n.value;
+}
+
+function sortDeep(n: SunNode): void {
+  n.children.sort(byValue);
+  n.children.forEach(sortDeep);
+}
+
+/** Finds or adds the child with `key` under `parent`. A group starts at value 0 (see rollUp). */
+function groupChild(parent: SunNode, p: RunnerPath['rings'][number], prefix: string): SunNode {
+  const key = `${prefix}/${p.key}`;
+  let c = parent.children.find(x => x.key === key);
+  if (!c) {
+    c = { key, label: p.label, kind: p.kind, value: 0, children: [], icon: p.icon };
+    parent.children.push(c);
+  }
+  return c;
+}
+
 function kubernetes(m: NodeMetrics, r: Resource): SunNode {
   const val = (p: { cpuCores: number; memBytes: number }) =>
     r === 'cpu' ? p.cpuCores : p.memBytes;
-  const nss = new Map<string, Map<string, SunNode[]>>();
+  interface PodAcc {
+    cs: SunNode[];
+    runner?: RunnerInfo;
+  }
+  const nss = new Map<string, Map<string, PodAcc>>();
   for (const p of m.pods) {
     const v = val(p);
     if (!(v > 0)) continue;
-    const pods = nss.get(p.namespace) ?? new Map<string, SunNode[]>();
+    const pods = nss.get(p.namespace) ?? new Map<string, PodAcc>();
     nss.set(p.namespace, pods);
-    const cs = pods.get(p.pod) ?? [];
-    pods.set(p.pod, cs);
-    cs.push(
+    const acc = pods.get(p.pod) ?? { cs: [] };
+    pods.set(p.pod, acc);
+    if (p.runner) acc.runner = p.runner;
+    acc.cs.push(
       node(`c:${p.container}`, p.container, 'container', v, [], {
         icon: iconForContainer(p.container, p.namespace),
       })
@@ -128,18 +234,48 @@ function kubernetes(m: NodeMetrics, r: Resource): SunNode {
   for (const [ns, pods] of nss) {
     const nsKey = `k8s/ns:${ns}`;
     const podNodes: SunNode[] = [];
-    for (const [pod, cs] of pods) {
+    // RunWarden groups: built top-down by key, values rolled up from the container leaves.
+    const holder: SunNode = { key: nsKey, label: ns, kind: 'namespace', value: 0, children: [] };
+    for (const [pod, acc] of pods) {
       const podKey = `${nsKey}/pod:${pod}`;
-      for (const c of cs) c.key = `${podKey}/${c.key}`;
+      const path = acc.runner ? runnerPath(acc.runner) : null;
       // A pod looks like its biggest container that is a known app, else a generic pod.
-      const sorted = cs.sort(byValue);
+      const sorted = acc.cs.sort(byValue);
       const known = sorted.find(c => c.icon?.name !== GENERIC.container.name);
-      podNodes.push(
-        node(podKey, pod, 'pod', sum(sorted), sorted, { icon: known?.icon ?? GENERIC.pod })
-      );
+      if (!path) {
+        for (const c of sorted) c.key = `${podKey}/${c.key}`;
+        podNodes.push(
+          node(podKey, pod, 'pod', sum(sorted), sorted, { icon: known?.icon ?? GENERIC.pod })
+        );
+        continue;
+      }
+      let parent = holder;
+      let prefix = nsKey;
+      for (const ring of path.rings) {
+        parent = groupChild(parent, ring, prefix);
+        prefix = parent.key;
+      }
+      // A job run holds the containers itself; the pod id stays in their keys.
+      const leafPrefix = `${prefix}/pod:${pod}`;
+      for (const c of sorted) c.key = `${leafPrefix}/${c.key}`;
+      if (path.podLeaf) {
+        parent.children.push(...sorted);
+      } else {
+        parent.children.push({
+          key: leafPrefix,
+          label: pod,
+          kind: 'pod',
+          value: sum(sorted),
+          children: sorted,
+          icon: known?.icon ?? GENERIC.pod,
+        });
+      }
     }
+    rollUp(holder);
+    sortDeep(holder);
+    const kids = [...podNodes, ...holder.children];
     nsNodes.push(
-      node(nsKey, ns, 'namespace', sum(podNodes), podNodes.sort(byValue), {
+      node(nsKey, ns, 'namespace', sum(kids), kids.sort(byValue), {
         icon: iconForNamespace(ns),
       })
     );
