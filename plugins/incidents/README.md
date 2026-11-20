@@ -15,6 +15,34 @@ is read-only.
   surface and the plugin renders it. The page polls every 5 seconds while the
   diagnosis is queued or running.
 
+## Agents
+
+When `GET /api/launches/config` answers `enabled: true`, the diagnosis page has a
+**Run with an agent** section. It is hidden when launching is off.
+
+- **Run with an agent**: a button on each suggested fix. A fix that cites the
+  `dns_placement_plan` fact (or is about DNS while a plan exists) gets a
+  prominent button. The dialog holds the purpose (filled in), the project
+  (keys from the agent settings) and a read-only, collapsible preview of the
+  brief. **Request** stores a request. It starts nothing.
+- **Approval card**: **Approve and launch** starts the agent. **Reject** ends the
+  request. One operator may approve their own request. The card says so. The
+  card shows on the diagnosis page and on the launch page.
+- `/incidents/launches`: the **Agents** list, newest first, with status pills.
+  The status filter is the query string `?status=running`. A change of the filter
+  replaces the history entry, so Back leaves the page.
+- `/incidents/launches/<id>`: the launch. The header has a status pill (pending
+  approval, launching, running, waiting, completed, failed, rejected or
+  cancelled, each with a colour and an icon) and the elapsed time. Below it a
+  vertical timeline shows the runs and their steps with live timers. A step is
+  an expandable card (title, status, time, detail) for a command, a tool call or
+  a file change. The agent's latest reply is rendered as Markdown. A box sends a
+  follow-up message. A link opens the thread in T3 Code when the agent settings
+  have a `threadUrlTemplate`. The page reads the launch every 1.5 seconds while
+  it is launching, running or waiting, and stops when it is final.
+
+The item identity is a path segment. Filters are query strings.
+
 ## Settings
 
 Set them on the plugin settings page, or deploy
@@ -32,14 +60,16 @@ Requests go through the Kubernetes API service proxy, for example
 
 ## RBAC
 
-The signed-in user needs `get` on `services/proxy` for the agent Service:
+The signed-in user needs `get` on `services/proxy` for the agent Service. To
+request, approve, reject or message an agent, the user also needs `create` on it
+(the same right the chat needs):
 
 ```yaml
 rules:
   - apiGroups: [""]
     resources: ["services/proxy"]
     resourceNames: ["headlamp-agent:80"]
-    verbs: ["get"]
+    verbs: ["get", "create"]
 ```
 
 ## A2UI renderer
