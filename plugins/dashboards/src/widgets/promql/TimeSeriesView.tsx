@@ -231,7 +231,7 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
       : series
           .map((s, i) => ({
             key: s.key,
-            name: s.name,
+            name: s.fullName ?? s.name,
             colour: colourFor(s.key),
             value: valueAt(s, hoverT),
             top: stacked ? stacked.tops[i][hover as number] : undefined,

@@ -10,7 +10,7 @@ import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../c
 import { SettingsForm } from '../SettingsForm';
 import { parseBlocks } from './blocks';
 import { kioskBox, Notice, useColourBook, useInk } from './common';
-import { parseMatrix, Series, seriesStats } from './mapping';
+import { parseMatrix, Series, seriesStats, shortenNames } from './mapping';
 import { QueryEditor } from './QueryEditor';
 import { ChartKind, TimeSeriesView } from './TimeSeriesView';
 import { formatValue, parseOptionalNumber, Unit, UNIT_OPTIONS } from './units';
@@ -44,8 +44,13 @@ export function collectSeries(
 ): Series[] {
   if (!results) return [];
   const many = results.length > 1;
-  return results.flatMap((r, qi) =>
-    parseMatrix(r.result, legends[qi]).map(s => (many ? { ...s, key: `${qi}:${s.key}` } : s))
+  const named = results.map((r, qi) => {
+    const parsed = parseMatrix(r.result, legends[qi]);
+    // A query with its own label template keeps the names the template gives.
+    return legends[qi] && legends[qi].trim() !== '' ? parsed : shortenNames(parsed);
+  });
+  return named.flatMap((list, qi) =>
+    list.map(s => (many ? { ...s, key: `${qi}:${s.key}` } : s))
   );
 }
 
@@ -127,7 +132,10 @@ function TimeSeriesWidget({
               const st = seriesStats(s);
               return (
                 <TableRow key={s.key}>
-                  <TableCell sx={{ color: ink.primary, overflowWrap: 'anywhere' }}>
+                  <TableCell
+                    title={s.fullName ?? s.name}
+                    sx={{ color: ink.primary, overflowWrap: 'anywhere' }}
+                  >
                     {s.name}
                   </TableCell>
                   {[st.last, st.min, st.avg, st.max].map((v, i) => (
@@ -224,7 +232,7 @@ function TimeSeriesWidget({
                   key={s.key}
                   onClick={() => toggle(s.key)}
                   aria-pressed={!hidden.has(s.key)}
-                  title={s.name}
+                  title={s.fullName ?? s.name}
                   sx={{
                     display: 'inline-flex',
                     alignItems: 'center',

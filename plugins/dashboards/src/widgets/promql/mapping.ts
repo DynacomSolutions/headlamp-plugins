@@ -15,6 +15,8 @@ export interface Series {
   labels: Labels;
   /** The legend text. */
   name: string;
+  /** The full default name (`name{a="b"}`) when `name` was shortened. The tooltip shows it. */
+  fullName?: string;
   points: Point[];
 }
 
@@ -67,6 +69,29 @@ export function defaultName(labels: Labels, fallback = 'value'): string {
     .map(k => `${k}="${labels[k]}"`);
   if (rest.length === 0) return name || fallback;
   return `${name}{${rest.join(', ')}}`;
+}
+
+/**
+ * Shorter legend names for series that have no label template: only the label values that differ between the
+ * series, in label order, joined with " / ". The full default name moves to `fullName`. A series set with nothing
+ * that differs, or a short name that two series share, keeps its full name.
+ */
+export function shortenNames(series: Series[]): Series[] {
+  if (series.length < 2) return series;
+  const keys = [...new Set(series.flatMap(s => Object.keys(s.labels)))].sort();
+  const differing = keys.filter(k => new Set(series.map(s => s.labels[k] ?? '')).size > 1);
+  if (differing.length === 0) return series;
+  const shorts = series.map(s =>
+    differing
+      .map(k => s.labels[k] ?? '')
+      .filter(v => v !== '')
+      .join(' / ')
+  );
+  const count = new Map<string, number>();
+  shorts.forEach(n => count.set(n, (count.get(n) ?? 0) + 1));
+  return series.map((s, i) =>
+    shorts[i] === '' || (count.get(shorts[i]) ?? 0) > 1 ? s : { ...s, name: shorts[i], fullName: s.name }
+  );
 }
 
 function asArray(v: unknown): any[] {

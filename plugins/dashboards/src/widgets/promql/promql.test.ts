@@ -14,6 +14,7 @@ import {
   pickLabelColumns,
   reduceSamples,
   seriesStats,
+  shortenNames,
   stackSeries,
 } from './mapping';
 import { colourAt, ColourBook } from './palette';
@@ -385,5 +386,32 @@ describe('endpoint', () => {
       '/api/v1/namespaces/obs/services/prom:http/proxy/prometheus/api/v1/query?query=up'
     );
     expect(resolveEndpoint({ metricsPathPrefix: 'no-slash' }).pathPrefix).toBe('');
+  });
+});
+
+describe('shortenNames', () => {
+  const mk = (labels: Record<string, string>) => parseMatrix([{ metric: labels, values: [[1, '1']] }])[0];
+  it('shows only the label values that differ, and keeps the full set as the full name', () => {
+    const out = shortenNames([
+      mk({ namespace: 'agent-memory', job: 'x' }),
+      mk({ namespace: 'agents', job: 'x' }),
+    ]);
+    expect(out.map(s => s.name)).toEqual(['agent-memory', 'agents']);
+    expect(out[0].fullName).toBe('{job="x", namespace="agent-memory"}');
+  });
+  it('joins several differing labels in label order', () => {
+    const out = shortenNames([mk({ a: '1', b: 'x' }), mk({ a: '2', b: 'y' })]);
+    expect(out.map(s => s.name)).toEqual(['1 / x', '2 / y']);
+  });
+  it('leaves one series, or series with nothing different, as they are', () => {
+    const one = [mk({ a: '1' })];
+    expect(shortenNames(one)).toBe(one);
+    const same = [mk({ a: '1' }), mk({ a: '1' })];
+    expect(shortenNames(same)).toBe(same);
+  });
+  it('treats a missing label as empty and never gives two series the same short name', () => {
+    const out = shortenNames([mk({ a: '1' }), mk({ a: '1', b: '2' }), mk({ a: '1', b: '2', c: '3' })]);
+    expect(out[0].name).toBe('{a="1"}');
+    expect(new Set(out.map(s => s.name)).size).toBe(3);
   });
 });

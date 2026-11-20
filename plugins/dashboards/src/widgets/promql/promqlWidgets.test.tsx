@@ -109,7 +109,10 @@ describe('time series widget', () => {
     ).toBeLessThanOrEqual(300);
     expect(reportRefreshed).toHaveBeenCalled();
     // The legend names both series.
-    expect(container.textContent).toContain('namespace="a"');
+    // The legend shows the value that differs, and the title keeps the full label set.
+    expect(container.textContent).not.toContain('namespace="a"');
+    const entry = container.querySelector('button[title*="namespace=\\"a\\""]') as HTMLElement;
+    expect(entry.textContent).toBe('a');
   });
 
   it('shows one tooltip with every series at the pointer', async () => {
