@@ -49,6 +49,29 @@ When `GET /api/launches/config` answers `enabled: true`, the diagnosis page has 
 
 The item identity is a path segment. Filters are query strings.
 
+## Dashboard widgets
+
+The plugin adds two widgets to the [Dashboards](../dashboards/README.md) plugin, through its
+cross-plugin contract (`src/dashboardsContract.ts` is a copy of `plugins/dashboards/src/contract.ts`).
+Both fetch when the dashboard refresh signal changes, call `reportRefreshed`, and never refetch on a
+layout change. The Incidents pages are unchanged.
+
+| Type | Config | What it shows |
+| --- | --- | --- |
+| `incidents.list` | `{ status: 'all' \| 'queued' \| 'running' \| 'done' \| 'failed', severity: 'all' \| 'critical' \| 'warning' \| 'other', openOnly: boolean }` | A summary (counts by severity and status) that stays at the top. The list below it scrolls on its own. |
+| `incidents.chat` | `{}` | The incident agent chat, with the same model picker and backend as the chat page. The message list scrolls and the input stays at the bottom. |
+
+- The summary counts the rows that the filters leave. `other` severity means any severity that is
+  not `critical` or `warning`. `openOnly` hides the diagnoses whose alert is resolved.
+- When a dashboard has both widgets, a click on a list row selects that incident for the chat
+  (the alert name link still opens the incident page). A second click on the same row clears it.
+  The chat then talks about that incident (`diagnosisId`). Each incident keeps its own chat while the
+  dashboard stays open. Without a selection, the chat is a general chat about the cluster and the
+  open incidents, with a hint above it.
+- Without a chat widget on the dashboard, a row click opens the incident page.
+- Both widgets come from this one bundle, so they share a small in-memory store
+  (`src/selection.ts`). The selection is not saved.
+
 ## Settings
 
 Set them on the plugin settings page, or deploy
