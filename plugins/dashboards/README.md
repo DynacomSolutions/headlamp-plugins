@@ -342,10 +342,14 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   true) shows the stat tiles, and `rowLayout` is `list` (default, the table above) or `grouped-bars`. A saved
   widget without these keys uses the defaults.
 - **Grouped bars**: rows are grouped by `label` (for example the account), in order of first sight. A group is one
-  horizontal bar with one segment for each row. The segment is filled to the `fraction` of the row, and its tooltip
+  horizontal bar with one segment for each row. All bars share one ordered list of limit names, so a limit is in the
+  same column in every bar. Known names go first by window length (5-hour, daily, weekly, weekly with a model name,
+  monthly), then other names in order of first sight. A group without a limit shows a faint empty slot there. The
+  group label column fits the longest label, up to 35 % of the widget. Only a longer label is clipped, and a tooltip
+  gives the full label. The segment is filled to the `fraction` of the row, and its tooltip
   gives the group, the limit (the row `detail`) and the value. Each limit name has its own colour, the same in every
-  group, from the eight validated categorical hues of the data visualisation palette (light and dark), in order of
-  first sight. A legend maps the colours to the limit names. A small status marker (shape and word) sits under each
+  group, from the eight validated categorical hues of the data visualisation palette (light and dark), in the order
+  of that list. A legend maps the colours to the limit names. A small status marker (shape and word) sits under each
   segment, and the limit colours are never status colours. Every group and segment shows: there is no top-N and no
   "Other" group. From the ninth limit name the hues repeat at lower opacity, and the legend names every one.
 - **Refresh**: the widget fetches when the dashboard refresh signal changes, and reports the time with
