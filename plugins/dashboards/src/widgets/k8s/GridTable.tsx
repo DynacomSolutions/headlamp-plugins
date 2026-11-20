@@ -48,24 +48,51 @@ export function GridTable(props: {
   kiosk: boolean;
   label: string;
   empty?: string;
+  /** Keep the first column in view while the table scrolls sideways. */
+  stickyFirst?: boolean;
 }): JSX.Element {
-  const { columns, count, getLine, sort, onSort, rowHeight, colors, kiosk, label } = props;
+  const { columns, count, getLine, sort, onSort, rowHeight, colors, kiosk, label, stickyFirst } =
+    props;
   const scroller = React.useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = React.useState(0);
   const [height, setHeight] = React.useState(400);
+  // Whether more columns wait on the right, for the edge fade that tells the user to scroll sideways.
+  const [moreRight, setMoreRight] = React.useState(false);
+
+  const measure = React.useCallback(() => {
+    const el = scroller.current;
+    if (!el) return;
+    setHeight(el.clientHeight || 400);
+    setMoreRight(el.scrollWidth - el.clientWidth - el.scrollLeft > 2);
+  }, []);
 
   React.useEffect(() => {
     const el = scroller.current;
     if (!el) return undefined;
-    setHeight(el.clientHeight || 400);
+    measure();
     if (typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(() => setHeight(el.clientHeight || 400));
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [measure]);
+
+  // The first cell of a line stays at the left edge. A band over it keeps the line colour.
+  const stickyCell = (strong: boolean, header: boolean) =>
+    stickyFirst
+      ? {
+          position: 'sticky',
+          left: 0,
+          zIndex: 1,
+          bgcolor: colors.surface,
+          backgroundImage: strong && !header ? `linear-gradient(${colors.band}, ${colors.band})` : undefined,
+          borderRight: `1px solid ${colors.line}`,
+        }
+      : {};
 
   const template = columns.map(c => `minmax(${c.min ?? 110}px, ${c.grow ?? 1}fr)`).join(' ');
   const minWidth = columns.reduce((n, c) => n + (c.min ?? 110), 0);
+  // The columns can change after the first paint (the data arrives later), and that is no resize of the box.
+  React.useEffect(measure, [measure, minWidth, count]);
   const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
   const last = Math.min(count, Math.ceil((scrollTop + height) / rowHeight) + OVERSCAN);
   const lines: React.ReactNode[] = [];
@@ -119,6 +146,9 @@ export function GridTable(props: {
                 whiteSpace: 'nowrap',
                 textAlign: c.numeric ? 'right' : 'left',
                 fontVariantNumeric: c.numeric ? 'tabular-nums' : undefined,
+                ...(ci === 0 ? stickyCell(strong, false) : {}),
+                // A sticky cell fills the row height, so the line colour reaches the edges.
+                ...(ci === 0 && stickyFirst ? { alignSelf: 'stretch', display: 'flex', alignItems: 'center' } : {}),
               }}
             >
               {line.cells?.[ci]}
@@ -128,16 +158,20 @@ export function GridTable(props: {
     );
   }
 
-  return (
+  const table = (
     <Box
       ref={scroller}
       role="table"
       aria-label={label}
       aria-rowcount={count + 1}
-      onScroll={e => setScrollTop((e.currentTarget as HTMLDivElement).scrollTop)}
+      onScroll={e => {
+        setScrollTop((e.currentTarget as HTMLDivElement).scrollTop);
+        measure();
+      }}
       sx={{
         flex: 1,
         minHeight: 0,
+        minWidth: 0,
         overflow: 'auto',
         color: colors.text,
         fontSize: kiosk ? '1rem' : '0.8125rem',
@@ -162,7 +196,7 @@ export function GridTable(props: {
             fontWeight: 600,
           }}
         >
-          {columns.map(c => {
+          {columns.map((c, ci) => {
             const active = sort?.id === c.id;
             const content = (
               <>
@@ -186,6 +220,8 @@ export function GridTable(props: {
                   overflow: 'hidden',
                   whiteSpace: 'nowrap',
                   textAlign: c.numeric ? 'right' : 'left',
+                  ...(ci === 0 ? stickyCell(false, true) : {}),
+                  ...(ci === 0 && stickyFirst ? { alignSelf: 'stretch', display: 'flex', alignItems: 'center' } : {}),
                 }}
               >
                 {c.sortable && onSort ? (
@@ -224,6 +260,34 @@ export function GridTable(props: {
           </Box>
         )}
       </Box>
+    </Box>
+  );
+
+  return (
+    <Box sx={{ position: 'relative', flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      {table}
+      {moreRight && (
+        <Box
+          aria-hidden
+          data-more-columns
+          sx={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            right: 0,
+            width: 36,
+            pointerEvents: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            pr: 0.25,
+            color: colors.muted,
+            background: `linear-gradient(to right, transparent, ${colors.surface} 80%)`,
+          }}
+        >
+          <Icon icon="mdi:chevron-right" width={22} />
+        </Box>
+      )}
     </Box>
   );
 }

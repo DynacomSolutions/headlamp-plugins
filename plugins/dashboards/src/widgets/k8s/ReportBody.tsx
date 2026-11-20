@@ -459,7 +459,13 @@ function MatrixTable(props: {
       grow: 2,
       min: 160,
     },
-    ...report.colLabels.map((c, i) => ({ id: `c${i}`, header: c, numeric: true, min: 90 })),
+    ...report.colLabels.map((c, i) => ({
+      id: `c${i}`,
+      header: c,
+      numeric: true,
+      // Wide enough for the whole header, so a long status name is not cut.
+      min: Math.max(90, Math.round(c.length * 8.5 + 28)),
+    })),
     { id: '#total', header: 'Total', numeric: true, min: 90 },
   ];
   const getLine = React.useCallback(
@@ -491,6 +497,7 @@ function MatrixTable(props: {
       rowHeight={rowHeight}
       colors={colors}
       kiosk={kiosk}
+      stickyFirst
       label={`${config.source.kind} matrix report, ${report.measure}`}
     />
   );
