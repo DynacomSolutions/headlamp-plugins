@@ -1,8 +1,8 @@
 # headlamp-plugins
 
-Twelve plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
+Thirteen plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
 spot slow disks, see where CI jobs are running, find application URLs, manage
-notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, see where CPU, memory, disk and network go, check uptime from several sites, and read incident diagnoses.
+notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, see where CPU, memory, disk and network go, check uptime from several sites, read incident diagnoses, and build dashboards of widgets.
 
 Built with `@kinvolk/headlamp-plugin` (TypeScript + React). Install the plugins
 you need; each has its own release archive and configuration.
@@ -21,6 +21,7 @@ you need; each has its own release archive and configuration.
 | [Usage](#usage) | Break down CPU, memory, disk and network usage by namespace, workload, Service, node or label | [Queries and the label join](plugins/usage/README.md) |
 | [Uptime](#uptime) | Check HTTP, TCP, TLS, DNS and ICMP targets from several sites, with history | [Labels and scrape config](plugins/uptime/README.md) |
 | [Incidents](#incidents) | Read the agent's alert diagnoses, rendered from A2UI | [Settings, RBAC and the renderer](plugins/incidents/README.md) |
+| [Dashboards](#dashboards) | Build, save and view dashboards of widgets in tabs and sections | [Storage, URLs and the widget contract](plugins/dashboards/README.md) |
 
 ## Agent layer
 
@@ -245,17 +246,34 @@ and read the likely cause, the evidence and the suggested read-only checks.
 Needs the headlamp-agent Service, reached through the Kubernetes service proxy.
 See the [settings and RBAC guide](plugins/incidents/README.md).
 
+### Dashboards
+
+Build your own dashboards, like the Salesforce Lightning App Builder. Drag widgets onto a grid,
+resize them, group them in sections (normal, sticky or self-scrolling) and tabs, and save the
+result. A dashboard has dashboard-level filters, saved views, a refresh button with an
+automatic interval, and a full screen kiosk view. Other plugins supply widgets (tables, charts,
+status cards) through a small contract. The plugin itself ships a clock, a Markdown note and a
+header or divider.
+
+**Example:** make a wall display. Create a dashboard, add a clock and a header in a sticky
+section, then add widgets in a self-scrolling section below. Set the refresh to 30 s and open
+it with `?kiosk=1`.
+
+Each dashboard is one ConfigMap, so you can keep them in Git. Needs permission to read
+ConfigMaps in the dashboards namespace, and to change them to edit. See the
+[storage, URL and widget contract guide](plugins/dashboards/README.md).
+
 Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
-The release contains twelve plugin archives and twelve checksum lines.
+The release contains thirteen plugin archives and thirteen checksum lines.
 
 ## Creating a release
 
 Push a strict semantic-version tag such as `v1.2.3` or `v1.2.3-rc.1` to
 create a release. The workflow stages the tag version in each plugin's
 `package.json` and `package-lock.json` in its job workspace without committing
-those changes, then creates and uploads twelve plugin archives plus
+those changes, then creates and uploads thirteen plugin archives plus
 `SHA256SUMS`. Tags containing a hyphen publish as prereleases.
 
 ## Installing a release
