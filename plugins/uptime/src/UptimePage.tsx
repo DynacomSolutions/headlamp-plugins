@@ -15,9 +15,9 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts';
+import { HistoryStrip } from './HistoryStrip';
 import { PROBE_JOB, queryMetrics, queryRange, RangeSeries } from './metrics';
 import {
-  bucketSeverity,
   buildChecks,
   Check,
   formatDays,
@@ -115,34 +115,16 @@ function SiteCell({ site, type }: { site?: SiteResult; type: string }): JSX.Elem
   );
 }
 
-function HistoryStrip({ check }: { check: Check }): JSX.Element {
-  const theme = useTheme();
-  const colour = (v: number | undefined) => {
-    const sev = bucketSeverity(v);
-    if (sev === 'none') return theme.palette.action.disabledBackground;
-    if (sev === 'ok') return theme.palette.success.main;
-    if (sev === 'warn') return theme.palette.warning.main;
-    return theme.palette.error.main;
-  };
+function CheckHistory({ check }: { check: Check }): JSX.Element {
   const failing = check.history.filter(v => v !== undefined && v < 0.999).length;
   const minutes = HISTORY_STEP_SEC / 60;
   return (
-    <Box
-      role="img"
-      aria-label={`${check.name}: ${failing} of ${check.history.length} ${minutes}-minute periods with failures in the last ${HISTORY_HOURS} hours`}
-      sx={{ display: 'flex', gap: '1px', alignItems: 'stretch', height: 18, minWidth: 192 }}
-    >
-      {check.history.map((v, i) => (
-        <Tooltip
-          key={i}
-          title={`${new Date((historyStart(Date.now() / 1000) + i * HISTORY_STEP_SEC) * 1000).toLocaleString()}: ${
-            v === undefined ? 'no data' : formatPercent(v)
-          }`}
-        >
-          <Box sx={{ flex: '1 1 0', minWidth: '1px', bgcolor: colour(v), borderRadius: '1px' }} />
-        </Tooltip>
-      ))}
-    </Box>
+    <HistoryStrip
+      history={check.history}
+      startSec={historyStart(Date.now() / 1000)}
+      stepSec={HISTORY_STEP_SEC}
+      label={`${check.name}: ${failing} of ${check.history.length} ${minutes}-minute periods with failures in the last ${HISTORY_HOURS} hours`}
+    />
   );
 }
 
@@ -237,7 +219,7 @@ function CheckRow({ check, locations }: { check: Check; locations: string[] }): 
         <TableCell align="right">{formatPercent(check.uptime24h)}</TableCell>
         <TableCell align="right">{formatPercent(check.uptime7d)}</TableCell>
         <TableCell sx={{ width: 260 }}>
-          <HistoryStrip check={check} />
+          <CheckHistory check={check} />
         </TableCell>
       </TableRow>
       {open && (

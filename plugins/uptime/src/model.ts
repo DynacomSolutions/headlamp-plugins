@@ -27,6 +27,8 @@ export interface Check {
   tlsDaysLeft?: number;
   uptime24h?: number;
   uptime7d?: number;
+  /** The series labels of the check (all but the probe plumbing), for grouping. */
+  labels: Record<string, string>;
   /** Combined availability per history bucket (0..1), undefined = no data. */
   history: (number | undefined)[];
 }
@@ -45,6 +47,16 @@ export interface Raw {
 export const HISTORY_HOURS = 24;
 export const HISTORY_STEP_SEC = 15 * 60;
 export const HISTORY_BUCKETS = (HISTORY_HOURS * 3600) / HISTORY_STEP_SEC;
+
+/** The history grid: bucket width and count. The page uses 96 buckets of 15 minutes. */
+export interface HistoryGrid {
+  stepSec: number;
+  buckets: number;
+}
+export const DEFAULT_GRID: HistoryGrid = { stepSec: HISTORY_STEP_SEC, buckets: HISTORY_BUCKETS };
+
+/** Series labels that are probe plumbing, not a grouping the user set. */
+const PLUMBING_LABELS = new Set(['__name__', 'job', 'target', 'location', 'type', 'policy', 'instance']);
 export const TLS_WARN_DAYS = 14;
 export const TLS_CRIT_DAYS = 7;
 
@@ -81,7 +93,7 @@ export function combinedUptimeQuery(job: string, window: string, step: string): 
   );
 }
 
-export function queries(job: string) {
+export function queries(job: string, historyStepSec: number = HISTORY_STEP_SEC) {
   const sel = `{job="${job}"}`;
   return {
     success: `probe_success${sel}`,
@@ -91,7 +103,7 @@ export function queries(job: string) {
     siteUptime24h: `avg_over_time(probe_success${sel}[24h])`,
     uptime24h: combinedUptimeQuery(job, '24h', '1m'),
     uptime7d: combinedUptimeQuery(job, '7d', '5m'),
-    history: `avg_over_time(probe_success${sel}[${HISTORY_STEP_SEC}s])`,
+    history: `avg_over_time(probe_success${sel}[${historyStepSec}s])`,
   };
 }
 
@@ -105,16 +117,20 @@ function siteOf(check: Check, location: string): SiteResult {
 }
 
 /** End of the history grid: VictoriaMetrics aligns range queries to the step, so do the same. */
-export function historyEnd(nowSec: number): number {
-  return Math.floor(nowSec / HISTORY_STEP_SEC) * HISTORY_STEP_SEC;
+export function historyEnd(nowSec: number, grid: HistoryGrid = DEFAULT_GRID): number {
+  return Math.floor(nowSec / grid.stepSec) * grid.stepSec;
 }
 
-export function historyStart(nowSec: number): number {
-  return historyEnd(nowSec) - (HISTORY_BUCKETS - 1) * HISTORY_STEP_SEC;
+export function historyStart(nowSec: number, grid: HistoryGrid = DEFAULT_GRID): number {
+  return historyEnd(nowSec, grid) - (grid.buckets - 1) * grid.stepSec;
 }
 
 /** Build the rows. History bucket i is the range point at historyStart + i*step. */
-export function buildChecks(raw: Raw, nowSec: number): { checks: Check[]; locations: string[] } {
+export function buildChecks(
+  raw: Raw,
+  nowSec: number,
+  grid: HistoryGrid = DEFAULT_GRID
+): { checks: Check[]; locations: string[] } {
   const byName = new Map<string, Check>();
   const locations = new Set<string>();
   const ensure = (m: Record<string, string>): Check | undefined => {
@@ -129,7 +145,8 @@ export function buildChecks(raw: Raw, nowSec: number): { checks: Check[]; locati
         policy: policyOf(m.policy),
         sites: new Map(),
         status: 'unknown',
-        history: new Array(HISTORY_BUCKETS).fill(undefined),
+        labels: Object.fromEntries(Object.entries(m).filter(([k]) => !PLUMBING_LABELS.has(k))),
+        history: new Array(grid.buckets).fill(undefined),
       };
       byName.set(name, c);
     }
@@ -169,20 +186,20 @@ export function buildChecks(raw: Raw, nowSec: number): { checks: Check[]; locati
   }
 
   // History: per check, per bucket, the values of every site, combined by policy.
-  const start = historyStart(nowSec);
+  const start = historyStart(nowSec, grid);
   const perBucket = new Map<string, number[][]>();
   for (const series of raw.history) {
     const c = byName.get(series.metric.target);
     if (!c) continue;
     let buckets = perBucket.get(c.name);
     if (!buckets) {
-      buckets = Array.from({ length: HISTORY_BUCKETS }, () => []);
+      buckets = Array.from({ length: grid.buckets }, () => []);
       perBucket.set(c.name, buckets);
     }
     for (const [t, v] of series.values) {
-      const i = Math.round((t - start) / HISTORY_STEP_SEC);
+      const i = Math.round((t - start) / grid.stepSec);
       const n = num(v);
-      if (i >= 0 && i < HISTORY_BUCKETS && n !== undefined) buckets[i].push(n);
+      if (i >= 0 && i < grid.buckets && n !== undefined) buckets[i].push(n);
     }
   }
   for (const [name, buckets] of perBucket) {
