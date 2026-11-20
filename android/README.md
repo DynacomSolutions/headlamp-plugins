@@ -14,7 +14,7 @@ who uses the capacity. It reads the data from one or more
 - A small widget shows the cluster totals for CPU and memory.
 - A larger widget shows a scrollable node list. The worst node is first (the higher of CPU and memory).
 - Bars are green below 75%, amber above 75% and red above 90%.
-- Tap the widget body to open the Nodes page of the usage plugin in the browser.
+- Tap the widget body to open the Usage dashboard of the usage plugin in the browser.
 - Tap Refresh in the widget header to update at once.
 - The widget shows an error text when the server is not reachable, when the token is refused (401 or 403), or when the metrics API is missing (404 or 503).
 
@@ -88,8 +88,9 @@ The usage dashboard widget reads one panel (GET only):
 | `<base>/clusters/<cluster>/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets/usage-dashboard` | CPU and memory rings |
 
 The node usage widget needs the Kubernetes metrics server in the cluster.
-The widget opens `<base>/c/<cluster>/usage/nodes`. This page needs the usage plugin of this repository.
+The widget opens `<base>/c/<cluster>/usage/dashboard`. This page needs the usage plugin of this repository.
 The usage dashboard widget opens the same page.
+The old `/usage/nodes` path still redirects to the dashboard, for older app versions and bookmarks.
 
 ## Authentication
 

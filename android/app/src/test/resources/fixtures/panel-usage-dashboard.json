@@ -5,18 +5,18 @@
   "status": "warn",
   "summary": "CPU 53.1%, memory 81.4% on 5 nodes",
   "generatedAt": "2026-11-20T08:00:00.000Z",
-  "link": "/c/{cluster}/usage/nodes",
+  "link": "/c/{cluster}/usage/dashboard",
   "stats": [
     { "label": "CPU", "value": "53.1%", "status": "ok" },
     { "label": "Memory", "value": "81.4%", "status": "warn" },
     { "label": "Nodes", "value": "5", "status": "ok" }
   ],
   "rows": [
-    { "label": "worker-1", "detail": "CPU 61.0%, Mem 88.2%", "value": "88.2%", "fraction": 0.882, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
-    { "label": "worker-2", "detail": "CPU 55.4%, Mem 79.0%", "value": "79.0%", "fraction": 0.79, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
-    { "label": "worker-3", "detail": "CPU 48.9%, Mem 80.1%", "value": "80.1%", "fraction": 0.801, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
-    { "label": "worker-4", "detail": "CPU 50.2%, Mem 77.3%", "value": "77.3%", "fraction": 0.773, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
-    { "label": "worker-5", "detail": "CPU 50.0%, Mem 82.5%", "value": "82.5%", "fraction": 0.825, "status": "warn", "link": "/c/{cluster}/usage/nodes" }
+    { "label": "worker-1", "detail": "CPU 61.0%, Mem 88.2%", "value": "88.2%", "fraction": 0.882, "status": "warn", "link": "/c/{cluster}/usage/dashboard" },
+    { "label": "worker-2", "detail": "CPU 55.4%, Mem 79.0%", "value": "79.0%", "fraction": 0.79, "status": "warn", "link": "/c/{cluster}/usage/dashboard" },
+    { "label": "worker-3", "detail": "CPU 48.9%, Mem 80.1%", "value": "80.1%", "fraction": 0.801, "status": "warn", "link": "/c/{cluster}/usage/dashboard" },
+    { "label": "worker-4", "detail": "CPU 50.2%, Mem 77.3%", "value": "77.3%", "fraction": 0.773, "status": "warn", "link": "/c/{cluster}/usage/dashboard" },
+    { "label": "worker-5", "detail": "CPU 50.0%, Mem 82.5%", "value": "82.5%", "fraction": 0.825, "status": "warn", "link": "/c/{cluster}/usage/dashboard" }
   ],
   "rings": [
     {
