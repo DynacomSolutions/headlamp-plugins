@@ -1,0 +1,22 @@
+import { describe, expect, it } from 'vitest';
+import { ICON_NAMES, isIconName, searchIcons } from './iconNames';
+
+describe('icon search', () => {
+  it('lists mdi names', () => {
+    expect(ICON_NAMES.length).toBeGreaterThan(100);
+    expect(ICON_NAMES.every(n => n.startsWith('mdi:'))).toBe(true);
+  });
+  it('requires every word', () => {
+    const r = searchIcons('clock outline');
+    expect(r).toContain('mdi:clock-outline');
+    expect(r.every(n => n.includes('clock') && n.includes('outline'))).toBe(true);
+    expect(searchIcons('zzzzzz')).toEqual([]);
+    expect(searchIcons('')).toHaveLength(120);
+    expect(searchIcons('mdi:server')).toContain('mdi:server');
+  });
+  it('validates names', () => {
+    expect(isIconName('mdi:chart-line')).toBe(true);
+    expect(isIconName('chart-line')).toBe(false);
+    expect(isIconName('mdi:Bad Name')).toBe(false);
+  });
+});
