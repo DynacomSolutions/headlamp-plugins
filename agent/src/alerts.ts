@@ -66,7 +66,7 @@ export class AlertGate {
     return this.room();
   }
 
-  /** Only the hourly limit: a person who runs a failed diagnosis again is not held back by severity or the ignore list. */
+  /** Only the hourly limit of webhook diagnoses. */
   async room(): Promise<{ ok: true } | { ok: false; reason: string }> {
     const hourAgo = Date.now() - 3600_000;
     while (this.started.length && this.started[0] < hourAgo) this.started.shift();

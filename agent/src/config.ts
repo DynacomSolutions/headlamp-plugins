@@ -113,6 +113,8 @@ export interface DiagnosisConfig {
   severities: string[];
   /** Upper bound on webhook-started diagnoses per hour (protects the model quota). */
   maxPerHour: number;
+  /** Re-runs a person started by hand that may be queued or running at one time. They do not count against `maxPerHour`. */
+  maxConcurrentReruns: number;
   /** Alerts with these alertnames are never diagnosed. */
   ignoreAlerts: string[];
 }
@@ -289,6 +291,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       toolBudget: int(env.AGENT_TOOL_BUDGET, 10),
       severities: list(env.AGENT_DIAGNOSE_SEVERITIES, ['warning', 'critical']).map(s => s.toLowerCase()),
       maxPerHour: int(env.AGENT_MAX_DIAGNOSES_PER_HOUR, 6),
+      maxConcurrentReruns: int(env.AGENT_MAX_CONCURRENT_RERUNS, 2),
       ignoreAlerts: list(env.AGENT_IGNORE_ALERTS, ['Watchdog', 'InfoInhibitor']),
     },
     launch: loadLaunchConfig(env),

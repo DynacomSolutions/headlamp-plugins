@@ -218,9 +218,11 @@ clears and `attempts` starts at 1. The failed attempt moves to `previousAttempts
 (`at`, `model`, `error`; the last 10 stay). `rerunAt` holds the time of the re-run. It works for
 resolved alerts too: the run uses the alert as it was, and a restart scan does not fail it
 because the alert is resolved. Answers: `202 {id, status, model}`; `404` unknown id; `409` when
-the status is not `failed`; `400` for an unknown model or body; `429` when the hourly limit is
-used; `503` without a model or while the pod stops. It has the same write protection as
-`POST /api/diagnoses`. Each re-run counts against `AGENT_MAX_DIAGNOSES_PER_HOUR`.
+the status is not `failed`; `400` for an unknown model or body; `429` when
+`AGENT_MAX_CONCURRENT_RERUNS` re-runs are already queued or running; `503` without a model or while the pod stops. It has the same write protection as
+`POST /api/diagnoses`. A re-run by hand does not count against `AGENT_MAX_DIAGNOSES_PER_HOUR`,
+so it never takes a slot from the automatic diagnoses of new alerts. One diagnosis runs again once at
+a time (`409` while it is queued or running), and `AGENT_MAX_CONCURRENT_RERUNS` limits the open re-runs.
 
 Every diagnosis is kept for ever. Nothing deletes or prunes them. They live in
 PostgreSQL (`DATABASE_URL`, the shared `pg-shared` cluster): one row per diagnosis, the
@@ -623,7 +625,8 @@ turns launching off with a reason. It does not stop the service.
 | `PUSH_MAX_PER_10_MIN` | `10` | Pushes one device may get in ten minutes |
 | `PUSH_EXTRA_HOSTS` | none | Extra exact push-service host names. Leave empty in production |
 | `AGENT_DIAGNOSE_SEVERITIES` | `warning,critical` | Severities that start a diagnosis from the webhook |
-| `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Diagnoses per hour: webhook diagnoses and re-runs together |
+| `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Webhook diagnoses per hour. Re-runs by hand do not count |
+| `AGENT_MAX_CONCURRENT_RERUNS` | `2` | Re-runs by hand that may be queued or running at one time. More get a 429 |
 | `AGENT_IGNORE_ALERTS` | `Watchdog,InfoInhibitor` | Alert names that are never diagnosed |
 
 ## Development

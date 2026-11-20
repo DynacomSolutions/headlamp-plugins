@@ -7,7 +7,7 @@ import type { Diagnosis } from '../src/agent/report.js';
 import { MemoryDiagnosisStore, type DiagnosisStore } from '../src/store.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
 
-const engine = vi.hoisted(() => ({ started: 0, ids: [] as string[], models: [] as string[], fail: undefined as string | undefined, alerts: [] as unknown[] }));
+const engine = vi.hoisted(() => ({ hold: undefined as Promise<void> | undefined, started: 0, ids: [] as string[], models: [] as string[], fail: undefined as string | undefined, alerts: [] as unknown[] }));
 
 vi.mock('../src/agent/engine.js', () => ({
   diagnose: vi.fn(async (opts: { id: string; alert: unknown; source: string; host: string; budget: number; model?: { name: string } }) => {
@@ -15,6 +15,7 @@ vi.mock('../src/agent/engine.js', () => ({
     engine.ids.push(opts.id);
     engine.models.push(opts.model?.name ?? '');
     engine.alerts.push(opts.alert);
+    if (engine.hold) await engine.hold;
     const base = { id: opts.id, createdAt: 'x', source: opts.source, host: opts.host, alert: opts.alert, evidence: [], toolCalls: 0, toolBudget: opts.budget, model: opts.model?.name ?? 'm', a2ui: [] };
     return engine.fail ? { ...base, status: 'failed', error: engine.fail } : { ...base, status: 'done' };
   }),
@@ -36,16 +37,17 @@ beforeEach(async () => {
   engine.models = [];
   engine.alerts = [];
   engine.fail = undefined;
+  engine.hold = undefined;
 });
 afterEach(async () => {
   await db.close();
   rmSync(dir, { recursive: true, force: true });
 });
 
-function config(maxPerHour = 6) {
+function config(maxPerHour = 6, maxConcurrentReruns = 2) {
   const c = { ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir };
   c.models = { routes: [route('one', ['a', 'b']), route('two', ['c'])], defaultModel: 'one/a', skipped: [] };
-  c.diagnosis = { ...c.diagnosis, maxPerHour };
+  c.diagnosis = { ...c.diagnosis, maxPerHour, maxConcurrentReruns };
   return c;
 }
 
@@ -166,27 +168,85 @@ describe('POST /api/diagnoses/:id/rerun', () => {
     await server.close();
   });
 
-  it('answers 429 when the hourly limit is used, and counts re-runs against it', async () => {
+  it('does not count a re-run against the hourly limit of webhook diagnoses', async () => {
+    // The hourly limit is already used by webhook diagnoses. A re-run by hand still starts.
+    await reader.put(failed('f1'));
+    await reader.put(failed('w1', { status: 'done', createdAt: new Date().toISOString(), error: undefined }));
+    const server = await startServer(config(1), 'test', { store: await podStore(db, { owner: 'S' }) });
+    expect((await rerun(server.port, 'f1')).status).toBe(202);
+    await until(async () => (await read('f1')).status === 'done');
+    await server.close();
+  });
+
+  it('keeps the hourly limit for new alerts after re-runs by hand', async () => {
+    await reader.put(failed('f1'));
+    await reader.put(failed('f2'));
+    const store = await podStore(db, { owner: 'S' });
+    const server = await startServer(config(2), 'test', { store });
+    expect((await rerun(server.port, 'f1')).status).toBe(202);
+    expect((await rerun(server.port, 'f2')).status).toBe(202);
+    await until(async () => (await read('f1')).status === 'done' && (await read('f2')).status === 'done');
+    // Two re-runs in the last hour leave both webhook slots free.
+    expect(await store.countStartedSince(Date.now() - 3600_000)).toBe(0);
+    const post = (node: string) =>
+      fetch(`http://127.0.0.1:${server.port}/api/v2/alerts`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify([{ labels: { alertname: 'NodeNotReady', severity: 'critical', node }, annotations: {}, startsAt: new Date().toISOString() }]),
+      });
+    // Both slots of the hour are free for new alerts. A third alert waits for the next hour.
+    for (const node of ['n1', 'n2', 'n3']) expect((await post(node)).status).toBeLessThan(300);
+    await until(async () => (await store.countStartedSince(Date.now() - 3600_000)) === 2);
+    await new Promise(r => setTimeout(r, 100));
+    expect(await store.countStartedSince(Date.now() - 3600_000)).toBe(2);
+    await server.close();
+  });
+
+  it('answers 429 when too many re-runs are open, and accepts one again when one finishes', async () => {
     await reader.put(failed('f1'));
     await reader.put(failed('f2'));
     await reader.put(failed('f3'));
-    const server = await startServer(config(2), 'test', { store: await podStore(db, { owner: 'S' }) });
+    let release!: () => void;
+    engine.hold = new Promise<void>(r => (release = r));
+    const server = await startServer(config(6, 2), 'test', { store: await podStore(db, { owner: 'S' }) });
     expect((await rerun(server.port, 'f1')).status).toBe(202);
     expect((await rerun(server.port, 'f2')).status).toBe(202);
     const res = await rerun(server.port, 'f3');
     expect(res.status).toBe(429);
-    expect((await res.json()).error).toContain('hourly limit');
-    await until(async () => (await read('f2')).status === 'done');
+    const message = (await res.json()).error as string;
+    expect(message).toContain('2 re-runs are already queued or running');
+    expect(message).toContain('limit 2');
     expect((await read('f3')).status).toBe('failed');
+    engine.hold = undefined;
+    release();
+    await until(async () => (await read('f1')).status === 'done' && (await read('f2')).status === 'done');
+    expect((await rerun(server.port, 'f3')).status).toBe(202);
+    await until(async () => (await read('f3')).status === 'done');
     await server.close();
   });
 
-  it('counts webhook diagnoses of the last hour against the limit', async () => {
-    await reader.put(failed('f1'));
-    await reader.put(failed('w1', { status: 'done', createdAt: new Date().toISOString(), error: undefined }));
-    const server = await startServer(config(1), 'test', { store: await podStore(db, { owner: 'S' }) });
-    expect((await rerun(server.port, 'f1')).status).toBe(429);
+  it('does not let parallel requests pass the open re-run limit', async () => {
+    for (const id of ['p1', 'p2', 'p3', 'p4']) await reader.put(failed(id));
+    let release!: () => void;
+    engine.hold = new Promise<void>(r => (release = r));
+    const server = await startServer(config(6, 2), 'test', { store: await podStore(db, { owner: 'S' }) });
+    const answers = await Promise.all(['p1', 'p2', 'p3', 'p4'].map(id => rerun(server.port, id)));
+    expect(answers.map(a => a.status).sort()).toEqual([202, 202, 429, 429]);
+    engine.hold = undefined;
+    release();
     await server.close();
+  });
+
+  it('counts only re-runs that are queued or running as open', async () => {
+    for (const store of [reader, new MemoryDiagnosisStore({ owner: 'm' })]) {
+      const recent = new Date().toISOString();
+      await store.put(failed('q', { status: 'queued', error: undefined, rerunAt: recent }));
+      await store.put(failed('r', { status: 'running', error: undefined, rerunAt: recent }));
+      await store.put(failed('d', { status: 'done', error: undefined, rerunAt: recent }));
+      await store.put(failed('x', { status: 'failed', rerunAt: recent }));
+      await store.put(failed('w', { status: 'queued', error: undefined }));
+      expect(await store.countOpenReruns()).toBe(2);
+    }
   });
 
   it('needs the JSON content type like the other write routes', async () => {
@@ -224,7 +284,7 @@ describe('POST /api/diagnoses/:id/rerun', () => {
 });
 
 describe('countStartedSince', () => {
-  it('counts a webhook creation or a re-run in the window, once each, in both stores', async () => {
+  it('counts webhook creations in the window and ignores re-runs, in both stores', async () => {
     const recent = new Date().toISOString();
     const old = '2026-01-01T00:00:00.000Z';
     for (const store of [reader, new MemoryDiagnosisStore({ owner: 'm' })]) {
@@ -233,7 +293,7 @@ describe('countStartedSince', () => {
       await store.put(failed('c', { createdAt: recent, rerunAt: recent }));
       await store.put(failed('d', { createdAt: old, rerunAt: old }));
       await store.put(failed('e', { createdAt: recent, source: 'api' }));
-      expect(await store.countStartedSince(Date.now() - 3600_000)).toBe(3);
+      expect(await store.countStartedSince(Date.now() - 3600_000)).toBe(2);
     }
   });
 });

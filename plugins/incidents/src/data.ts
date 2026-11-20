@@ -155,7 +155,7 @@ export function rerunErrorText(e: unknown): string {
 
 /**
  * Runs a failed diagnosis again. The agent answers 202 when it queued the run, 409 when the
- * diagnosis is not failed any more, 429 when the hourly limit is used.
+ * diagnosis is not failed any more, 429 when too many re-runs are already open.
  */
 export async function rerunDiagnosis(s: Settings, id: string): Promise<void> {
   try {

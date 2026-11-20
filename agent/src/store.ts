@@ -84,8 +84,10 @@ export abstract class DiagnosisStore {
   abstract page(options?: PageOptions): Promise<Page>;
   /** Queued or running diagnoses whose lease ran out, oldest first. */
   abstract stale(): Promise<Diagnosis[]>;
-  /** How many diagnoses started at or after `sinceMs`: created by the webhook, or run again by a person. */
+  /** How many diagnoses the webhook created at or after `sinceMs`. A re-run by a person is not counted. */
   abstract countStartedSince(sinceMs: number): Promise<number>;
+  /** How many diagnoses a person ran again that are still queued or running. */
+  abstract countOpenReruns(): Promise<number>;
   abstract findByFingerprint(fingerprint: string, startsAt: string): Promise<Diagnosis | undefined>;
   /** Fingerprints of firing alerts that have an unresolved diagnosis: ids to mark as resolved. */
   protected abstract unresolvedIds(fingerprint: string): Promise<string[]>;
@@ -159,7 +161,11 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
   }
 
   async countStartedSince(sinceMs: number): Promise<number> {
-    return this.sorted().filter(d => (d.source === 'webhook' && Date.parse(d.createdAt) >= sinceMs) || (d.rerunAt !== undefined && Date.parse(d.rerunAt) >= sinceMs)).length;
+    return this.sorted().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= sinceMs).length;
+  }
+
+  async countOpenReruns(): Promise<number> {
+    return this.sorted().filter(d => d.rerunAt !== undefined && (d.status === 'queued' || d.status === 'running')).length;
   }
 
   async findByFingerprint(fingerprint: string, startsAt: string): Promise<Diagnosis | undefined> {
@@ -328,7 +334,12 @@ export class PgDiagnosisStore extends DiagnosisStore {
   }
 
   async countStartedSince(sinceMs: number): Promise<number> {
-    const r = await this.db.query("SELECT count(*)::int AS n FROM diagnoses WHERE (source = 'webhook' AND created_at >= $1) OR rerun_at >= $1", [new Date(sinceMs)]);
+    const r = await this.db.query("SELECT count(*)::int AS n FROM diagnoses WHERE source = 'webhook' AND created_at >= $1", [new Date(sinceMs)]);
+    return r.rows[0].n as number;
+  }
+
+  async countOpenReruns(): Promise<number> {
+    const r = await this.db.query("SELECT count(*)::int AS n FROM diagnoses WHERE rerun_at IS NOT NULL AND status IN ('queued', 'running')");
     return r.rows[0].n as number;
   }
 
