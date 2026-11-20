@@ -9,6 +9,8 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useTheme } from '@mui/material/styles';
 import React from 'react';
 import type { WidgetDefinition } from '../contract';
 import type { WidgetInstance } from '../spec/model';
@@ -30,11 +32,13 @@ export function WidgetSettingsDialog(props: {
   const [title, setTitle] = React.useState(widget.title);
   const [config, setConfig] = React.useState<Record<string, unknown>>({ ...(def?.defaultConfig ?? {}), ...widget.config });
   const [selfScroll, setSelfScroll] = React.useState<boolean>(widget.selfScroll ?? def?.selfScroll ?? false);
+  const narrow = useMediaQuery(useTheme().breakpoints.down('md'));
   const Custom = def?.SettingsComponent;
   // Only store a self-scroll override when it differs from the widget type's default.
   const scrollOverride = selfScroll === (def?.selfScroll ?? false) ? undefined : selfScroll;
   return (
-    <Dialog open onClose={onCancel} fullWidth maxWidth="sm" aria-labelledby="widget-settings-title">
+    // Wide for the report editor and the query editors, and full screen on a small window.
+    <Dialog open onClose={onCancel} fullWidth maxWidth="md" fullScreen={narrow} aria-labelledby="widget-settings-title">
       <DialogTitle id="widget-settings-title">{def ? `${def.title} settings` : 'Widget settings'}</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
