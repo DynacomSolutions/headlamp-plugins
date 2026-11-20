@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arcPath, CENTRE, layoutArcs, TAU, trackPath, usedShare } from './geometry';
+import { arcPath, CENTRE, fitCentreText, layoutArcs, TAU, trackPath, usedShare } from './geometry';
 
 const data = {
   capacity: 100,
@@ -106,9 +106,9 @@ describe('layoutArcs', () => {
     );
     expect(arcs.map(a => a.key)).toEqual(['c']);
   });
-  it('keeps the centre hole at the Usage plugin proportion', () => {
-    expect(CENTRE).toBe(0.24);
-    expect(layoutArcs(data, 100)[0].inner).toBeCloseTo(24);
+  it('has a centre hole large enough for the centre text', () => {
+    expect(CENTRE).toBe(0.36);
+    expect(layoutArcs(data, 100)[0].inner).toBeCloseTo(36);
     expect(Math.max(...layoutArcs(data, 100).map(a => a.outer))).toBe(100);
   });
 });
@@ -135,5 +135,25 @@ describe('usedShare', () => {
     expect(usedShare(data)).toBeCloseTo(0.5);
     expect(usedShare({ capacity: 10, categories: [{ key: 'a', label: 'A', value: 30 }] })).toBe(1);
     expect(usedShare({ capacity: 0, categories: [] })).toBe(0);
+  });
+});
+
+describe('fitCentreText', () => {
+  const R = 96;
+  const hole = R * CENTRE;
+  it('keeps the base size for short text', () => {
+    expect(fitCentreText('5', 13, 1, R, true)).toBe(13);
+  });
+  it('shrinks long text so its width stays inside the hole', () => {
+    for (const text of ['123 cores', '57.96 cores', '1.23 TiB', 'of 384 cores (32%)']) {
+      const size = fitCentreText(text, 13, 1, R, text !== 'of 384 cores (32%)');
+      expect(size).toBeLessThanOrEqual(13);
+      expect(size * text.length * 0.56).toBeLessThanOrEqual(hole * 2);
+    }
+    expect(fitCentreText('123456789012', 13, 1, R, true)).toBeLessThan(fitCentreText('123', 13, 1, R, true));
+  });
+  it('gives less room on a line far from the middle, and never goes below a floor', () => {
+    expect(fitCentreText('abcdefghijklmnop', 9, 14, R)).toBeLessThan(fitCentreText('abcdefghijklmnop', 9, 0, R));
+    expect(fitCentreText('x'.repeat(200), 9, 0, R)).toBe(3);
   });
 });

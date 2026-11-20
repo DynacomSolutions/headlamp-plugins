@@ -12,7 +12,7 @@ import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { colourAt } from '../palette';
-import { arcPath, ArcShape, layoutArcs, SunburstData, trackPath, usedShare } from './geometry';
+import { arcPath, ArcShape, fitCentreText, layoutArcs, SunburstData, trackPath, usedShare } from './geometry';
 import { childShade } from './shade';
 
 /** The drawing is laid out in these units and scaled to the card by the viewBox. */
@@ -196,18 +196,18 @@ export function SunburstChart({
             textAnchor="middle"
             fill={theme.palette.text.primary}
           >
-            <text y={-6} fontSize={9} fill={theme.palette.text.secondary}>
+            <text y={-8} fontSize={fitCentreText(centreLabel, 8.5, -11, RADIUS)} fill={theme.palette.text.secondary}>
               {centreLabel}
             </text>
             <text
-              y={9}
-              fontSize={13}
+              y={6}
+              fontSize={fitCentreText(centreValue, 13, 1, RADIUS, true)}
               fontWeight={600}
               style={{ fontVariantNumeric: 'tabular-nums' }}
             >
               {centreValue}
             </text>
-            <text y={21} fontSize={7.5} fill={theme.palette.text.secondary}>
+            <text y={17} fontSize={fitCentreText(centreSub, 7.5, 14, RADIUS)} fill={theme.palette.text.secondary}>
               {centreSub}
             </text>
           </g>

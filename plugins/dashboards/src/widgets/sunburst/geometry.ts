@@ -4,7 +4,7 @@
  * angle is its share of capacity and the unused part stays empty. A parent may be larger than
  * its children together: that gap stays empty too. Every group is its own arc at its real
  * size: there is no "Other" arc and no top-N cut. The ring proportions follow the Usage
- * plugin sunburst (a centre hole of 24 % of the radius).
+ * plugin sunburst (the dashboard copies use a larger centre hole of 36 % of the radius, so the centre text fits).
  */
 
 export interface SunburstChild {
@@ -43,10 +43,10 @@ export interface ArcShape {
 }
 
 export const TAU = 2 * Math.PI;
-/** The centre hole, as a share of the radius (the same as the Usage plugin sunburst). */
-export const CENTRE = 0.24;
+/** The centre hole, as a share of the radius. Larger than on the Usage pages, so the centre text fits. */
+export const CENTRE = 0.36;
 /** The inner ring ends at this share of the radius. The outer ring fills the rest. */
-export const INNER_END = 0.62;
+export const INNER_END = 0.68;
 /** A small gap between the two rings, in pixels. */
 export const RING_GAP = 2;
 
@@ -150,4 +150,23 @@ export function trackPath(radius: number): string {
 export function usedShare(data: SunburstData): number {
   const used = data.categories.reduce((s, c) => s + positive(c.value), 0);
   return data.capacity > 0 ? Math.min(1, used / data.capacity) : used > 0 ? 1 : 0;
+}
+
+/** Average glyph width as a share of the font size, for the sans fonts of Headlamp. */
+const GLYPH = 0.56;
+/** Bold digits with tabular figures are wider. */
+const GLYPH_BOLD = 0.62;
+
+/**
+ * The font size that makes `text` fit the centre hole. `base` is the size for short text, `lineY` is the
+ * distance of the line centre from the middle of the hole and `radius` is the radius of the whole chart.
+ * The width is the chord of the hole at that height, with a small margin. It never goes above `base`.
+ */
+export function fitCentreText(text: string, base: number, lineY: number, radius: number, bold = false): number {
+  const hole = radius * CENTRE;
+  const half = Math.sqrt(Math.max(0, hole * hole - lineY * lineY));
+  const width = half * 2 * 0.9;
+  const glyph = bold ? GLYPH_BOLD : GLYPH;
+  const chars = Math.max(1, text.length);
+  return Math.min(base, Math.max(3, width / (chars * glyph)));
 }

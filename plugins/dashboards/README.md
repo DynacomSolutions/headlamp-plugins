@@ -287,9 +287,9 @@ Draws one ring (`cpu` or `memory`, or the first ring) of a panel that has rings,
 
 `src/widgets/sunburst/SunburstChart.tsx` is a reusable two-level sunburst: the inner ring has one arc per
 category and the outer ring has one arc per child. The full circle is the capacity and the filled part is the
-used part, so the unused part stays empty. The geometry (`geometry.ts`) has the same proportions as the Usage
-plugin rings (a centre hole of 24 % of the radius), and the colours are the Usage palette (Okabe-Ito, with
-lighter hues for dark mode and the kiosk). Rules:
+used part, so the unused part stays empty. The geometry (`geometry.ts`) is like the Usage plugin rings, with a
+larger centre hole (36 % of the radius), and the centre text shrinks to fit the hole. The colours are the Usage
+palette (Okabe-Ito, with lighter hues for dark mode and the kiosk). Rules:
 
 - Every group is its own arc at its real size. There is no "Other" arc and no top-N cut.
 - A mouse hover shows the label and the value in the centre. A tap selects an arc, and a second tap clears it.
