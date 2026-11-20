@@ -168,4 +168,16 @@ describe('usage donut widget', () => {
     expect(container.querySelectorAll('ul li')).toHaveLength(2);
     expect(queryMetrics).not.toHaveBeenCalled();
   });
+  it('scrolls by touch in the kiosk, so every group is reachable, with no visible scrollbar', async () => {
+    const { container } = view(
+      <Component
+        {...props({ resource: 'memory', groupBy: 'namespace', labelKey: '' }, { kiosk: true })}
+      />
+    );
+    await act(async () => {});
+    const scroller = container.querySelector('[data-donut-scroll]') as HTMLElement;
+    expect(getComputedStyle(scroller).overflowY).toBe('auto');
+    expect(getComputedStyle(scroller).scrollbarWidth).toBe('none');
+    expect(container.querySelectorAll('ul[aria-label$=" groups"] li').length).toBeGreaterThan(0);
+  });
 });

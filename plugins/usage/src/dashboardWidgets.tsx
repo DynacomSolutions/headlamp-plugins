@@ -274,7 +274,17 @@ function UsageDonutWidget({
   if (state.loading) return <Loading />;
   const failed = state.error && state.rows.length === 0;
   return (
-    <Box sx={{ height: '100%', overflowY: kiosk ? 'hidden' : 'auto', minWidth: 0 }}>
+    <Box
+      data-donut-scroll
+      sx={{
+        height: '100%',
+        // The whole widget scrolls, so every group of the legend is reachable. In the kiosk it scrolls by
+        // touch, with no visible scrollbar.
+        overflowY: 'auto',
+        minWidth: 0,
+        ...(kiosk ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } } : {}),
+      }}
+    >
       {state.error && (
         <Message severity={failed ? 'error' : 'warning'}>
           {failed
@@ -286,6 +296,8 @@ function UsageDonutWidget({
         // The card already has a border and a width, so the donut card loses its own here.
         <Box
           sx={{
+            // The legend list of the donut card has its own height limit. Here the widget scrolls instead.
+            '& ul[aria-label$=" groups"]': { maxHeight: 'none', overflowY: 'visible' },
             '& > .MuiPaper-root': {
               minWidth: 0,
               flex: 'none',
