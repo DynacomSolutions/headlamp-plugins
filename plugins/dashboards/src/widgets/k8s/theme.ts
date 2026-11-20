@@ -13,7 +13,8 @@ export interface ReportColors {
 
 export function useReportColors(kiosk: boolean): ReportColors {
   const theme = useTheme();
-  if (kiosk) {
+  // The kiosk is black only in a dark theme (like the Usage kiosk). A light theme keeps its light surface.
+  if (kiosk && theme.palette.mode === 'dark') {
     return { text: '#f0efec', muted: '#c3c2b7', line: 'rgba(255,255,255,0.16)', surface: '#000000', band: 'rgba(255,255,255,0.08)', dark: true, link: '#8ab4f8' };
   }
   const dark = theme.palette.mode === 'dark';

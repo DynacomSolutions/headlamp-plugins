@@ -6,10 +6,14 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { ColourBook, INK, Ink, KIOSK_INK, Mode } from './palette';
 
+/**
+ * The kiosk is black only in a dark theme (the overlay copies the Usage kiosk), so the black tuned ink is
+ * used only then. A light theme kiosk keeps the light surface and the normal ink.
+ */
 export function useInk(kiosk: boolean): { ink: Ink; mode: Mode } {
   const theme = useTheme();
   const mode: Mode = theme.palette.mode === 'dark' ? 'dark' : 'light';
-  return { ink: kiosk ? KIOSK_INK : INK[mode], mode: kiosk ? 'dark' : mode };
+  return { ink: kiosk && mode === 'dark' ? KIOSK_INK : INK[mode], mode };
 }
 
 /** A colour for each key that stays with the key while the widget lives. */

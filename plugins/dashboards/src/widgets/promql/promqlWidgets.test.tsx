@@ -1,3 +1,4 @@
+import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -294,12 +295,21 @@ describe('breakdown', () => {
 });
 
 describe('kiosk', () => {
-  it('uses black based ink on the kiosk background', async () => {
+  const colourIn = async (mode: 'light' | 'dark') => {
     request.mockResolvedValue(reply('vector', [{ metric: {}, value: [1, '5'] }]));
     const C = statWidget.Component;
-    const { container } = render(<C {...props({ ...DEFAULT_STAT, sparkline: false }, { kiosk: true })} />);
+    const { container } = render(
+      <ThemeProvider theme={createTheme({ palette: { mode } })}>
+        <C {...props({ ...DEFAULT_STAT, sparkline: false }, { kiosk: true })} />
+      </ThemeProvider>
+    );
     await waitFor(() => expect(container.querySelector('[data-stat-value]')).toBeTruthy());
-    const el = container.querySelector('[data-stat-value]') as HTMLElement;
-    expect(getComputedStyle(el).color).toBe('rgb(240, 239, 236)');
+    return getComputedStyle(container.querySelector('[data-stat-value]') as HTMLElement).color;
+  };
+  it('uses black based ink on the black kiosk of a dark theme', async () => {
+    expect(await colourIn('dark')).toBe('rgb(240, 239, 236)');
+  });
+  it('keeps the normal ink in a light theme, where the kiosk stays light', async () => {
+    expect(await colourIn('light')).not.toBe('rgb(240, 239, 236)');
   });
 });
