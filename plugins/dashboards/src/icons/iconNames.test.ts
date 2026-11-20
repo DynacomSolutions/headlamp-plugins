@@ -3,7 +3,7 @@ import { ICON_NAMES, isBundledIcon, isIconName, searchIcons } from './iconNames'
 
 describe('icon search', () => {
   it('lists mdi names', () => {
-    expect(ICON_NAMES.length).toBeGreaterThan(100);
+    expect(ICON_NAMES.length).toBeGreaterThan(800);
     expect(ICON_NAMES.every(n => n.startsWith('mdi:'))).toBe(true);
   });
   it('requires every word', () => {
@@ -13,6 +13,24 @@ describe('icon search', () => {
     expect(searchIcons('zzzzzz')).toEqual([]);
     expect(searchIcons('')).toHaveLength(120);
     expect(searchIcons('mdi:server')).toContain('mdi:server');
+  });
+  it('bundles the common operations icons', () => {
+    for (const n of [
+      'run-fast',
+      'alert-decagram-outline',
+      'speedometer',
+      'alert-circle-outline',
+      'database',
+      'console',
+      'github',
+      'server',
+      'kubernetes',
+      'chart-line',
+      'clock-outline',
+      'robot',
+    ])
+      expect(isBundledIcon(`mdi:${n}`), n).toBe(true);
+    expect(searchIcons('run fast')).toContain('mdi:run-fast');
   });
   it('validates names', () => {
     expect(isIconName('mdi:chart-line')).toBe(true);

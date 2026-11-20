@@ -8,6 +8,7 @@
  */
 import React from 'react';
 import type { WidgetDefinition } from '../../contract';
+import { isBundledIcon } from '../../icons/iconNames';
 import { getRegistry, WidgetStore } from '../../registry';
 import { panelWidget } from './PanelWidget';
 import { AGENT_SOURCE_ID, PanelSource } from './sources';
@@ -30,7 +31,8 @@ export function variantWidgets(sources: ReadonlyArray<PanelSource>): WidgetDefin
         type: `${base.type}.${s.id}`,
         title: `${noun} from ${s.title}`,
         description: `${noun} from the ${s.title} panel source.`,
-        icon: s.icon ?? base.icon,
+        // An icon that is not bundled would make the browser ask the public Iconify service.
+        icon: isBundledIcon(s.icon) ? s.icon : base.icon,
         defaultConfig: { ...base.defaultConfig, source: s.id, panel: '' },
       });
     }

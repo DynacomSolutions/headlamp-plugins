@@ -7,6 +7,7 @@ import Paper from '@mui/material/Paper';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { isBundledIcon } from '../../icons/iconNames';
 import { reason, testSource } from './data';
 import { useSettingsCluster } from './settingsCluster';
 import { draftProblem, draftToSource, PanelSource, SourceDraft } from './sources';
@@ -108,7 +109,12 @@ export function SourceEditor(props: {
           value={draft.icon}
           placeholder="mdi:server"
           onChange={e => set({ icon: e.target.value })}
-          helperText="Optional mdi: name."
+          error={draft.icon.trim() !== '' && !isBundledIcon(draft.icon.trim())}
+          helperText={
+            draft.icon.trim() !== '' && !isBundledIcon(draft.icon.trim())
+              ? 'This icon is not in the plugin, so the default icon is shown.'
+              : 'Optional mdi: name from the plugin icon list.'
+          }
           sx={{ flex: '1 1 160px' }}
         />
         <TextField
