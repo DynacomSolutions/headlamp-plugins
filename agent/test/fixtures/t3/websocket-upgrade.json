@@ -1,0 +1,1 @@
+{ "upgrade": "/ws?wsTicket=<ticket>&orchestrationProtocol=2&clientCapabilities=settingsSecretReferences" }
