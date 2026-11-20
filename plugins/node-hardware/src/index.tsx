@@ -311,7 +311,7 @@ registerDetailsViewSection({
   },
 } as any);
 
-// Show the hardware profile right after the node's main info section.
+// Show the hardware profile just before the Pods section.
 registerDetailsViewSectionsProcessor({
   id: 'node-hardware.order',
   processor: (resource: any, sections: any[]) => moveHardwareProfileSection(resource?.kind, sections),

@@ -7,9 +7,9 @@ const mk = (...i: string[]) => i.map(id => ({ id }));
 describe('moveHardwareProfileSection', () => {
   const base = mk('BACK_LINK', 'MAIN_HEADER', 'METADATA', 'headlamp.node-resource-allocation', 'headlamp.node-owned-pods', 'node-hardware.profile', 'node-hardware.sensors', 'EVENTS');
 
-  it('moves the profile directly after the main info section', () => {
+  it('moves the profile directly before the pods section', () => {
     expect(ids(moveHardwareProfileSection('Node', base))).toEqual([
-      'BACK_LINK', 'MAIN_HEADER', 'METADATA', 'node-hardware.profile', 'headlamp.node-resource-allocation', 'headlamp.node-owned-pods', 'node-hardware.sensors', 'EVENTS',
+      'BACK_LINK', 'MAIN_HEADER', 'METADATA', 'headlamp.node-resource-allocation', 'node-hardware.profile', 'headlamp.node-owned-pods', 'node-hardware.sensors', 'EVENTS',
     ]);
   });
   it('keeps every other section in order and does not mutate the input', () => {
@@ -26,7 +26,11 @@ describe('moveHardwareProfileSection', () => {
     expect(moveHardwareProfileSection('Pod', base)).toBe(base);
     expect(moveHardwareProfileSection(undefined, base)).toBe(base);
   });
-  it('returns the list unchanged when the main info id is missing', () => {
+  it('falls back to after the main info section when the pods id is missing', () => {
+    const l = mk('MAIN_HEADER', 'METADATA', 'headlamp.node-conditions', 'node-hardware.profile', 'EVENTS');
+    expect(ids(moveHardwareProfileSection('Node', l))).toEqual(['MAIN_HEADER', 'METADATA', 'node-hardware.profile', 'headlamp.node-conditions', 'EVENTS']);
+  });
+  it('returns the list unchanged when both the pods and main info ids are missing', () => {
     const l = mk('MAIN_HEADER', 'node-hardware.profile');
     expect(moveHardwareProfileSection('Node', l)).toBe(l);
   });
