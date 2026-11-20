@@ -6,6 +6,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 }));
 
 import {
+  backendCandidates,
   DEFAULT_NODES_SETTINGS,
   fetchAgentHosts,
   iconUrl,
@@ -104,6 +105,59 @@ describe('fetchAgentHosts', () => {
   });
 });
 
+describe('backend fallback', () => {
+  it('lists the new Service first and the old one as fallback', () => {
+    expect(backendCandidates('service/ns/agent-resource:80')).toEqual([
+      'service/ns/agent-resource:80',
+      'service/ns/agent-memory:80',
+    ]);
+    expect(backendCandidates('service/ns/agent-memory:80')).toEqual([
+      'service/ns/agent-resource:80',
+      'service/ns/agent-memory:80',
+    ]);
+    expect(backendCandidates('service/ns/other:80')).toEqual(['service/ns/other:80']);
+  });
+  it('defaults to the new Service', () => {
+    expect(DEFAULT_NODES_SETTINGS.agentBackends).toEqual([
+      'service/agent-memory/agent-resource:80',
+    ]);
+  });
+  it('falls back to the old Service when the new one does not answer', async () => {
+    request.mockReset();
+    request.mockImplementation(async (u: string) => {
+      if (u.includes('/services/agent-resource:80/'))
+        throw Object.assign(new Error('nf'), { status: 404 });
+      return state;
+    });
+    const r = await fetchAgentHosts(['service/ns/agent-resource:80']);
+    expect(r.errors).toEqual([]);
+    expect(r.hosts).toHaveLength(1);
+    expect(request.mock.calls.map(c => c[0])).toEqual([
+      '/api/v1/namespaces/ns/services/agent-resource:80/proxy/api/state',
+      '/api/v1/namespaces/ns/services/agent-memory:80/proxy/api/state',
+    ]);
+    // The next poll goes straight to the Service that answered, and icons use it too.
+    request.mockClear();
+    await fetchAgentHosts(['service/ns/agent-resource:80']);
+    expect(request.mock.calls.map(c => c[0])).toEqual([
+      '/api/v1/namespaces/ns/services/agent-memory:80/proxy/api/state',
+    ]);
+    expect(iconUrl('service/ns/agent-resource:80', 'p')).toContain('/services/agent-memory:80/');
+  });
+  it('shows the error that is not a 404 when both fail', async () => {
+    request.mockReset();
+    request.mockImplementation(async (u: string) => {
+      if (u.includes('/services/agent-resource:80/'))
+        throw Object.assign(new Error('missing'), { status: 404 });
+      throw Object.assign(new Error('backend broke'), { status: 500 });
+    });
+    const r = await fetchAgentHosts(['service/zz/agent-resource:80']);
+    expect(r.errors).toEqual([
+      { backend: 'service/zz/agent-resource:80', message: 'backend broke' },
+    ]);
+  });
+});
+
 describe('iconUrl', () => {
   it('targets the proxy route', () => {
     expect(iconUrl('service/ns/svc:80', 'p 1')).toBe(
@@ -124,5 +178,28 @@ describe('resolveNodesSettings', () => {
   it('falls back to defaults', () => {
     expect(resolveNodesSettings(undefined)).toEqual(DEFAULT_NODES_SETTINGS);
     expect(resolveNodesSettings({ agentBackends: [' x '] }).agentBackends).toEqual(['x']);
+  });
+});
+
+describe('CPU limits of agent units', () => {
+  const unitWith = (extra: object) => ({
+    ...state,
+    units: [{ name: 'c.scope', kind: 'scope', anon: 1, shmem: 0, kernel: 0, ...extra }],
+  });
+  const first = (extra: object) => parseAgentState(unitWith(extra), 'b').units[0];
+  it('reads the CPU limit and throttling', () => {
+    const u = first({ cpuQuotaCores: 16, cpuThrottledRatio: 0.125, cpuWeight: 100 });
+    expect(u.cpuLimitCores).toBe(16);
+    expect(u.cpuThrottledRatio).toBe(0.125);
+  });
+  it('treats CPU stats without a quota as no limit', () => {
+    expect(first({ cpuWeight: 100 }).cpuLimitCores).toBeNull();
+    expect(first({ cpuQuotaCores: null, cpuNrPeriods: 4 }).cpuLimitCores).toBeNull();
+    expect(first({ cpuQuotaCores: 0, cpuNrPeriods: 4 }).cpuLimitCores).toBeNull();
+  });
+  it('leaves the limit unset for an old backend', () => {
+    const u = first({ cpuCores: 1 });
+    expect(u.cpuLimitCores).toBeUndefined();
+    expect(u.cpuThrottledRatio).toBeUndefined();
   });
 });

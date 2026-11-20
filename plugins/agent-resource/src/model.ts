@@ -52,7 +52,8 @@ export interface AgentNames {
 
 /** A limit the agent raised itself, after a verified approval. */
 export interface RaisedInfo {
-  size: number;
+  /** The new hard memory limit; absent for a raise of the CPU limit only. */
+  size?: number;
   high: Limit;
   /** The limit before the raise; null when unknown or unlimited. */
   previous: Limit;
@@ -61,6 +62,8 @@ export interface RaisedInfo {
   label: string;
   approvedAt: string;
   at: string;
+  /** The new CPU limit in systemd form ("3200%"); absent when the CPU limit was not raised. */
+  cpuQuota?: string;
 }
 
 /** The agent session in an orchestrator's agent scope. */
@@ -140,6 +143,26 @@ export interface MemUnit {
   raised?: RaisedInfo;
   /** Human-friendly label ("claude · .cluster · 32a684cb"); the unit name for slices. */
   displayName: string;
+  /** CPU in use in cores (cpu.stat usage over the last two samples); absent until sampled. */
+  cpuCores?: number;
+  /**
+   * The CPU limit in cores (cpu.max). null: no limit. undefined: the backend predates CPU
+   * limits. A backend that reports CPU stats but leaves the quota out means no limit.
+   */
+  cpuQuotaCores?: number | null;
+  cpuWeight?: number;
+  /** cpu.stat counters since the cgroup was created. */
+  cpuNrPeriods?: number;
+  cpuNrThrottled?: number;
+  cpuThrottledUsec?: number;
+  /**
+   * Time spent throttled over the last two samples, in cores' worth: 0.25 is a quarter of one
+   * core's time. null: not measured yet.
+   */
+  cpuThrottledRatio?: number | null;
+  /** cpu.pressure; absent from backends that predate it. */
+  cpuPressureSome?: Pressure;
+  cpuPressureFull?: Pressure;
 }
 
 export interface MemAlert {
@@ -179,7 +202,14 @@ export interface AgentResourceState {
   sampled: number;
   error: string;
   writable: boolean;
-  host: { total: number; available: number; swapTotal: number };
+  host: {
+    total: number;
+    available: number;
+    swapTotal: number;
+    /** Number of CPUs of the host and the cores kept outside the agents slice. */
+    cpus?: number;
+    cpuReserve?: number;
+  };
   policy: { heavyHigh: string; heavyMax: string; heavySwap: string; keepFree: number };
   minLimit: number;
   protected: string[];
@@ -210,6 +240,8 @@ export interface AgentDefault {
   memoryHigh?: Limit;
   memoryMax?: Limit;
   memorySwapMax?: Limit;
+  /** The per-agent CPU limit in systemd form ("1600%"); "" for none; absent when not reported. */
+  cpuQuota?: string;
   /** daemon-reload (T3) or running-agents (Herdr: set on each running pane). */
   apply?: string;
   /** Shown without an editor (mounted read-only). */
@@ -227,14 +259,18 @@ export interface LayerLimits {
   managedOOMPreference?: string;
   oomPolicy?: string;
   ioWeight?: number;
+  /** CPU limit in systemd form ("1600%"); "" for none; absent when the backend does not say. */
+  cpuQuota?: string;
+  cpuWeight?: number;
 }
 
 export interface Drift {
   layer: 'control' | 'agents' | 'agent';
   unit: string;
   property: string;
-  want: Limit;
-  have: Limit;
+  /** Bytes for memory, a systemd value such as "1600%" for CPUQuota, null for none. */
+  want: Limit | string;
+  have: Limit | string;
 }
 
 /** One orchestrator: its three layers, its default and how live limits match the policy. */
@@ -426,6 +462,143 @@ export function sizeInput(v: Limit): string {
   return String(v);
 }
 
+/* ---------- CPU ---------- */
+
+/** The smallest CPU limit the editor accepts, in cores (systemd's minimum is 1%). */
+export const MIN_CPU_CORES = 0.1;
+
+/** "16 cores", "1 core", "0.5 core"; "No limit" for null; "-" when unknown. */
+export function cpuLimitText(cores: number | null | undefined): string {
+  if (cores === undefined) return '-';
+  if (cores === null) return 'No limit';
+  return `${formatCores(cores)} ${cores <= 1 ? 'core' : 'cores'}`;
+}
+
+/** CPU in use: "0.04", "3.2", "12.5", "128". */
+export function formatCpuUse(v: number): string {
+  if (!Number.isFinite(v)) return '-';
+  return v < 1 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : String(Math.round(v));
+}
+
+/** Cores with at most one decimal: "16", "3.2", "0.05" is "0.1". */
+export function formatCores(v: number): string {
+  if (!Number.isFinite(v)) return '-';
+  const r = Math.round(v * 10) / 10;
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
+}
+
+/**
+ * Parses a CPU limit: "16" or "16.5" (cores), "1600%" (systemd), "none", "infinity",
+ * "max" or "unlimited" (no limit). Returns cores, null for no limit, undefined when invalid.
+ * A blank string is invalid here: callers decide what blank means.
+ */
+export function parseCpuQuota(input: string): number | null | undefined {
+  const s = input.trim().toLowerCase();
+  if (s === '') return undefined;
+  if (s === 'none' || s === 'infinity' || s === 'max' || s === 'unlimited') return null;
+  const pct = /^(\d+(?:\.\d+)?|\.\d+)\s*%$/.exec(s);
+  if (pct) {
+    const v = parseFloat(pct[1]) / 100;
+    return Number.isFinite(v) && v > 0 ? v : undefined;
+  }
+  const cores = /^(\d+(?:\.\d+)?|\.\d+)(?:\s*(?:cores?|cpus?))?$/.exec(s);
+  if (!cores) return undefined;
+  const v = parseFloat(cores[1]);
+  return Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+/** The systemd spelling of a CPU limit in cores: 16 gives "1600%"; null gives "" (none). */
+export function quotaString(cores: number | null): string {
+  return cores === null ? '' : `${Math.round(cores * 100)}%`;
+}
+
+/** A systemd CPUQuota string as text: "1600%" is "16 cores", "" is "No limit". */
+export function quotaText(q: string | undefined): string {
+  if (q === undefined) return '-';
+  const cores = q.trim() === '' ? null : parseCpuQuota(q);
+  return cores === undefined ? q : cpuLimitText(cores);
+}
+
+/** The text that round-trips through parseCpuQuota, for pre-filling an input. */
+export function cpuInput(q: string | undefined): string {
+  if (q === undefined) return '';
+  const cores = q.trim() === '' ? null : parseCpuQuota(q);
+  return cores === undefined ? q : cores === null ? 'none' : formatCores(cores);
+}
+
+/** CPU use as a share of the limit; null with no limit or no sample. */
+export function cpuShare(u: Pick<MemUnit, 'cpuCores' | 'cpuQuotaCores'>): number | null {
+  const q = u.cpuQuotaCores;
+  if (typeof q !== 'number' || q <= 0 || u.cpuCores === undefined) return null;
+  return u.cpuCores / q;
+}
+
+/** "12%", "0.4%", "250%"; a ratio of 0.125 is "12.5%". */
+export function formatRatio(r: number): string {
+  const p = r * 100;
+  if (p < 0.05) return '0%';
+  if (p < 10) return `${p.toFixed(1)}%`;
+  return `${Math.round(p)}%`;
+}
+
+/** Use of the limit that turns the share amber and red. */
+export const CPU_SHARE_WARN = 0.85;
+export const CPU_SHARE_CRIT = 0.99;
+
+export function cpuShareLevel(
+  u: Pick<MemUnit, 'cpuCores' | 'cpuQuotaCores'>
+): 'default' | 'warning' | 'error' {
+  const sh = cpuShare(u);
+  return sh === null
+    ? 'default'
+    : sh >= CPU_SHARE_CRIT
+    ? 'error'
+    : sh >= CPU_SHARE_WARN
+    ? 'warning'
+    : 'default';
+}
+
+/** Throttled time, in cores' worth, that turns the throttling badge amber and red. */
+export const THROTTLE_WARN = 0.05;
+export const THROTTLE_CRIT = 0.25;
+
+export function throttleLevel(
+  u: Pick<MemUnit, 'cpuThrottledRatio'>
+): 'default' | 'warning' | 'error' {
+  const r = u.cpuThrottledRatio;
+  if (typeof r !== 'number') return 'default';
+  return r >= THROTTLE_CRIT ? 'error' : r >= THROTTLE_WARN ? 'warning' : 'default';
+}
+
+/** Share of time (percent, 10 s average) with some task waiting for CPU that turns the badge amber and red. */
+export const CPU_PRESSURE_WARN = 10;
+export const CPU_PRESSURE_CRIT = 40;
+
+export function cpuPressureLevel(
+  u: Pick<MemUnit, 'cpuPressureSome'>
+): 'default' | 'warning' | 'error' {
+  const v = u.cpuPressureSome?.avg10;
+  if (v === undefined) return 'default';
+  return v >= CPU_PRESSURE_CRIT ? 'error' : v >= CPU_PRESSURE_WARN ? 'warning' : 'default';
+}
+
+/** Whether the backend reported anything about the CPU of this unit. */
+export function hasCpu(u: MemUnit): boolean {
+  return (
+    u.cpuQuotaCores !== undefined ||
+    u.cpuCores !== undefined ||
+    u.cpuThrottledRatio !== undefined ||
+    u.cpuPressureSome !== undefined
+  );
+}
+
+/** A drift value as text: bytes for memory, cores for CPUQuota, a plain number otherwise. */
+export function driftValue(property: string, v: Limit | string): string {
+  if (property === 'CPUQuota') return typeof v === 'string' ? quotaText(v) : cpuLimitText(v);
+  if (property.startsWith('CPU')) return v === null ? 'none' : String(v);
+  return typeof v === 'string' ? v : formatSize(v);
+}
+
 /* ---------- edit validation ---------- */
 
 export type EditField = 'memoryHigh' | 'memoryMax' | 'memorySwapMax' | 'memoryMin' | 'memoryLow';
@@ -567,8 +740,15 @@ export function checkEdit(
   return { changes, errors, belowCurrent };
 }
 
-export type DefaultField = 'memoryHigh' | 'memoryMax' | 'memorySwapMax';
+export type DefaultField = 'memoryHigh' | 'memoryMax' | 'memorySwapMax' | 'cpuQuota';
 export type DefaultForm = Partial<Record<DefaultField, string>>;
+
+export const CPU_QUOTA_LABEL = 'CPU limit (CPUQuota)';
+
+/** The label of a form field, for dialogs and summaries. */
+export function defaultFieldLabel(f: string): string {
+  return f === 'cpuQuota' ? CPU_QUOTA_LABEL : FIELD_LABELS[f as EditField] ?? f;
+}
 
 /**
  * Mirrors the backend's rules for POST /api/defaults. belowCurrent lists the
@@ -578,14 +758,14 @@ export type DefaultForm = Partial<Record<DefaultField, string>>;
 export function checkDefaults(
   current: AgentDefault,
   form: DefaultForm,
-  ctx: Pick<EditContext, 'minLimit' | 'hostTotal'>,
+  ctx: Pick<EditContext, 'minLimit' | 'hostTotal'> & { hostCpus?: number },
   agents: MemUnit[],
   overrides: Record<string, Record<string, string>>
 ): { changes: DefaultForm; errors: string[]; belowCurrent: MemUnit[] } {
   const errors: string[] = [];
-  const parsed: Partial<Record<DefaultField, Limit>> = {};
+  const parsed: Partial<Record<'memoryHigh' | 'memoryMax' | 'memorySwapMax', Limit>> = {};
   const changes: DefaultForm = {};
-  for (const f of ['memoryHigh', 'memoryMax', 'memorySwapMax'] as DefaultField[]) {
+  for (const f of ['memoryHigh', 'memoryMax', 'memorySwapMax'] as const) {
     const raw = form[f];
     if (raw === undefined || (raw.trim() === '' && current[f] === undefined)) continue;
     const v = parseSize(raw);
@@ -601,14 +781,35 @@ export function checkDefaults(
     parsed[f] = v;
     changes[f] = raw.trim();
   }
+  // The CPU limit is sent in systemd form ("1600%"); "" means no limit.
+  let cpuChanged = false;
+  const rawCpu = form.cpuQuota;
+  if (rawCpu !== undefined && !(rawCpu.trim() === '' && current.cpuQuota === undefined)) {
+    const cores = parseCpuQuota(rawCpu);
+    const have =
+      current.cpuQuota === undefined ? undefined : parseCpuQuota(current.cpuQuota || 'none');
+    if (cores === undefined) {
+      errors.push(
+        `${CPU_QUOTA_LABEL}: "${rawCpu}" is not a CPU limit (use for example 16, 1600% or none)`
+      );
+    } else if (cores !== have) {
+      if (cores !== null && cores < MIN_CPU_CORES)
+        errors.push(`${CPU_QUOTA_LABEL} must be at least ${formatCores(MIN_CPU_CORES)} cores.`);
+      if (cores !== null && ctx.hostCpus && cores > ctx.hostCpus)
+        errors.push(`${CPU_QUOTA_LABEL} exceeds the host CPUs (${ctx.hostCpus}).`);
+      changes.cpuQuota = quotaString(cores);
+      cpuChanged = true;
+    }
+  }
   if (errors.length) return { changes, errors, belowCurrent: [] };
-  if (Object.keys(parsed).length === 0)
+  if (Object.keys(parsed).length === 0 && !cpuChanged)
     return { changes, errors: ['Nothing has changed.'], belowCurrent: [] };
-  const eff = (f: DefaultField): Limit =>
+  const eff = (f: 'memoryHigh' | 'memoryMax'): Limit =>
     f in parsed ? (parsed[f] as Limit) : current[f] === undefined ? null : (current[f] as Limit);
   const high = eff('memoryHigh');
   const max = eff('memoryMax');
-  if (max !== null && (high === null || high > max))
+  // Only a memory change needs the soft limit to stay below the hard one.
+  if (Object.keys(parsed).length > 0 && max !== null && (high === null || high > max))
     errors.push(
       `The soft limit (${formatSize(high)}) must not exceed the hard limit (${formatSize(max)}).`
     );
@@ -906,12 +1107,22 @@ function limitOrUndefined(v: unknown): Limit | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** A CPUQuota value from the backend: a systemd string, "" or null for none; undefined when absent. */
+function quotaOrUndefined(v: unknown): string | undefined {
+  if (v === undefined) return undefined;
+  if (v === null) return '';
+  if (typeof v === 'number') return Number.isFinite(v) && v > 0 ? `${Math.round(v)}%` : '';
+  return cleanText(v, 32);
+}
+
 function parseDefault(d: any): AgentDefault | null {
   if (!d || typeof d !== 'object') return null;
   const out: AgentDefault = { file: cleanText(d.file, 300) };
   if ('memoryHigh' in d) out.memoryHigh = limitOrUndefined(d.memoryHigh);
   if ('memoryMax' in d) out.memoryMax = limitOrUndefined(d.memoryMax);
   if ('memorySwapMax' in d) out.memorySwapMax = limitOrUndefined(d.memorySwapMax);
+  const quota = quotaOrUndefined('cpuQuota' in d ? d.cpuQuota : d.CPUQuota);
+  if (quota !== undefined) out.cpuQuota = quota;
   if (d.apply) out.apply = cleanText(d.apply);
   if (d.readOnly) out.readOnly = true;
   if (d.note) out.note = cleanText(d.note, 300);
@@ -927,7 +1138,17 @@ function parseLayer(l: any): LayerLimits {
   if (l.managedOOMPreference) out.managedOOMPreference = cleanText(l.managedOOMPreference);
   if (l.oomPolicy) out.oomPolicy = cleanText(l.oomPolicy);
   if (l.ioWeight) out.ioWeight = num(l.ioWeight);
+  const quota = quotaOrUndefined(l.CPUQuota ?? l.cpuQuota);
+  if (quota !== undefined) out.cpuQuota = quota;
+  const weight = l.CPUWeight ?? l.cpuWeight;
+  if (weight !== undefined && weight !== null) out.cpuWeight = num(weight);
   return out;
+}
+
+/** A drift value: a number or null, or a systemd string such as "1600%". */
+function driftOrNull(v: unknown): Limit | string {
+  if (typeof v === 'string' && !/^\d+$/.test(v.trim())) return cleanText(v, 32);
+  return limitOrUndefined(v) ?? null;
 }
 
 function parseOrchestrators(json: any, units: MemUnit[]): Orchestrator[] {
@@ -982,8 +1203,8 @@ function parseOrchestrators(json: any, units: MemUnit[]): Orchestrator[] {
         layer: d?.layer === 'control' || d?.layer === 'agents' ? d.layer : 'agent',
         unit: cleanText(d?.unit),
         property: cleanText(d?.property),
-        want: limitOrUndefined(d?.want) ?? null,
-        have: limitOrUndefined(d?.have) ?? null,
+        want: driftOrNull(d?.want),
+        have: driftOrNull(d?.have),
       })),
       agentDrift: num(o.agentDrift),
       names:
@@ -1002,13 +1223,13 @@ function parseOrchestrators(json: any, units: MemUnit[]): Orchestrator[] {
 function parseRaised(r: any): RaisedInfo | undefined {
   if (!r || typeof r !== 'object') return undefined;
   const size = limitOrUndefined(r.size);
-  if (typeof size !== 'number') return undefined;
+  const cpuQuota = typeof r.cpuQuota === 'string' ? cleanText(r.cpuQuota, 32) : '';
+  if (typeof size !== 'number' && cpuQuota === '') return undefined;
   const at = (v: unknown) => {
     const t = Date.parse(String(v ?? ''));
     return Number.isFinite(t) ? new Date(t).toISOString() : '';
   };
-  return {
-    size,
+  const out: RaisedInfo = {
     high: limitOrUndefined(r.high) ?? null,
     previous: limitOrUndefined(r.previous) ?? null,
     reason: cleanText(r.reason, 300),
@@ -1017,6 +1238,9 @@ function parseRaised(r: any): RaisedInfo | undefined {
     approvedAt: at(r.approvedAt),
     at: at(r.at),
   };
+  if (typeof size === 'number') out.size = size;
+  if (cpuQuota !== '') out.cpuQuota = cpuQuota;
+  return out;
 }
 
 /** Tooltip of the "Raised by request" chip. */
@@ -1025,9 +1249,13 @@ export function raisedTitle(
   fmt: (iso: string) => string = iso => new Date(iso).toLocaleString()
 ): string {
   const when = r.approvedAt ? fmt(r.approvedAt) : 'unknown time';
-  return `approved ${when}: ${r.label || 'no label'}; reason: ${
-    r.reason || 'none given'
-  }; ${formatSize(r.previous)} → ${formatSize(r.size)}`;
+  const parts = [
+    `approved ${when}: ${r.label || 'no label'}`,
+    `reason: ${r.reason || 'none given'}`,
+  ];
+  if (r.size !== undefined) parts.push(`${formatSize(r.previous)} → ${formatSize(r.size)}`);
+  if (r.cpuQuota) parts.push(`CPU limit ${quotaText(r.cpuQuota)}`);
+  return parts.join('; ');
 }
 
 function parsePods(p: any): PodMemory | null {
@@ -1054,6 +1282,55 @@ function parseOverrides(o: any): Record<string, Record<string, string>> {
     out[cleanText(unit)] = Object.fromEntries(
       Object.entries(props as Record<string, unknown>).map(([k, v]) => [cleanText(k), cleanText(v)])
     );
+  }
+  return out;
+}
+
+function cpuNum(v: unknown): number | undefined {
+  if (v === undefined || v === null) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
+function parsePressure(p: any): Pressure | undefined {
+  if (!p || typeof p !== 'object') return undefined;
+  return {
+    avg10: num(p.avg10),
+    avg60: num(p.avg60),
+    avg300: num(p.avg300),
+    totalUs: num(p.totalUs),
+  };
+}
+
+/** The validated CPU fields of a raw backend unit; every one is optional for old backends. */
+export function parseCpu(u: any): Partial<MemUnit> {
+  const out: Partial<MemUnit> = {};
+  const cores = cpuNum(u?.cpuCores);
+  if (cores !== undefined) out.cpuCores = cores;
+  const weight = cpuNum(u?.cpuWeight);
+  if (weight !== undefined) out.cpuWeight = weight;
+  const nrPeriods = cpuNum(u?.cpuNrPeriods);
+  if (nrPeriods !== undefined) out.cpuNrPeriods = nrPeriods;
+  const nrThrottled = cpuNum(u?.cpuNrThrottled);
+  if (nrThrottled !== undefined) out.cpuNrThrottled = nrThrottled;
+  const throttledUsec = cpuNum(u?.cpuThrottledUsec);
+  if (throttledUsec !== undefined) out.cpuThrottledUsec = throttledUsec;
+  const some = parsePressure(u?.cpuPressureSome);
+  if (some) out.cpuPressureSome = some;
+  const full = parsePressure(u?.cpuPressureFull);
+  if (full) out.cpuPressureFull = full;
+  // The backend leaves a null quota out: a unit with CPU stats and no quota has no limit.
+  const reported =
+    weight !== undefined ||
+    nrPeriods !== undefined ||
+    nrThrottled !== undefined ||
+    throttledUsec !== undefined ||
+    u?.cpuQuotaCores !== undefined;
+  if (reported) {
+    const q = cpuNum(u?.cpuQuotaCores);
+    out.cpuQuotaCores = q !== undefined && q > 0 ? q : null;
+    const ratio = cpuNum(u?.cpuThrottledRatio);
+    out.cpuThrottledRatio = ratio === undefined ? null : ratio;
   }
   return out;
 }
@@ -1170,6 +1447,16 @@ export function parseState(json: any): AgentResourceState {
       ? undefined
       : '',
     raised: parseRaised(u.raised),
+    cpuCores: undefined,
+    cpuQuotaCores: undefined,
+    cpuThrottledRatio: undefined,
+    cpuWeight: undefined,
+    cpuNrPeriods: undefined,
+    cpuNrThrottled: undefined,
+    cpuThrottledUsec: undefined,
+    cpuPressureSome: undefined,
+    cpuPressureFull: undefined,
+    ...parseCpu(u),
     eventsWindow: parseEventsWindow(u.eventsWindow),
     pressureWindow: parsePressureWindow(u.pressureWindow),
   }));
@@ -1178,7 +1465,14 @@ export function parseState(json: any): AgentResourceState {
     sampled: Number(json?.sampled ?? 0),
     error: String(json?.error ?? ''),
     writable: Boolean(json?.writable),
-    host: { total: 0, available: 0, swapTotal: 0, ...(json?.host ?? {}) },
+    host: {
+      total: 0,
+      available: 0,
+      swapTotal: 0,
+      ...(json?.host ?? {}),
+      cpus: cpuNum(json?.host?.cpus),
+      cpuReserve: cpuNum(json?.host?.cpuReserve),
+    },
     policy: {
       heavyHigh: '8G',
       heavyMax: '12G',
@@ -1212,6 +1506,8 @@ export interface ProjectGroup {
   /** The "Other scopes" group: non-agent scopes of the orchestrator. */
   other?: boolean;
   current: number;
+  /** CPU cores in use by the group's units; absent when no unit has a sample. */
+  cpu?: number;
 }
 
 export interface AgentTreeRow {
@@ -1233,6 +1529,11 @@ export interface AgentTreeRow {
   unit?: MemUnit;
   orchestrator?: Orchestrator;
   project?: ProjectGroup;
+}
+
+/** Adds a unit's CPU use to a running total; stays undefined while no unit has a sample. */
+function sumCpu(total: number | undefined, u: Pick<MemUnit, 'cpuCores'>): number | undefined {
+  return u.cpuCores === undefined ? total : (total ?? 0) + u.cpuCores;
 }
 
 function baseName(p: string | undefined): string {
@@ -1334,6 +1635,7 @@ export function buildTree(
       }
       p.group.agents++;
       p.group.current += u.current;
+      p.group.cpu = sumCpu(p.group.cpu, u);
       p.units.push(u);
     }
     const rank = (n: string) => (n === UNKNOWN_PROJECT ? 1 : 0);
@@ -1354,6 +1656,7 @@ export function buildTree(
           orchestrator: o.name,
           agents: others.length,
           current: others.reduce((a, u) => a + u.current, 0),
+          cpu: others.reduce<number | undefined>((a, u) => sumCpu(a, u), undefined),
           other: true,
         },
         units: others,
@@ -1448,4 +1751,6 @@ export function processTotal(u: Pick<MemUnit, 'kind' | 'procs' | 'processes'>): 
 }
 
 /** Column widths in px of the agent table (fixed layout; Name first, Edit last). */
-export const TREE_COLUMN_WIDTHS = [390, 116, 60, 60, 60, 60, 104, 72, 220, 144, 48, 64];
+export const TREE_COLUMN_WIDTHS = [
+  390, 116, 60, 60, 60, 60, 104, 72, 220, 144, 64, 84, 72, 170, 126, 48, 64,
+];

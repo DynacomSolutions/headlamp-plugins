@@ -28,7 +28,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
       </Typography>
       <TextField
         label="Agent backends"
-        helperText="Comma-separated agent-memory backends, each as service/<namespace>/<name>:<port>. They are reached through the Kubernetes API service proxy."
+        helperText="Comma-separated agent-resource backends, each as service/<namespace>/<name>:<port>. They are reached through the Kubernetes API service proxy. A Service named agent-memory is the fallback when agent-resource does not answer."
         value={Array.isArray(backends) ? backends.join(', ') : backends ?? ''}
         placeholder={DEFAULT_NODES_SETTINGS.agentBackends.join(', ')}
         onChange={e => set('agentBackends', e.target.value)}

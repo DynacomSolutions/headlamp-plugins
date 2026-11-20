@@ -255,7 +255,7 @@ Data sources, refreshed every 10 seconds:
   `node_memory_MemAvailable_bytes`, or the macOS exporter equivalents, with
   `kube_node_status_capacity` as a capacity fallback), and per-container CPU
   and memory from cAdvisor.
-- The agent-memory backends (`/api/state`, read through the Kubernetes API
+- The agent-resource backends (`/api/state`, read through the Kubernetes API
   service proxy): the agent orchestrators, projects, threads and processes of
   the node each backend runs on. CPU or memory not explained by Kubernetes or
   the agents is shown as **System**.
@@ -263,7 +263,10 @@ Data sources, refreshed every 10 seconds:
 Settings (Headlamp **Settings > Plugins > usage**, stored in the browser):
 
 - **Agent backends:** comma-separated `service/<namespace>/<name>:<port>`
-  entries. Default `service/agent-memory/agent-memory:80`.
+  entries. Default `service/agent-memory/agent-resource:80`. The backend
+  Service was called `agent-memory` before. When the Service is named
+  `agent-resource`, the plugin falls back to the `agent-memory` Service in the
+  same namespace if the new one does not answer.
 - **Idle threshold (seconds):** how long without a touch before the page goes
   back to the overview. Default 120, at least 30.
 
@@ -290,7 +293,7 @@ counted twice.
 
 - `get` on the Services proxy (`services/proxy`) of the metrics service,
 - `list` on Pods and Services (cluster-wide), and
-- for the Usage dashboard, `get` on the Services proxy of each agent-memory backend.
+- for the Usage dashboard, `get` on the Services proxy of each agent-resource backend. Grant it on the old `agent-memory` Service too until the backend rollout is complete.
 
 The built-in `view` ClusterRole grants these.
 

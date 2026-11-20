@@ -21,6 +21,7 @@ import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { useHistory, useLocation } from 'react-router-dom';
 import {
   applyDefaults,
   applyLimits,
@@ -44,34 +45,51 @@ import {
   ChangeRecord,
   checkDefaults,
   checkEdit,
+  CPU_QUOTA_LABEL,
+  cpuInput,
+  cpuLimitText,
+  cpuPressureLevel,
+  cpuShare,
+  cpuShareLevel,
   currentValue,
+  defaultFieldLabel,
   DefaultForm,
   describeChange,
+  driftValue,
   editableFields,
   EditField,
   EditForm,
   EVENT_LABELS,
   FIELD_LABELS,
+  formatCores,
+  formatCpuUse,
+  formatRatio,
   formatSize,
   formatSpan,
   formatStall,
   GuideCell,
   guideCells,
+  hasCpu,
   isAgent,
+  LayerLimits,
   Limit,
   MemAlert,
   MemUnit,
   Orchestrator,
   orchestratorAgents,
+  orchestratorUnits,
+  parseCpuQuota,
   parseSize,
   processTotal,
   ProjectGroup,
+  quotaText,
   raisedTitle,
   shortName,
   sizeInput,
   stallLevel,
   swapText,
   threadName,
+  throttleLevel,
   TREE_COLUMN_WIDTHS,
   unitDetail,
   unitLabel,
@@ -80,6 +98,7 @@ import {
   worstSeverity,
 } from './model';
 import { Chevron, processSummary, ProcessTree } from './processes';
+import { parseView, toggled, viewSearch,ViewState } from './urlState';
 
 const LEVEL_PALETTE = { ok: 'success', warning: 'warning', critical: 'error' } as const;
 
@@ -244,6 +263,127 @@ function Pressure({ unit }: { unit: MemUnit }) {
   );
 }
 
+/** Throttling: the share of time spent throttled over the last sample, and the period count. */
+function ThrottleChips({ unit }: { unit: MemUnit }) {
+  const r = unit.cpuThrottledRatio;
+  if (typeof r !== 'number') {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        -
+      </Typography>
+    );
+  }
+  const level = throttleLevel(unit);
+  const n = unit.cpuNrThrottled ?? 0;
+  const title = `Throttled for ${formatRatio(
+    r
+  )} of the last sample (100% is the time of one core). ${n.toLocaleString()} of ${(
+    unit.cpuNrPeriods ?? 0
+  ).toLocaleString()} scheduler periods were throttled since the cgroup was created, ${formatStall(
+    unit.cpuThrottledUsec ?? 0
+  )} in total.`;
+  return (
+    <Tooltip title={title}>
+      <Box display="flex" gap={0.5} flexWrap="nowrap" sx={CHIP_ROW_SX}>
+        <Chip
+          size="small"
+          variant={level === 'default' ? 'outlined' : 'filled'}
+          color={level}
+          label={formatRatio(r)}
+        />
+        <Chip size="small" variant="outlined" label={`${n.toLocaleString()} periods`} />
+      </Box>
+    </Tooltip>
+  );
+}
+
+/** CPU pressure (PSI): the 10 second average of time some or all tasks waited for CPU. */
+function CpuPressure({ unit }: { unit: MemUnit }) {
+  const some = unit.cpuPressureSome;
+  const full = unit.cpuPressureFull;
+  if (!some) {
+    return (
+      <Typography variant="body2" color="text.secondary">
+        -
+      </Typography>
+    );
+  }
+  const level = cpuPressureLevel(unit);
+  const title = `Time with a task waiting for CPU (PSI some): ${some.avg10.toFixed(
+    1
+  )}% over 10 s, ${some.avg60.toFixed(1)}% over 60 s, ${some.avg300.toFixed(
+    1
+  )}% over 5 min. Cumulative since the cgroup was created: ${formatStall(some.totalUs)} some${
+    full ? `, ${formatStall(full.totalUs)} full` : ''
+  }.`;
+  return (
+    <Tooltip title={title}>
+      <Box display="flex" gap={0.5} flexWrap="nowrap" sx={CHIP_ROW_SX}>
+        <Chip
+          size="small"
+          variant={level === 'default' ? 'outlined' : 'filled'}
+          color={level}
+          label={`some ${some.avg10.toFixed(1)}%`}
+        />
+        {full && <Chip size="small" variant="outlined" label={`full ${full.avg10.toFixed(1)}%`} />}
+      </Box>
+    </Tooltip>
+  );
+}
+
+/** The five CPU cells of a unit row: use, limit, share of the limit, throttling and pressure. */
+function CpuCells({ unit }: { unit: MemUnit }) {
+  if (!hasCpu(unit)) return <EmptyCells n={CPU_COLUMNS} />;
+  const share = cpuShare(unit);
+  const level = cpuShareLevel(unit);
+  return (
+    <>
+      <TableCell align="right">
+        {unit.cpuCores === undefined ? '-' : formatCpuUse(unit.cpuCores)}
+      </TableCell>
+      <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
+        <Tooltip
+          title={
+            unit.cpuQuotaCores === null
+              ? 'No CPU limit on this unit (cpu.max is max). A limit on a slice above it still applies.'
+              : `CPU limit (CPUQuota): ${cpuLimitText(unit.cpuQuotaCores)}, weight ${
+                  unit.cpuWeight ?? '-'
+                }`
+          }
+        >
+          <span>{cpuLimitText(unit.cpuQuotaCores)}</span>
+        </Tooltip>
+      </TableCell>
+      <TableCell align="right">
+        {share === null ? (
+          '-'
+        ) : (
+          <Tooltip
+            title={`${formatCpuUse(unit.cpuCores ?? 0)} of ${cpuLimitText(
+              unit.cpuQuotaCores
+            )} in use`}
+          >
+            <Box display="inline-flex" sx={CHIP_ROW_SX}>
+              <Chip
+                size="small"
+                variant={level === 'default' ? 'outlined' : 'filled'}
+                color={level}
+                label={formatRatio(share)}
+              />
+            </Box>
+          </Tooltip>
+        )}
+      </TableCell>
+      <TableCell>
+        <ThrottleChips unit={unit} />
+      </TableCell>
+      <TableCell>
+        <CpuPressure unit={unit} />
+      </TableCell>
+    </>
+  );
+}
+
 function AlertBadges({ alerts }: { alerts: MemAlert[] | undefined }) {
   if (!alerts || alerts.length === 0)
     return (
@@ -284,6 +424,16 @@ function HostSummary({ state }: { state: AgentResourceState }) {
         variant="outlined"
         label={`Heavy job guidance: ${state.policy.heavyHigh} soft, ${state.policy.heavyMax} hard, ${state.policy.heavySwap} swap`}
       />
+      {state.host.cpus ? (
+        <Tooltip title="CPUs of the host. The agents slice may use all of them except the reserve, which stays free for the control units and the host.">
+          <Chip
+            variant="outlined"
+            label={`${state.host.cpus} CPUs${
+              state.host.cpuReserve ? `, ${formatCores(state.host.cpuReserve)} reserved` : ''
+            }`}
+          />
+        </Tooltip>
+      ) : null}
       {!state.writable && <Chip variant="outlined" color="warning" label="Read only" />}
     </Box>
   );
@@ -576,10 +726,14 @@ function DefaultsDialog({
   onApplied: (message: string) => void;
 }) {
   const settings = useSettings();
+  // The CPU limit is offered when the backend reports one, in the default file or the policy.
+  const cpuQuota = effectiveCpuQuota(o);
+  const showCpu = cpuQuota !== undefined;
   const [form, setForm] = React.useState<DefaultForm>(() => ({
     memoryHigh: current.memoryHigh === undefined ? '' : sizeInput(current.memoryHigh),
     memoryMax: current.memoryMax === undefined ? '' : sizeInput(current.memoryMax),
     memorySwapMax: current.memorySwapMax === undefined ? '' : sizeInput(current.memorySwapMax),
+    ...(showCpu ? { cpuQuota: cpuInput(cpuQuota) } : {}),
   }));
   const [force, setForce] = React.useState(false);
   const [reason, setReason] = React.useState('');
@@ -588,9 +742,9 @@ function DefaultsDialog({
   const agents = orchestratorAgents(state.units, o);
   const reload = current.apply !== 'running-agents';
   const check = checkDefaults(
-    current,
+    showCpu ? { ...current, cpuQuota } : current,
     form,
-    { minLimit: state.minLimit, hostTotal: state.host.total },
+    { minLimit: state.minLimit, hostTotal: state.host.total, hostCpus: state.host.cpus },
     agents,
     state.overrides
   );
@@ -609,7 +763,11 @@ function DefaultsDialog({
       const again = Array.isArray(res?.reapplied) ? res.reapplied.length : 0;
       onApplied(
         `Default for every ${o.title} agent: ${Object.entries(check.changes)
-          .map(([k, v]) => `${FIELD_LABELS[k as EditField].split(' (')[0]} ${v}`)
+          .map(([k, v]) =>
+            k === 'cpuQuota'
+              ? `CPU limit ${quotaText(v)}`
+              : `${defaultFieldLabel(k).split(' (')[0]} ${v}`
+          )
           .join(', ')}. Saved and applied to running agents${
           again ? `; ${again} agent limit${again === 1 ? '' : 's'} set here re-applied` : ''
         }.`
@@ -652,6 +810,21 @@ function DefaultsDialog({
               />
             );
           })}
+          {showCpu && (
+            <TextField
+              label={CPU_QUOTA_LABEL}
+              value={form.cpuQuota ?? ''}
+              onChange={e => setForm(prev => ({ ...prev, cpuQuota: e.target.value }))}
+              helperText={`Cores for each agent: 16, 1600% or none. Currently ${quotaText(
+                cpuQuota
+              )}${
+                state.host.cpus ? `. The host has ${state.host.cpus} CPUs` : ''
+              }. A running agent is throttled, never stopped, when it reaches the limit.`}
+              error={!!form.cpuQuota && parseCpuQuota(form.cpuQuota) === undefined}
+              size="small"
+              fullWidth
+            />
+          )}
           <TextField
             label="Reason (recorded in the file and the audit log)"
             value={reason}
@@ -706,13 +879,14 @@ function DefaultsPanel({
 }) {
   const d = o.defaults;
   if (!d) return null;
+  const cpu = effectiveCpuQuota(o);
   return (
     <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={2}>
       <Typography variant="subtitle2">Default for every {o.title} agent:</Typography>
       <Chip
         label={`soft ${limitText(d.memoryHigh)}, hard ${limitText(d.memoryMax)}${
           d.memorySwapMax !== undefined ? `, swap ${limitText(d.memorySwapMax)}` : ''
-        }`}
+        }${cpu !== undefined ? `, CPU ${quotaText(cpu)}` : ''}`}
       />
       <Tooltip title={[d.file, d.note].filter(Boolean).join(' · ')}>
         <Typography variant="caption" color="text.secondary">
@@ -859,7 +1033,11 @@ function continuing(row: AgentTreeRow): GuideCell[] {
   return [...row.guides.map((g): GuideCell => (g ? 'line' : 'none')), row.last ? 'none' : 'line'];
 }
 
-const COLUMNS = 12;
+/** The table: memory columns, then the five CPU columns, then alerts and the edit button. */
+const COLUMNS = TREE_COLUMN_WIDTHS.length;
+const CPU_COLUMNS = 5;
+/** Index of the first CPU column (CPU use). */
+const COL_CPU = 10;
 
 /**
  * The first cell of a row: connectors on the left spanning the full row
@@ -967,6 +1145,17 @@ function EmptyCells({ n }: { n: number }) {
       {Array.from({ length: n }, (_, i) => (
         <TableCell key={i} />
       ))}
+    </>
+  );
+}
+
+/** The cells of a group row after Used: empty, except the CPU use of the group. */
+function GroupRest({ cpu }: { cpu?: number }) {
+  return (
+    <>
+      <EmptyCells n={COL_CPU - 3} />
+      <TableCell align="right">{cpu === undefined ? '' : formatCpuUse(cpu)}</TableCell>
+      <EmptyCells n={COLUMNS - COL_CPU - 1} />
     </>
   );
 }
@@ -1121,6 +1310,7 @@ function UnitRow({
         <TableCell>
           <Pressure unit={u} />
         </TableCell>
+        <CpuCells unit={u} />
         <TableCell>
           <AlertBadges alerts={byUnit.get(u.name)} />
         </TableCell>
@@ -1214,7 +1404,32 @@ function AgentTree({
           </TableCell>
           <TableCell>
             <Tooltip title="Memory stall time in the recent window">
-              <span>Stall</span>
+              <span>Mem stall</span>
+            </Tooltip>
+          </TableCell>
+          <TableCell align="right">
+            <Tooltip title="CPU cores in use (average between two refreshes)">
+              <span>CPU use</span>
+            </Tooltip>
+          </TableCell>
+          <TableCell align="right">
+            <Tooltip title="CPU limit of the unit (CPUQuota, in cores)">
+              <span>CPU limit</span>
+            </Tooltip>
+          </TableCell>
+          <TableCell align="right">
+            <Tooltip title="CPU use as a share of the CPU limit">
+              <span>Of limit</span>
+            </Tooltip>
+          </TableCell>
+          <TableCell>
+            <Tooltip title="Time spent throttled by the CPU limit between two refreshes (100% is the time of one core), and the number of throttled scheduler periods in total">
+              <span>Throttled</span>
+            </Tooltip>
+          </TableCell>
+          <TableCell>
+            <Tooltip title="CPU pressure: share of time a task waited for CPU (10 second average)">
+              <span>CPU stall</span>
             </Tooltip>
           </TableCell>
           <TableCell>Alerts</TableCell>
@@ -1251,7 +1466,7 @@ function AgentTree({
                 </TreeCell>
                 <TableCell />
                 {usedCell(total > 0 ? Math.max(0, total - available) : undefined)}
-                <EmptyCells n={COLUMNS - 3} />
+                <GroupRest />
               </TableRow>
             );
           }
@@ -1293,7 +1508,13 @@ function AgentTree({
                   </TreeCell>
                   <TableCell />
                   {usedCell(o.running ? o.current : undefined)}
-                  <EmptyCells n={COLUMNS - 3} />
+                  <GroupRest
+                    cpu={
+                      o.running
+                        ? orchestratorUnits(state.units, o).find(x => x.role === 'agents')?.cpuCores
+                        : undefined
+                    }
+                  />
                 </TableRow>
                 {row.expanded && (
                   <TableRow>
@@ -1336,7 +1557,7 @@ function AgentTree({
               </TreeCell>
               <TableCell />
               {usedCell(p.current)}
-              <EmptyCells n={COLUMNS - 3} />
+              <GroupRest cpu={p.cpu} />
             </TableRow>
           );
         })}
@@ -1354,34 +1575,50 @@ function AgentTree({
   );
 }
 
+/** The per-agent CPU default: the default file's value, else the policy's. */
+function effectiveCpuQuota(o: Orchestrator): string | undefined {
+  return o.defaults?.cpuQuota ?? o.policy.agent.cpuQuota;
+}
+
 function limitText(v: Limit | undefined): string {
   return v === undefined ? 'not set' : formatSize(v);
+}
+
+/** "CPU limit 16 cores, weight 100" from a layer's CPU policy; empty when the layer has none. */
+function cpuPolicyText(l: LayerLimits): string {
+  const parts: string[] = [];
+  if (l.cpuQuota !== undefined) parts.push(`CPU limit ${quotaText(l.cpuQuota)}`);
+  if (l.cpuWeight !== undefined) parts.push(`CPU weight ${l.cpuWeight}`);
+  return parts.join(', ');
 }
 
 function PolicyChips({ o }: { o: Orchestrator }) {
   const { control, agents, agent } = o.policy;
   const parts: [string, string][] = [];
+  const memory = (l: LayerLimits) =>
+    `soft ${limitText(l.memoryHigh)}, hard ${limitText(l.memoryMax)}, swap ${limitText(
+      l.memorySwapMax
+    )}`;
+  const layer = (name: string, l: LayerLimits) => {
+    const hasMemory = l.memoryHigh !== undefined || l.memoryMax !== undefined;
+    const text = [hasMemory ? memory(l) : '', cpuPolicyText(l)].filter(Boolean).join(', ');
+    if (text) parts.push([name, text]);
+  };
   if (control.memoryMin !== undefined || control.memoryLow !== undefined)
     parts.push([
       'Control',
-      `min ${limitText(control.memoryMin)}, low ${limitText(control.memoryLow)}${
-        control.managedOOMPreference ? `, OOM ${control.managedOOMPreference}` : ''
-      }`,
+      [
+        `min ${limitText(control.memoryMin)}, low ${limitText(control.memoryLow)}${
+          control.managedOOMPreference ? `, OOM ${control.managedOOMPreference}` : ''
+        }`,
+        cpuPolicyText(control),
+      ]
+        .filter(Boolean)
+        .join(', '),
     ]);
-  if (agents.memoryHigh !== undefined || agents.memoryMax !== undefined)
-    parts.push([
-      'All agents',
-      `soft ${limitText(agents.memoryHigh)}, hard ${limitText(agents.memoryMax)}, swap ${limitText(
-        agents.memorySwapMax
-      )}`,
-    ]);
-  if (agent.memoryHigh !== undefined || agent.memoryMax !== undefined)
-    parts.push([
-      'Each agent',
-      `soft ${limitText(agent.memoryHigh)}, hard ${limitText(agent.memoryMax)}, swap ${limitText(
-        agent.memorySwapMax
-      )}`,
-    ]);
+  else if (cpuPolicyText(control)) parts.push(['Control', cpuPolicyText(control)]);
+  layer('All agents', agents);
+  layer('Each agent', agent);
   if (parts.length === 0) return null;
   return (
     <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={1}>
@@ -1408,8 +1645,8 @@ function DriftNote({ o }: { o: Orchestrator }) {
       <Box component="ul" sx={{ m: 0, pl: 3 }}>
         {o.drift.slice(0, 8).map(d => (
           <li key={`${d.unit}/${d.property}`}>
-            {d.layer}: {shortName(d.unit)} {d.property} is {formatSize(d.have)}, policy{' '}
-            {formatSize(d.want)}
+            {d.layer}: {shortName(d.unit)} {d.property} is {driftValue(d.property, d.have)}, policy{' '}
+            {driftValue(d.property, d.want)}
           </li>
         ))}
         {o.drift.length > 8 && <li>and {o.drift.length - 8} more</li>}
@@ -1421,21 +1658,24 @@ function DriftNote({ o }: { o: Orchestrator }) {
 export function AgentResourcePage(): JSX.Element {
   const settings = useSettings();
   const { state, loading, error, refresh } = useAgentResource(settings);
-  const [filter, setFilter] = React.useState('');
-  const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(new Set());
-  const toggleExpanded = (name: string) =>
-    setExpanded(prev => {
-      const next = new Set(prev);
-      if (!next.delete(name)) next.add(name);
-      return next;
+  // The filter and the open and collapsed rows are part of the URL (query, history replace).
+  const location = useLocation();
+  const history = useHistory();
+  const view = React.useMemo(() => parseView(location.search), [location.search]);
+  const setView = (next: Partial<ViewState>) =>
+    history.replace({
+      pathname: location.pathname,
+      search: viewSearch(location.search, { ...view, ...next }),
+      hash: location.hash,
     });
-  const [collapsed, setCollapsed] = React.useState<ReadonlySet<string>>(new Set());
-  const toggleCollapsed = (key: string) =>
-    setCollapsed(prev => {
-      const next = new Set(prev);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
+  const filter = view.filter;
+  const expanded = React.useMemo<ReadonlySet<string>>(() => new Set(view.procs), [view.procs]);
+  const collapsed = React.useMemo<ReadonlySet<string>>(
+    () => new Set(view.collapsed),
+    [view.collapsed]
+  );
+  const toggleExpanded = (name: string) => setView({ procs: toggled(view.procs, name) });
+  const toggleCollapsed = (key: string) => setView({ collapsed: toggled(view.collapsed, key) });
   const [editing, setEditing] = React.useState<string | null>(null);
   const [editingDefault, setEditingDefault] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
@@ -1454,11 +1694,13 @@ export function AgentResourcePage(): JSX.Element {
   return (
     <SectionBox title="Agent resources">
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Memory limits of the agents on the agent host as a tree: host, orchestrator (T3 Code,
-        Herdr), project and thread. Each orchestrator lists its own control unit and the slice that
-        holds all its agents, then one scope per agent thread. The bar fills with current usage; the
-        amber line is the soft limit (memory.high, where the kernel starts throttling) and the red
-        line is the hard limit (memory.max, where it kills).
+        Memory and CPU limits of the agents on the agent host as a tree: host, orchestrator (T3
+        Code, Herdr), project and thread. Each orchestrator lists its own control unit and the slice
+        that holds all its agents, then one scope per agent thread. The bar fills with current
+        usage; the amber line is the soft limit (memory.high, where the kernel starts throttling)
+        and the red line is the hard limit (memory.max, where it kills). The CPU columns show the
+        CPU limit (cpu.max), the use as a share of it, the time spent throttled by it and the CPU
+        pressure. A unit at its CPU limit is slowed down, never stopped.
       </Typography>
       {loading && !state && <CircularProgress size={24} />}
       {error && (
@@ -1486,7 +1728,7 @@ export function AgentResourcePage(): JSX.Element {
             <TextField
               label="Filter by name, session, thread, directory or command"
               value={filter}
-              onChange={e => setFilter(e.target.value)}
+              onChange={e => setView({ filter: e.target.value })}
               size="small"
               sx={{ minWidth: 340 }}
             />

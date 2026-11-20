@@ -1,5 +1,5 @@
 /*
- * Polls VictoriaMetrics and the agent-memory backends every 10 s. A failed metrics refresh keeps
+ * Polls VictoriaMetrics and the agent-resource backends every 10 s. A failed metrics refresh keeps
  * the last data and marks it stale. A failing agent backend keeps its node's last good agent data
  * on screen, marked with its time, for up to MAX_AGENT_FAILURES failed polls in a row; its error
  * is shown on the node it served last time (or page-wide if it never answered).
