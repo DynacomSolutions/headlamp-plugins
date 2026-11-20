@@ -84,7 +84,12 @@ export type LogicNode =
   | { type: 'not'; child: LogicNode }
   | { type: 'and' | 'or'; left: LogicNode; right: LogicNode };
 
-export type LogicResult = { ok: true; ast: LogicNode } | { ok: false; error: string };
+/** `ast` is set when `ok` is true, and `error` when it is false. */
+export interface LogicResult {
+  ok: boolean;
+  ast?: LogicNode;
+  error?: string;
+}
 
 interface Token {
   kind: 'num' | 'and' | 'or' | 'not' | 'open' | 'close';
@@ -218,8 +223,8 @@ export function compileFilters(
   if (logic.trim() !== '' && filters.length > 0) {
     // The logic counts the filters as the user sees them, so keep draft rows in the numbering.
     const parsed = parseFilterLogic(logic, filters.length);
-    if (parsed.ok) ast = parsed.ast;
-    else logicError = parsed.error;
+    if (parsed.ok) ast = parsed.ast ?? null;
+    else logicError = parsed.error ?? 'The logic is not valid.';
   }
   const test = (obj: unknown): boolean => {
     if (ast) {

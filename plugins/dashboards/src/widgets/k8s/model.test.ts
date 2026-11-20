@@ -157,7 +157,7 @@ describe('filter operators', () => {
 describe('filter logic', () => {
   const run = (logic: string, results: boolean[]) => {
     const parsed = parseFilterLogic(logic, results.length);
-    if (!parsed.ok) throw new Error(parsed.error);
+    if (!parsed.ok || !parsed.ast) throw new Error(parsed.error);
     return evaluateLogic(parsed.ast, results);
   };
   it('follows AND over OR precedence and brackets', () => {
