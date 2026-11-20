@@ -15,6 +15,9 @@ import { mcpHandler } from './mcp.js';
 import { Runtime, serviceGet } from './runtime.js';
 import { PanelError, buildPanel, listPanels } from './widgets.js';
 import { DiagnosisStore } from './store.js';
+import { LaunchError, LaunchService } from './launch/service.js';
+import { LaunchStore, type Launch } from './launch/store.js';
+import { T3Client, tokenFromFile } from './t3/client.js';
 
 const MAX_BODY = 1024 * 1024;
 
@@ -276,7 +279,7 @@ const publishSchema = z.object({
     status: z.enum(['done', 'failed']),
     result: resultSchema.optional(),
     error: z.string().max(2000).optional(),
-    evidence: z.array(z.object({ id: z.string().max(16), tool: z.string().max(80), reason: z.string().max(400), summary: z.string().max(2000), ok: z.boolean() })).max(60).default([]),
+    evidence: z.array(z.object({ id: z.string().max(16), tool: z.string().max(80), reason: z.string().max(400), summary: z.string().max(2000), ok: z.boolean(), data: z.unknown().refine(v => v === undefined || JSON.stringify(v).length <= 30_000, 'data is too large').optional() })).max(60).default([]),
     toolCalls: z.number().int().min(0).max(1000).default(0),
     toolBudget: z.number().int().min(0).max(1000).default(0),
     model: z.string().max(120).default(''),
@@ -288,6 +291,33 @@ const createChatSchema = z.object({ model: z.string().max(200).optional(), diagn
 const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional() });
 const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional() });
 
+const fixSchema = z.object({ index: z.number().int().min(0).max(20).optional(), title: z.string().min(1).max(200), detail: z.string().max(1000).optional(), command: z.string().max(400).optional() });
+const launchSchema = z
+  .object({
+    purpose: z.string().min(1).max(200),
+    diagnosisId: z.string().max(200).optional(),
+    chatId: z.string().max(200).optional(),
+    fix: fixSchema.optional(),
+    brief: z.string().max(40_000).optional(),
+    projectKey: z.string().max(60).optional(),
+    requestedBy: z.string().max(80).optional(),
+  })
+  .strict();
+const decisionSchema = z.object({ by: z.string().max(80).optional() }).strict();
+const launchMessageSchema = z.object({ text: z.string().min(1).max(8000) }).strict();
+
+/** Who asked. The service proxy does not pass the user on, so this is a label for the record, not proof. */
+function operator(req: IncomingMessage, claimed?: string): string {
+  const header = req.headers['x-remote-user'] ?? req.headers['x-forwarded-user'];
+  const value = (Array.isArray(header) ? header[0] : header) || claimed || 'operator';
+  return maskText(value.slice(0, 80));
+}
+
+/** The launch as the list shows it: no brief and no timeline. */
+function launchSummary({ brief: _brief, timeline, lastReply, ...l }: Launch): Omit<Launch, 'brief' | 'timeline' | 'lastReply'> & { steps: number } {
+  return { ...l, steps: timeline.length };
+}
+
 async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<T> {
   const parsed = schema.safeParse(await readBody(req));
   if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
@@ -296,9 +326,18 @@ async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
 
 export async function startServer(config: Config = loadConfig(), version = '0.0.0'): Promise<{ close(): Promise<void>; port: number }> {
   const store = new DiagnosisStore(config.dataDir, config.maxDiagnoses);
-  const runtime = new Runtime(config, store);
+  const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
+  const runtime = new Runtime(config, store, launchStore);
   const runner = new Runner(runtime, store, config);
   const chats = new ChatService({ store: new ChatStore(config.dataDir, config.maxChats), diagnoses: store, tools: runtime.toolHost(), catalogue: runner.catalogue, budget: config.diagnosis.toolBudget, maxTurns: config.maxChatTurns });
+  const launches = new LaunchService({
+    store: launchStore,
+    diagnoses: store,
+    config: config.launch,
+    t3: config.launch.t3Url && config.launch.t3TokenFile ? new T3Client({ url: config.launch.t3Url, readToken: tokenFromFile(config.launch.t3TokenFile) }) : undefined,
+    log,
+  });
+  launches.resume();
   // Webhook diagnoses in the shared store, so a rollout or a second pod does not reset the hourly cap.
   const gate = new AlertGate(config.diagnosis, since => store.list().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= since).length);
   const mcp = await mcpHandler(runtime, store, version);
@@ -487,6 +526,38 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           throw error;
         }
       }
+      if (path === '/api/launches' || path.startsWith('/api/launches/')) {
+        const parts = path.split('/').slice(3).map(decodeURIComponent);
+        const [id, action] = parts;
+        if (parts.length > 2 || (action && !['approve', 'reject', 'messages'].includes(action)) || (id === 'config' && (action || req.method !== 'GET')) || (id === 'preview' && (action || req.method !== 'POST'))) return send(res, 404, { error: 'not found' });
+        try {
+          if (id === 'config') return send(res, 200, launches.publicConfig());
+          launches.requireEnabled();
+          if (!id && req.method === 'GET') {
+            const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
+            return send(res, 200, { launches: launchStore.list().slice(0, limit).map(launchSummary) });
+          }
+          if (!id && req.method === 'POST') {
+            const body = await chatBody(req, launchSchema);
+            const { requestedBy, ...request } = body;
+            return send(res, 201, launches.create(request, operator(req, requestedBy)));
+          }
+          if (id === 'preview') {
+            const { requestedBy: _by, ...request } = await chatBody(req, launchSchema);
+            return send(res, 200, { brief: launches.brief(request) });
+          }
+          if (id && !action && req.method === 'GET') {
+            const l = launchStore.get(id);
+            return l ? send(res, 200, l) : send(res, 404, { error: 'not found' });
+          }
+          if (id && action === 'approve' && req.method === 'POST') return send(res, 200, await launches.approve(id, operator(req, (await chatBody(req, decisionSchema)).by)));
+          if (id && action === 'reject' && req.method === 'POST') return send(res, 200, launches.reject(id, operator(req, (await chatBody(req, decisionSchema)).by)));
+          if (id && action === 'messages' && req.method === 'POST') return send(res, 202, await launches.message(id, (await chatBody(req, launchMessageSchema)).text));
+        } catch (error) {
+          if (error instanceof LaunchError) throw new HttpError(error.status, error.message);
+          throw error;
+        }
+      }
       if (path === '/mcp' || path.startsWith('/api/')) return send(res, 405, { error: 'method not allowed' });
       return send(res, 404, { error: 'not found' });
     } catch (error) {
@@ -509,6 +580,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       const closed = new Promise<void>(resolve => server.close(() => resolve()));
       server.closeIdleConnections();
       chats.shutdown();
+      launches.shutdown();
       await runner.drain();
       await mcp.close();
       server.closeIdleConnections();

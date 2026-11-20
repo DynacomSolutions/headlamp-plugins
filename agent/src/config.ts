@@ -27,8 +27,40 @@ export interface Config {
   maxChats: number;
   /** Chat turns that may run at once across all chats. */
   maxChatTurns: number;
+  /** Agent launches kept in the data directory. The oldest finished ones are dropped first. */
+  maxLaunches: number;
   models: ModelRoutesConfig;
   diagnosis: DiagnosisConfig;
+  launch: LaunchConfig;
+}
+
+/** Launching T3 Code agents from the incident agent. Every value comes from the environment or the settings file. */
+export interface LaunchConfig {
+  /** Base URL of the T3 server. Empty disables launching. */
+  t3Url: string;
+  /** File that holds the bearer token. It is read on each use, so a rotated token needs no restart. */
+  t3TokenFile: string;
+  settingsFile: string;
+  settings: LaunchSettings;
+  /** Why the settings file could not be used (missing, not JSON). Shown as the reason when launching is off. */
+  settingsError?: string;
+}
+
+export interface LaunchProject {
+  projectId: string;
+  title: string;
+}
+
+export interface LaunchSettings {
+  /** T3 projects by key. The key `default` is used when a request names none. */
+  projects: Record<string, LaunchProject>;
+  model: { instanceId: string; model: string; options?: Array<{ id: string; value: string | number | boolean }> };
+  /** Text put at the top of every brief. */
+  briefPreamble: string;
+  /** Launches that may be active at once. */
+  maxRunning: number;
+  /** Link to a thread in the T3 web app, with `{threadId}` in place of the id. */
+  threadUrlTemplate: string;
 }
 
 export type ModelStyle = 'anthropic' | 'openai' | 'responses';
@@ -165,6 +197,58 @@ export function loadModelRoutes(env: NodeJS.ProcessEnv): ModelRoutesConfig {
   return { routes, defaultModel, skipped };
 }
 
+const emptyLaunchSettings = (): LaunchSettings => ({ projects: {}, model: { instanceId: '', model: '' }, briefPreamble: '', maxRunning: 2, threadUrlTemplate: '' });
+
+function plainString(v: unknown, max = 200): string {
+  return typeof v === 'string' ? v.trim().slice(0, max) : '';
+}
+
+/** Parses the launch settings JSON. A wrong value is dropped, so a bad file turns launching off and never stops the service. */
+export function parseLaunchSettings(raw: unknown): LaunchSettings {
+  const out = emptyLaunchSettings();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out;
+  const r = raw as Record<string, unknown>;
+  if (r.projects && typeof r.projects === 'object' && !Array.isArray(r.projects)) {
+    for (const [key, value] of Object.entries(r.projects as Record<string, unknown>)) {
+      if (!/^[A-Za-z0-9_.-]{1,60}$/.test(key) || !value || typeof value !== 'object') continue;
+      const v = value as Record<string, unknown>;
+      const projectId = plainString(v.projectId, 100);
+      if (!projectId) continue;
+      out.projects[key] = { projectId, title: plainString(v.title, 120) || key };
+    }
+  }
+  if (r.model && typeof r.model === 'object' && !Array.isArray(r.model)) {
+    const m = r.model as Record<string, unknown>;
+    out.model.instanceId = plainString(m.instanceId, 100);
+    out.model.model = plainString(m.model, 100);
+    if (Array.isArray(m.options)) {
+      const options = m.options
+        .filter((o): o is { id: string; value: string | number | boolean } => !!o && typeof o === 'object' && typeof (o as { id?: unknown }).id === 'string' && ['string', 'number', 'boolean'].includes(typeof (o as { value?: unknown }).value))
+        .map(o => ({ id: o.id, value: o.value }));
+      if (options.length > 0) out.model.options = options;
+    }
+  }
+  out.briefPreamble = typeof r.briefPreamble === 'string' ? r.briefPreamble.slice(0, 8000) : '';
+  out.maxRunning = typeof r.maxRunning === 'number' && Number.isFinite(r.maxRunning) && r.maxRunning >= 1 ? Math.floor(r.maxRunning) : 2;
+  const template = plainString(r.threadUrlTemplate, 500);
+  out.threadUrlTemplate = /^https?:\/\//.test(template) ? template : '';
+  return out;
+}
+
+export function loadLaunchConfig(env: NodeJS.ProcessEnv): LaunchConfig {
+  const settingsFile = env.AGENT_LAUNCH_SETTINGS_FILE ?? '';
+  let settings = emptyLaunchSettings();
+  let settingsError: string | undefined;
+  if (settingsFile) {
+    try {
+      settings = parseLaunchSettings(JSON.parse(readFileSync(settingsFile, 'utf8')));
+    } catch (error) {
+      settingsError = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'The launch settings file does not exist' : 'The launch settings file is not valid JSON';
+    }
+  }
+  return { t3Url: (env.T3_URL ?? '').trim().replace(/\/+$/, ''), t3TokenFile: env.T3_TOKEN_FILE ?? '', settingsFile, settings, settingsError };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     port: int(env.PORT, 8080),
@@ -182,6 +266,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxDiagnoses: int(env.MAX_DIAGNOSES, 200),
     maxChats: int(env.AGENT_MAX_CHATS, 200),
     maxChatTurns: int(env.AGENT_MAX_CHAT_TURNS, 3),
+    maxLaunches: int(env.AGENT_MAX_LAUNCHES, 200),
     models: loadModelRoutes(env),
     diagnosis: {
       toolBudget: int(env.AGENT_TOOL_BUDGET, 10),
@@ -189,6 +274,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       maxPerHour: int(env.AGENT_MAX_DIAGNOSES_PER_HOUR, 6),
       ignoreAlerts: list(env.AGENT_IGNORE_ALERTS, ['Watchdog', 'InfoInhibitor']),
     },
+    launch: loadLaunchConfig(env),
   };
 }
 
