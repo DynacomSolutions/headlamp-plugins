@@ -1,10 +1,60 @@
 # github-runners
 
-A [Headlamp](https://headlamp.dev/) plugin for
-[Actions Runner Controller](https://github.com/actions/actions-runner-controller)
-(ARC, `actions.github.com/v1alpha1`). It adds a **GitHub Runners** sidebar entry.
+A [Headlamp](https://headlamp.dev/) plugin for CI runners. It adds a **GitHub
+Runners** sidebar entry. It has two data sources:
 
-## What it shows
+1. **RunWarden** (first choice). The page reads the RunWarden widget panels.
+2. **ARC feed** (fallback). The page reads
+   [Actions Runner Controller](https://github.com/actions/actions-runner-controller)
+   (ARC, `actions.github.com/v1alpha1`) objects and an optional status endpoint.
+
+A chip beside the title shows which source is in use.
+
+## RunWarden source
+
+RunWarden serves the widget panel API (PanelModel v1) on a Kubernetes Service:
+`GET /api/widgets` and `GET /api/widgets/<id>`. The browser reaches it through
+the Kubernetes API service proxy
+(`/api/v1/namespaces/NS/services/NAME:PORT/proxy/api/widgets/<id>`), so Kubernetes
+permissions apply. The signed-in user needs the `get` verb on `services/proxy`
+for that Service. The browser holds no token for RunWarden.
+
+| Setting | Meaning |
+| --- | --- |
+| RunWarden | `Auto` (default) uses RunWarden and falls back to the ARC feed when it does not answer. `On` uses RunWarden only. `Off` uses the ARC feed only. |
+| RunWarden namespace / service / port | Where the widgets Service is. Defaults: `runwarden`, `runwarden-widgets`, `80`. A blank field uses the default. |
+
+The settings page has a **Test** button. It asks the Service for its panel list
+and shows how many panels it found, as the Dashboards panel sources do. The
+keys for `defaults.json` are `runwardenMode`, `runwardenNamespace`,
+`runwardenService` and `runwardenPort`.
+
+| Panel | Shown on |
+| --- | --- |
+| `pools` | Overview and Capacity: one row per pool with running, queued, free slots, cap and a fill bar. Top stats: running jobs, queued jobs, free slots. |
+| `queue` | Overview: one row per owner and pool with queued jobs and the wait of the oldest. Top stat: oldest queued. |
+| `runners` | Runners tab: pods by state (busy, idle, warm, and any other state) per pool. Top stats: busy, idle, pending, stuck runners. Also in the Overview pool rows. |
+| `nodes` | Capacity: CPU, memory, runners and load per node. |
+| `persistent` | Capacity: state of each persistent machine. |
+| `job-times` | Job times tab: wait p50 and p90, start (warm start) p50 and run p50 per pool, and a chart of the wait and run time of the last jobs. Top stats: wait p50, wait p90, start p50. |
+| `failures` | Job times tab: failed, cancelled and timed out jobs per repository. Top stat: failed. |
+
+Every row and group of every panel is shown. There is no top-N and there is no
+"Other" row. The search box filters rows. The node chips filter the node rows.
+The pool chips filter pool, queue and job time rows. If one panel fails, the
+others still show and a notice names the failed panel. Panel numbers older than
+five minutes are flagged stale. The ARC-only tabs (Scale sets, Listeners) show
+only with the ARC feed.
+
+The page then reads no ARC objects for its numbers. It still watches them in the
+background, so the ARC tabs are ready if RunWarden stops answering.
+
+## ARC feed (fallback)
+
+The sections below describe the ARC feed. The page uses it when RunWarden is
+`Off`, or in `Auto` mode when RunWarden does not answer.
+
+## What the ARC feed shows
 
 - **Overview**: summary stats, one card per node (ready/offline, busy marks,
   best-effort external workers), live jobs (job, repository, workflow, run,

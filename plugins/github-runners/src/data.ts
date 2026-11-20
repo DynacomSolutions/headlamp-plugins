@@ -8,6 +8,16 @@ import {
   mergeEnrichment,
   parseAliases,
 } from './model';
+import {
+  buildRunWarden,
+  PANEL_IDS,
+  panelPath,
+  Panels,
+  parsePanel,
+  resolveSource,
+  RunWardenBoard,
+  RunWardenSource,
+} from './runwarden';
 import type { History, PluginConfig, Raw, Status } from './types';
 
 export const CONFIG_KEY = 'github-runners';
@@ -89,7 +99,7 @@ export function useKind(cls: any): ListState {
   };
 }
 
-async function getJson(url: string): Promise<any> {
+export async function getJson(url: string): Promise<any> {
   if (url.startsWith('/')) {
     // Same-cluster path (for example a Service proxy path) via Headlamp's API proxy.
     const res = await ApiProxy.request(url, { method: 'GET', isJSON: false });
@@ -187,8 +197,92 @@ export function useExternalWorkers(cfg: PluginConfig): { items: Raw[]; error: st
   return state;
 }
 
+export type RunWardenState = 'off' | 'loading' | 'ok' | 'error';
+
+export interface RunWardenData {
+  source: RunWardenSource;
+  state: RunWardenState;
+  board: RunWardenBoard | null;
+  /** Panels that failed on the last poll, with the reason. The others still show. */
+  failed: Array<{ id: string; reason: string }>;
+  error: string | null;
+}
+
+const reasonOf = (e: unknown): string => String((e as Error)?.message || e);
+
+/** Poll the RunWarden panels through the Kubernetes service proxy. Off when the mode is off. */
+export function useRunWarden(cfg: PluginConfig): RunWardenData {
+  const source = React.useMemo(
+    () => resolveSource(cfg),
+    [cfg.runwardenMode, cfg.runwardenNamespace, cfg.runwardenService, cfg.runwardenPort]
+  );
+  const enabled = source.mode !== 'off' && source.problem === null;
+  const key = `${source.namespace}/${source.service}:${source.port}`;
+  const [state, setState] = React.useState<{
+    key: string;
+    panels: Panels;
+    got: boolean;
+    failed: Array<{ id: string; reason: string }>;
+    error: string | null;
+  }>({ key, panels: {}, got: false, failed: [], error: null });
+  React.useEffect(() => {
+    if (!enabled) return;
+    let alive = true;
+    const load = async () => {
+      const results = await Promise.allSettled(PANEL_IDS.map(id => getJson(panelPath(source, id))));
+      if (!alive) return;
+      setState(prev => {
+        const base = prev.key === key ? prev.panels : {};
+        const panels: Panels = { ...base };
+        const failed: Array<{ id: string; reason: string }> = [];
+        results.forEach((r, i) => {
+          const id = PANEL_IDS[i];
+          if (r.status === 'rejected') failed.push({ id, reason: reasonOf(r.reason) });
+          else {
+            const panel = parsePanel(r.value);
+            if (panel) panels[id] = panel;
+            else failed.push({ id, reason: 'Not a panel document' });
+          }
+        });
+        const any = Object.keys(panels).length > 0;
+        return {
+          key,
+          panels,
+          got: any,
+          failed,
+          error: any ? null : failed[0]?.reason ?? 'No panel answered',
+        };
+      });
+    };
+    load();
+    const t = setInterval(load, POLL_MS);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [enabled, key, source]);
+  const fresh = state.key === key;
+  const board = React.useMemo(
+    () => (fresh && state.got ? buildRunWarden(state.panels) : null),
+    [fresh, state.got, state.panels]
+  );
+  let st: RunWardenState = 'off';
+  if (source.problem && source.mode !== 'off') st = 'error';
+  else if (enabled) st = !fresh || (!state.got && !state.error) ? 'loading' : board ? 'ok' : 'error';
+  return {
+    source,
+    state: st,
+    board,
+    failed: fresh ? state.failed : [],
+    error: source.problem && source.mode !== 'off' ? source.problem : fresh ? state.error : null,
+  };
+}
+
 export interface Board {
   cfg: PluginConfig;
+  /** Where the numbers come from. RunWarden when it answers, otherwise the ARC feed and Kubernetes. */
+  dataSource: 'runwarden' | 'arc';
+  runwarden: RunWardenData;
   loading: boolean;
   arcPresent: boolean;
   status: Status;
@@ -211,6 +305,12 @@ export function useBoard(): Board {
   const listeners = useKind(AutoscalingListener);
   const workers = useExternalWorkers(cfg);
   const remote = useRemote(cfg);
+  const runwarden = useRunWarden(cfg);
+  // Auto: RunWarden while it loads or works, the ARC path once it fails. On: RunWarden only. Off: ARC only.
+  const dataSource: 'runwarden' | 'arc' =
+    runwarden.state === 'off' || (runwarden.source.mode === 'auto' && runwarden.state === 'error')
+      ? 'arc'
+      : 'runwarden';
 
   const arcPresent = !(sets.absent && runners.absent);
   const local = React.useMemo(
@@ -234,6 +334,8 @@ export function useBoard(): Board {
     .filter((e): e is string => !!e);
   return {
     cfg,
+    dataSource,
+    runwarden,
     loading: sets.loading || runners.loading,
     arcPresent,
     status,

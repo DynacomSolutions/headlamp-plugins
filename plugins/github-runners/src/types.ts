@@ -103,4 +103,9 @@ export interface PluginConfig {
   policyRepoCaps?: string;
   projectStripPrefixes?: string;
   projectStripSuffixes?: string;
+  /** RunWarden data source: auto (default), on or off. */
+  runwardenMode?: string;
+  runwardenNamespace?: string;
+  runwardenService?: string;
+  runwardenPort?: string;
 }

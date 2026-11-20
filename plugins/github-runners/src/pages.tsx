@@ -36,6 +36,16 @@ import {
   workflowName,
   workflowUrl,
 } from './model';
+import { PoolFilter } from './runwarden';
+import { RUNWARDEN_STALE_AFTER_S } from './runwarden';
+import {
+  RunWardenCapacity,
+  RunWardenHistory,
+  RunWardenLink,
+  RunWardenNotice,
+  RunWardenOverview,
+  RunWardenRunners,
+} from './runwarden-view';
 import type { Job, NodeStatus, Raw } from './types';
 
 type HLStatus = 'success' | 'warning' | 'error' | '';
@@ -656,51 +666,93 @@ export function GitHubRunnersPage() {
     setView({ [key]: list.includes(v) ? list.filter(x => x !== v) : [...list, v] });
 
   const { status, remote } = board;
-  const generated = remote.status ? remote.status.generated_at : status.generated_at;
-  const remoteAge = remote.status ? ageSeconds(remote.status.generated_at) : null;
-  const stale = remoteAge !== null && remoteAge > STALE_AFTER_S;
+  const rwOn = board.dataSource === 'runwarden';
+  const rw = board.runwarden.board;
+  const generated = rwOn && rw ? rw.generatedAt || status.generated_at : remote.status ? remote.status.generated_at : status.generated_at;
+  const remoteAge = rwOn
+    ? rw?.generatedAt
+      ? ageSeconds(rw.generatedAt)
+      : null
+    : remote.status
+    ? ageSeconds(remote.status.generated_at)
+    : null;
+  const stale = remoteAge !== null && remoteAge > (rwOn ? RUNWARDEN_STALE_AFTER_S : STALE_AFTER_S);
+  const poolFilter: PoolFilter = { pools: setSel, nodes: nodeSel, terms: filters.terms };
+  const nodeChips = rwOn ? (rw?.nodes ?? []).map(n => ({ id: n.name, label: n.name })) : status.nodes.map(n => ({ id: n.id, label: n.display_name }));
+  const setChips = rwOn ? (rw?.pools ?? []).map(p => p.name) : status.scale_sets.map(x => x.name);
+  const sourceLabel = rwOn
+    ? 'RunWarden'
+    : board.runwarden.state === 'off'
+    ? 'ARC feed (RunWarden is off)'
+    : 'ARC feed (RunWarden is not reachable)';
+  const arcOnlyTab = tab === 'scalesets' || tab === 'listeners';
 
   return (
     <Box p={2}>
-      <Typography variant="h4" gutterBottom>
-        GitHub Runners
-      </Typography>
-      {board.errors.map(e => (
-        <Alert key={e} severity="error" sx={{ mb: 1 }}>
-          {e}
-        </Alert>
-      ))}
-      {!board.arcPresent && !board.loading && (
+      <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
+        <Typography variant="h4" gutterBottom>
+          GitHub Runners
+        </Typography>
+        <Tooltip title="Where the numbers on this page come from. Settings, Plugins, GitHub Runners sets it.">
+          <Chip
+            size="small"
+            color={rwOn ? 'success' : 'warning'}
+            variant="outlined"
+            label={`Source: ${sourceLabel}`}
+            data-source={rwOn ? 'runwarden' : 'arc'}
+          />
+        </Tooltip>
+        {rwOn && <RunWardenLink board={board} />}
+      </Box>
+      <RunWardenNotice board={board} />
+      {!rwOn &&
+        board.errors.map(e => (
+          <Alert key={e} severity="error" sx={{ mb: 1 }}>
+            {e}
+          </Alert>
+        ))}
+      {!rwOn && !board.arcPresent && !board.loading && (
         <Alert severity="info" sx={{ mb: 1 }}>
           The Actions Runner Controller CRDs (actions.github.com/v1alpha1) are not installed or not
           visible. Install ARC to see runner scale sets, runners and listeners here.
         </Alert>
       )}
-      {hasConfig && remote.error && (
+      {!rwOn && hasConfig && remote.error && (
         <Alert severity="warning" sx={{ mb: 1 }}>
           Status endpoint unavailable ({remote.error}). Showing Kubernetes data only.
         </Alert>
       )}
       {stale && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          Status endpoint data is stale ({ago(remoteAge as number)}).
+          {rwOn ? 'RunWarden' : 'Status endpoint'} data is stale ({ago(remoteAge as number)}).
         </Alert>
       )}
       <Box display="flex" gap={4} flexWrap="wrap" mb={2}>
-        <Stat label="Running jobs" value={status.summary.running_jobs} />
-        <Stat label="Pending runners" value={status.summary.pending_runners} />
-        <Stat
-          label="Nodes ready"
-          value={`${status.summary.nodes_ready} / ${status.summary.nodes_total}${
-            status.summary.nodes_standby ? ` (${status.summary.nodes_standby} standby)` : ''
-          }`}
-        />
-        <Stat
-          label={remote.status ? 'Enrichment data' : 'Data'}
-          value={remote.status ? ago(remoteAge ?? 0) : 'live'}
-          warn={stale}
-        />
-        {board.loading && <CircularProgress size={20} />}
+        {rwOn && rw ? (
+          <>
+            {rw.headline.map(h => (
+              <Stat key={h.label} label={h.label} value={h.value} warn={h.status === 'crit'} />
+            ))}
+            <Stat label="Data" value={ago(remoteAge ?? 0)} warn={stale} />
+          </>
+        ) : (
+          <>
+            <Stat label="Running jobs" value={status.summary.running_jobs} />
+            <Stat label="Pending runners" value={status.summary.pending_runners} />
+            <Stat
+              label="Nodes ready"
+              value={`${status.summary.nodes_ready} / ${status.summary.nodes_total}${
+                status.summary.nodes_standby ? ` (${status.summary.nodes_standby} standby)` : ''
+              }`}
+            />
+            <Stat
+              label={remote.status ? 'Enrichment data' : 'Data'}
+              value={remote.status ? ago(remoteAge ?? 0) : 'live'}
+              warn={stale}
+            />
+          </>
+        )}
+        {(board.loading || board.runwarden.state === 'loading') && <CircularProgress size={20} />}
       </Box>
       <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={1}>
         <TextField
@@ -710,23 +762,23 @@ export function GitHubRunnersPage() {
           onChange={e => setView({ q: e.target.value })}
           sx={{ minWidth: 240 }}
         />
-        {status.nodes.map(n => (
+        {nodeChips.map(n => (
           <Chip
             key={n.id}
             size="small"
-            label={n.display_name}
+            label={n.label}
             color={nodeSel.includes(n.id) ? 'primary' : 'default'}
             onClick={() => toggle(nodeSel, 'nodes', n.id)}
           />
         ))}
-        {status.scale_sets.map(s => (
+        {setChips.map(name => (
           <Chip
-            key={s.name}
+            key={name}
             size="small"
             variant="outlined"
-            label={s.name}
-            color={setSel.includes(s.name) ? 'primary' : 'default'}
-            onClick={() => toggle(setSel, 'sets', s.name)}
+            label={name}
+            color={setSel.includes(name) ? 'primary' : 'default'}
+            onClick={() => toggle(setSel, 'sets', name)}
           />
         ))}
         {(q || nodeSel.length > 0 || setSel.length > 0) && (
@@ -738,30 +790,43 @@ export function GitHubRunnersPage() {
           </Button>
         )}
       </Box>
-      <Tabs value={tab} onChange={(_, v) => setTab(v as TabId)} sx={{ mb: 1 }}>
+      <Tabs value={rwOn && arcOnlyTab ? 'overview' : tab} onChange={(_, v) => setTab(v as TabId)} sx={{ mb: 1 }}>
         <Tab value="overview" label="Overview" />
         <Tab value="capacity" label="Capacity" />
-        <Tab value="scalesets" label="Scale sets" />
+        {!rwOn && <Tab value="scalesets" label="Scale sets" />}
         <Tab value="runners" label="Runners" />
-        <Tab value="listeners" label="Listeners" />
-        <Tab value="history" label="History" />
+        {!rwOn && <Tab value="listeners" label="Listeners" />}
+        <Tab value="history" label={rwOn ? 'Job times' : 'History'} />
       </Tabs>
-      {tab === 'overview' && (
-        <Overview
-          board={board}
-          filters={filters}
-          onNode={id => {
-            setTab('history', viewToSearch({ ...view, nodes: [id] }));
-          }}
-        />
+      {rwOn ? (
+        <>
+          {(tab === 'overview' || arcOnlyTab) && <RunWardenOverview board={board} filter={poolFilter} />}
+          {tab === 'capacity' && <RunWardenCapacity board={board} filter={poolFilter} />}
+          {tab === 'runners' && <RunWardenRunners board={board} filter={poolFilter} />}
+          {tab === 'history' && <RunWardenHistory board={board} filter={poolFilter} />}
+        </>
+      ) : (
+        <>
+          {tab === 'overview' && (
+            <Overview
+              board={board}
+              filters={filters}
+              onNode={id => {
+                setTab('history', viewToSearch({ ...view, nodes: [id] }));
+              }}
+            />
+          )}
+          {tab === 'capacity' && <CapacityView board={board} />}
+          {tab === 'scalesets' && <ScaleSets board={board} />}
+          {tab === 'runners' && <Runners board={board} filters={filters} />}
+          {tab === 'listeners' && <Listeners board={board} />}
+          {tab === 'history' && <HistoryView board={board} filters={filters} />}
+        </>
       )}
-      {tab === 'capacity' && <CapacityView board={board} />}
-      {tab === 'scalesets' && <ScaleSets board={board} />}
-      {tab === 'runners' && <Runners board={board} filters={filters} />}
-      {tab === 'listeners' && <Listeners board={board} />}
-      {tab === 'history' && <HistoryView board={board} filters={filters} />}
       <Typography variant="caption" color="text.secondary" display="block" mt={2}>
-        Updated {generated}. Links open github.com; this plugin makes no GitHub API calls.
+        {rwOn
+          ? `Updated ${generated}. Numbers come from RunWarden through the Kubernetes API service proxy. This plugin makes no GitHub API calls.`
+          : `Updated ${generated}. Links open github.com; this plugin makes no GitHub API calls.`}
       </Typography>
     </Box>
   );
