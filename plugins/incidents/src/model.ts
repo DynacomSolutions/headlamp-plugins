@@ -104,6 +104,12 @@ export function parseList(json: unknown): DiagnosisSummary[] {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/** The total the agent reports for a list, or null for an agent that does not send one. */
+export function parseTotal(json: unknown): number | null {
+  const t = rec(json).total;
+  return typeof t === 'number' && Number.isFinite(t) && t >= 0 ? t : null;
+}
+
 export function parseDetail(json: unknown): DiagnosisDetail {
   const d = rec(json);
   const fixes = Array.isArray(rec(d.result).fixes) ? (rec(d.result).fixes as unknown[]) : [];
@@ -140,4 +146,59 @@ export type SeverityColour = 'error' | 'warning' | 'default';
 export function severityColour(severity: string): SeverityColour {
   const s = severity.toLowerCase();
   return s === 'critical' ? 'error' : s === 'warning' ? 'warning' : 'default';
+}
+
+/** The filters of the incident list widget. `all` means no filter on that field. */
+export interface IncidentFilter {
+  status: Status | 'all';
+  severity: 'critical' | 'warning' | 'other' | 'all';
+  /** Hide diagnoses whose alert is resolved. */
+  openOnly: boolean;
+}
+
+export const DEFAULT_FILTER: IncidentFilter = { status: 'all', severity: 'all', openOnly: false };
+
+/** `critical` and `warning` match themselves. `other` matches every other severity, including none. */
+export function severityGroup(severity: string): 'critical' | 'warning' | 'other' {
+  const s = severity.toLowerCase();
+  return s === 'critical' || s === 'warning' ? s : 'other';
+}
+
+export function filterDiagnoses(
+  list: DiagnosisSummary[],
+  filter: Partial<IncidentFilter>
+): DiagnosisSummary[] {
+  const f: IncidentFilter = {
+    status: filter.status ?? DEFAULT_FILTER.status,
+    severity: filter.severity ?? DEFAULT_FILTER.severity,
+    openOnly: filter.openOnly ?? DEFAULT_FILTER.openOnly,
+  };
+  return list.filter(
+    d =>
+      (f.status === 'all' || d.status === f.status) &&
+      (f.severity === 'all' || severityGroup(d.severity) === f.severity) &&
+      (!f.openOnly || !d.resolved)
+  );
+}
+
+export interface IncidentSummaryCounts {
+  total: number;
+  bySeverity: Record<'critical' | 'warning' | 'other', number>;
+  byStatus: Record<Status, number>;
+  resolved: number;
+}
+
+export function summariseDiagnoses(list: DiagnosisSummary[]): IncidentSummaryCounts {
+  const counts: IncidentSummaryCounts = {
+    total: list.length,
+    bySeverity: { critical: 0, warning: 0, other: 0 },
+    byStatus: { queued: 0, running: 0, done: 0, failed: 0 },
+    resolved: 0,
+  };
+  for (const d of list) {
+    counts.bySeverity[severityGroup(d.severity)] += 1;
+    counts.byStatus[d.status] += 1;
+    if (d.resolved) counts.resolved += 1;
+  }
+  return counts;
 }

@@ -14,6 +14,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 }));
 vi.mock('@kinvolk/headlamp-plugin/lib/CommonComponents', () => ({ SectionBox: () => null }));
 vi.mock('./registerIcons', () => ({}));
+vi.mock('./dashboardWidgets', () => ({}));
 vi.mock('./ChatPage', () => ({ ChatPage: () => null }));
 vi.mock('./pages', () => ({ IncidentPage: () => null, IncidentsPage: () => null }));
 vi.mock('./LaunchPages', () => ({ LaunchPage: () => null, LaunchesPage: () => null }));

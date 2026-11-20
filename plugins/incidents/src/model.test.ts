@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { backendUrl, parseDetail, parseList, resolveSettings, severityColour } from './model';
+import {
+  backendUrl,
+  DiagnosisSummary,
+  filterDiagnoses,
+  parseDetail,
+  parseList,
+  resolveSettings,
+  severityColour,
+  summariseDiagnoses,
+} from './model';
 
 describe('settings', () => {
   it('layers stored over defaults over built-ins', () => {
@@ -59,5 +68,44 @@ describe('parsing', () => {
     expect(severityColour('critical')).toBe('error');
     expect(severityColour('Warning')).toBe('warning');
     expect(severityColour('info')).toBe('default');
+  });
+});
+
+describe('widget filters and summary', () => {
+  const d = (over: Partial<DiagnosisSummary>): DiagnosisSummary => ({
+    id: 'x',
+    createdAt: '2026-01-01T00:00:00Z',
+    status: 'done',
+    source: 'alert',
+    alertName: 'A',
+    severity: 'critical',
+    likelyCause: '',
+    confidence: '',
+    resolved: false,
+    ...over,
+  });
+  const list = [
+    d({ id: '1', severity: 'critical', status: 'done' }),
+    d({ id: '2', severity: 'Warning', status: 'running' }),
+    d({ id: '3', severity: 'info', status: 'failed', resolved: true }),
+    d({ id: '4', severity: '', status: 'queued' }),
+  ];
+  it('filters by status, severity group and resolved', () => {
+    expect(filterDiagnoses(list, {}).map(x => x.id)).toEqual(['1', '2', '3', '4']);
+    expect(filterDiagnoses(list, { status: 'running' }).map(x => x.id)).toEqual(['2']);
+    expect(filterDiagnoses(list, { severity: 'warning' }).map(x => x.id)).toEqual(['2']);
+    expect(filterDiagnoses(list, { severity: 'other' }).map(x => x.id)).toEqual(['3', '4']);
+    expect(filterDiagnoses(list, { openOnly: true }).map(x => x.id)).toEqual(['1', '2', '4']);
+  });
+  it('ignores unknown filter keys from an old saved config', () => {
+    expect(filterDiagnoses(list, { status: undefined } as any)).toHaveLength(4);
+  });
+  it('counts by severity and status', () => {
+    expect(summariseDiagnoses(list)).toEqual({
+      total: 4,
+      bySeverity: { critical: 1, warning: 1, other: 2 },
+      byStatus: { queued: 1, running: 1, done: 1, failed: 1 },
+      resolved: 1,
+    });
   });
 });

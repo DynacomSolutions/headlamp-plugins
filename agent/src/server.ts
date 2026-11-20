@@ -448,10 +448,13 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       if (path === '/api/v2/status' && req.method === 'GET') return send(res, 200, { cluster: { status: 'ready' }, versionInfo: { version } });
       if (path === '/api/diagnoses' && req.method === 'GET') {
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
+        const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
+        const all = store.list();
         return send(res, 200, {
-          diagnoses: store
-            .list()
-            .slice(0, limit)
+          // `total` is every stored diagnosis, so a client can page with `offset` and count them all.
+          total: all.length,
+          diagnoses: all
+            .slice(offset, offset + limit)
             .map(({ a2ui: _a2ui, evidence, ...d }) => ({ ...d, evidenceCount: evidence.length })),
         });
       }

@@ -208,6 +208,8 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
   `diagnose` to take the most severe firing alert.
 
 `GET /api/diagnoses` and `GET /api/diagnoses/<id>` serve the Incidents plugin.
+`GET /api/diagnoses?limit=<n>&offset=<n>` answers `{ total, diagnoses }`, newest first. `limit` is 200 at most.
+`total` counts every stored diagnosis, so a client can page with `offset`.
 
 Diagnoses are stored one file per diagnosis. During a rollout the old pod
 finishes its running diagnosis, and the new pod takes over queued and
