@@ -14,7 +14,7 @@ import { mask, maskText } from './mask.js';
 import { mcpHandler } from './mcp.js';
 import { Runtime, serviceGet } from './runtime.js';
 import { PanelError, buildPanel, listPanels } from './widgets.js';
-import { DiagnosisStore } from './store.js';
+import { DiagnosisStore, openDiagnosisStore } from './store.js';
 import { LaunchError, LaunchService } from './launch/service.js';
 import { LaunchStore, type Launch } from './launch/store.js';
 import { T3Client, tokenFromFile } from './t3/client.js';
@@ -84,8 +84,8 @@ export class Runner {
 
   /** Look for abandoned diagnoses now and every 30 s. */
   start(): void {
-    this.scan();
-    this.scanTimer = setInterval(() => this.scan(), SCAN_MS);
+    void this.scan();
+    this.scanTimer = setInterval(() => void this.scan(), SCAN_MS);
     this.scanTimer.unref();
   }
 
@@ -94,15 +94,15 @@ export class Runner {
    * They run again with the same id and creation time and do not count against the hourly cap.
    * Without a model, when the alert has resolved, or after 3 attempts, they are marked failed.
    */
-  scan(): void {
+  async scan(): Promise<void> {
     if (this.draining) return;
     try {
-      const stale = this.store.list().filter(d => (d.status === 'queued' || d.status === 'running') && this.store.expired(d) && !this.held.has(d.id));
-      for (const listed of stale.reverse()) {
+      const stale = (await this.store.stale()).filter(d => !this.held.has(d.id));
+      for (const listed of stale) {
         try {
           let taken: Diagnosis | undefined;
           // Decided on the record as stored now: the other pod may have renewed the lease meanwhile.
-          this.store.update(listed.id, d => {
+          await this.store.update(listed.id, d => {
             if (!d || (d.status !== 'queued' && d.status !== 'running') || !this.store.expired(d)) return undefined;
             const attempts = d.attempts ?? 1;
             const fail = (error: string): Diagnosis => {
@@ -115,7 +115,7 @@ export class Runner {
             return taken;
           });
           if (taken) {
-            this.resume(taken);
+            await this.resume(taken);
             log('info', 'diagnosis taken over', { id: listed.id, alert: listed.alert.name });
           }
         } catch (error) {
@@ -139,7 +139,7 @@ export class Runner {
     for (const id of [...this.held]) {
       if (id === this.running) continue;
       try {
-        this.store.update(id, d => (d && d.owner === this.store.owner && d.status === 'queued' ? { ...d, leaseUntil: DiagnosisStore.released() } : undefined));
+        await this.store.update(id, d => (d && d.owner === this.store.owner && d.status === 'queued' ? { ...d, leaseUntil: DiagnosisStore.released() } : undefined));
       } catch (error) {
         log('error', 'lease release failed', { id, error: String(error) });
       }
@@ -149,10 +149,10 @@ export class Runner {
     this.stopRenewing();
   }
 
-  private renew(): void {
-    for (const id of this.held) {
+  private async renew(): Promise<void> {
+    for (const id of [...this.held]) {
       try {
-        this.store.update(id, d => (d && d.owner === this.store.owner && (d.status === 'queued' || d.status === 'running') ? { ...d, leaseUntil: this.store.lease() } : undefined));
+        await this.store.update(id, d => (d && d.owner === this.store.owner && (d.status === 'queued' || d.status === 'running') ? { ...d, leaseUntil: this.store.lease() } : undefined));
       } catch (error) {
         log('error', 'lease renewal failed', { id, error: String(error) });
       }
@@ -165,13 +165,13 @@ export class Runner {
   }
 
   /** Run again a diagnosis that a restart interrupted. It keeps its id and its creation time. */
-  resume(interrupted: Diagnosis): void {
-    this.enqueue(interrupted.alert, interrupted.source, interrupted.id, interrupted.model || undefined);
+  async resume(interrupted: Diagnosis): Promise<void> {
+    await this.enqueue(interrupted.alert, interrupted.source, interrupted.id, interrupted.model || undefined);
   }
 
   /** `model` is a model id (`<route>/<model>`) the caller has checked. Without it the run uses the recorded model or the default. */
-  enqueue(alert: Alert, source: Diagnosis['source'], existingId?: string, model?: string): Diagnosis {
-    const existing = existingId ? this.store.get(existingId) : undefined;
+  async enqueue(alert: Alert, source: Diagnosis['source'], existingId?: string, model?: string): Promise<Diagnosis> {
+    const existing = existingId ? await this.store.get(existingId) : undefined;
     // One firing alert has one diagnosis id, so a second pod or a repeated request finds the record and stops.
     const derived = !existingId && (source === 'webhook' || alert.startsAt) ? diagnosisIdFor(alert.fingerprint, alert.startsAt) : undefined;
     const queued: Diagnosis = {
@@ -192,29 +192,31 @@ export class Runner {
     };
     queued.a2ui = renderDiagnosis(queued);
     if (existing) {
-      if (!this.store.put(queued)) return queued;
-    } else if (!this.store.putNew(queued)) {
-      return this.store.getFresh(queued.id) ?? queued;
+      if (!(await this.store.put(queued))) return queued;
+    } else if (!(await this.store.putNew(queued))) {
+      return (await this.store.get(queued.id)) ?? queued;
     }
     if (this.draining) return queued;
     if (!existing && this.pending >= 20) {
-      this.store.put({ ...queued, status: 'failed', error: 'Too many diagnoses queued', leaseUntil: undefined, a2ui: renderDiagnosis({ ...queued, status: 'failed', error: 'Too many diagnoses queued' }) });
+      await this.store.put({ ...queued, status: 'failed', error: 'Too many diagnoses queued', leaseUntil: undefined, a2ui: renderDiagnosis({ ...queued, status: 'failed', error: 'Too many diagnoses queued' }) });
       return queued;
     }
     this.pending++;
     this.held.add(queued.id);
     if (!this.renewTimer) {
-      this.renewTimer = setInterval(() => this.renew(), RENEW_MS);
+      this.renewTimer = setInterval(() => void this.renew(), RENEW_MS);
       this.renewTimer.unref();
     }
     this.chain = this.chain.then(async () => {
       let lost = false;
       try {
         if (this.draining) return;
-        const fresh = this.store.getFresh(queued.id);
+        const fresh = await this.store.get(queued.id);
         if (!fresh || fresh.owner !== this.store.owner || this.store.expired(fresh)) return;
         this.running = queued.id;
         const abort = new AbortController();
+        // Progress writes run one after another, so an older step never overwrites a newer one.
+        let writes: Promise<void> = Promise.resolve();
         const resolved = await this.catalogue.resolve(queued.model || undefined);
         const client = new ModelClient(resolved.route, resolved.model);
         const result = await diagnose({
@@ -227,22 +229,27 @@ export class Runner {
           id: queued.id,
           signal: abort.signal,
           onEvent: event => {
-            if (event.type !== 'progress' || lost) return;
-            try {
-              const ok = this.store.put({ ...event.diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), attempts: queued.attempts });
-              if (!ok) {
-                // Another process owns the record now. Stop working on it.
-                lost = true;
-                abort.abort();
-                log('warn', 'diagnosis ownership lost', { id: queued.id });
+            if (event.type !== 'progress') return;
+            const diagnosis = event.diagnosis;
+            writes = writes.then(async () => {
+              if (lost) return;
+              try {
+                const ok = await this.store.put({ ...diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), attempts: queued.attempts });
+                if (!ok) {
+                  // Another process owns the record now. Stop working on it.
+                  lost = true;
+                  abort.abort();
+                  log('warn', 'diagnosis ownership lost', { id: queued.id });
+                }
+              } catch (error) {
+                log('error', 'diagnosis write failed', { id: queued.id, error: String(error) });
               }
-            } catch (error) {
-              log('error', 'diagnosis write failed', { id: queued.id, error: String(error) });
-            }
+            });
           },
         });
+        await writes;
         if (lost) return;
-        if (!this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, attempts: queued.attempts })) return;
+        if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, attempts: queued.attempts }))) return;
         log('info', 'diagnosis finished', { id: result.id, alert: alert.name, status: result.status, toolCalls: result.toolCalls, error: result.error });
       } catch (error) {
         log('error', 'diagnosis crashed', { id: queued.id, error: String(error) });
@@ -250,7 +257,7 @@ export class Runner {
         if (!lost) {
           try {
             const message = maskText(error instanceof Error ? error.message : String(error));
-            this.store.update(queued.id, d => {
+            await this.store.update(queued.id, d => {
               if (!d || d.owner !== this.store.owner) return undefined;
               const failed = { ...d, status: 'failed' as const, error: message, leaseUntil: undefined };
               return { ...failed, a2ui: renderDiagnosis(failed) };
@@ -334,12 +341,13 @@ async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
   return parsed.data;
 }
 
-export async function startServer(config: Config = loadConfig(), version = '0.0.0'): Promise<{ close(): Promise<void>; port: number }> {
-  const store = new DiagnosisStore(config.dataDir, config.maxDiagnoses);
+/** `deps.store` replaces the diagnosis store, for tests. The caller then closes it. */
+export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore } = {}): Promise<{ close(): Promise<void>; port: number }> {
+  const store = deps.store ?? (await openDiagnosisStore(config.databaseUrl, config.dataDir, (message, extra) => log('info', message, extra)));
   const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
   const runtime = new Runtime(config, store, launchStore);
   const runner = new Runner(runtime, store, config);
-  const chats = new ChatService({ store: new ChatStore(config.dataDir, config.maxChats), diagnoses: store, tools: runtime.toolHost(), catalogue: runner.catalogue, budget: config.diagnosis.toolBudget, maxTurns: config.maxChatTurns });
+  const chats = new ChatService({ store: new ChatStore(config.dataDir), diagnoses: store, tools: runtime.toolHost(), catalogue: runner.catalogue, budget: config.diagnosis.toolBudget, maxTurns: config.maxChatTurns });
   const launches = new LaunchService({
     store: launchStore,
     diagnoses: store,
@@ -349,7 +357,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   });
   void launches.resume().catch(error => log('error', 'launch resume failed', { error: String(error) }));
   // Webhook diagnoses in the shared store, so a rollout or a second pod does not reset the hourly cap.
-  const gate = new AlertGate(config.diagnosis, since => store.list().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= since).length);
+  const gate = new AlertGate(config.diagnosis, since => store.countWebhookSince(since));
   const mcp = await mcpHandler(runtime, store, version);
   const mcpNode = toNodeHandler(mcp);
   let ready = true;
@@ -383,11 +391,11 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         let started = 0;
         for (const { alert, resolved } of alerts) {
           if (resolved) {
-            store.markResolved(alert.fingerprint, alert.endsAt ?? new Date().toISOString());
+            await store.markResolved(alert.fingerprint, alert.endsAt ?? new Date().toISOString());
             continue;
           }
-          if (store.findByFingerprint(alert.fingerprint, alert.startsAt) || store.getFresh(diagnosisIdFor(alert.fingerprint, alert.startsAt))) continue;
-          const verdict = gate.wants(alert);
+          if ((await store.findByFingerprint(alert.fingerprint, alert.startsAt)) || (await store.get(diagnosisIdFor(alert.fingerprint, alert.startsAt)))) continue;
+          const verdict = await gate.wants(alert);
           if (!verdict.ok) continue;
           if (!runner.configured) {
             log('warn', 'alert not diagnosed: no model configured', { alert: alert.name });
@@ -405,7 +413,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
             }
           }
           gate.record();
-          runner.enqueue(alert, 'webhook', undefined, model);
+          await runner.enqueue(alert, 'webhook', undefined, model);
           started++;
         }
         if (started) log('info', 'alerts received', { alerts: alerts.length, started });
@@ -450,17 +458,11 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       if (path === '/api/diagnoses' && req.method === 'GET') {
         const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
         const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
-        const all = store.list();
-        return send(res, 200, {
-          // `total` is every stored diagnosis, so a client can page with `offset` and count them all.
-          total: all.length,
-          diagnoses: all
-            .slice(offset, offset + limit)
-            .map(({ a2ui: _a2ui, evidence, ...d }) => ({ ...d, evidenceCount: evidence.length })),
-        });
+        // `total` is every stored diagnosis, so a client can page with `offset` and count them all.
+        return send(res, 200, await store.page({ offset, limit }));
       }
       if (path.startsWith('/api/diagnoses/') && req.method === 'GET') {
-        const d = store.get(decodeURIComponent(path.slice('/api/diagnoses/'.length)));
+        const d = await store.get(decodeURIComponent(path.slice('/api/diagnoses/'.length)));
         return d ? send(res, 200, d) : send(res, 404, { error: 'not found' });
       }
       if (path === '/api/diagnoses' && req.method === 'POST') {
@@ -483,7 +485,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
               throw error;
             }
           }
-          const d = runner.enqueue(alert, 'api', undefined, model);
+          const d = await runner.enqueue(alert, 'api', undefined, model);
           return send(res, 202, { id: d.id, status: d.status });
         }
         // Publish a diagnosis an agent made elsewhere (the ACP agent in T3 Code, a CLI run).
@@ -510,7 +512,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           a2ui: [],
         });
         d.a2ui = renderDiagnosis(d);
-        store.put(d);
+        await store.put(d);
         return send(res, 201, { id: d.id });
       }
       if (path === '/api/chats' || path.startsWith('/api/chats/')) {
@@ -565,7 +567,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           }
           if (id === 'preview') {
             const { requestedBy: _by, ...request } = await chatBody(req, launchSchema);
-            return send(res, 200, { brief: launches.brief(request) });
+            return send(res, 200, { brief: await launches.brief(request) });
           }
           if (id && !action && req.method === 'GET') {
             const l = launchStore.get(id);
@@ -604,6 +606,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       await launches.shutdown();
       await runner.drain();
       await mcp.close();
+      if (!deps.store) await store.close();
       server.closeIdleConnections();
       await closed;
     },

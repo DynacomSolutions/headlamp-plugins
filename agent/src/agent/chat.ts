@@ -113,7 +113,7 @@ export class ChatService {
   }
 
   async create(body: { model?: string; diagnosisId?: string }): Promise<{ id: string }> {
-    if (body.diagnosisId !== undefined && !this.deps.diagnoses.get(body.diagnosisId)) throw new ChatError(404, `No diagnosis ${body.diagnosisId}`);
+    if (body.diagnosisId !== undefined && !(await this.deps.diagnoses.get(body.diagnosisId))) throw new ChatError(404, `No diagnosis ${body.diagnosisId}`);
     const model = await this.modelId(body.model);
     return { id: this.deps.store.create({ model, diagnosisId: body.diagnosisId }).id };
   }
@@ -238,7 +238,7 @@ export class ChatService {
       const specs = await guard(host.list());
       const names = new Set(specs.map(s => s.name));
       const toolSpecs: ToolSpec[] = specs.map(s => withReason(s));
-      const diagnosis = chat.diagnosisId ? this.deps.diagnoses.get(chat.diagnosisId) : undefined;
+      const diagnosis = chat.diagnosisId ? await this.deps.diagnoses.get(chat.diagnosisId) : undefined;
       const system = systemPrompt(budget, diagnosis);
       const past = this.history(chat, reply);
       const turn: Message[] = [];

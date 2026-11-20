@@ -57,15 +57,15 @@ export class AlertGate {
 
   constructor(
     private readonly config: DiagnosisConfig,
-    private readonly startedSince?: (since: number) => number,
+    private readonly startedSince?: (since: number) => number | Promise<number>,
   ) {}
 
-  wants(alert: Alert): { ok: true } | { ok: false; reason: string } {
+  async wants(alert: Alert): Promise<{ ok: true } | { ok: false; reason: string }> {
     if (this.config.ignoreAlerts.includes(alert.name)) return { ok: false, reason: 'ignored alert' };
     if (!this.config.severities.includes(alert.severity)) return { ok: false, reason: `severity "${alert.severity}" is not diagnosed` };
     const hourAgo = Date.now() - 3600_000;
     while (this.started.length && this.started[0] < hourAgo) this.started.shift();
-    const count = this.startedSince ? this.startedSince(hourAgo) : this.started.length;
+    const count = this.startedSince ? await this.startedSince(hourAgo) : this.started.length;
     if (count >= this.config.maxPerHour) return { ok: false, reason: 'hourly diagnosis limit reached' };
     return { ok: true };
   }

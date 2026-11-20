@@ -64,7 +64,8 @@ const LOCK_STALE_MS = 10_000;
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Launches, capped at `max`. With a data directory each launch is one JSON file,
+ * Launches, kept for ever: nothing deletes a finished one. `max` is only the number of open (not finished) requests
+ * that the service accepts. With a data directory each launch is one JSON file,
  * `<dir>/launches/<id>.json`, written by atomic rename. Without one they live in
  * memory only. Every record is masked before it is stored or served.
  *
@@ -258,9 +259,7 @@ export class LaunchStore {
   create(launch: Launch): Promise<Launch> {
     return this.withLock(launch.id, () => {
       if (this.get(launch.id)) throw new Error(`Launch ${launch.id} exists`);
-      const stored = this.write(launch);
-      this.prune();
-      return stored;
+      return this.write(launch);
     });
   }
 
@@ -271,24 +270,6 @@ export class LaunchStore {
     this.launches.set(next.id, next);
     this.writeFile(next);
     return next;
-  }
-
-  /** Drops the oldest finished launches beyond the cap. Pending and active ones stay. */
-  private prune(): void {
-    if (this.launches.size <= this.max) return;
-    for (const l of this.list().reverse()) {
-      if (this.launches.size <= this.max) break;
-      if (!FINAL_STATUSES.has(l.status)) continue;
-      this.launches.delete(l.id);
-      this.meta.delete(l.id);
-      if (this.dir) {
-        try {
-          unlinkSync(this.file(l.id));
-        } catch {
-          // Already gone.
-        }
-      }
-    }
   }
 
   /** How many records the store holds. */

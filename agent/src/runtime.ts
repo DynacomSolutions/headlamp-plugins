@@ -38,11 +38,8 @@ function diagnosesProvider(store: DiagnosisStore): ProviderDefinition {
         output: z.object({ diagnoses: z.array(brief) }),
         async run(args) {
           const f = args.alert?.toLowerCase();
-          const diagnoses = store
-            .list()
-            .filter(d => !f || d.alert.name.toLowerCase().includes(f))
-            .slice(0, args.limit)
-            .map(d => ({
+          const { diagnoses: page } = await store.page({ alert: f, limit: args.limit });
+          const diagnoses = page.map(d => ({
               id: d.id,
               alert: d.alert.name,
               severity: d.alert.severity,
@@ -66,7 +63,7 @@ function diagnosesProvider(store: DiagnosisStore): ProviderDefinition {
         input: z.object({ id: z.string() }),
         output: z.object({ diagnosis: z.unknown() }),
         async run(args) {
-          const d = store.get(args.id);
+          const d = await store.get(args.id);
           if (!d) throw new Error(`No diagnosis ${args.id}`);
           const { a2ui: _a2ui, ...rest } = d;
           return {

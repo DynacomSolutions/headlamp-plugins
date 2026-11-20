@@ -22,14 +22,13 @@ export interface Config {
   providerConfigFile: string;
   /** Browser origins allowed to call /mcp. Requests without an Origin header are always allowed. */
   allowedOrigins: string[];
-  /** Where diagnoses are kept across container restarts. Empty keeps them in memory only. */
+  /** Where chats and launches are kept across container restarts (and the old diagnosis files are imported from). Empty keeps them in memory only. */
   dataDir: string;
-  maxDiagnoses: number;
-  /** Chats kept in the data directory. The oldest are dropped first. */
-  maxChats: number;
+  /** PostgreSQL connection URI for the diagnosis history. Empty keeps diagnoses in memory only (tests, local runs). */
+  databaseUrl: string;
   /** Chat turns that may run at once across all chats. */
   maxChatTurns: number;
-  /** Agent launches kept in the data directory. The oldest finished ones are dropped first. */
+  /** Launches that may be open (pending or active) at once. Finished launches are never dropped. */
   maxLaunches: number;
   models: ModelRoutesConfig;
   diagnosis: DiagnosisConfig;
@@ -269,8 +268,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     providerConfigFile: env.PROVIDER_CONFIG_FILE ?? '',
     allowedOrigins: list(env.ALLOWED_ORIGINS, []),
     dataDir: env.DATA_DIR ?? '',
-    maxDiagnoses: int(env.MAX_DIAGNOSES, 200),
-    maxChats: int(env.AGENT_MAX_CHATS, 200),
+    databaseUrl: (env.DATABASE_URL ?? '').trim(),
     maxChatTurns: int(env.AGENT_MAX_CHAT_TURNS, 3),
     maxLaunches: int(env.AGENT_MAX_LAUNCHES, 200),
     models: loadModelRoutes(env),

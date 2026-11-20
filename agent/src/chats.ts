@@ -38,7 +38,7 @@ export interface Chat {
 export const DEFAULT_TITLE = 'New chat';
 
 /**
- * Chats, capped at `max`. With a data directory each chat is one JSON file,
+ * Chats, kept until a user deletes one: no count limit drops them. With a data directory each chat is one JSON file,
  * `<dir>/chats/<id>.json`, written by atomic rename. Without one they live in
  * memory only. A turn that a restart interrupted is marked failed on load.
  */
@@ -46,10 +46,7 @@ export class ChatStore {
   private readonly chats = new Map<string, Chat>();
   private readonly dir: string;
 
-  constructor(
-    dataDir: string,
-    private readonly max: number,
-  ) {
+  constructor(dataDir: string) {
     this.dir = dataDir ? join(dataDir, 'chats') : '';
     if (!this.dir) return;
     mkdirSync(this.dir, { recursive: true });
@@ -103,7 +100,6 @@ export class ChatStore {
     const chat: Chat = { id: randomUUID(), title: DEFAULT_TITLE, model: fields.model, diagnosisId: fields.diagnosisId, createdAt: now, updatedAt: now, messages: [] };
     this.chats.set(chat.id, chat);
     this.save(chat);
-    this.prune();
     return chat;
   }
 
@@ -137,14 +133,5 @@ export class ChatStore {
 
   running(chat: Chat): boolean {
     return chat.messages.some(m => m.status === 'running');
-  }
-
-  /** Drops the oldest chats beyond the cap. A chat with a running turn stays. */
-  private prune(): void {
-    if (this.chats.size <= this.max) return;
-    for (const chat of [...this.chats.values()].sort((a, b) => a.updatedAt.localeCompare(b.updatedAt))) {
-      if (this.chats.size <= this.max) break;
-      if (!this.running(chat)) this.delete(chat.id);
-    }
   }
 }

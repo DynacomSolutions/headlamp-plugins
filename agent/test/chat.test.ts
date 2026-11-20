@@ -10,7 +10,7 @@ import type { Diagnosis } from '../src/agent/report.js';
 import { ChatStore, type Chat } from '../src/chats.js';
 import { loadConfig, type ModelRoutesConfig } from '../src/config.js';
 import { startServer } from '../src/server.js';
-import { DiagnosisStore } from '../src/store.js';
+import { MemoryDiagnosisStore, type DiagnosisStore } from '../src/store.js';
 
 const realFetch = globalThis.fetch;
 const FAKE_TOKEN = ['abc', '123'].join('');
@@ -86,8 +86,8 @@ afterEach(() => {
 });
 
 function service(calls: string[] = [], overrides: { maxTurns?: number; diagnoses?: DiagnosisStore } = {}) {
-  const store = new ChatStore(dir, 200);
-  const diagnoses = overrides.diagnoses ?? new DiagnosisStore('', 10);
+  const store = new ChatStore(dir);
+  const diagnoses = overrides.diagnoses ?? new MemoryDiagnosisStore();
   const chats = new ChatService({ store, diagnoses, tools: host(calls), catalogue: new ModelCatalogue(models()), budget: 2, maxTurns: overrides.maxTurns ?? 3 });
   return { store, chats, diagnoses };
 }
@@ -211,8 +211,8 @@ describe('chat service', () => {
   });
 
   it('puts the diagnosis into the system prompt', async () => {
-    const diagnoses = new DiagnosisStore('', 10);
-    diagnoses.put(diagnosis('d1'));
+    const diagnoses = new MemoryDiagnosisStore();
+    await diagnoses.put(diagnosis('d1'));
     const { chats } = service([], { diagnoses });
     script.queue.push({ text: 'It ran out of memory.' });
     const { id } = await chats.create({ diagnosisId: 'd1' });
@@ -250,17 +250,18 @@ describe('chat store', () => {
         { id: 'a', role: 'assistant', text: 'part', createdAt: 'x', status: 'running', steps: [{ id: 's1', tool: 'get_resource', reason: 'r', status: 'running' }] },
       ],
     };
-    new ChatStore(dir, 5); // creates the directory
+    new ChatStore(dir); // creates the directory
     writeFileSync(join(dir, 'chats', 'c1.json'), JSON.stringify(chat));
-    const store = new ChatStore(dir, 2);
+    const store = new ChatStore(dir);
     const loaded = store.get('c1')!;
     expect(loaded.messages[1]).toMatchObject({ status: 'failed', error: 'interrupted by restart', text: 'part' });
     expect(loaded.messages[1].steps[0]).toMatchObject({ status: 'done', ok: false });
     expect(JSON.parse(readFileSync(join(dir, 'chats', 'c1.json'), 'utf8')).messages[1].status).toBe('failed');
-    store.create({ model: 'm' });
-    store.create({ model: 'm' });
-    expect(store.list()).toHaveLength(2);
-    expect(store.get('c1')).toBeUndefined();
+    // No count limit drops a chat: the old one stays however many are made.
+    for (let i = 0; i < 205; i++) store.create({ model: 'm' });
+    expect(store.list()).toHaveLength(206);
+    expect(store.get('c1')).toBeDefined();
+    expect(new ChatStore(dir).list()).toHaveLength(206);
   });
 });
 
@@ -316,10 +317,10 @@ describe('chat routes', () => {
 
 describe('diagnosis list route', () => {
   it('reports the real total and pages with offset', async () => {
-    const seed = new DiagnosisStore(dir, 500);
-    for (let i = 0; i < 5; i++) seed.put({ ...diagnosis(`d${i}`), createdAt: `2026-11-18T05:00:0${i}.000Z` });
+    const seed = new MemoryDiagnosisStore();
+    for (let i = 0; i < 5; i++) await seed.put({ ...diagnosis(`d${i}`), createdAt: `2026-11-18T05:00:0${i}.000Z` });
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir, models: models() };
-    const server = await startServer(config, 'test');
+    const server = await startServer(config, 'test', { store: seed });
     const base = `http://127.0.0.1:${server.port}`;
     try {
       const get = async (q: string) => (await (await realFetch(`${base}/api/diagnoses${q}`)).json()) as { total: number; diagnoses: Array<{ id: string }> };
