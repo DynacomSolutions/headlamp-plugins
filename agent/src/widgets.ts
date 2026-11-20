@@ -677,8 +677,8 @@ const REFRESH = 900;
 
 export const PANELS: PanelDefinition[] = [
   { id: 'uptime', title: 'Uptime', description: 'Up, degraded and down checks.', plugin: 'uptime', link: '/c/{cluster}/uptime', refreshSeconds: REFRESH, build: uptime },
-  { id: 'usage', title: 'Usage', description: 'CPU and memory use of each node.', plugin: 'usage', link: '/c/{cluster}/usage/nodes', refreshSeconds: REFRESH, build: usage },
-  { id: 'usage-dashboard', title: 'Usage dashboard', description: 'CPU and memory rings: who uses the cluster.', plugin: 'usage', link: '/c/{cluster}/usage/nodes', refreshSeconds: 300, build: usageDashboard },
+  { id: 'usage', title: 'Usage', description: 'CPU and memory use of each node.', plugin: 'usage', link: '/c/{cluster}/usage/dashboard', refreshSeconds: REFRESH, build: usage },
+  { id: 'usage-dashboard', title: 'Usage dashboard', description: 'CPU and memory rings: who uses the cluster.', plugin: 'usage', link: '/c/{cluster}/usage/dashboard', refreshSeconds: 300, build: usageDashboard },
   { id: 'alerts', title: 'Alerts', description: 'Firing and pending alerts, by severity.', plugin: 'alerting', link: '/c/{cluster}/alerting/status', refreshSeconds: REFRESH, build: alerts },
   { id: 'disks', title: 'Disks', description: 'SMART health of each disk, worst first.', plugin: 'disk-health', link: '/c/{cluster}/disk-health', refreshSeconds: REFRESH, build: disks },
   { id: 'hardware', title: 'Hardware', description: 'Node temperatures and power.', plugin: 'node-hardware', link: '/c/{cluster}/node-hardware', refreshSeconds: REFRESH, build: hardware },
