@@ -1,3 +1,4 @@
+import Box from '@mui/material/Box';
 import Chip from '@mui/material/Chip';
 import Link from '@mui/material/Link';
 import Table from '@mui/material/Table';
@@ -84,7 +85,25 @@ function Row({
       <TableCell>
         <Chip size="small" variant="outlined" label={d.status} color={STATUS_COLOUR[d.status]} />
       </TableCell>
-      <TableCell sx={{ maxWidth: 480 }}>{d.likelyCause}</TableCell>
+      {compact ? (
+        // A narrow widget: the cause takes the rest of the row and wraps to three lines at most.
+        <TableCell sx={{ width: '100%', maxWidth: 0, minWidth: 140 }}>
+          <Box
+            title={d.likelyCause}
+            sx={{
+              display: '-webkit-box',
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: 'vertical',
+              overflow: 'hidden',
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {d.likelyCause}
+          </Box>
+        </TableCell>
+      ) : (
+        <TableCell sx={{ maxWidth: 480 }}>{d.likelyCause}</TableCell>
+      )}
       {!compact && <TableCell>{d.confidence}</TableCell>}
       {!compact && <TableCell>{d.source}</TableCell>}
       {!compact && <TableCell>{d.resolved ? 'yes' : 'no'}</TableCell>}
