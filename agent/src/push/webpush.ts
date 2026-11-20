@@ -97,6 +97,8 @@ export function encryptPayload(plaintext: Buffer, uaPublic: Buffer, authSecret: 
 /** Push services the agent may send to. Any other host is refused, so a subscription cannot point the agent at an internal URL. */
 const PUSH_HOSTS: Array<string | RegExp> = [
   'fcm.googleapis.com',
+  // Chrome now hands out endpoints on numbered hosts of this form (for example `jmt17.google.com/fcm/send/...`).
+  /^jmt\d{1,3}\.google\.com$/,
   /(^|\.)push\.services\.mozilla\.com$/,
   /(^|\.)push\.apple\.com$/,
   /(^|\.)notify\.windows\.com$/,

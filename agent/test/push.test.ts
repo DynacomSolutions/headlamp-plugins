@@ -137,6 +137,9 @@ describe('Web Push encryption', () => {
 
   it('allows only https endpoints of known push services', () => {
     expect(endpointAllowed('https://fcm.googleapis.com/fcm/send/x')).toBe(true);
+    expect(endpointAllowed('https://jmt17.google.com/fcm/send/x')).toBe(true);
+    expect(endpointAllowed('https://www.google.com/fcm/send/x')).toBe(false);
+    expect(endpointAllowed('https://jmt17.google.com.evil.example/x')).toBe(false);
     expect(endpointAllowed('https://updates.push.services.mozilla.com/wpush/v2/x')).toBe(true);
     expect(endpointAllowed('https://web.push.apple.com/x')).toBe(true);
     expect(endpointAllowed('https://wns2-par02p.notify.windows.com/x')).toBe(true);

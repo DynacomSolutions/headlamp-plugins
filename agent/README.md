@@ -426,7 +426,7 @@ The writes have the same protection as the other writes (allowed origin, JSON bo
 The subscriptions are rows of the table `push_subscriptions` in the same database as the
 diagnoses, so two pods see the same devices. Safety rules:
 
-- The endpoint must be `https` on a known push service (Google, Mozilla, Apple or Windows).
+- The endpoint must be `https` on a known push service (Google, including the `jmt<N>.google.com` hosts that Chrome uses, Mozilla, Apple or Windows).
   Any other host is refused, so a subscription cannot point the agent at an internal address.
   The agent never follows a redirect.
 - One try for each push, no retry. A 404 or 410 from the push service deletes the subscription.
