@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  baseWidgetType,
   countWidgets,
   defaultFilters,
   emptySpec,
@@ -147,6 +148,50 @@ describe('parseSpec and serialiseSpec', () => {
   });
   it('counts widgets', () => {
     expect(countWidgets(emptySpec('x'))).toBe(0);
+  });
+});
+
+describe('palette types of panel sources', () => {
+  const widget = (type: string, config: Record<string, unknown> = {}) => ({
+    version: 1,
+    title: 'Ops',
+    tabs: [
+      {
+        id: 'main',
+        label: 'Main',
+        sections: [
+          { id: 's', title: 'S', widgets: [{ id: 'w', type, config, x: 0, y: 0, w: 4, h: 4 }] },
+        ],
+      },
+    ],
+  });
+  const first = (input: unknown) => migrateSpec(input).spec.tabs[0].sections[0].widgets[0];
+
+  it('splits a variant type into the base type and the source', () => {
+    expect(baseWidgetType('agent.panel.my-app')).toEqual({ type: 'agent.panel', source: 'my-app' });
+    expect(baseWidgetType('agent.sunburst.x_1')).toEqual({ type: 'agent.sunburst', source: 'x_1' });
+    expect(baseWidgetType('agent.panel')).toBeNull();
+    expect(baseWidgetType('core.header')).toBeNull();
+    expect(baseWidgetType('agent.panel.Bad Name')).toBeNull();
+  });
+  it('loads a saved variant type as the base type with that source', () => {
+    expect(first(widget('agent.panel.my-app', { panel: 'p' }))).toMatchObject({
+      type: 'agent.panel',
+      config: { panel: 'p', source: 'my-app' },
+    });
+    expect(first(widget('agent.sunburst.my-app'))).toMatchObject({
+      type: 'agent.sunburst',
+      config: { source: 'my-app' },
+    });
+  });
+  it('keeps the source the widget was saved with', () => {
+    expect(first(widget('agent.panel.my-app', { source: 'other' })).config.source).toBe('other');
+  });
+  it('leaves other types alone', () => {
+    expect(first(widget('agent.panel', { source: 'agent' }))).toMatchObject({
+      type: 'agent.panel',
+      config: { source: 'agent' },
+    });
   });
 });
 

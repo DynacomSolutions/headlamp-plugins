@@ -190,4 +190,25 @@ describe('dashboard page', () => {
     mount('/dashboards/nope');
     expect(await screen.findByText(/was not found/)).toBeTruthy();
   });
+
+  it('adds a panel source entry of the palette as the base type with the source set', async () => {
+    getRegistry().registerWidget({
+      type: 'agent.panel.my-app',
+      title: 'Panel from My app',
+      icon: 'mdi:server',
+      category: 'Monitoring',
+      defaultSize: { w: 4, h: 4 },
+      defaultConfig: { source: 'my-app', panel: '' },
+      Component: () => <span>panel</span>,
+    });
+    mount('/dashboards/ops?edit=1');
+    fireEvent.click(await screen.findByRole('button', { name: 'Add widget' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Panel from My app' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close the palette' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(version).toBe(2));
+    const added = spec.tabs[0].sections[0].widgets.find(w => w.type.startsWith('agent.'));
+    expect(added?.type).toBe('agent.panel');
+    expect(added?.config).toMatchObject({ source: 'my-app' });
+  });
 });

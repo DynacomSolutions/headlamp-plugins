@@ -219,13 +219,32 @@ function uniqueIds<T extends { id: string }>(items: T[], prefix: string): T[] {
   });
 }
 
+/**
+ * The palette lists one entry per panel source, as the type `agent.panel.<source id>` or
+ * `agent.sunburst.<source id>`. Sources are settings of one browser, so a spec never holds these
+ * types: it holds the base type with `config.source`. Earlier versions did save them.
+ */
+export function baseWidgetType(type: string): { type: string; source: string } | null {
+  const m = /^(agent\.(?:panel|sunburst))\.([a-z0-9][a-z0-9_-]{0,39})$/.exec(type);
+  return m ? { type: m[1], source: m[2] } : null;
+}
+
 function normaliseWidget(raw: unknown): WidgetInstance | null {
   if (!isObject(raw) || typeof raw.type !== 'string' || raw.type === '') return null;
+  let type = raw.type;
+  let config: Raw = isObject(raw.config) ? raw.config : {};
+  const legacy = baseWidgetType(type);
+  if (legacy) {
+    // Keep the source the widget showed: a saved `source` wins over the one in the type.
+    type = legacy.type;
+    if (typeof config.source !== 'string' || config.source === '')
+      config = { ...config, source: legacy.source };
+  }
   const w: WidgetInstance = {
     id: str(raw.id) || newId('w'),
-    type: raw.type,
+    type,
     title: str(raw.title),
-    config: isObject(raw.config) ? raw.config : {},
+    config,
     x: num(raw.x, 0, 0, GRID_COLUMNS - 1),
     y: num(raw.y, 0, 0, 100000),
     w: num(raw.w, 4, 1, GRID_COLUMNS),

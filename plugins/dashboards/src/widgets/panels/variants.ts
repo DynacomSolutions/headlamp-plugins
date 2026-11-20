@@ -2,8 +2,9 @@
  * One palette entry per configured source. Each entry is a widget type of its own
  * (`agent.panel.<source id>`) that shares the component and the settings form of the base
  * widget and only pre-selects the source. The registry has no way to remove a type, so a source
- * that is removed in this session keeps its entry until the page reloads. A saved widget keeps
- * its own `source` setting, so the base type `agent.panel` always works.
+ * that is removed in this session keeps its entry until the page reloads. The entry exists only in
+ * the palette: sources are settings of one browser, so adding it saves the base type with
+ * `config.source` (see `baseWidgetType`), and a dashboard never holds a per-source type.
  */
 import React from 'react';
 import type { WidgetDefinition } from '../../contract';

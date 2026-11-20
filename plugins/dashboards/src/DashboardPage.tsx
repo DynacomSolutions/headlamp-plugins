@@ -59,7 +59,7 @@ import {
   updateTab,
   updateWidget,
 } from './spec/edit';
-import { DashboardSpec, sameFilters } from './spec/model';
+import { baseWidgetType, DashboardSpec, sameFilters } from './spec/model';
 import { ConflictError, StoredDashboard } from './storage/storage';
 import {
   baseFilters,
@@ -370,7 +370,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const left = spec.tabPosition === 'left';
   const showTabs = spec.tabs.length > 1 || editing;
 
-  const onAddWidget = (def: WidgetDefinition, sectionId: string) =>
+  const onAddWidget = (def: WidgetDefinition, sectionId: string) => {
+    // A palette entry of a panel source adds the base type with the source in its settings.
+    // Sources are per browser, so the spec must not depend on one.
+    const variant = baseWidgetType(def.type);
+    const config = JSON.parse(JSON.stringify(def.defaultConfig));
+    if (variant) config.source = variant.source;
     edit(
       s =>
         addWidget(
