@@ -4,6 +4,7 @@ import Box from '@mui/material/Box';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { isNamespaceName, resolveNamespace } from './namespace';
 import { DEFAULT_NAMESPACE } from './storage/storage';
 import { SourcesSettingsSection } from './widgets/panels/SourcesSettingsSection';
 import { MetricsEndpointSection } from './widgets/promql/EndpointSettings';
@@ -11,15 +12,7 @@ import { MetricsEndpointSection } from './widgets/promql/EndpointSettings';
 export const CONFIG_KEY = 'dashboards';
 export const configStore = new ConfigStore<Record<string, unknown>>(CONFIG_KEY);
 
-/** A Kubernetes namespace name: a DNS label. */
-export const isNamespaceName = (s: string): boolean =>
-  /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(s);
-
-/** The namespace that holds the dashboard ConfigMaps. A blank or invalid setting gives the default. */
-export function resolveNamespace(stored: Record<string, unknown> | undefined): string {
-  const v = typeof stored?.namespace === 'string' ? stored.namespace.trim() : '';
-  return isNamespaceName(v) ? v : DEFAULT_NAMESPACE;
-}
+export { isNamespaceName, resolveNamespace };
 
 export function useDashboardNamespace(): string {
   const stored = configStore.useConfig()() as Record<string, unknown> | undefined;

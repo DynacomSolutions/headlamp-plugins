@@ -13,8 +13,8 @@ import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../c
 import { usePanel, usePanelList } from './data';
 import { sourceOf, SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
 import { PanelView } from './PanelView';
-import { AGENT_SOURCE_ID, findSource } from './sources';
-import { useSources } from './sourcesConfig';
+import { AGENT_SOURCE_ID } from './sources';
+import { useSourceLookup } from './sourcesConfig';
 
 export type PanelConfig = SourcePanelConfig;
 
@@ -26,7 +26,7 @@ export function PanelWidget({
   kiosk,
 }: WidgetProps<PanelConfig>): JSX.Element {
   const sourceId = sourceOf(config);
-  const source = findSource(useSources(), sourceId);
+  const { source, pending } = useSourceLookup(sourceId);
   const list = usePanelList(source, sourceId);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
   const state = usePanel(
@@ -47,7 +47,7 @@ export function PanelWidget({
       </Box>
     );
   }
-  if (state.loading) {
+  if (state.loading || pending) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
         <CircularProgress size={24} aria-label="Loading the panel" />

@@ -70,6 +70,8 @@ import {
   resolveFilters,
   serialiseQuery,
 } from './urlState';
+import { ensureClusterSources } from './widgets/panels/clusterSources';
+import { transportFor } from './widgets/panels/sourcesConfig';
 
 type SaveState = { saving: boolean; error?: string; conflict: boolean };
 
@@ -117,6 +119,10 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   const refresh = React.useMemo(() => createRefreshStore(), []);
   const signal = React.useSyncExternalStore(refresh.subscribe, () => refresh.getState().signal);
+  // A long-open page (a kiosk) keeps the shared cluster sources up to date. This asks only when the cache is old.
+  React.useEffect(() => {
+    ensureClusterSources(transportFor(undefined), undefined, storage.namespace);
+  }, [signal, storage.namespace]);
   const definitions = useWidgetDefinitions();
   const namespaceOptions = useClusterNames('/api/v1/namespaces');
   const nodeOptions = useClusterNames('/api/v1/nodes');
