@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { AgentHost, AgentProc, AgentUnit } from './agents';
-import { buildCombinedTree, buildNodeTree, findPath, gapNodes, SunNode } from './tree';
-import type { NodeMetrics } from './types';
+import {
+  buildCombinedTree,
+  buildNodeTree,
+  findPath,
+  gapNodes,
+  splitTenant,
+  SunNode,
+} from './tree';
+import type { NodeMetrics, RunnerInfo } from './types';
 
 const GB = 1e9;
 const icon = (id: string) => `/icon/${id}`;
@@ -773,5 +780,132 @@ describe('system breakdown', () => {
       expect(session.displayName).toBe('User 1000 session');
       expect(session.children[0].displayName).toBe('User 1000 services');
     });
+  });
+});
+
+describe('RunWarden runner hierarchy', () => {
+  const NS = 'runwarden-runners';
+  const pod = (name: string, mem: number, runner?: RunnerInfo): NodeMetrics['pods'][number] => ({
+    namespace: NS,
+    pod: name,
+    container: 'runner',
+    cpuCores: mem,
+    memBytes: mem,
+    ...(runner ? { runner } : {}),
+  });
+  const job = (over: Partial<NonNullable<RunnerInfo['job']>> = {}): RunnerInfo => ({
+    tenant: 'DynacomSolutions..cluster',
+    pool: 'rw-linux',
+    role: 'runner',
+    job: {
+      owner: 'DynacomSolutions',
+      repo: '.cluster',
+      runsOn: 'k3s-runners',
+      workflow: 'CI',
+      job: 'build',
+      runId: '42',
+      ...over,
+    },
+  });
+  const nsNode = (pods: NodeMetrics['pods']) => {
+    const t = buildNodeTree(metrics({ pods, cpuUsed: 100, memUsed: 100 }), null, 'memory', icon);
+    return t.root.children[0].children[0];
+  };
+  const leaves = (n: SunNode): SunNode[] =>
+    n.children.length ? n.children.flatMap(leaves) : [n];
+
+  it('nests owner / label, repo, workflow, job, run and containers', () => {
+    const ns = nsNode([pod('rw-a', 5, job())]);
+    expect(ns.key).toBe(`k8s/ns:${NS}`);
+    const chain: SunNode[] = [];
+    let cur = ns;
+    while (cur.children.length) {
+      cur = cur.children[0];
+      chain.push(cur);
+    }
+    expect(chain.map(c => [c.kind, c.label])).toEqual([
+      ['runner', 'DynacomSolutions / k3s-runners'],
+      ['repo', '.cluster'],
+      ['workflow', 'CI'],
+      ['job', 'build'],
+      ['run', '#42'],
+      ['container', 'runner'],
+    ]);
+    expect(chain[chain.length - 1].key).toBe(
+      `k8s/ns:${NS}/rw:DynacomSolutions|k3s-runners/repo:.cluster/wf:CI/job:build/run:42/pod:rw-a/c:runner`
+    );
+    expect(chain.every(c => c.value === 5)).toBe(true);
+  });
+
+  it('splits the tenant on the first dot only', () => {
+    expect(splitTenant('DynacomSolutions..cluster')).toEqual({
+      owner: 'DynacomSolutions',
+      repo: '.cluster',
+    });
+    expect(splitTenant('Acme.web')).toEqual({ owner: 'Acme', repo: 'web' });
+  });
+
+  it('groups a pod with labels but no job under Waiting for job', () => {
+    const ns = nsNode([
+      pod('rw-b', 2, { tenant: 'DynacomSolutions..cluster', pool: 'rw-linux', role: 'runner' }),
+    ]);
+    const group = ns.children[0];
+    expect(group.label).toBe('DynacomSolutions / rw-linux');
+    expect(group.children[0].label).toBe('.cluster');
+    const waiting = group.children[0].children[0];
+    expect(waiting.label).toBe('Waiting for job');
+    expect(waiting.children[0].kind).toBe('pod');
+    expect(waiting.children[0].label).toBe('rw-b');
+    expect(waiting.children[0].children[0].key).toBe(
+      `k8s/ns:${NS}/rw:DynacomSolutions|rw-linux/repo:.cluster/wf:~waiting/pod:rw-b/c:runner`
+    );
+  });
+
+  it('groups a warm pod under Warm pool and its pool', () => {
+    const ns = nsNode([pod('rw-w', 1, { tenant: '', pool: 'rw-linux', role: 'warm' })]);
+    expect(ns.children[0].label).toBe('Warm pool');
+    expect(ns.children[0].children[0].label).toBe('rw-linux');
+    expect(ns.children[0].children[0].children[0].label).toBe('rw-w');
+  });
+
+  it('keeps pod and container for a pod with no RunWarden data', () => {
+    const ns = nsNode([pod('plain', 1)]);
+    expect(ns.children[0].kind).toBe('pod');
+    expect(ns.children[0].key).toBe(`k8s/ns:${NS}/pod:plain`);
+    expect(ns.children[0].children[0].key).toBe(`k8s/ns:${NS}/pod:plain/c:runner`);
+  });
+
+  it('keeps the namespace total and unique, URL-safe keys', () => {
+    const pods = [
+      pod('rw-a', 5, job()),
+      pod('rw-c', 3, job({ runId: '43' })),
+      pod('rw-d', 4, job({ workflow: 'Release / deploy', job: 'a b' })),
+      pod('rw-b', 2, { tenant: 'DynacomSolutions..cluster', pool: 'rw-linux', role: 'runner' }),
+      pod('rw-w', 1, { tenant: '', pool: 'rw-linux', role: 'warm' }),
+      pod('plain', 6),
+    ];
+    for (const r of ['cpu', 'memory'] as const) {
+      const t = buildNodeTree(metrics({ pods, cpuUsed: 100, memUsed: 100 }), null, r, icon);
+      const ns = t.root.children[0].children[0];
+      expect(ns.value).toBe(21);
+      expect(leaves(ns).reduce((s, l) => s + l.value, 0)).toBe(21);
+      const all: SunNode[] = [];
+      const walk = (n: SunNode) => {
+        all.push(n);
+        n.children.forEach(walk);
+      };
+      walk(t.root);
+      const ks = all.map(n => n.key);
+      expect(new Set(ks).size).toBe(ks.length);
+      // A parent equals the sum of its children, so nothing is rescaled.
+      for (const n of all) {
+        if (n.children.length && n.kind !== 'node' && n.kind !== 'category') {
+          expect(n.children.reduce((s, c) => s + c.value, 0)).toBe(n.value);
+        }
+      }
+      // Two runs of one job share the job arc.
+      const jobArc = all.find(n => n.key.endsWith('/wf:CI/job:build'));
+      expect(jobArc?.children.map(c => c.label).sort()).toEqual(['#42', '#43']);
+    }
   });
 });
