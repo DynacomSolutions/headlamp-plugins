@@ -1,7 +1,7 @@
 /*
  * node-hardware: server temperatures and estimated power draw per node, from
- * a Prometheus-compatible metrics service. Adds "Temp" and "Power" columns to
- * the Nodes list and a "Hardware sensors" section to the Node details page.
+ * a Prometheus-compatible metrics service. Adds "Temp", "Power", "RAM" and "GPUs"
+ * columns to the Nodes list and "Hardware profile" and "Hardware sensors" sections to the Node details page.
  */
 import { registerDetailsViewSection, registerResourceTableColumnsProcessor } from '@kinvolk/headlamp-plugin/lib';
 import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
@@ -17,7 +17,10 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Battery, batteryHealthPct, batterySeverity, columnPower, pickCpuTemps, Severity, tempSeverity, thermalPressureName, thermalSeverity } from './hardware';
+import { HardwareProfileSection } from './HardwareProfile';
 import { getHardwareSnapshot, startHardwarePolling, useHardware } from './hardwareStore';
+import { gpuColumn, ramColumn } from './inventory';
+import { getInventorySnapshot, startInventoryPolling, useInventory } from './inventoryStore';
 
 const SEVERITY_COLOUR: Record<Severity, string | undefined> = {
   ok: undefined,
@@ -61,12 +64,39 @@ function PowerCell({ nodeName }: { nodeName: string }): JSX.Element {
   );
 }
 
+function RamCell({ nodeName }: { nodeName: string }): JSX.Element {
+  const { profiles, loading } = useInventory();
+  const c = ramColumn(profiles.get(nodeName));
+  if (!c) {
+    return <Typography display="inline">{loading ? '…' : '-'}</Typography>;
+  }
+  return (
+    <Tooltip title={c.tooltip}>
+      <Typography display="inline">{c.text}</Typography>
+    </Tooltip>
+  );
+}
+
+function GpuCell({ nodeName }: { nodeName: string }): JSX.Element {
+  const { profiles, loading } = useInventory();
+  const c = gpuColumn(profiles.get(nodeName));
+  if (!c) {
+    return <Typography display="inline">{loading ? '…' : '-'}</Typography>;
+  }
+  return (
+    <Tooltip title={c.tooltip}>
+      <Typography display="inline">{c.count}</Typography>
+    </Tooltip>
+  );
+}
+
 /** Plain function called during NodeList's render: reads the store, never calls hooks. */
 function NodesHardwareColumns({ id, columns }: { id: string; columns: unknown[] }): unknown[] {
   if (id !== 'headlamp-nodes') {
     return columns;
   }
   startHardwarePolling();
+  startInventoryPolling();
 
   const tempColumn: ResourceTableColumn<NodeLike> = {
     id: 'cpu-temp',
@@ -89,10 +119,27 @@ function NodesHardwareColumns({ id, columns }: { id: string; columns: unknown[] 
     render: node => <PowerCell nodeName={nodeNameOf(node)} />,
   };
 
+  const ramCol: ResourceTableColumn<NodeLike> = {
+    id: 'ram-installed',
+    label: 'RAM',
+    gridTemplate: 'min-content',
+    disableFiltering: true,
+    getValue: node => ramColumn(getInventorySnapshot().profiles.get(nodeNameOf(node)))?.sortValue ?? 0,
+    render: node => <RamCell nodeName={nodeNameOf(node)} />,
+  };
+  const gpuCol: ResourceTableColumn<NodeLike> = {
+    id: 'gpu-count',
+    label: 'GPUs',
+    gridTemplate: 'min-content',
+    disableFiltering: true,
+    getValue: node => gpuColumn(getInventorySnapshot().profiles.get(nodeNameOf(node)))?.count ?? 0,
+    render: node => <GpuCell nodeName={nodeNameOf(node)} />,
+  };
+
   // After the built-in memory column, or after disk-health's "disk" column if present.
   const after = Math.max(columns.findIndex((c: any) => c?.id === 'memory'), columns.findIndex((c: any) => c?.id === 'disk'));
   const next = [...columns];
-  next.splice(after >= 0 ? after + 1 : columns.length, 0, tempColumn, powerColumn);
+  next.splice(after >= 0 ? after + 1 : columns.length, 0, tempColumn, powerColumn, ramCol, gpuCol);
   return next;
 }
 
@@ -249,6 +296,15 @@ registerDetailsViewSection(({ resource }) => {
     return null;
   }
   return (
+    <>
+      <HardwareProfileSection nodeName={nodeName} />
+      <SensorsSection nodeName={nodeName} />
+    </>
+  );
+});
+
+function SensorsSection({ nodeName }: { nodeName: string }): JSX.Element {
+  return (
     <SectionBox title="Hardware sensors">
       <Typography variant="body2" sx={{ mb: 1 }} color="text.secondary">
         Temperatures and power draw for this node, from the metrics service. {POWER_NOTE}
@@ -256,4 +312,4 @@ registerDetailsViewSection(({ resource }) => {
       <HardwareSection nodeName={nodeName} />
     </SectionBox>
   );
-});
+}
