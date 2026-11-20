@@ -72,7 +72,7 @@ function RamCell({ nodeName }: { nodeName: string }): JSX.Element {
   }
   return (
     <Tooltip title={c.tooltip}>
-      <Typography display="inline">{c.text}</Typography>
+      <Typography display="inline" sx={{ whiteSpace: 'nowrap' }}>{c.text}</Typography>
     </Tooltip>
   );
 }
@@ -85,7 +85,7 @@ function GpuCell({ nodeName }: { nodeName: string }): JSX.Element {
   }
   return (
     <Tooltip title={c.tooltip}>
-      <Typography display="inline">{c.count}</Typography>
+      <Typography display="inline" sx={{ whiteSpace: 'nowrap' }}>{c.text}</Typography>
     </Tooltip>
   );
 }

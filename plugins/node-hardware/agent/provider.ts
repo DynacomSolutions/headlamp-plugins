@@ -69,7 +69,7 @@ const profileTool = defineTool({
   name: 'node_hardware_profile',
   title: 'Node hardware profile',
   description:
-    'Hardware profile per node: motherboard, CPU sockets, memory (installed, maximum, slots used), PCIe and M.2 slots in use, GPUs with VRAM, NVMe drives, and PCI links running below their maximum width or speed. Use it to answer what hardware a node has and whether it can take more RAM, GPUs or drives.',
+    'Hardware profile per node: motherboard, CPU sockets, memory (installed, maximum, slots used), PCIe and M.2 slots in use, GPUs with VRAM and kind (discrete, integrated, BMC display), NVMe drives, and PCI links running below their maximum width or speed. Use it to answer what hardware a node has and whether it can take more RAM, GPUs or drives.',
   input: z.object({ node: z.string().optional() }),
   output: z.object({
     nodes: z.array(
@@ -82,6 +82,7 @@ const profileTool = defineTool({
         pcieSlots: slotCount,
         m2Slots: slotCount,
         gpus: z.array(z.string()),
+        discreteGpus: z.number(),
         nvme: z.array(z.string()),
         belowMaxLinks: z.array(z.string()),
       }),
@@ -107,7 +108,7 @@ const profileTool = defineTool({
         title: 'Node hardware',
         rows: nodes.map(n => ({
           label: n.node,
-          detail: `${n.memory}${n.gpus.length > 0 ? ` · ${n.gpus.length} GPU` : ''}${n.nvme.length > 0 ? ` · ${n.nvme.length} NVMe` : ''}`,
+          detail: `${n.memory}${n.gpus.length > 0 ? ` · ${n.discreteGpus} GPU${n.gpus.length > n.discreteGpus ? ` (+${n.gpus.length - n.discreteGpus} integrated or BMC)` : ''}` : ''}${n.nvme.length > 0 ? ` · ${n.nvme.length} NVMe` : ''}`,
           status: n.belowMaxLinks.length > 0 ? `${n.belowMaxLinks.length} link(s) below max` : n.collector,
         })),
       },

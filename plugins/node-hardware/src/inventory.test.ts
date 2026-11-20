@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildProfiles,
+  classifyGpu,
   formatBytes,
   formatLink,
   formatLinkWithMax,
@@ -129,6 +130,8 @@ describe('link flags', () => {
     expect(isBelowMax(linkInfo(16, 16, 2.5, 32))).toBe(false);
     expect(formatLinkWithMax(linkInfo(16, 16, 2.5, 32))).toBe('Gen1 x16 (2.5 GT/s) (max Gen5)');
     expect(isBelowMax(linkInfo(8, 16, 32, 32))).toBe(true);
+    expect(formatLinkWithMax(linkInfo(2, 4, 16, 16))).toBe('Gen4 x2 (16 GT/s) (max x4)');
+    expect(formatLinkWithMax(linkInfo(4, 4, 16, 16))).toBe('Gen4 x4 (16 GT/s)');
     expect(isBelowMax(linkInfo(4, 4, 16, 16))).toBe(false);
     expect(isBelowMax(linkInfo(undefined, 4, undefined, undefined))).toBe(false);
     expect(isBelowMax(undefined)).toBe(false);
@@ -186,7 +189,7 @@ describe('buildProfiles with only existing metrics', () => {
 
   it('takes GPUs from DCGM with a normalised address', () => {
     expect(p.gpus).toEqual([expect.objectContaining({ address: '0000:0a:00.0', model: 'Fake DC GPU', vramBytes: 24 * GiB })]);
-    expect(gpuColumn(p)).toEqual({ count: 1, tooltip: 'Fake DC GPU (24 GiB)' });
+    expect(gpuColumn(p)).toEqual({ count: 1, text: '1', tooltip: 'Fake DC GPU (24 GiB, discrete)' });
   });
 
   it('takes NVMe drives from node_nvme_info without capacity', () => {
@@ -203,6 +206,51 @@ describe('GPU union', () => {
     const gpus = buildProfiles(d).get('worker-1')!.gpus;
     expect(gpus).toHaveLength(1);
     expect(gpus[0]).toMatchObject({ model: 'Fake GPU 2', vramBytes: 8 * GiB });
+  });
+});
+
+describe('GPU kinds', () => {
+  const gpuInfo = (address: string, vendor: string, model: string, driver: string) =>
+    sample({ ...n, address, vendor, model, driver });
+  const profileOf = (info: MetricSample[], vram: MetricSample[] = []) => {
+    const d = emptyData();
+    d.gpuInfo = info;
+    d.gpuMemory = vram;
+    return buildProfiles(d).get('worker-1');
+  };
+  const bmc = gpuInfo('0000:03:00.0', 'ASPEED Technology, Inc.', 'ASPEED Graphics Family', 'ast');
+  const igpu = gpuInfo('0000:0e:00.0', 'AMD', 'Granite Ridge [Radeon 610M]', 'amdgpu');
+  const card = gpuInfo('0000:01:00.0', 'GpuCo', 'Fake GPU 1', 'fakedrv');
+
+  it('classifies BMC, integrated and discrete GPUs', () => {
+    expect(classifyGpu({ vendor: 'ASPEED Technology, Inc.', model: 'x', driver: '' })).toBe('bmc');
+    expect(classifyGpu({ vendor: 'Fake', model: 'x', driver: 'mgag200' })).toBe('bmc');
+    expect(classifyGpu({ vendor: 'Matrox Electronics', model: 'x', driver: '' })).toBe('bmc');
+    expect(classifyGpu({ vendor: 'Intel', model: 'UHD Graphics', driver: 'i915' })).toBe('integrated');
+    expect(classifyGpu({ vendor: 'Intel', model: 'Arc A380', driver: 'xe' })).toBe('discrete');
+    expect(classifyGpu({ vendor: 'AMD', model: 'x', driver: 'amdgpu', vramBytes: 512 * 1024 ** 2 })).toBe('integrated');
+    expect(classifyGpu({ vendor: 'AMD', model: 'x', driver: 'amdgpu', vramBytes: 16 * GiB })).toBe('discrete');
+    expect(classifyGpu({ vendor: 'AMD', model: 'x', driver: 'amdgpu' })).toBe('discrete');
+  });
+
+  it('shows 0 with a BMC-only tooltip on a server without a GPU', () => {
+    const p = profileOf([bmc]);
+    expect(p?.gpus[0].kind).toBe('bmc');
+    expect(gpuColumn(p)).toEqual({ count: 0, text: '0', tooltip: 'BMC display only' });
+  });
+
+  it('counts the discrete card and adds the integrated GPU', () => {
+    const p = profileOf([card, igpu], [sample({ ...n, address: '0000:0e:00.0' }, 512 * 1024 ** 2), sample({ ...n, address: '0000:01:00.0' }, 16 * GiB)]);
+    const c = gpuColumn(p);
+    expect(c?.count).toBe(1);
+    expect(c?.text).toBe('1 (+1 iGPU)');
+    expect(c?.tooltip).toBe('Fake GPU 1 (16 GiB, discrete), Granite Ridge [Radeon 610M] (512 MiB, integrated)');
+  });
+
+  it('lists the BMC chip in the tooltip next to a card', () => {
+    const c = gpuColumn(profileOf([card, bmc]));
+    expect(c?.text).toBe('1');
+    expect(c?.tooltip).toContain('ASPEED Graphics Family (bmc display)');
   });
 });
 
