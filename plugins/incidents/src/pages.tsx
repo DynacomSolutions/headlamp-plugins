@@ -14,9 +14,11 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, useHistory, useParams } from 'react-router-dom';
 import { A2uiRenderer } from './a2ui';
+import { AgentActions } from './AgentActions';
 import { createChat } from './chat-data';
 import { ChatPage } from './ChatPage';
 import { useDiagnoses, useDiagnosis, useSettings } from './data';
+import { LaunchesPage } from './LaunchPages';
 import { DiagnosisSummary, severityColour, Status } from './model';
 import { chatUrl, diagnosesUrl, diagnosisUrl } from './routes';
 
@@ -104,6 +106,7 @@ export function IncidentPage() {
   const { id } = useParams<{ id: string }>();
   // Safety net: if a router matches this page first, 'chat' is the chat page.
   if (id === 'chat') return <ChatPage />;
+  if (id === 'launches') return <LaunchesPage />;
   return <IncidentDetail id={id} />;
 }
 
@@ -150,7 +153,15 @@ function IncidentDetail({ id }: { id: string }) {
       {loading && !data ? (
         <CircularProgress aria-label="Loading" />
       ) : data ? (
-        <A2uiRenderer messages={data.a2ui} />
+        <>
+          <A2uiRenderer messages={data.a2ui} />
+          <AgentActions
+            diagnosisId={id}
+            alertName={data.alertName}
+            fixes={data.fixes}
+            planFactIds={data.planFactIds}
+          />
+        </>
       ) : null}
     </SectionBox>
   );

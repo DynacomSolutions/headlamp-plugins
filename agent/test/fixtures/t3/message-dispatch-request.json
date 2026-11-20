@@ -1,0 +1,17 @@
+{
+  "_tag": "Request",
+  "id": "1",
+  "tag": "orchestration.dispatchCommand",
+  "payload": {
+    "commandId": "id-1",
+    "type": "message.dispatch",
+    "createdBy": "user",
+    "creationSource": "mcp",
+    "threadId": "thread-0",
+    "messageId": "id-2",
+    "text": "Check it again.",
+    "attachments": [],
+    "dispatchMode": { "type": "start_immediately" }
+  },
+  "headers": []
+}

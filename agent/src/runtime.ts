@@ -7,6 +7,7 @@ import { defineProvider, defineTool, z, type ProviderDefinition, type ToolContex
 import type { ToolHost } from './agent/engine.js';
 import type { ToolSpec } from './agent/model.js';
 import type { DiagnosisStore } from './store.js';
+import type { LaunchStore } from './launch/store.js';
 
 const MAX_BODY = 4 * 1024 * 1024;
 
@@ -79,6 +80,50 @@ function diagnosesProvider(store: DiagnosisStore): ProviderDefinition {
   });
 }
 
+/** Read-only view of the agent launches. Nothing here can request, approve or send. */
+function launchesProvider(store: LaunchStore): ProviderDefinition {
+  const brief = z.object({ id: z.string(), purpose: z.string(), status: z.string(), projectKey: z.string(), requestedBy: z.string(), requestedAt: z.string(), startedAt: z.string().nullable(), finishedAt: z.string().nullable(), diagnosisId: z.string().nullable(), steps: z.number(), lastReply: z.string(), error: z.string() });
+  return defineProvider({
+    name: 'launches',
+    title: 'Agent launches',
+    description: 'Agents that the incident agent launched in T3 Code after an operator approved (read-only)',
+    tools: [
+      defineTool({
+        name: 'list_agent_launches',
+        title: 'List agent launches',
+        description: 'Launch requests and the T3 Code agents started from them, newest first, with status, the latest agent reply and any error. Use it to see whether an agent already works on an incident.',
+        input: z.object({ status: z.string().optional().describe('Only launches with this status, for example running or pending_approval'), diagnosisId: z.string().optional(), limit: z.number().int().min(1).max(100).default(20) }),
+        output: z.object({ launches: z.array(brief) }),
+        async run(args) {
+          const launches = store
+            .list()
+            .filter(l => (!args.status || l.status === args.status) && (!args.diagnosisId || l.source.diagnosisId === args.diagnosisId))
+            .slice(0, args.limit)
+            .map(l => ({
+              id: l.id,
+              purpose: l.purpose,
+              status: l.status,
+              projectKey: l.projectKey,
+              requestedBy: l.requestedBy,
+              requestedAt: l.requestedAt,
+              startedAt: l.startedAt ?? null,
+              finishedAt: l.finishedAt ?? null,
+              diagnosisId: l.source.diagnosisId ?? null,
+              steps: l.timeline.length,
+              lastReply: (l.lastReply ?? '').slice(0, 1500),
+              error: l.error ?? '',
+            }));
+          return {
+            data: { launches },
+            summary: `${launches.length} agent launches.`,
+            view: { title: 'Agent launches', rows: launches.map(l => ({ label: l.purpose, detail: l.lastReply || l.error, status: l.status })) },
+          };
+        },
+      }),
+    ],
+  });
+}
+
 export class Runtime {
   readonly kube: KubeClient;
   readonly prom: PromClient;
@@ -88,11 +133,12 @@ export class Runtime {
   constructor(
     readonly config: Config,
     store: DiagnosisStore,
+    launches?: LaunchStore,
   ) {
     this.kube = new KubeClient(config);
     this.prom = new PromClient(config.metricsUrl);
     this.settings = loadProviderSettings(config.providerConfigFile);
-    this.registry = new Registry(allProviders([diagnosesProvider(store)]));
+    this.registry = new Registry(allProviders([diagnosesProvider(store), ...(launches ? [launchesProvider(launches)] : [])]));
   }
 
   context(provider: ProviderDefinition): ToolContext {
@@ -118,7 +164,7 @@ export class Runtime {
     return {
       list: async (): Promise<ToolSpec[]> =>
         [...this.registry.tools.values()]
-          .filter(t => t.provider.name !== 'diagnoses')
+          .filter(t => t.provider.name !== 'diagnoses' && t.provider.name !== 'launches')
           .map(t => ({ name: t.tool.name, description: t.tool.description, parameters: t.inputJsonSchema })),
       call: async (name, args) => {
         const out = await this.registry.call(name, args, p => this.context(p));

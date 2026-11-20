@@ -1,0 +1,4 @@
+{
+  "ticket": { "method": "POST", "path": "/api/auth/websocket-ticket/rpc", "authorization": "Bearer <token>", "protocolHeader": null },
+  "thread": { "method": "GET", "path": "/api/orchestration/threads/thread-0", "authorization": "Bearer <token>", "protocolHeader": "2" }
+}

@@ -9,6 +9,7 @@ import {
   registerSidebarEntry,
 } from '@kinvolk/headlamp-plugin/lib';
 import { ChatPage } from './ChatPage';
+import { LaunchesPage, LaunchPage } from './LaunchPages';
 import { CONFIG_KEY } from './model';
 import { IncidentPage, IncidentsPage } from './pages';
 import { Settings } from './settings';
@@ -32,6 +33,12 @@ registerSidebarEntry({
   name: 'incidents-chat',
   label: 'Chat',
   url: '/incidents/chat',
+});
+registerSidebarEntry({
+  parent: 'incidents',
+  name: 'incidents-launches',
+  label: 'Agents',
+  url: '/incidents/launches',
 });
 
 registerRoute({
@@ -57,6 +64,21 @@ registerRoute({
   exact: true,
   component: ChatPage,
   isFullWidth: true,
+});
+// The agent routes also come before '/incidents/:id'.
+registerRoute({
+  path: '/incidents/launches',
+  sidebar: 'incidents-launches',
+  name: 'incidents-launches',
+  exact: true,
+  component: LaunchesPage,
+});
+registerRoute({
+  path: '/incidents/launches/:id',
+  sidebar: 'incidents-launches',
+  name: 'incidents-launch',
+  exact: true,
+  component: LaunchPage,
 });
 registerRoute({
   path: '/incidents/:id',

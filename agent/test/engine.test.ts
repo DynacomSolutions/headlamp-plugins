@@ -105,4 +105,17 @@ describe('diagnosis engine', () => {
     expect(d.status).toBe('failed');
     expect(d.error).toBe('The model did not submit a diagnosis');
   });
+
+  it('keeps the full data of the DNS plan in its evidence item, masked, and no other tool data', async () => {
+    const dnsAlert = { ...alert, name: 'DnsPlacementDrift', labels: { alertname: 'DnsPlacementDrift', host: 'app.example.com' } };
+    const tools: ToolHost = {
+      list: async () => ['dns_placement_status', 'dns_placement_plan', 'list_events'].map(name => ({ name, description: name, parameters: { type: 'object', properties: {} } })),
+      call: async name => ({ ok: true, summary: `${name} ok`, data: { changes: [{ host: 'app.example.com', note: `token=${FAKE_TOKEN}` }] } }),
+    };
+    const d = await diagnose({ alert: dnsAlert, tools, model: model([]), budget: 1, source: 'api' });
+    const plan = d.evidence.find(e => e.tool === 'dns_placement_plan');
+    expect(plan?.data).toMatchObject({ changes: [{ host: 'app.example.com' }] });
+    expect(JSON.stringify(plan?.data)).not.toContain(FAKE_TOKEN);
+    expect(d.evidence.filter(e => e.tool !== 'dns_placement_plan').every(e => e.data === undefined)).toBe(true);
+  });
 });

@@ -49,6 +49,8 @@ export interface EvidenceItem {
   reason: string;
   summary: string;
   ok: boolean;
+  /** Full tool data, kept only for the tools whose data a launched agent needs (the DNS placement plan). */
+  data?: unknown;
 }
 
 export interface Diagnosis {
@@ -67,6 +69,8 @@ export interface Diagnosis {
   model: string;
   error?: string;
   a2ui: A2uiMessage[];
+  /** True when an outside agent (ACP, CLI) published this diagnosis through the API. Its evidence data is not trusted. */
+  published?: boolean;
   /** The process that holds this record while it is queued or running. */
   owner?: string;
   /** The holder's claim ends at this time (ISO). After it, another process may take over. */

@@ -9,6 +9,8 @@ export const ROUTE_DIAGNOSES = 'incidents';
 export const ROUTE_DIAGNOSIS = 'incident';
 export const ROUTE_CHAT = 'incidents-chat';
 export const ROUTE_CHAT_THREAD = 'incidents-chat-thread';
+export const ROUTE_LAUNCHES = 'incidents-launches';
+export const ROUTE_LAUNCH = 'incidents-launch';
 
 export const diagnosesUrl = (): string => Router.createRouteURL(ROUTE_DIAGNOSES);
 
@@ -16,3 +18,7 @@ export const diagnosisUrl = (id: string): string => Router.createRouteURL(ROUTE_
 
 export const chatUrl = (id?: string): string =>
   id ? Router.createRouteURL(ROUTE_CHAT_THREAD, { id }) : Router.createRouteURL(ROUTE_CHAT);
+
+export const launchesUrl = (): string => Router.createRouteURL(ROUTE_LAUNCHES);
+
+export const launchUrl = (id: string): string => Router.createRouteURL(ROUTE_LAUNCH, { id });

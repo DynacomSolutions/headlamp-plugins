@@ -1,0 +1,19 @@
+{
+  "_tag": "Request",
+  "id": "1",
+  "tag": "orchestration.launchThread",
+  "payload": {
+    "commandId": "id-1",
+    "creationSource": "mcp",
+    "threadId": "thread-0",
+    "projectId": "project-0",
+    "title": "Incident agent: probe",
+    "generateTitle": false,
+    "modelSelection": { "instanceId": "provider-0", "model": "model-0" },
+    "runtimeMode": "full-access",
+    "interactionMode": "default",
+    "workspaceStrategy": { "type": "root" },
+    "initialMessage": { "messageId": "id-2", "text": "Reply with the single word OK and do nothing else.", "attachments": [] }
+  },
+  "headers": []
+}

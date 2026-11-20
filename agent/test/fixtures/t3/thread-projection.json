@@ -1,0 +1,20 @@
+{
+  "snapshotSequence": 5294524,
+  "projection": {
+    "thread": { "id": "thread-0", "title": "Incident agent: probe", "modelSelection": { "instanceId": "provider-0", "model": "model-0" }, "runtimeMode": "full-access", "interactionMode": "default", "createdAt": "2026-11-20T07:00:00.000Z", "updatedAt": "2026-11-20T07:00:09.000Z", "archivedAt": null, "deletedAt": null, "lastError": null },
+    "runs": [
+      { "id": "run-1", "ordinal": 1, "status": "completed", "requestedAt": "2026-11-20T07:00:00.000Z", "startedAt": "2026-11-20T07:00:01.000Z", "completedAt": "2026-11-20T07:00:09.000Z" }
+    ],
+    "messages": [
+      { "id": "msg-1", "role": "user", "text": "Run the probe.", "streaming": false, "createdAt": "2026-11-20T07:00:00.000Z", "updatedAt": "2026-11-20T07:00:00.000Z", "runId": "run-1", "createdBy": "user", "creationSource": "mcp" },
+      { "id": "msg-2", "role": "assistant", "text": "DONE", "streaming": false, "createdAt": "2026-11-20T07:00:08.000Z", "updatedAt": "2026-11-20T07:00:08.000Z", "runId": "run-1" }
+    ],
+    "turnItems": [
+      { "id": "item-1", "runId": "run-1", "ordinal": 1, "type": "user_message", "status": "completed", "title": "User message", "startedAt": "2026-11-20T07:00:00.000Z", "completedAt": "2026-11-20T07:00:00.000Z" },
+      { "id": "item-2", "runId": "run-1", "ordinal": 2, "type": "command_execution", "status": "completed", "title": "Workspace ready", "input": "Preparing workspace", "startedAt": "2026-11-20T07:00:01.000Z", "completedAt": "2026-11-20T07:00:02.000Z" },
+      { "id": "item-3", "runId": "run-1", "ordinal": 3, "type": "command_execution", "status": "running", "title": "echo probe-ok", "input": "echo probe-ok", "startedAt": "2026-11-20T07:00:03.000Z" },
+      { "id": "item-4", "runId": "run-1", "ordinal": 4, "type": "file_change", "status": "completed", "fileName": "notes.txt", "additions": 3, "deletions": 1, "diffStr": "@@ -1 +1,3 @@", "startedAt": "2026-11-20T07:00:05.000Z", "completedAt": "2026-11-20T07:00:06.000Z" }
+    ],
+    "runtimeRequests": []
+  }
+}
