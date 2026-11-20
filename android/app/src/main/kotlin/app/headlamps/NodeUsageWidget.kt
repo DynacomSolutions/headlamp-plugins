@@ -47,7 +47,6 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import java.text.DateFormat
 import java.util.Date
-import kotlinx.coroutines.launch
 
 private val SMALL = DpSize(110.dp, 110.dp)
 private val TALL = DpSize(110.dp, 180.dp)
@@ -280,23 +279,8 @@ class NodeUsageReceiver : GlanceAppWidgetReceiver() {
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         super.onDeleted(context, appWidgetIds)
-        val pending = goAsync()
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launchAndFinish(pending) {
-            val repository = Repository(context)
-            appWidgetIds.forEach { repository.removeWidget(it) }
-        }
-    }
-}
-
-private fun kotlinx.coroutines.CoroutineScope.launchAndFinish(
-    pending: android.content.BroadcastReceiver.PendingResult,
-    block: suspend () -> Unit,
-) {
-    this.launch {
-        try {
-            block()
-        } finally {
-            pending.finish()
+        removeWidgetData(context, appWidgetIds) { repository, id ->
+            repository.removeWidget(id)
         }
     }
 }
