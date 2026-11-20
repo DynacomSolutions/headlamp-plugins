@@ -15,6 +15,7 @@ import { rerunDiagnosis, useDiagnoses, useDiagnosis, useSettings } from './data'
 import { DiagnosesTable } from './DiagnosesTable';
 import { LaunchesPage } from './LaunchPages';
 import { DiagnosisSummary } from './model';
+import { NotificationsPage } from './NotificationsPage';
 import { RerunButton } from './RerunButton';
 import { chatUrl, diagnosesUrl } from './routes';
 
@@ -51,6 +52,7 @@ export function IncidentPage() {
   // Safety net: if a router matches this page first, 'chat' is the chat page.
   if (id === 'chat') return <ChatPage />;
   if (id === 'launches') return <LaunchesPage />;
+  if (id === 'notifications') return <NotificationsPage />;
   return <IncidentDetail id={id} />;
 }
 

@@ -22,3 +22,7 @@ export const chatUrl = (id?: string): string =>
 export const launchesUrl = (): string => Router.createRouteURL(ROUTE_LAUNCHES);
 
 export const launchUrl = (id: string): string => Router.createRouteURL(ROUTE_LAUNCH, { id });
+
+export const ROUTE_NOTIFICATIONS = 'incidents-notifications';
+
+export const notificationsUrl = (): string => Router.createRouteURL(ROUTE_NOTIFICATIONS);

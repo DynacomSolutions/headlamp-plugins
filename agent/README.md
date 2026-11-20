@@ -388,6 +388,57 @@ without it. The title is the first user message, cut to 60 characters. A turn
 that a restart interrupted is marked `failed` with the error `interrupted by
 restart`.
 
+## Push notifications
+
+The agent sends Web Push messages to browsers and installed web apps (the Incidents plugin
+page **Notifications** turns them on for one device). It has its own VAPID key pair and its own
+subscriptions. Nothing is shared with the Alerting plugin. Push is off until both keys are set.
+
+Two events send a push. Each has its own switch per device:
+
+- **Diagnosis ready.** A diagnosis reaches `done`: from a webhook alert, a run started in the
+  plugin, a run again, or a diagnosis that an outside agent publishes as `done`. The title is
+  `Diagnosis ready: <alert> (<severity>)` and the body is the likely cause, cut to 140
+  characters. A device may limit this to the severity groups `critical`, `warning` and `other`
+  (default: warning and critical). A failed diagnosis sends nothing.
+- **Chat answer.** The page that asked sends its push subscription id with the message. When the
+  answer is done, the agent pushes the start of it (title `Incident chat`) to that device only,
+  and only when the page is not showing that chat. A page that is visible reports the open chat
+  now and every 30 seconds, and a hidden page clears the report. The agent forgets a report after
+  75 seconds.
+
+A push holds a title, a short text and a path. It never holds a secret: the text is masked like
+every other reply. The path comes from the page, so it holds the cluster name. The service
+worker of the plugin opens it.
+
+| Route | Answer |
+| --- | --- |
+| `GET /api/push/config` | `{ enabled, publicKey }`. The page needs `publicKey` to subscribe |
+| `GET /api/push/subscriptions/<id>` | `{ id, label, settings, createdAt, updatedAt, lastSentAt, lastResult }`, or 404. The keys never come back |
+| `POST /api/push/subscriptions/<id>` with `{ subscription, urls, label?, settings? }` | Creates or replaces the device. `<id>` is the first 32 hex digits of the SHA-256 of the endpoint. 400 for a wrong id, key, endpoint or path. 503 when push is off |
+| `POST /api/push/subscriptions/<id>/settings` with `{ settings?, urls?, label? }` | Changes the switches (`diagnosis`, `chat`) and the filter (`severities`) |
+| `POST /api/push/subscriptions/<id>/presence` with `{ chatId }` | `chatId` is the chat the visible page shows, or `null` |
+| `POST /api/push/subscriptions/<id>/unsubscribe` | Deletes the device |
+
+The writes have the same protection as the other writes (allowed origin, JSON body). They use
+`GET` and `POST` only, so the rights `get` and `create` on the service proxy are enough.
+
+The subscriptions are rows of the table `push_subscriptions` in the same database as the
+diagnoses, so two pods see the same devices. Safety rules:
+
+- The endpoint must be `https` on a known push service (Google, Mozilla, Apple or Windows).
+  Any other host is refused, so a subscription cannot point the agent at an internal address.
+  The agent never follows a redirect.
+- One try for each push, no retry. A 404 or 410 from the push service deletes the subscription.
+- A device gets at most `PUSH_MAX_PER_10_MIN` pushes in ten minutes. More are dropped and logged.
+- A push never holds up a diagnosis or an answer. A push error is logged as a warning.
+
+Make a key pair once, keep it in a Secret, and give it to the pod. This prints the pair as JSON:
+
+```sh
+node -e "const{generateKeyPairSync}=require('crypto');const{privateKey:k,publicKey:p}=generateKeyPairSync('ec',{namedCurve:'prime256v1'});const d=k.export({format:'jwk'}).d;const j=p.export({format:'jwk'});console.log(JSON.stringify({publicKey:Buffer.concat([Buffer.from([4]),Buffer.from(j.x,'base64url'),Buffer.from(j.y,'base64url')]).toString('base64url'),privateKey:d}))"
+```
+
 ## Agent launches
 
 An operator can ask the agent to start a T3 Code agent for a
@@ -567,6 +618,10 @@ turns launching off with a reason. It does not stop the service.
 | `AGENT_LAUNCH_SETTINGS_FILE` | – | JSON with `projects` (a `default` key is required), `model`, `briefPreamble`, `maxRunning` (default 2) and `threadUrlTemplate`. See [Agent launches](#agent-launches) |
 | `AGENT_MAX_LAUNCHES` | `200` | Open (pending or active) launches at once. New requests get a 429 when all are open. Finished launches are never dropped |
 | `AGENT_MAX_LAUNCH_APPROVALS_PER_HOUR` | `4` | Approvals per hour. More get a 429 |
+| `PUSH_VAPID_PUBLIC_KEY`, `PUSH_VAPID_PRIVATE_KEY` | – | VAPID key pair of the agent (base64url, P-256). Push is off without both, or when they do not match. See [Push notifications](#push-notifications) |
+| `PUSH_SUBJECT` | `mailto:noreply@example.com` | VAPID contact (`mailto:` or `https:` URL) that the push services may use |
+| `PUSH_MAX_PER_10_MIN` | `10` | Pushes one device may get in ten minutes |
+| `PUSH_EXTRA_HOSTS` | none | Extra exact push-service host names. Leave empty in production |
 | `AGENT_DIAGNOSE_SEVERITIES` | `warning,critical` | Severities that start a diagnosis from the webhook |
 | `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Diagnoses per hour: webhook diagnoses and re-runs together |
 | `AGENT_IGNORE_ALERTS` | `Watchdog,InfoInhibitor` | Alert names that are never diagnosed |

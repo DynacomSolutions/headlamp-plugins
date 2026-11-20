@@ -33,11 +33,13 @@ export async function sendMessage(
   s: Settings,
   chatId: string,
   text: string,
-  model?: string
+  model?: string,
+  /** The id of this device's push subscription: the agent may push the answer to it. */
+  push?: string
 ): Promise<void> {
   await ApiProxy.request(
     backendUrl(s, `/api/chats/${encodeURIComponent(chatId)}/messages`),
-    json('POST', model ? { text, model } : { text })
+    json('POST', { text, ...(model ? { model } : {}), ...(push ? { push } : {}) })
   );
 }
 

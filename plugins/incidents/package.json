@@ -4,7 +4,8 @@
   "license": "MIT",
   "headlamp": {
     "extraDist": {
-      "LICENSE": "../../LICENSE"
+      "LICENSE": "../../LICENSE",
+      "sw.js": "sw.js"
     }
   },
   "description": "Headlamp plugin: incident diagnoses from the headlamp-agent, rendered from A2UI",

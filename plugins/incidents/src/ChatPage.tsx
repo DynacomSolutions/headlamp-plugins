@@ -24,6 +24,7 @@ import { ChatMarkdown } from './chat-markdown';
 import { ChatMessage, ChatSummary, cleanErrorText, relativeTime, Step } from './chat-model';
 import { useSettings } from './data';
 import { ModelPicker } from './ModelPicker';
+import { useChatPresence, usePushId } from './push-data';
 import { chatUrl, diagnosisUrl } from './routes';
 
 export const EXAMPLE_PROMPTS = [
@@ -381,6 +382,9 @@ export function ChatView({ id }: { id?: string }) {
   const [picked, setPicked] = React.useState<string | null>(null);
   const [sendError, setSendError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  // Which device asked, and whether this page shows the chat: the agent pushes an answer only when it does not.
+  const pushId = usePushId();
+  useChatPresence(settings, id, pushId);
 
   const messages = chat.data?.messages ?? [];
   const running = !!chat.data?.running;
@@ -414,7 +418,7 @@ export function ChatView({ id }: { id?: string }) {
       if (!id) {
         const newId = await createChat(settings, model ? { model } : {});
         try {
-          await sendMessage(settings, newId, text);
+          await sendMessage(settings, newId, text, undefined, pushId);
         } finally {
           chats.refresh();
           history.push(chatUrl(newId));
@@ -425,7 +429,8 @@ export function ChatView({ id }: { id?: string }) {
         settings,
         id,
         text,
-        picked && picked !== chat.data?.model ? picked : undefined
+        picked && picked !== chat.data?.model ? picked : undefined,
+        pushId
       );
       setPicked(null);
       chat.refresh();

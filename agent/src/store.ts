@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Diagnosis } from './agent/report.js';
+import { MemoryPushStore, PgPushStore, PUSH_SCHEMA, type PushStore } from './push/store.js';
 
 export const LEASE_MS = 60_000;
 const EPOCH = new Date(0).toISOString();
@@ -73,6 +74,8 @@ export abstract class DiagnosisStore {
     return !d.leaseUntil || Date.parse(d.leaseUntil) <= this.now();
   }
 
+  /** The push subscriptions. They live beside the diagnoses: in the same database, or in memory. */
+  abstract pushStore(): PushStore;
   /** Prepare the store: create the schema and import the old JSON files. Call once before use. */
   abstract init(): Promise<void>;
   abstract close(): Promise<void>;
@@ -125,6 +128,11 @@ export abstract class DiagnosisStore {
 /** Diagnoses in memory only. For tests and for a run without a database. They are gone when the process ends. */
 export class MemoryDiagnosisStore extends DiagnosisStore {
   private readonly records = new Map<string, Diagnosis>();
+  private readonly push = new MemoryPushStore();
+
+  pushStore(): PushStore {
+    return this.push;
+  }
 
   async init(): Promise<void> {}
   async close(): Promise<void> {}
@@ -207,6 +215,7 @@ const SCHEMA = [
   'CREATE INDEX IF NOT EXISTS diagnoses_fingerprint_idx ON diagnoses (fingerprint, starts_at)',
   "CREATE INDEX IF NOT EXISTS diagnoses_open_idx ON diagnoses (created_at) WHERE status IN ('queued', 'running')",
   "CREATE INDEX IF NOT EXISTS diagnoses_webhook_idx ON diagnoses (created_at) WHERE source = 'webhook'",
+  ...PUSH_SCHEMA,
 ];
 
 /** Any 64-bit number. Two pods that start together take this advisory lock, so only one creates the schema. */
@@ -241,6 +250,13 @@ export class PgDiagnosisStore extends DiagnosisStore {
     private readonly log: (message: string, extra?: Record<string, unknown>) => void = () => {},
   ) {
     super(options);
+    this.push = new PgPushStore(db);
+  }
+
+  private readonly push: PushStore;
+
+  pushStore(): PushStore {
+    return this.push;
   }
 
   async init(): Promise<void> {

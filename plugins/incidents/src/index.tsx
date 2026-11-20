@@ -12,6 +12,7 @@ import {
 import { ChatPage } from './ChatPage';
 import { LaunchesPage, LaunchPage } from './LaunchPages';
 import { CONFIG_KEY } from './model';
+import { NotificationsPage } from './NotificationsPage';
 import { IncidentPage, IncidentsPage } from './pages';
 import { Settings } from './settings';
 
@@ -41,6 +42,12 @@ registerSidebarEntry({
   label: 'Agents',
   url: '/incidents/launches',
 });
+registerSidebarEntry({
+  parent: 'incidents',
+  name: 'incidents-notifications',
+  label: 'Notifications',
+  url: '/incidents/notifications',
+});
 
 registerRoute({
   path: '/incidents',
@@ -65,6 +72,14 @@ registerRoute({
   exact: true,
   component: ChatPage,
   isFullWidth: true,
+});
+// The notifications route also comes before '/incidents/:id'.
+registerRoute({
+  path: '/incidents/notifications',
+  sidebar: 'incidents-notifications',
+  name: 'incidents-notifications',
+  exact: true,
+  component: NotificationsPage,
 });
 // The agent routes also come before '/incidents/:id'.
 registerRoute({
