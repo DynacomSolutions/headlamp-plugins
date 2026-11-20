@@ -61,8 +61,9 @@ function Donut(props: {
   colourFor: (k: string) => string;
   ink: ReturnType<typeof useInk>['ink'];
   size: number;
+  kiosk: boolean;
 }): JSX.Element {
-  const { groups, unit, colourFor, ink, size } = props;
+  const { groups, unit, colourFor, ink, size, kiosk } = props;
   const [active, setActive] = React.useState<string | null>(null);
   const slices = React.useMemo(() => sliceAngles(groups), [groups]);
   const total = groups.reduce((a, g) => a + Math.max(0, g.value), 0);
@@ -146,9 +147,17 @@ function Donut(props: {
           flex: '1 1 0',
           minHeight: 0,
           minWidth: 0,
+          // The row is centred when the chart is wide. The list must still fill the height and start at the
+          // top, so a long legend scrolls from its first row.
+          alignSelf: 'stretch',
           overflow: 'auto',
           fontSize: 12,
-          ...kioskBox(false),
+          // A clean bottom edge: the last visible row fades out, and the padding lets the final row
+          // scroll clear of the fade.
+          pb: '14px',
+          maskImage: 'linear-gradient(to bottom, #000 calc(100% - 14px), transparent)',
+          WebkitMaskImage: 'linear-gradient(to bottom, #000 calc(100% - 14px), transparent)',
+          ...kioskBox(kiosk),
         }}
       >
         {groups.map(g => (
@@ -324,7 +333,7 @@ function BreakdownWidget({
       />
     );
   else
-    body = <Donut groups={groups} unit={unit} colourFor={colourFor} ink={ink} size={size.width} />;
+    body = <Donut groups={groups} unit={unit} colourFor={colourFor} ink={ink} size={size.width} kiosk={kiosk} />;
 
   return (
     <Box
