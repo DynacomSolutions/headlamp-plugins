@@ -426,6 +426,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   const mcp = await mcpHandler(runtime, store, version);
   const mcpNode = toNodeHandler(mcp);
   let ready = true;
+  let rerunTurn: Promise<void> = Promise.resolve();
 
   runner.start();
 
@@ -547,11 +548,18 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           if (parsed.data.model) throw error;
           model = config.models.defaultModel;
         }
-        const verdict = await gate.room();
-        if (!verdict.ok) throw new HttpError(429, `The hourly limit of ${config.diagnosis.maxPerHour} diagnoses is used. Try again later.`);
+        // A re-run by hand skips the hourly limit of webhook diagnoses. A small cap on open re-runs guards against abuse.
+        // The check and the start run one after another in this pod, so two requests cannot both take the last place.
+        const turn = rerunTurn.then(async () => {
+          const open = await store.countOpenReruns();
+          if (open >= config.diagnosis.maxConcurrentReruns) {
+            throw new HttpError(429, `${open} re-run${open === 1 ? ' is' : 's are'} already queued or running (limit ${config.diagnosis.maxConcurrentReruns}). Try again when one finishes.`);
+          }
+          return runner.rerun(id, model);
+        });
+        rerunTurn = turn.then(() => undefined, () => undefined);
         try {
-          const d = await runner.rerun(id, model);
-          gate.record();
+          const d = await turn;
           return send(res, 202, { id: d.id, status: d.status, model: d.model });
         } catch (error) {
           if (error instanceof RerunError) throw new HttpError(error.status, error.message);

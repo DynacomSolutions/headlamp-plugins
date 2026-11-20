@@ -85,7 +85,7 @@ export interface Diagnosis {
   leaseUntil?: string;
   /** How many times a process started this diagnosis. A takeover adds one. */
   attempts?: number;
-  /** When a person last ran this diagnosis again (ISO). Counts against the hourly limit. */
+  /** When a person last ran this diagnosis again (ISO). A re-run does not count against the hourly limit. */
   rerunAt?: string;
   /** The failed attempts that re-runs replaced, oldest first. */
   previousAttempts?: PreviousAttempt[];
