@@ -27,7 +27,7 @@ temperatures, power draw and a full hardware profile:
   type, rated and configured speed, manufacturer, part number), Expansion
   slots (PCIe and M.2: total and in use, lanes, generation, the device in each
   slot), PCI devices, GPUs (with VRAM) and NVMe drives (capacity, link). A
-  link below its maximum width or speed shows in amber. When the inventory
+  link below its maximum width shows in amber. A lower link speed shows neutrally, because it drops at idle. When firmware lists fewer M.2 slots than there are NVMe drives, the summary says so. When the inventory
   collector is not reporting, the section says so and shows what the existing
   series give.
 
