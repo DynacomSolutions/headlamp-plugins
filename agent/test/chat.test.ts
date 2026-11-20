@@ -313,3 +313,25 @@ describe('chat routes', () => {
     }
   });
 });
+
+describe('diagnosis list route', () => {
+  it('reports the real total and pages with offset', async () => {
+    const seed = new DiagnosisStore(dir, 500);
+    for (let i = 0; i < 5; i++) seed.put({ ...diagnosis(`d${i}`), createdAt: `2026-11-18T05:00:0${i}.000Z` });
+    const config = { ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir, models: models() };
+    const server = await startServer(config, 'test');
+    const base = `http://127.0.0.1:${server.port}`;
+    try {
+      const get = async (q: string) => (await (await realFetch(`${base}/api/diagnoses${q}`)).json()) as { total: number; diagnoses: Array<{ id: string }> };
+      const first = await get('?limit=2');
+      expect(first.total).toBe(5);
+      expect(first.diagnoses.map(d => d.id)).toEqual(['d4', 'd3']);
+      expect((await get('?limit=2&offset=2')).diagnoses.map(d => d.id)).toEqual(['d2', 'd1']);
+      expect((await get('?limit=2&offset=4')).diagnoses.map(d => d.id)).toEqual(['d0']);
+      expect((await get('?limit=2&offset=-3')).diagnoses.map(d => d.id)).toEqual(['d4', 'd3']);
+      expect((await get('?offset=99')).diagnoses).toEqual([]);
+    } finally {
+      await server.close();
+    }
+  });
+});
