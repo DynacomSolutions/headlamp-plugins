@@ -126,6 +126,14 @@ describe('dns_placement_plan', () => {
     expect(out.steps.length).toBeGreaterThan(3);
   });
 
+  it('sets the default node note only when the remove list has the default node', async () => {
+    const d = { ...data, dns_placement_match: [match('all.example.com', 'node-a,home-1', 'node-a,home-1,remote-1', 0)] };
+    const out = await call('dns_placement_plan', {}, ctx(d));
+    const change = out.changes.find((c: any) => c.host === 'all.example.com');
+    expect(change.remove.map((r: any) => r.node)).toEqual(['remote-1']);
+    expect(change.note).toBeNull();
+  });
+
   it('plans only the requested hosts and reports the others', async () => {
     const out = await call('dns_placement_plan', { hosts: ['moved.example.com', 'failover-x.example.com', 'ok.example.com', 'nope.example.com'] }, ctx(data));
     expect(out.changes.map((c: any) => c.host)).toEqual(['moved.example.com']);
