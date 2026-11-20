@@ -415,7 +415,8 @@ describe('PgPushStore', () => {
     } finally {
       await db.close();
     }
-  });
+    // PGlite starts a real PostgreSQL. On a busy CI runner that takes about 10 s.
+  }, 60_000);
 });
 
 describe('push in the server', () => {
