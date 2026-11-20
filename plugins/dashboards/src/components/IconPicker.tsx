@@ -10,7 +10,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { isIconName, searchIcons } from '../icons/iconNames';
+import { isBundledIcon, searchIcons } from '../icons/iconNames';
 
 export function IconPickerDialog(props: {
   value: string;
@@ -29,12 +29,12 @@ export function IconPickerDialog(props: {
           fullWidth
           size="small"
           label="Search icons"
-          helperText="For example clock, server or chart. You can also type any mdi: name."
+          helperText="For example clock, server or chart. Only the icons in the list can be used."
           value={query}
           onChange={e => setQuery(e.target.value)}
           sx={{ my: 1 }}
         />
-        {typed && isIconName(typed) && !results.includes(typed) && (
+        {typed && isBundledIcon(typed) && !results.includes(typed) && (
           <Button
             startIcon={<Icon icon={typed} width={20} height={20} />}
             onClick={() => onPick(typed)}

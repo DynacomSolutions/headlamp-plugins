@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ICON_NAMES, isIconName, searchIcons } from './iconNames';
+import { ICON_NAMES, isBundledIcon, isIconName, searchIcons } from './iconNames';
 
 describe('icon search', () => {
   it('lists mdi names', () => {
@@ -18,5 +18,12 @@ describe('icon search', () => {
     expect(isIconName('mdi:chart-line')).toBe(true);
     expect(isIconName('chart-line')).toBe(false);
     expect(isIconName('mdi:Bad Name')).toBe(false);
+  });
+  it('knows which icons are bundled', () => {
+    expect(isBundledIcon('mdi:server')).toBe(true);
+    expect(isBundledIcon('mdi:not-a-bundled-icon')).toBe(false);
+    expect(isBundledIcon('mdi:constructor')).toBe(false);
+    expect(isBundledIcon('server')).toBe(false);
+    expect(isBundledIcon(undefined)).toBe(false);
   });
 });

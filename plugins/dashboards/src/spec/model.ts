@@ -5,6 +5,7 @@
  * of the plugin can trust the shape.
  */
 import type { DashboardFilters, TimeRange } from '../contract';
+import { isBundledIcon } from '../icons/iconNames';
 
 export const SPEC_VERSION = 1;
 
@@ -152,11 +153,9 @@ export function emptySection(title = 'Section'): Section {
   };
 }
 
-export function emptyTab(
-  label = 'Overview',
-  icon = 'mdi:view-dashboard-outline',
-  taken: string[] = []
-): Tab {
+export const DEFAULT_TAB_ICON = 'mdi:view-dashboard-outline';
+
+export function emptyTab(label = 'Overview', icon = DEFAULT_TAB_ICON, taken: string[] = []): Tab {
   return {
     id: uniqueSlug(slugify(label, 'tab'), taken),
     label,
@@ -267,7 +266,8 @@ function normaliseTab(raw: unknown, taken: string[]): Tab | null {
   return {
     id: str(raw.id) || uniqueSlug(slugify(label, 'tab'), taken),
     label,
-    icon: str(raw.icon, 'mdi:view-dashboard-outline'),
+    // A name that is not bundled would make the browser ask the public Iconify service.
+    icon: isBundledIcon(raw.icon) ? raw.icon : DEFAULT_TAB_ICON,
     sections: sections.length > 0 ? sections : [emptySection('Main')],
   };
 }

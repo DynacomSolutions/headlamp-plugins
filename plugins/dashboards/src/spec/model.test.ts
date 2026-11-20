@@ -149,3 +149,19 @@ describe('parseSpec and serialiseSpec', () => {
     expect(countWidgets(emptySpec('x'))).toBe(0);
   });
 });
+
+describe('tab icons', () => {
+  const tab = (icon: unknown) =>
+    migrateSpec({ title: 'Ops', tabs: [{ id: 't', label: 'T', icon, sections: [] }] }).spec.tabs[0]
+      .icon;
+  it('keeps a bundled icon', () => {
+    expect(tab('mdi:server')).toBe('mdi:server');
+  });
+  it('replaces a name that is not bundled, so the browser never calls the Iconify API', () => {
+    expect(tab('mdi:this-icon-is-not-bundled')).toBe('mdi:view-dashboard-outline');
+    expect(tab('logos:github')).toBe('mdi:view-dashboard-outline');
+    expect(tab('https://example.com/x.svg')).toBe('mdi:view-dashboard-outline');
+    expect(tab(5)).toBe('mdi:view-dashboard-outline');
+    expect(tab(undefined)).toBe('mdi:view-dashboard-outline');
+  });
+});
