@@ -48,9 +48,11 @@ export function resolveEndpoint(stored: Record<string, unknown> | undefined): Me
   };
 }
 
-const store = new ConfigStore<Record<string, unknown>>('dashboards');
+// Made on first use, so importing this module needs no settings store (a test may mock it away).
+let store: ConfigStore<Record<string, unknown>> | undefined;
 
 export function useMetricsEndpoint(): MetricsEndpoint {
+  store ??= new ConfigStore<Record<string, unknown>>('dashboards');
   const stored = store.useConfig()() as Record<string, unknown> | undefined;
   const ns = stored?.metricsNamespace;
   const service = stored?.metricsService;
