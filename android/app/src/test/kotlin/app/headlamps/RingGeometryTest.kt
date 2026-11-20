@@ -15,6 +15,16 @@ class RingGeometryTest {
     private val eps = 1e-6
 
     @Test
+    fun manyChildrenKeepEveryArcInsideTheirParent() {
+        // 300 small children, none dropped: the agent sends every segment at its real size.
+        val children = DoubleArray(300) { 0.01 }
+        val g = ringGeometry(ring(100.0, 3.0, seg("k8s", 3.0, *children)), 150.0, false)
+        val consumers = g.arcs.filter { it.level == 2 }
+        assertEquals(300, consumers.size)
+        assertTrue(consumers.all { it.startDeg >= -eps && it.endDeg <= 10.8 + eps })
+    }
+
+    @Test
     fun sweepsAreRelativeToCapacityAndStartAtTwelveOClock() {
         val g = ringGeometry(ring(100.0, 50.0, seg("k8s", 30.0), seg("t3", 20.0)), 150.0, false)
         val categories = g.arcs.filter { it.level == 1 }
