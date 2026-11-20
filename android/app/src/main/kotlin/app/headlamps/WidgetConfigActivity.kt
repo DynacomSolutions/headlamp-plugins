@@ -51,7 +51,7 @@ class WidgetConfigActivity : ComponentActivity() {
         val repository = Repository(applicationContext)
         setContent {
             HeadlampsTheme {
-                ConfigScreen(repository, onOpenApp = { startActivity(Intent(this, MainActivity::class.java)) }) { instance, cluster ->
+                ConfigScreen(repository, stringResource(R.string.config_title), onOpenApp = { startActivity(Intent(this, MainActivity::class.java)) }) { instance, cluster ->
                     lifecycleScope.launch { finishWith(repository, instance, cluster) }
                 }
             }
@@ -70,8 +70,9 @@ class WidgetConfigActivity : ComponentActivity() {
 }
 
 @Composable
-private fun ConfigScreen(
+internal fun ConfigScreen(
     repository: Repository,
+    title: String,
     onOpenApp: () -> Unit,
     onDone: (Instance, String) -> Unit,
 ) {
@@ -101,7 +102,7 @@ private fun ConfigScreen(
             Modifier.fillMaxSize().padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(stringResource(R.string.config_title), style = MaterialTheme.typography.headlineSmall)
+            Text(title, style = MaterialTheme.typography.headlineSmall)
             if (instances.isEmpty()) {
                 Text(stringResource(R.string.instances_empty))
                 Button(onClick = onOpenApp) { Text(stringResource(R.string.config_open_app)) }

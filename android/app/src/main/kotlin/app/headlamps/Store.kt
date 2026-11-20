@@ -64,6 +64,8 @@ object TokenCipher {
 
 data class WidgetState(val config: WidgetConfig?, val instance: Instance?, val snapshot: Snapshot?)
 
+data class RingsWidgetState(val config: WidgetConfig?, val instance: Instance?, val snapshot: PanelSnapshot?)
+
 data class Instance(val id: String, val name: String, val baseUrl: String, val token: String)
 
 @Serializable
@@ -176,6 +178,36 @@ class Repository(private val context: Context) {
         context.dataStore.edit {
             it.remove(stringPreferencesKey("panel_$widgetId"))
             it.remove(stringPreferencesKey("panelsnap_$widgetId"))
+        }
+    }
+
+    /** Emits again whenever the usage dashboard config, its instance or its snapshot changes. */
+    fun ringsState(widgetId: Int): Flow<RingsWidgetState> = context.dataStore.data.map { prefs ->
+        val config = prefs[stringPreferencesKey("rings_$widgetId")]
+            ?.let { runCatching { AppJson.decodeFromString<WidgetConfig>(it) }.getOrNull() }
+        val instance = config?.let { c -> decode(prefs[instancesKey]).firstOrNull { it.id == c.instanceId } }
+        val snapshot = prefs[stringPreferencesKey("ringssnap_$widgetId")]
+            ?.let { runCatching { AppJson.decodeFromString<PanelSnapshot>(it) }.getOrNull() }
+        RingsWidgetState(config, instance, snapshot)
+    }.distinctUntilChanged()
+
+    suspend fun ringsConfig(widgetId: Int): WidgetConfig? =
+        context.dataStore.data.first()[stringPreferencesKey("rings_$widgetId")]?.let {
+            runCatching { AppJson.decodeFromString<WidgetConfig>(it) }.getOrNull()
+        }
+
+    suspend fun saveRingsConfig(widgetId: Int, config: WidgetConfig) {
+        context.dataStore.edit { it[stringPreferencesKey("rings_$widgetId")] = AppJson.encodeToString(WidgetConfig.serializer(), config) }
+    }
+
+    suspend fun saveRingsSnapshot(widgetId: Int, snapshot: PanelSnapshot) {
+        context.dataStore.edit { it[stringPreferencesKey("ringssnap_$widgetId")] = AppJson.encodeToString(PanelSnapshot.serializer(), snapshot) }
+    }
+
+    suspend fun removeRingsWidget(widgetId: Int) {
+        context.dataStore.edit {
+            it.remove(stringPreferencesKey("rings_$widgetId"))
+            it.remove(stringPreferencesKey("ringssnap_$widgetId"))
         }
     }
 }

@@ -25,6 +25,13 @@
     <string name="panel_widget_description">A panel from the Headlamp plugins, such as uptime, alerts or disks.</string>
     <string name="panel_config_title">Headlamp panel widget</string>
     <string name="config_pick_panel">Panel</string>
+    <string name="usage_widget_name">Usage dashboard</string>
+    <string name="usage_widget_description">CPU and memory use as rings. See who uses the cluster.</string>
+    <string name="usage_config_title">Usage dashboard widget</string>
+    <string name="usage_ring_description">Usage ring</string>
+    <string name="usage_no_data">No usage data.</string>
+    <string name="error_usage_panel_missing">This headlamp-agent has no usage dashboard panel. Update the agent.</string>
+    <string name="pin_usage_dashboard">Usage dashboard</string>
     <string name="pin_choose_title">Choose a widget</string>
     <string name="pin_node_usage">Node usage</string>
     <string name="pin_panel">Headlamp panel</string>

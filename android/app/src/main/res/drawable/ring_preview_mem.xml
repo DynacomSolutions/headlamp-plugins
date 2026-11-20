@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="100dp"
+    android:height="100dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+    <path android:fillColor="@color/preview_track" android:pathData="M50,0 A50,50 0 1 1 49.98,0 L49.99,20 A30,30 0 1 0 50,20 Z" />
+    <path android:fillColor="@color/preview_track" android:pathData="M50,22 A28,28 0 1 1 49.99,22 L49.99,25 A25,25 0 1 0 50,25 Z" />
+    <path android:fillColor="@color/preview_high" android:pathData="M50,22 A28,28 0 1 1 24.31,38.86 L27.06,40.06 A25,25 0 1 0 50,25 Z" />
+    <path android:fillColor="@color/ring_k8s" android:pathData="M50,10.5 A39.5,39.5 0 0 1 69.75,84.21 L65,75.98 A30,30 0 0 0 50,20 Z" />
+    <path android:fillColor="@color/ring_k8s_a" android:pathData="M50,0 A50,50 0 0 1 99.76,45.1 L90.06,46.05 A40.25,40.25 0 0 0 50,9.75 Z" />
+    <path android:fillColor="@color/ring_k8s_b" android:pathData="M99.76,45.1 A50,50 0 0 1 92.46,76.4 L84.18,71.25 A40.25,40.25 0 0 0 90.06,46.05 Z" />
+    <path android:fillColor="@color/ring_t3" android:pathData="M69.75,84.21 A39.5,39.5 0 0 1 17.89,73.01 L25.61,67.47 A30,30 0 0 0 65,75.98 Z" />
+    <path android:fillColor="@color/ring_t3_a" android:pathData="M75,93.3 A50,50 0 0 1 27.89,94.84 L32.2,86.1 A40.25,40.25 0 0 0 70.13,84.86 Z" />
+    <path android:fillColor="@color/ring_system" android:pathData="M9.36,79.12 A50,50 0 0 1 4.13,30.11 L22.48,38.07 A30,30 0 0 0 25.61,67.47 Z" />
+</vector>

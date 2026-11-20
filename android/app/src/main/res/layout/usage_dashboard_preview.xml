@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static preview of the usage dashboard widget for launcher pickers. It uses only views that RemoteViews allows. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_preview_background"
+    android:orientation="vertical"
+    android:padding="10dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:baselineAligned="false" android:orientation="horizontal">
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:text="main" android:textColor="@color/preview_text" android:textSize="13sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Refresh" android:textColor="@color/preview_accent" android:textSize="12sp" />
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:baselineAligned="false" android:gravity="center_vertical" android:orientation="horizontal">
+        <LinearLayout android:layout_width="56dp" android:layout_height="wrap_content" android:orientation="vertical">
+            <FrameLayout android:layout_width="56dp" android:layout_height="56dp">
+                <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:contentDescription="@null" android:scaleType="fitCenter" android:src="@drawable/ring_preview_cpu" />
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:gravity="center_horizontal" android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="53%" android:textColor="@color/preview_text" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="CPU" android:textColor="@color/preview_text_muted" android:textSize="11sp" />
+                </LinearLayout>
+            </FrameLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:maxLines="1" android:text="CPU 51 of 96" android:textColor="@color/preview_text_muted" android:textSize="11sp" />
+        </LinearLayout>
+        <Space android:layout_width="8dp" android:layout_height="1dp" />
+        <LinearLayout android:layout_width="56dp" android:layout_height="wrap_content" android:orientation="vertical">
+            <FrameLayout android:layout_width="56dp" android:layout_height="56dp">
+                <ImageView android:layout_width="match_parent" android:layout_height="match_parent" android:contentDescription="@null" android:scaleType="fitCenter" android:src="@drawable/ring_preview_mem" />
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center" android:gravity="center_horizontal" android:orientation="vertical">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="81%" android:textColor="@color/preview_text" android:textSize="12sp" android:textStyle="bold" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Mem" android:textColor="@color/preview_text_muted" android:textSize="11sp" />
+                </LinearLayout>
+            </FrameLayout>
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:maxLines="1" android:text="Mem 313 of 384" android:textColor="@color/preview_text_muted" android:textSize="11sp" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="12dp" android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="14dp" android:baselineAligned="false" android:orientation="horizontal">
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="CPU" android:textColor="@color/preview_text_muted" android:textSize="11sp" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="Mem" android:textColor="@color/preview_text_muted" android:textSize="11sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="18dp" android:baselineAligned="false" android:gravity="center_vertical" android:orientation="horizontal">
+                <ImageView android:layout_width="8dp" android:layout_height="8dp" android:contentDescription="@null" android:src="@drawable/legend_dot" android:tint="@color/ring_k8s" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:maxLines="1" android:text="Kubernetes" android:textColor="@color/preview_text" android:textSize="12sp" android:textStyle="bold" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="32%" android:textColor="@color/preview_text_muted" android:textSize="12sp" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="41%" android:textColor="@color/preview_text_muted" android:textSize="12sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="18dp" android:baselineAligned="false" android:gravity="center_vertical" android:orientation="horizontal">
+                <ImageView android:layout_width="8dp" android:layout_height="8dp" android:contentDescription="@null" android:src="@drawable/legend_dot" android:tint="@color/ring_system" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:maxLines="1" android:text="System" android:textColor="@color/preview_text" android:textSize="12sp" android:textStyle="bold" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="14%" android:textColor="@color/preview_text_muted" android:textSize="12sp" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="19%" android:textColor="@color/preview_text_muted" android:textSize="12sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="18dp" android:baselineAligned="false" android:gravity="center_vertical" android:orientation="horizontal">
+                <ImageView android:layout_width="8dp" android:layout_height="8dp" android:contentDescription="@null" android:src="@drawable/legend_dot" android:tint="@color/ring_k8s_a" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="5dp" android:maxLines="1" android:text="Shop" android:textColor="@color/preview_text" android:textSize="12sp" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="12%" android:textColor="@color/preview_text_muted" android:textSize="12sp" />
+                <TextView android:layout_width="34dp" android:layout_height="wrap_content" android:gravity="end" android:text="9%" android:textColor="@color/preview_text_muted" android:textSize="12sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>

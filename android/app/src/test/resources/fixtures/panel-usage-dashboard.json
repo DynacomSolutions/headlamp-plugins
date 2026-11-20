@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "id": "usage-dashboard",
+  "title": "Usage dashboard",
+  "status": "warn",
+  "summary": "CPU 53.1%, memory 81.4% on 5 nodes",
+  "generatedAt": "2026-11-20T08:00:00.000Z",
+  "link": "/c/{cluster}/usage/nodes",
+  "stats": [
+    { "label": "CPU", "value": "53.1%", "status": "ok" },
+    { "label": "Memory", "value": "81.4%", "status": "warn" },
+    { "label": "Nodes", "value": "5", "status": "ok" }
+  ],
+  "rows": [
+    { "label": "worker-1", "detail": "CPU 61.0%, Mem 88.2%", "value": "88.2%", "fraction": 0.882, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
+    { "label": "worker-2", "detail": "CPU 55.4%, Mem 79.0%", "value": "79.0%", "fraction": 0.79, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
+    { "label": "worker-3", "detail": "CPU 48.9%, Mem 80.1%", "value": "80.1%", "fraction": 0.801, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
+    { "label": "worker-4", "detail": "CPU 50.2%, Mem 77.3%", "value": "77.3%", "fraction": 0.773, "status": "warn", "link": "/c/{cluster}/usage/nodes" },
+    { "label": "worker-5", "detail": "CPU 50.0%, Mem 82.5%", "value": "82.5%", "fraction": 0.825, "status": "warn", "link": "/c/{cluster}/usage/nodes" }
+  ],
+  "rings": [
+    {
+      "id": "cpu",
+      "label": "CPU",
+      "unit": "cores",
+      "capacity": 96,
+      "used": 51.02,
+      "segments": [
+        {
+          "key": "k8s", "label": "Kubernetes", "value": 30.5,
+          "children": [
+            { "key": "k8s/ns:shop", "label": "Shop", "value": 11.9 },
+            { "key": "k8s/ns:monitoring", "label": "Monitoring", "value": 6.2 },
+            { "key": "k8s/ns:databases", "label": "Databases", "value": 4.4 },
+            { "key": "k8s/ns:ingress", "label": "Ingress", "value": 3.1 },
+            { "key": "k8s/ns:logging", "label": "Logging", "value": 2.0 },
+            { "key": "k8s/ns:platform", "label": "Platform", "value": 1.2 },
+            { "key": "k8s/ns:cache", "label": "Cache", "value": 0.9 },
+            { "key": "k8s/ns:default", "label": "Default", "value": 0.4 }
+          ]
+        },
+        {
+          "key": "t3", "label": "T3 Code", "value": 12.3,
+          "children": [
+            { "key": "t3/p:web-shop", "label": "web-shop", "value": 7.0 },
+            { "key": "t3/p:api-gateway", "label": "api-gateway", "value": 3.1 },
+            { "key": "t3/p:worker-queue", "label": "worker-queue", "value": 1.5 }
+          ]
+        },
+        {
+          "key": "system", "label": "System", "value": 8.22,
+          "children": [
+            { "key": "system/kubelet", "label": "kubelet", "value": 3.4 },
+            { "key": "system/runtime", "label": "container runtime", "value": 2.9 },
+            { "key": "system/kernel", "label": "kernel", "value": 1.4 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "memory",
+      "label": "Memory",
+      "unit": "bytes",
+      "capacity": 412316860416,
+      "used": 335625000000,
+      "segments": [
+        {
+          "key": "k8s", "label": "Kubernetes", "value": 190000000000,
+          "children": [
+            { "key": "k8s/ns:shop", "label": "Shop", "value": 60000000000 },
+            { "key": "k8s/ns:databases", "label": "Databases", "value": 45000000000 },
+            { "key": "k8s/ns:monitoring", "label": "Monitoring", "value": 40000000000 },
+            { "key": "k8s/ns:logging", "label": "Logging", "value": 14000000000 },
+            { "key": "k8s/ns:ingress", "label": "Ingress", "value": 9000000000 },
+            { "key": "k8s/ns:cache", "label": "Cache", "value": 8000000000 },
+            { "key": "k8s/ns:platform", "label": "Platform", "value": 6000000000 },
+            { "key": "k8s/ns:default", "label": "Default", "value": 1000000000 }
+          ]
+        },
+        {
+          "key": "t3", "label": "T3 Code", "value": 90000000000,
+          "children": [
+            { "key": "t3/p:web-shop", "label": "web-shop", "value": 50000000000 },
+            { "key": "t3/p:api-gateway", "label": "api-gateway", "value": 25000000000 },
+            { "key": "t3/p:worker-queue", "label": "worker-queue", "value": 10000000000 }
+          ]
+        },
+        {
+          "key": "system", "label": "System", "value": 55625000000,
+          "children": [
+            { "key": "system/kernel", "label": "kernel", "value": 20000000000 },
+            { "key": "system/runtime", "label": "container runtime", "value": 18000000000 },
+            { "key": "system/kubelet", "label": "kubelet", "value": 12000000000 }
+          ]
+        }
+      ]
+    }
+  ]
+}
