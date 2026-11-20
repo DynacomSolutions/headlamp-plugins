@@ -1,4 +1,5 @@
 /** Agent data provider for the node-hardware plugin: temperatures and estimated power per node. */
+import { buildProfiles, InventoryData, QUERIES, summarizeProfile } from '../src/inventory.js';
 import { defineProvider, defineTool, promString, z } from '../../../agent/src/sdk.js';
 
 const hardware = defineTool({
@@ -62,9 +63,61 @@ const hardware = defineTool({
   },
 });
 
+const slotCount = z.object({ total: z.number(), inUse: z.number() });
+
+const profileTool = defineTool({
+  name: 'node_hardware_profile',
+  title: 'Node hardware profile',
+  description:
+    'Hardware profile per node: motherboard, CPU sockets, memory (installed, maximum, slots used), PCIe and M.2 slots in use, GPUs with VRAM, NVMe drives, and PCI links running below their maximum width or speed. Use it to answer what hardware a node has and whether it can take more RAM, GPUs or drives.',
+  input: z.object({ node: z.string().optional() }),
+  output: z.object({
+    nodes: z.array(
+      z.object({
+        node: z.string(),
+        collector: z.string(),
+        board: z.string().nullable(),
+        cpu: z.array(z.string()),
+        memory: z.string(),
+        pcieSlots: slotCount,
+        m2Slots: slotCount,
+        gpus: z.array(z.string()),
+        nvme: z.array(z.string()),
+        belowMaxLinks: z.array(z.string()),
+      }),
+    ),
+  }),
+  async run(args, ctx) {
+    const keys = Object.keys(QUERIES) as (keyof typeof QUERIES)[];
+    const results = await Promise.all(
+      keys.map(k =>
+        // A series that does not exist yet gives an empty list, never a failed profile.
+        ctx.prom
+          .query(QUERIES[k])
+          .then(list => list.map(x => ({ metric: x.metric, value: [0, String(x.value)] as [number, string] })))
+          .catch(() => []),
+      ),
+    );
+    const data = Object.fromEntries(keys.map((k, i) => [k, results[i]])) as InventoryData;
+    const nodes = [...buildProfiles(data).values()].filter(p => !args.node || p.node === args.node).map(summarizeProfile);
+    return {
+      data: { nodes },
+      summary: nodes.length > 0 ? `Hardware profile for ${nodes.length} node(s).` : 'No hardware metrics found.',
+      view: {
+        title: 'Node hardware',
+        rows: nodes.map(n => ({
+          label: n.node,
+          detail: `${n.memory}${n.gpus.length > 0 ? ` · ${n.gpus.length} GPU` : ''}${n.nvme.length > 0 ? ` · ${n.nvme.length} NVMe` : ''}`,
+          status: n.belowMaxLinks.length > 0 ? `${n.belowMaxLinks.length} link(s) below max` : n.collector,
+        })),
+      },
+    };
+  },
+});
+
 export const provider = defineProvider({
   name: 'node_hardware',
   title: 'Node hardware',
-  description: 'Temperatures and estimated power per node (node-hardware plugin)',
-  tools: [hardware],
+  description: 'Temperatures, estimated power and hardware profile per node (node-hardware plugin)',
+  tools: [hardware, profileTool],
 });
