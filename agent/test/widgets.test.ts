@@ -82,7 +82,7 @@ describe('panel mappings', () => {
       }),
     );
     expect(m!.status).toBe('warn');
-    expect(m!.rows[0]).toMatchObject({ label: 'worker-1', value: '90%', fraction: 0.9, status: 'warn' });
+    expect(m!.rows[0]).toMatchObject({ label: 'worker-1', value: '90.0%', fraction: 0.9, status: 'warn' });
     expect(m!.stats[0]).toMatchObject({ label: 'CPU', value: '57.5%' });
   });
 
@@ -200,6 +200,36 @@ describe('panel mappings', () => {
     expect(m!.stats[0]).toMatchObject({ label: 'Open', value: '1' });
   });
 
+  it('incidents: an open incident with a finished diagnosis shows open, not done', async () => {
+    const m = await buildPanel(
+      'incidents',
+      deps({
+        list_diagnoses: {
+          diagnoses: [
+            { id: '1', alert: 'Old', severity: 'warning', status: 'done', likelyCause: '', resolved: true },
+            { id: '2', alert: 'New', severity: 'critical', status: 'done', likelyCause: '', resolved: false },
+            { id: '3', alert: 'Broken', severity: 'critical', status: 'failed', likelyCause: '', resolved: false },
+            { id: '4', alert: 'Busy', severity: 'warning', status: 'running', likelyCause: '', resolved: false },
+          ],
+        },
+      }),
+    );
+    const byLabel = Object.fromEntries(m!.rows.map(r => [r.label, r]));
+    expect(byLabel.New).toMatchObject({ value: 'open', detail: 'open', status: 'crit' });
+    expect(byLabel.Old.value).toBe('resolved');
+    expect(byLabel.Broken).toMatchObject({ value: 'failed', status: 'unknown' });
+    expect(byLabel.Busy.value).toBe('running');
+    expect(m!.rows.some(r => r.value === 'done')).toBe(false);
+    // The failed row stays out of the panel status.
+    expect(m!.status).toBe('crit');
+  });
+
+  it('prints one decimal in every percentage', async () => {
+    const m = await buildPanel('agent-memory', deps({}, { serviceGet: async () => ({ error: '', host: { total: 100, available: 53 }, orchestrators: [], units: [] }) }));
+    expect(m!.stats[1].value).toBe('53.0%');
+    expect(m!.summary).toContain('53.0% memory free');
+  });
+
   it('agent-memory reads the state endpoint', async () => {
     let asked = '';
     const m = await buildPanel(
@@ -228,7 +258,7 @@ describe('panel mappings', () => {
     expect(m!.rows.map(r => r.label)).toEqual(['Agent A', 'Agent B']);
     expect(m!.rows[0]).toMatchObject({ value: '2 GiB', fraction: 1, status: 'warn' });
     expect(m!.stats[0]).toMatchObject({ label: 'Agents', value: '2' });
-    expect(m!.stats[1]).toMatchObject({ label: 'Free', value: '50%' });
+    expect(m!.stats[1]).toMatchObject({ label: 'Free', value: '50.0%' });
   });
 
   it('keeps stats to four items with short labels and values', async () => {

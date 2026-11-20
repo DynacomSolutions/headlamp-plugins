@@ -99,7 +99,7 @@ export function stat(label: string, value: string | number, status: PanelStatus 
 
 export const clamp01 = (n: number): number => Math.round(Math.min(1, Math.max(0, n)) * 10000) / 10000;
 const round = (n: number, digits = 0): number => Math.round(n * 10 ** digits) / 10 ** digits;
-export const pctText = (n: number | null | undefined): string => (n === null || n === undefined ? '-' : `${round(n, 1)}%`);
+export const pctText = (n: number | null | undefined): string => (n === null || n === undefined ? '-' : `${round(n, 1).toFixed(1)}%`);
 
 type Obj = Record<string, any>;
 const list = (v: unknown): Obj[] => (Array.isArray(v) ? (v as Obj[]) : []);
@@ -343,10 +343,12 @@ async function incidents(d: PanelDeps): Promise<PanelBody> {
   const all = list(data.diagnoses);
   const rows: Row[] = all.map(x => {
     const open = !x.resolved;
+    // A finished diagnosis of an open incident is not "done": the incident is still open.
+    const state = open && x.status === 'done' ? 'open' : String(x.status);
     return {
       label: String(x.alert),
-      detail: String(x.likelyCause || x.status).slice(0, 160),
-      value: open ? String(x.status) : 'resolved',
+      detail: String(x.likelyCause || state).slice(0, 160),
+      value: open ? state : 'resolved',
       status: !open ? 'ok' : x.status === 'failed' ? 'unknown' : x.severity === 'critical' ? 'crit' : 'warn',
     };
   });
