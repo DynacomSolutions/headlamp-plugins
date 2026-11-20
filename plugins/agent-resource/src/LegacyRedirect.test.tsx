@@ -33,13 +33,13 @@ describe('LegacyRedirect', () => {
     expect(getByTestId('where').textContent).toBe('/agent-resource?q=x');
   });
   it('keeps the cluster prefix of /c/<cluster>/agent-memory, with query and hash', () => {
-    const { getByTestId } = app('/c/dynacom/agent-memory?x=1#h');
-    expect(getByTestId('where').textContent).toBe('/c/dynacom/agent-resource?x=1#h');
+    const { getByTestId } = app('/c/example/agent-memory?x=1#h');
+    expect(getByTestId('where').textContent).toBe('/c/example/agent-resource?x=1#h');
   });
   it('builds the target from the current path', () => {
     expect(currentRoute('/agent-memory')).toBe('/agent-resource');
-    expect(currentRoute('/c/dynacom/agent-memory')).toBe('/c/dynacom/agent-resource');
-    expect(currentRoute('/c/dynacom/agent-memory/')).toBe('/c/dynacom/agent-resource');
+    expect(currentRoute('/c/example/agent-memory')).toBe('/c/example/agent-resource');
+    expect(currentRoute('/c/example/agent-memory/')).toBe('/c/example/agent-resource');
     expect(currentRoute('/c/a%20b/agent-memory')).toBe('/c/a%20b/agent-resource');
     expect(currentRoute('/elsewhere')).toBe('/agent-resource');
   });
