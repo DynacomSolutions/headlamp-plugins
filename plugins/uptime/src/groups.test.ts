@@ -6,6 +6,8 @@ import {
   groupKeyOf,
   meanAvailability,
   namePrefix,
+  NOT_IN_CLUSTER,
+  Placements,
   resolveGroupBy,
   worstHistory,
   worstStatus,
@@ -28,6 +30,13 @@ const check = (
   labels,
   history,
 });
+const placed = (m: Record<string, [string, string]>): Placements =>
+  new Map(
+    Object.entries(m).map(([name, [namespace, app]]) => [
+      name,
+      { namespace, app, route: { kind: 'httproute', namespace, name: 'r', host: 'h', path: '/', exact: false, labels: {} } },
+    ])
+  );
 const grid3 = { stepSec: 60, buckets: 3 };
 
 describe('grouping keys', () => {
@@ -36,22 +45,68 @@ describe('grouping keys', () => {
     expect(namePrefix('api-edge-probe-2')).toBe('api');
     expect(namePrefix('github')).toBe('github');
   });
-  it('auto prefers namespace, then app, then group, then the name', () => {
+  it('auto prefers the resolved namespace, then the app, then the name', () => {
     const plain = [check('a-1', 'up')];
     expect(resolveGroupBy('auto', plain)).toBe('name');
-    expect(resolveGroupBy('auto', [...plain, check('b', 'up', [], { group: 'edge' })])).toBe('group');
-    expect(resolveGroupBy('auto', [check('b', 'up', [], { app: 'web', group: 'edge' })])).toBe('app');
-    expect(
-      resolveGroupBy('auto', [check('b', 'up', [], { app: 'web' }), check('c', 'up', [], { namespace: 'shop' })])
-    ).toBe('namespace');
+    // A group label alone is not an auto choice: pick it by hand.
+    expect(resolveGroupBy('auto', [check('b', 'up', [], { group: 'edge' })])).toBe('name');
+    expect(resolveGroupBy('auto', [check('b', 'up', [], { app: 'web' })])).toBe('app');
+    expect(resolveGroupBy('auto', [check('b', 'up', [], { app: 'web' }), check('c', 'up', [], { namespace: 'shop' })])).toBe(
+      'namespace'
+    );
+    // A namespace that the cluster routes give.
+    expect(resolveGroupBy('auto', plain, placed({ 'a-1': ['shop', 'web'] }))).toBe('namespace');
     expect(resolveGroupBy('type', plain)).toBe('type');
   });
-  it('reads a label, falls back to a named empty group, and upper-cases the type', () => {
+  it('reads a label, falls back to the namespace or to Not in cluster, and upper-cases the type', () => {
     const c = check('a', 'up', [], { namespace: 'shop' }, 'tcp');
     expect(groupKeyOf(c, 'namespace')).toBe('shop');
-    expect(groupKeyOf(c, 'app')).toBe('(no app)');
+    expect(groupKeyOf(c, 'app')).toBe('shop');
+    expect(groupKeyOf(check('b', 'up', [], {}, 'tcp'), 'app')).toBe('Not in cluster · TCP');
     expect(groupKeyOf(c, 'type')).toBe('TCP');
     expect(groupKeyOf(check('a', 'up', [], { app_kubernetes_io_name: 'web' }), 'app')).toBe('web');
+  });
+});
+
+describe('cluster groups', () => {
+  const checks = [
+    check('web', 'up'),
+    check('api', 'down', [1, 0, 1]),
+    check('dns-a', 'up', [1, 1, 1], {}, 'dns'),
+    check('dns-b', 'up', [1, 1, 1], {}, 'dns'),
+    check('ssh', 'up', [1, 1, 1], {}, 'tcp'),
+    check('stray', 'up'),
+  ];
+  const placements = placed({ web: ['shop', 'storefront'], api: ['shop', 'storefront'] });
+  it('groups by namespace and splits "Not in cluster" by check type', () => {
+    const { groups, resolved } = buildGroups(checks, 'auto', grid3, false, placements);
+    expect(resolved).toBe('namespace');
+    expect(groups.map(g => g.key).sort()).toEqual([
+      `${NOT_IN_CLUSTER} · DNS`,
+      `${NOT_IN_CLUSTER} · HTTP`,
+      `${NOT_IN_CLUSTER} · TCP`,
+      'shop',
+    ]);
+    expect(groups.find(g => g.key === 'shop')?.checks.map(c => c.name)).toEqual(['web', 'api']);
+    expect(groups.find(g => g.key === `${NOT_IN_CLUSTER} · DNS`)?.checks).toHaveLength(2);
+    expect(groups.flatMap(g => g.checks)).toHaveLength(checks.length);
+    expect(groups.some(g => /other/i.test(g.key))).toBe(false);
+  });
+  it('groups by app, which falls back to the namespace of the route', () => {
+    const p = placed({ web: ['shop', 'storefront'], api: ['shop', 'shop'] });
+    const { groups } = buildGroups(checks, 'app', grid3, false, p);
+    expect(groups.map(g => g.key)).toContain('storefront');
+    expect(groups.map(g => g.key)).toContain('shop');
+    expect(groups.find(g => g.key === 'shop')?.checks.map(c => c.name)).toEqual(['api']);
+  });
+  it('a series label wins over the cluster', () => {
+    const c = check('web', 'up', [], { namespace: 'labelled' });
+    expect(groupKeyOf(c, 'namespace', placements)).toBe('labelled');
+  });
+  it('without routes every check is not in the cluster, never one Other group', () => {
+    const { groups } = buildGroups(checks, 'namespace', grid3, false);
+    expect(groups.every(g => g.key.startsWith(NOT_IN_CLUSTER))).toBe(true);
+    expect(groups).toHaveLength(3);
   });
 });
 

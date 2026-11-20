@@ -1,12 +1,12 @@
 /*
  * The widget that the Uptime plugin adds to the Dashboards plugin, through the cross-plugin
  * `window.headlampDashboards` contract (see dashboardsContract.ts):
- *   uptime.targets  Every check grouped by one key. A group header shows the worst status, the counts
+ *   uptime.targets  Every check grouped by one key (namespace and app come from the cluster routes). A group header shows the worst status, the counts
  *                   and the worst history line of its checks. A group expands to every check line.
  * The lines are the history strip of the Uptime page, with the same colours. The widget fetches when
  * the time range or the dashboard refresh signal changes, never on its own timer or on a layout drag.
  * Dashboard filters: the time range (when the widget range is "dashboard") and the namespaces (for
- * checks that carry a namespace label). The nodes and the label selector do not apply to probes.
+ * checks that a route or a label places in a namespace). The nodes and the label selector do not apply to probes.
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -43,6 +43,8 @@ import {
   Raw,
   Status,
 } from './model';
+import { fetchRouteLists } from './routeApi';
+import { buildRoutes, placeChecks, Route } from './routes';
 
 export interface UptimeWidgetConfig {
   groupBy: GroupBy;
@@ -100,9 +102,14 @@ const STATUS_DOT: Record<Status, string> = {
  */
 const ROW_COLUMNS = '16px 76px minmax(0, 38%) minmax(64px, 1fr) 56px';
 
+const EMPTY_ROUTES: Route[] = [];
+
 interface Loaded {
   key: string;
   checks: Check[];
+  /** The routes of this refresh, fetched once with the checks and shared by every check. */
+  routes: Route[];
+  routeErrors: string[];
   grid: HistoryGrid;
   at: number;
   error: string | null;
@@ -116,7 +123,14 @@ export function useUptimeChecks(
   grid: HistoryGrid,
   refreshSignal: number,
   reportRefreshed: (at?: number) => void
-): { loading: boolean; error: string | null; checks: Check[]; at: number | null } {
+): {
+  loading: boolean;
+  error: string | null;
+  checks: Check[];
+  routes: Route[];
+  routeErrors: string[];
+  at: number | null;
+} {
   const [loaded, setLoaded] = React.useState<Loaded | null>(null);
   const key = `${grid.stepSec}x${grid.buckets}`;
   React.useEffect(() => {
@@ -126,8 +140,10 @@ export function useUptimeChecks(
     Promise.all([
       queryMetrics(q.success),
       queryRange(q.history, historyStart(nowSec, grid), historyEnd(nowSec, grid), grid.stepSec),
+      // One list per route kind for the whole cluster, never one request per check.
+      fetchRouteLists(),
     ]).then(
-      ([success, history]) => {
+      ([success, history, lists]) => {
         if (!live) return;
         const raw: Raw = {
           success,
@@ -143,6 +159,8 @@ export function useUptimeChecks(
         setLoaded({
           key,
           checks: buildChecks(raw, nowSec, grid).checks,
+          routes: buildRoutes(lists.routes),
+          routeErrors: lists.errors,
           grid,
           at,
           error: null,
@@ -154,6 +172,8 @@ export function useUptimeChecks(
         setLoaded(prev => ({
           key,
           checks: prev?.key === key ? prev.checks : [],
+          routes: prev?.key === key ? prev.routes : [],
+          routeErrors: prev?.key === key ? prev.routeErrors : [],
           grid,
           at: prev?.key === key ? prev.at : 0,
           error: String((e as Error)?.message || e),
@@ -170,6 +190,8 @@ export function useUptimeChecks(
     loading: current === null,
     error: current?.error ?? null,
     checks: current?.checks ?? [],
+    routes: current?.routes ?? EMPTY_ROUTES,
+    routeErrors: current?.routeErrors ?? [],
     at: current?.at || null,
   };
 }
@@ -343,17 +365,23 @@ function UptimeTargetsWidget({
     [settings.range, filters.range]
   );
   const state = useUptimeChecks(grid, refreshSignal, reportRefreshed);
-  const namespaces = filters.namespaces;
-  const visible = React.useMemo(
-    () =>
-      namespaces.length === 0
-        ? state.checks
-        : state.checks.filter(c => !c.labels.namespace || namespaces.includes(c.labels.namespace)),
-    [state.checks, namespaces]
+  // The cluster placement is derived from the routes of the last refresh, so a settings change reuses them.
+  const placements = React.useMemo(
+    () => placeChecks(state.checks, state.routes),
+    [state.checks, state.routes]
   );
+  const namespaces = filters.namespaces;
+  const visible = React.useMemo(() => {
+    if (namespaces.length === 0) return state.checks;
+    // A check with no namespace (not in the cluster) has nothing to filter on, so it stays.
+    return state.checks.filter(c => {
+      const ns = c.labels.namespace ?? placements.get(c.name)?.namespace;
+      return !ns || namespaces.includes(ns);
+    });
+  }, [state.checks, placements, namespaces]);
   const { groups, resolved } = React.useMemo(
-    () => buildGroups(visible, settings.groupBy, grid, settings.onlyFailing),
-    [visible, settings.groupBy, grid, settings.onlyFailing]
+    () => buildGroups(visible, settings.groupBy, grid, settings.onlyFailing, placements),
+    [visible, settings.groupBy, grid, settings.onlyFailing, placements]
   );
   // `key` resets the toggles when the default changes, so no effect syncs them.
   return (
@@ -371,6 +399,7 @@ function UptimeTargetsWidget({
           grid={grid}
           at={state.at}
           error={state.error}
+          routeErrors={state.routeErrors}
           failed={state.error !== null && state.checks.length === 0}
           expandedByDefault={settings.expanded}
           onlyFailing={settings.onlyFailing}
@@ -408,6 +437,7 @@ function TargetGroups(props: {
   grid: HistoryGrid;
   at: number | null;
   error: string | null;
+  routeErrors: string[];
   failed: boolean;
   expandedByDefault: boolean;
   onlyFailing: boolean;
@@ -432,6 +462,11 @@ function TargetGroups(props: {
           {props.failed
             ? `Could not read probe results: ${props.error}`
             : `Refresh failed, showing the last data: ${props.error}`}
+        </Alert>
+      )}
+      {props.routeErrors.length > 0 && !props.failed && (
+        <Alert severity="warning" sx={{ mb: 1 }}>
+          Could not list routes, so some checks may show as not in the cluster: {props.routeErrors.join('; ')}
         </Alert>
       )}
       {!props.failed && props.total === 0 && (
@@ -478,11 +513,11 @@ export const uptimeTargetsWidget: WidgetDefinition<UptimeWidgetConfig> = {
       key: 'groupBy',
       label: 'Group by',
       type: 'select',
-      help: 'Automatic uses a namespace, app or group series label when the probes carry one, and the first word of the check name otherwise.',
+      help: 'Namespace and app come from the cluster: the host of a check is matched with the HTTPRoutes, Ingresses and Mappings. Checks no route serves show under "Not in cluster", split by type. Automatic uses the namespace, then the app, then the first word of the check name.',
       options: [
         { value: 'auto', label: 'Automatic' },
-        { value: 'namespace', label: 'Namespace label' },
-        { value: 'app', label: 'App label' },
+        { value: 'namespace', label: 'Namespace' },
+        { value: 'app', label: 'App (route label, else namespace)' },
         { value: 'group', label: 'Group label' },
         { value: 'name', label: 'First word of the check name' },
         { value: 'type', label: 'Check type' },

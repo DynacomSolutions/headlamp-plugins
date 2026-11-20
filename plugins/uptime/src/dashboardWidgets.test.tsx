@@ -4,7 +4,9 @@ import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { queryMetrics, queryRange } = vi.hoisted(() => ({ queryMetrics: vi.fn(), queryRange: vi.fn() }));
+const { fetchRouteLists } = vi.hoisted(() => ({ fetchRouteLists: vi.fn() }));
 vi.mock('./metrics', () => ({ PROBE_JOB: 'uptime', queryMetrics, queryRange }));
+vi.mock('./routeApi', () => ({ fetchRouteLists }));
 
 import { normaliseConfig, uptimeTargetsWidget } from './dashboardWidgets';
 
@@ -38,6 +40,8 @@ beforeEach(() => {
   vi.spyOn(Date, 'now').mockReturnValue(NOW_MS);
   queryMetrics.mockReset();
   queryRange.mockReset();
+  fetchRouteLists.mockReset();
+  fetchRouteLists.mockResolvedValue({ routes: { httproutes: [], ingresses: [], mappings: [] }, errors: [] });
   queryMetrics.mockResolvedValue([
     s('web-1', 'eu', 1),
     s('web-1', 'hq', 1),
@@ -75,6 +79,79 @@ describe('uptime.targets definition', () => {
       uptimeTargetsWidget.defaultConfig
     );
     expect(normaliseConfig(undefined)).toEqual(uptimeTargetsWidget.defaultConfig);
+  });
+});
+
+describe('uptime.targets in the cluster', () => {
+  const routes = {
+    httproutes: [
+      { metadata: { namespace: 'shop', name: 'a', labels: { 'app.kubernetes.io/name': 'storefront' } }, spec: { hostnames: ['web-1', 'web-2'].map(h => `${h}.example.com`) } },
+      { metadata: { namespace: 'ops', name: 'b' }, spec: { hostnames: ['db.example.com'] } },
+    ],
+    ingresses: [],
+    mappings: [],
+  };
+  const withHosts = () =>
+    queryMetrics.mockResolvedValue([
+      s('web-1', 'eu', 1, { instance: 'https://web-1.example.com/' }),
+      s('web-2', 'eu', 0, { instance: 'https://web-2.example.com/' }),
+      s('db', 'eu', 1, { instance: 'https://db.example.com/' }),
+      s('github', 'eu', 1, { instance: 'https://github.com/' }),
+      s('ssh', 'eu', 1, { instance: 'github.com:22', type: 'tcp' }),
+    ]);
+
+  it('groups by the namespace of the route and puts the rest in Not in cluster by type', async () => {
+    withHosts();
+    fetchRouteLists.mockResolvedValue({ routes, errors: [] });
+    view(<Widget {...props({ groupBy: 'namespace' })} />);
+    await flush();
+    const names = screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent);
+    expect(names).toEqual(['shop', 'Not in cluster · HTTP', 'Not in cluster · TCP', 'ops']);
+    expect(screen.getByText(/4 groups by namespace · 5 checks/)).toBeTruthy();
+  });
+
+  it('auto uses the namespace, and app groups use the route app label', async () => {
+    withHosts();
+    fetchRouteLists.mockResolvedValue({ routes, errors: [] });
+    const first = view(<Widget {...props({})} />);
+    await flush();
+    expect(screen.getByText(/groups by namespace/)).toBeTruthy();
+    first.unmount();
+    view(<Widget {...props({ groupBy: 'app' })} />);
+    await flush();
+    expect(screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent)).toContain('storefront');
+  });
+
+  it('lists the routes once per refresh, not once per check', async () => {
+    withHosts();
+    fetchRouteLists.mockResolvedValue({ routes, errors: [] });
+    const p = props({ groupBy: 'namespace' });
+    const { rerender } = view(<Widget {...p} />);
+    await flush();
+    expect(fetchRouteLists).toHaveBeenCalledTimes(1);
+    // A settings change regroups from the cached routes.
+    rerender(
+      <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+        <Widget {...p} config={{ ...p.config, groupBy: 'app' }} />
+      </ThemeProvider>
+    );
+    await flush();
+    expect(fetchRouteLists).toHaveBeenCalledTimes(1);
+    rerender(
+      <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+        <Widget {...p} refreshSignal={1} />
+      </ThemeProvider>
+    );
+    await flush();
+    expect(fetchRouteLists).toHaveBeenCalledTimes(2);
+  });
+
+  it('warns when a route list cannot be read', async () => {
+    withHosts();
+    fetchRouteLists.mockResolvedValue({ routes, errors: ['mappings: not allowed'] });
+    view(<Widget {...props({ groupBy: 'namespace' })} />);
+    await flush();
+    expect(screen.getByText(/Could not list routes.*mappings: not allowed/)).toBeTruthy();
   });
 });
 
