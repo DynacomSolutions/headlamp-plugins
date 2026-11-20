@@ -28,7 +28,7 @@ import {
 import { cleanErrorText } from './chat-model';
 import { Composer, EXAMPLE_PROMPTS, MessageView, useStickToBottom } from './ChatPage';
 import { registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
-import { fetchAllDiagnoses, useSettings } from './data';
+import { fetchAllDiagnoses, rerunDiagnosis, useSettings } from './data';
 import { DiagnosesTable } from './DiagnosesTable';
 import { IncidentSummary } from './IncidentSummary';
 import {
@@ -73,7 +73,9 @@ interface Fetched {
 export function useDiagnosesOnSignal(
   settings: Settings,
   refreshSignal: number,
-  reportRefreshed: (at?: number) => void
+  reportRefreshed: (at?: number) => void,
+  /** A number that the widget raises to fetch again now (after a re-run). */
+  reload = 0
 ): Fetched & { loading: boolean } {
   const [state, setState] = React.useState<Fetched>({ rows: null, error: null });
   // A string key, so a new but equal settings object does not fetch again.
@@ -93,7 +95,7 @@ export function useDiagnosesOnSignal(
     };
     // `key` covers every field of the settings that the request uses.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, refreshSignal, reportRefreshed]);
+  }, [key, refreshSignal, reportRefreshed, reload]);
   return { ...state, loading: state.rows === null && state.error === null };
 }
 
@@ -105,7 +107,16 @@ function IncidentListWidget({
   kiosk,
 }: WidgetProps<IncidentListConfig>): JSX.Element {
   const settings = useSettings();
-  const state = useDiagnosesOnSignal(settings, refreshSignal, reportRefreshed);
+  const [reload, setReload] = React.useState(0);
+  const state = useDiagnosesOnSignal(settings, refreshSignal, reportRefreshed, reload);
+  const rerun = React.useCallback(
+    async (d: DiagnosisSummary) => {
+      await rerunDiagnosis(settings, d.id);
+      // The agent has queued the run. Fetch the rows again, so this row shows it.
+      setReload(n => n + 1);
+    },
+    [settings]
+  );
   const selected = useSelectedIncident();
   const hasChat = useHasChatWidget();
   // The selection belongs to the list on screen: clear it when the list goes away.
@@ -155,6 +166,7 @@ function IncidentListWidget({
             selectedId={selected?.id ?? null}
             onSelect={hasChat ? onSelect : undefined}
             disableNavigation={editing}
+            onRerun={editing ? undefined : rerun}
           />
         )}
       </Box>

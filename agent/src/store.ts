@@ -81,8 +81,8 @@ export abstract class DiagnosisStore {
   abstract page(options?: PageOptions): Promise<Page>;
   /** Queued or running diagnoses whose lease ran out, oldest first. */
   abstract stale(): Promise<Diagnosis[]>;
-  /** How many diagnoses from the webhook were created at or after `sinceMs`. */
-  abstract countWebhookSince(sinceMs: number): Promise<number>;
+  /** How many diagnoses started at or after `sinceMs`: created by the webhook, or run again by a person. */
+  abstract countStartedSince(sinceMs: number): Promise<number>;
   abstract findByFingerprint(fingerprint: string, startsAt: string): Promise<Diagnosis | undefined>;
   /** Fingerprints of firing alerts that have an unresolved diagnosis: ids to mark as resolved. */
   protected abstract unresolvedIds(fingerprint: string): Promise<string[]>;
@@ -150,8 +150,8 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
       .reverse();
   }
 
-  async countWebhookSince(sinceMs: number): Promise<number> {
-    return this.sorted().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= sinceMs).length;
+  async countStartedSince(sinceMs: number): Promise<number> {
+    return this.sorted().filter(d => (d.source === 'webhook' && Date.parse(d.createdAt) >= sinceMs) || (d.rerunAt !== undefined && Date.parse(d.rerunAt) >= sinceMs)).length;
   }
 
   async findByFingerprint(fingerprint: string, startsAt: string): Promise<Diagnosis | undefined> {
@@ -201,6 +201,8 @@ const SCHEMA = [
     lease_until timestamptz,
     data jsonb NOT NULL
   )`,
+  'ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS rerun_at timestamptz',
+  'CREATE INDEX IF NOT EXISTS diagnoses_rerun_idx ON diagnoses (rerun_at) WHERE rerun_at IS NOT NULL',
   'CREATE INDEX IF NOT EXISTS diagnoses_created_idx ON diagnoses (created_at DESC, id DESC)',
   'CREATE INDEX IF NOT EXISTS diagnoses_fingerprint_idx ON diagnoses (fingerprint, starts_at)',
   "CREATE INDEX IF NOT EXISTS diagnoses_open_idx ON diagnoses (created_at) WHERE status IN ('queued', 'running')",
@@ -214,6 +216,11 @@ const SUMMARY_SQL = "(data - 'a2ui' - 'evidence') || jsonb_build_object('evidenc
 function created(d: Diagnosis, now: number): Date {
   const t = Date.parse(d.createdAt);
   return new Date(Number.isFinite(t) ? t : now);
+}
+
+function rerun(d: Diagnosis): Date | null {
+  const t = d.rerunAt ? Date.parse(d.rerunAt) : NaN;
+  return Number.isFinite(t) ? new Date(t) : null;
 }
 
 function lease(d: Diagnosis): Date | null {
@@ -279,9 +286,9 @@ export class PgDiagnosisStore extends DiagnosisStore {
 
   private async insert(db: { query: Db['query'] }, d: Diagnosis): Promise<boolean> {
     const r = await db.query(
-      `INSERT INTO diagnoses (id, created_at, status, source, alert_name, fingerprint, starts_at, resolved, lease_until, data)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb) ON CONFLICT (id) DO NOTHING`,
-      [d.id, created(d, this.now()), d.status, d.source, d.alert.name ?? '', d.alert.fingerprint ?? '', d.alert.startsAt ?? '', Boolean(d.resolvedAt), lease(d), JSON.stringify(d)],
+      `INSERT INTO diagnoses (id, created_at, status, source, alert_name, fingerprint, starts_at, resolved, lease_until, rerun_at, data)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb) ON CONFLICT (id) DO NOTHING`,
+      [d.id, created(d, this.now()), d.status, d.source, d.alert.name ?? '', d.alert.fingerprint ?? '', d.alert.startsAt ?? '', Boolean(d.resolvedAt), lease(d), rerun(d), JSON.stringify(d)],
     );
     return (r.rowCount ?? 0) > 0;
   }
@@ -304,8 +311,8 @@ export class PgDiagnosisStore extends DiagnosisStore {
     return r.rows.map(row => row.data as Diagnosis);
   }
 
-  async countWebhookSince(sinceMs: number): Promise<number> {
-    const r = await this.db.query("SELECT count(*)::int AS n FROM diagnoses WHERE source = 'webhook' AND created_at >= $1", [new Date(sinceMs)]);
+  async countStartedSince(sinceMs: number): Promise<number> {
+    const r = await this.db.query("SELECT count(*)::int AS n FROM diagnoses WHERE (source = 'webhook' AND created_at >= $1) OR rerun_at >= $1", [new Date(sinceMs)]);
     return r.rows[0].n as number;
   }
 
@@ -328,8 +335,8 @@ export class PgDiagnosisStore extends DiagnosisStore {
       if (!next) return false;
       if (!current) return this.insert(tx, next); // False when another pod created it a moment ago.
       await tx.query(
-        'UPDATE diagnoses SET created_at = $2, status = $3, source = $4, alert_name = $5, fingerprint = $6, starts_at = $7, resolved = $8, lease_until = $9, data = $10::jsonb WHERE id = $1',
-        [id, created(next, this.now()), next.status, next.source, next.alert.name ?? '', next.alert.fingerprint ?? '', next.alert.startsAt ?? '', Boolean(next.resolvedAt), lease(next), JSON.stringify(next)],
+        'UPDATE diagnoses SET created_at = $2, status = $3, source = $4, alert_name = $5, fingerprint = $6, starts_at = $7, resolved = $8, lease_until = $9, rerun_at = $10, data = $11::jsonb WHERE id = $1',
+        [id, created(next, this.now()), next.status, next.source, next.alert.name ?? '', next.alert.fingerprint ?? '', next.alert.startsAt ?? '', Boolean(next.resolvedAt), lease(next), rerun(next), JSON.stringify(next)],
       );
       return true;
     });

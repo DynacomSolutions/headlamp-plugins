@@ -178,7 +178,7 @@ describe('PgDiagnosisStore', () => {
     await a.put(diagnosis('one', 'done', { createdAt: new Date().toISOString() }));
     await a.put(diagnosis('old', 'done', { createdAt: '2026-01-01T00:00:00.000Z' }));
     await a.put(diagnosis('api', 'done', { createdAt: new Date().toISOString(), source: 'api' }));
-    expect(await a.countWebhookSince(Date.now() - 3600_000)).toBe(1);
+    expect(await a.countStartedSince(Date.now() - 3600_000)).toBe(1);
   });
 });
 
@@ -465,8 +465,8 @@ describe('hourly cap across pods', () => {
     await a.put(diagnosis('api', 'done', { createdAt: recent, source: 'api' }));
     const alert = { name: 'X', severity: 'critical', labels: {}, annotations: {}, startsAt: '', fingerprint: 'f' };
     // Pod B starts fresh but sees pod A's two webhook diagnoses from the last hour.
-    expect(await new AlertGate(config, since => b.countWebhookSince(since)).wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
-    expect((await new AlertGate({ ...config, maxPerHour: 3 }, since => b.countWebhookSince(since)).wants(alert)).ok).toBe(true);
+    expect(await new AlertGate(config, since => b.countStartedSince(since)).wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
+    expect((await new AlertGate({ ...config, maxPerHour: 3 }, since => b.countStartedSince(since)).wants(alert)).ok).toBe(true);
   });
 });
 

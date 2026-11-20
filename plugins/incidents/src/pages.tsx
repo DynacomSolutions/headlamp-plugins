@@ -11,14 +11,23 @@ import { A2uiRenderer } from './a2ui';
 import { AgentActions } from './AgentActions';
 import { createChat } from './chat-data';
 import { ChatPage } from './ChatPage';
-import { useDiagnoses, useDiagnosis, useSettings } from './data';
+import { rerunDiagnosis, useDiagnoses, useDiagnosis, useSettings } from './data';
 import { DiagnosesTable } from './DiagnosesTable';
 import { LaunchesPage } from './LaunchPages';
+import { DiagnosisSummary } from './model';
+import { RerunButton } from './RerunButton';
 import { chatUrl, diagnosesUrl } from './routes';
 
 export function IncidentsPage() {
   const settings = useSettings();
-  const { data, loading, error } = useDiagnoses(settings);
+  const { data, loading, error, refresh } = useDiagnoses(settings);
+  const rerun = React.useCallback(
+    async (d: DiagnosisSummary) => {
+      await rerunDiagnosis(settings, d.id);
+      await refresh();
+    },
+    [settings, refresh]
+  );
   return (
     <SectionBox title="Incidents">
       {error && (
@@ -31,7 +40,7 @@ export function IncidentsPage() {
       ) : data && data.length === 0 ? (
         <Typography>No diagnoses yet.</Typography>
       ) : (
-        <DiagnosesTable rows={data ?? []} />
+        <DiagnosesTable rows={data ?? []} onRerun={rerun} />
       )}
     </SectionBox>
   );
@@ -48,7 +57,7 @@ export function IncidentPage() {
 function IncidentDetail({ id }: { id: string }) {
   const settings = useSettings();
   const history = useHistory();
-  const { data, loading, error } = useDiagnosis(settings, id);
+  const { data, loading, error, refresh } = useDiagnosis(settings, id);
   const [askError, setAskError] = React.useState<string | null>(null);
   const ask = async () => {
     setAskError(null);
@@ -72,6 +81,15 @@ function IncidentDetail({ id }: { id: string }) {
           <Button size="small" variant="outlined" onClick={ask}>
             Ask about this incident
           </Button>
+          {data?.status === 'failed' && (
+            <RerunButton
+              key={data.status}
+              onRerun={async () => {
+                await rerunDiagnosis(settings, id);
+                await refresh();
+              }}
+            />
+          )}
         </Box>
       }
     >

@@ -63,6 +63,11 @@ export class AlertGate {
   async wants(alert: Alert): Promise<{ ok: true } | { ok: false; reason: string }> {
     if (this.config.ignoreAlerts.includes(alert.name)) return { ok: false, reason: 'ignored alert' };
     if (!this.config.severities.includes(alert.severity)) return { ok: false, reason: `severity "${alert.severity}" is not diagnosed` };
+    return this.room();
+  }
+
+  /** Only the hourly limit: a person who runs a failed diagnosis again is not held back by severity or the ignore list. */
+  async room(): Promise<{ ok: true } | { ok: false; reason: string }> {
     const hourAgo = Date.now() - 3600_000;
     while (this.started.length && this.started[0] < hourAgo) this.started.shift();
     const count = this.startedSince ? await this.startedSince(hourAgo) : this.started.length;

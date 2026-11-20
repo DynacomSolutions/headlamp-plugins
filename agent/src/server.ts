@@ -59,6 +59,18 @@ function send(res: ServerResponse, status: number, body: unknown): void {
 const RENEW_MS = 20_000;
 const SCAN_MS = 30_000;
 const MAX_ATTEMPTS = 3;
+/** A record keeps the last 10 failed attempts that re-runs replaced. */
+const MAX_PREVIOUS = 10;
+
+/** Why a re-run did not start. */
+export class RerunError extends Error {
+  constructor(
+    readonly status: 404 | 409 | 503,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 /** Runs diagnoses one at a time, in arrival order, so a burst of alerts cannot overload the model quota. */
 export class Runner {
@@ -92,7 +104,8 @@ export class Runner {
   /**
    * Take over queued or running diagnoses that nobody holds: the lease ran out or is missing.
    * They run again with the same id and creation time and do not count against the hourly cap.
-   * Without a model, when the alert has resolved, or after 3 attempts, they are marked failed.
+   * Without a model, when the alert has resolved (unless a person asked for the re-run), or after 3 attempts,
+   * they are marked failed.
    */
   async scan(): Promise<void> {
     if (this.draining) return;
@@ -109,7 +122,8 @@ export class Runner {
               const failed = { ...d, status: 'failed' as const, error, owner: this.store.owner, leaseUntil: undefined };
               return { ...failed, a2ui: renderDiagnosis(failed) };
             };
-            if (d.resolvedAt || !this.configured) return fail('Interrupted by a restart');
+            // A person asked for a re-run of a resolved alert: diagnose it as it was, do not fail it for being resolved.
+            if ((d.resolvedAt && !d.rerunAt) || !this.configured) return fail('Interrupted by a restart');
             if (attempts >= MAX_ATTEMPTS) return fail(`Gave up after ${attempts} attempts`);
             taken = { ...d, status: 'queued', evidence: [], result: undefined, error: undefined, toolCalls: 0, attempts: attempts + 1, owner: this.store.owner, leaseUntil: this.store.lease() };
             return taken;
@@ -169,6 +183,34 @@ export class Runner {
     await this.enqueue(interrupted.alert, interrupted.source, interrupted.id, interrupted.model || undefined);
   }
 
+  /** True while the pod stops: it starts no new work. */
+  get stopping(): boolean {
+    return this.draining;
+  }
+
+  /**
+   * Run a failed diagnosis again under its own id. `model` is a model id (`<route>/<model>`) the caller has checked.
+   * The failed attempt moves to `previousAttempts`, the error clears and the attempts count starts again.
+   * Throws `RerunError` when no record has this id or when it is not failed.
+   */
+  async rerun(id: string, model: string): Promise<Diagnosis> {
+    const current = await this.store.get(id);
+    if (!current) throw new RerunError(404, 'Diagnosis not found');
+    let moved: Diagnosis | undefined;
+    // Decided on the record as stored now: two requests for one id start it once.
+    const ok = await this.store.update(id, d => {
+      if (!d || d.status !== 'failed') return undefined;
+      const previous = [...(d.previousAttempts ?? []), { at: d.finishedAt ?? d.createdAt, model: d.model, error: d.error ?? '' }].slice(-MAX_PREVIOUS);
+      moved = { ...d, status: 'queued', error: undefined, finishedAt: undefined, model, attempts: 1, previousAttempts: previous, rerunAt: new Date().toISOString(), owner: this.store.owner, leaseUntil: this.store.lease() };
+      return moved;
+    });
+    if (!ok || !moved) {
+      const now = await this.store.get(id);
+      throw new RerunError(now ? 409 : 404, now ? `Only a failed diagnosis can run again. This one is ${now.status}.` : 'Diagnosis not found');
+    }
+    return this.enqueue(moved.alert, moved.source, id, model);
+  }
+
   /** `model` is a model id (`<route>/<model>`) the caller has checked. Without it the run uses the recorded model or the default. */
   async enqueue(alert: Alert, source: Diagnosis['source'], existingId?: string, model?: string): Promise<Diagnosis> {
     const existing = existingId ? await this.store.get(existingId) : undefined;
@@ -189,6 +231,8 @@ export class Runner {
       owner: this.store.owner,
       leaseUntil: this.draining ? DiagnosisStore.released() : this.store.lease(),
       attempts: existing ? (existing.attempts ?? 1) : 1,
+      rerunAt: existing?.rerunAt,
+      previousAttempts: existing?.previousAttempts,
     };
     queued.a2ui = renderDiagnosis(queued);
     if (existing) {
@@ -234,7 +278,7 @@ export class Runner {
             writes = writes.then(async () => {
               if (lost) return;
               try {
-                const ok = await this.store.put({ ...diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), attempts: queued.attempts });
+                const ok = await this.store.put({ ...diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts });
                 if (!ok) {
                   // Another process owns the record now. Stop working on it.
                   lost = true;
@@ -249,7 +293,7 @@ export class Runner {
         });
         await writes;
         if (lost) return;
-        if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, attempts: queued.attempts }))) return;
+        if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts }))) return;
         log('info', 'diagnosis finished', { id: result.id, alert: alert.name, status: result.status, toolCalls: result.toolCalls, error: result.error });
       } catch (error) {
         log('error', 'diagnosis crashed', { id: queued.id, error: String(error) });
@@ -294,6 +338,7 @@ const publishSchema = z.object({
   }),
 });
 
+const rerunSchema = z.object({ model: z.string().max(200).nullish() }).strict();
 const createChatSchema = z.object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional() }).strict();
 const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional() });
 const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional() });
@@ -357,7 +402,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   });
   void launches.resume().catch(error => log('error', 'launch resume failed', { error: String(error) }));
   // Webhook diagnoses in the shared store, so a rollout or a second pod does not reset the hourly cap.
-  const gate = new AlertGate(config.diagnosis, since => store.countWebhookSince(since));
+  const gate = new AlertGate(config.diagnosis, since => store.countStartedSince(since));
   const mcp = await mcpHandler(runtime, store, version);
   const mcpNode = toNodeHandler(mcp);
   let ready = true;
@@ -460,6 +505,38 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         const offset = Math.max(Number(url.searchParams.get('offset') ?? 0) || 0, 0);
         // `total` is every stored diagnosis, so a client can page with `offset` and count them all.
         return send(res, 200, await store.page({ offset, limit }));
+      }
+      const rerunMatch = /^\/api\/diagnoses\/([^/]+)\/rerun$/.exec(path);
+      if (rerunMatch && req.method === 'POST') {
+        guardWrite(req, config);
+        const id = decodeURIComponent(rerunMatch[1]!);
+        const parsed = rerunSchema.safeParse(await readBody(req));
+        if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
+        const known = await store.get(id);
+        if (!known) throw new HttpError(404, 'Diagnosis not found');
+        if (known.status !== 'failed') throw new HttpError(409, `Only a failed diagnosis can run again. This one is ${known.status}.`);
+        if (!runner.configured) throw new HttpError(503, 'No model is configured for in-cluster diagnosis');
+        if (runner.stopping) throw new HttpError(503, 'The agent is restarting. Try again in a moment.');
+        // The current default model, unless the body names a valid one. The failed model is not reused.
+        let model: string;
+        try {
+          const r = await runner.catalogue.resolve(parsed.data.model || undefined);
+          model = `${r.route.id}/${r.model}`;
+        } catch (error) {
+          if (parsed.data.model && error instanceof UnknownModelError) throw new HttpError(400, error.message);
+          if (parsed.data.model) throw error;
+          model = config.models.defaultModel;
+        }
+        const verdict = await gate.room();
+        if (!verdict.ok) throw new HttpError(429, `The hourly limit of ${config.diagnosis.maxPerHour} diagnoses is used. Try again later.`);
+        try {
+          const d = await runner.rerun(id, model);
+          gate.record();
+          return send(res, 202, { id: d.id, status: d.status, model: d.model });
+        } catch (error) {
+          if (error instanceof RerunError) throw new HttpError(error.status, error.message);
+          throw error;
+        }
       }
       if (path.startsWith('/api/diagnoses/') && req.method === 'GET') {
         const d = await store.get(decodeURIComponent(path.slice('/api/diagnoses/'.length)));

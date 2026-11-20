@@ -53,6 +53,14 @@ export interface EvidenceItem {
   data?: unknown;
 }
 
+/** A failed attempt that a re-run replaced. The record keeps it, so the history of the failure stays. */
+export interface PreviousAttempt {
+  /** When the attempt ended (ISO). */
+  at: string;
+  model: string;
+  error: string;
+}
+
 export interface Diagnosis {
   id: string;
   createdAt: string;
@@ -77,6 +85,10 @@ export interface Diagnosis {
   leaseUntil?: string;
   /** How many times a process started this diagnosis. A takeover adds one. */
   attempts?: number;
+  /** When a person last ran this diagnosis again (ISO). Counts against the hourly limit. */
+  rerunAt?: string;
+  /** The failed attempts that re-runs replaced, oldest first. */
+  previousAttempts?: PreviousAttempt[];
 }
 
 /** Commands a fix may show: reads and checks only. Anything else is dropped from the fix, its text stays. */
