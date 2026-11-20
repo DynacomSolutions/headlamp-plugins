@@ -32,12 +32,32 @@ export interface Series {
   points: number[];
 }
 
+/** One arc of a ring: a category on the first level, one of its children on the second. */
+export interface RingSegment {
+  key: string;
+  label: string;
+  value: number;
+  /** First level only. Omitted when empty. */
+  children?: RingSegment[];
+}
+
+/** A sunburst ring. The full circle is `capacity`, the filled part is `used`, in `unit`. */
+export interface Ring {
+  id: 'cpu' | 'memory';
+  label: 'CPU' | 'Memory';
+  unit: 'cores' | 'bytes';
+  capacity: number;
+  used: number;
+  segments: RingSegment[];
+}
+
 export interface PanelBody {
   status: PanelStatus;
   summary: string;
   stats: Stat[];
   rows: Row[];
   series?: Series[];
+  rings?: Ring[];
 }
 
 export interface PanelModel extends PanelBody {
@@ -208,6 +228,75 @@ async function usage(d: PanelDeps): Promise<PanelBody> {
       stat('Nodes', nodes.length),
     ],
     rows: sortRows(rows),
+  };
+}
+
+// ---------- usage dashboard ----------
+
+const positive = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? n : 0);
+
+function parseSegments(v: unknown, nested: boolean): RingSegment[] {
+  return list(v).map(s => ({
+    key: String(s.key),
+    label: String(s.label),
+    value: positive(s.value),
+    ...(nested && list(s.children).length ? { children: parseSegments(s.children, false) } : {}),
+  }));
+}
+
+function parseRings(v: unknown): Ring[] {
+  return list(v)
+    .filter(r => r.id === 'cpu' || r.id === 'memory')
+    .slice(0, 2)
+    .map(r => ({
+      id: r.id,
+      label: r.id === 'cpu' ? ('CPU' as const) : ('Memory' as const),
+      unit: r.id === 'cpu' ? ('cores' as const) : ('bytes' as const),
+      capacity: positive(r.capacity),
+      used: positive(r.used),
+      segments: parseSegments(r.segments, true),
+    }));
+}
+
+async function usageDashboard(d: PanelDeps): Promise<PanelBody> {
+  const data = (await d.call('usage_dashboard', {})) as Obj;
+  const rings = parseRings(data.rings);
+  const nodes = positive(data.nodes);
+  const cpu = rings.find(r => r.id === 'cpu');
+  const mem = rings.find(r => r.id === 'memory');
+  const percent = (r: Ring | undefined): number | null => (r && r.capacity > 0 ? (r.used / r.capacity) * 100 : null);
+  const cpuPct = percent(cpu);
+  const memPct = percent(mem);
+  const level = (p: number | null): PanelStatus => (p === null ? 'unknown' : levelOf(p));
+  // One row per first-level child over both rings. A segment without children counts as its own entry.
+  const entries = new Map<string, { label: string; shares: { cpu: number; memory: number } }>();
+  for (const r of rings) {
+    for (const seg of r.segments) {
+      for (const child of seg.children?.length ? seg.children : [seg]) {
+        const e = entries.get(child.key) ?? { label: child.label, shares: { cpu: 0, memory: 0 } };
+        e.shares[r.id] += r.capacity > 0 ? (child.value / r.capacity) * 100 : 0;
+        entries.set(child.key, e);
+      }
+    }
+  }
+  const rows: Row[] = [...entries.values()]
+    .map(e => {
+      const top = Math.max(e.shares.cpu, e.shares.memory);
+      return {
+        label: e.label,
+        detail: `CPU ${pctText(e.shares.cpu)}, Mem ${pctText(e.shares.memory)}`,
+        value: pctText(top),
+        fraction: clamp01(top / 100),
+        status: 'ok' as const,
+      };
+    })
+    .sort((a, b) => b.fraction - a.fraction);
+  return {
+    status: worst([level(cpuPct), level(memPct)]),
+    summary: rings.length === 0 || nodes === 0 ? 'No usage data' : `CPU ${pctText(cpuPct)}, memory ${pctText(memPct)} on ${nodes} nodes`,
+    stats: [stat('CPU', pctText(cpuPct), level(cpuPct)), stat('Memory', pctText(memPct), level(memPct)), stat('Nodes', nodes)],
+    rows: sortRows(rows),
+    rings,
   };
 }
 
@@ -589,6 +678,7 @@ const REFRESH = 900;
 export const PANELS: PanelDefinition[] = [
   { id: 'uptime', title: 'Uptime', description: 'Up, degraded and down checks.', plugin: 'uptime', link: '/c/{cluster}/uptime', refreshSeconds: REFRESH, build: uptime },
   { id: 'usage', title: 'Usage', description: 'CPU and memory use of each node.', plugin: 'usage', link: '/c/{cluster}/usage/nodes', refreshSeconds: REFRESH, build: usage },
+  { id: 'usage-dashboard', title: 'Usage dashboard', description: 'CPU and memory rings: who uses the cluster.', plugin: 'usage', link: '/c/{cluster}/usage/nodes', refreshSeconds: 300, build: usageDashboard },
   { id: 'alerts', title: 'Alerts', description: 'Firing and pending alerts, by severity.', plugin: 'alerting', link: '/c/{cluster}/alerting/status', refreshSeconds: REFRESH, build: alerts },
   { id: 'disks', title: 'Disks', description: 'SMART health of each disk, worst first.', plugin: 'disk-health', link: '/c/{cluster}/disk-health', refreshSeconds: REFRESH, build: disks },
   { id: 'hardware', title: 'Hardware', description: 'Node temperatures and power.', plugin: 'node-hardware', link: '/c/{cluster}/node-hardware', refreshSeconds: REFRESH, build: hardware },
@@ -626,6 +716,7 @@ export async function buildPanel(id: string, deps: PanelDeps): Promise<PanelMode
     link: panel.link,
     stats: body.stats.slice(0, 4),
     rows: body.rows.slice(0, MAX_ROWS).map(r => ({ ...r, link: r.link ?? panel.link })),
+    ...(body.rings?.length ? { rings: body.rings.slice(0, 2) } : {}),
     ...(body.series?.length ? { series: body.series.slice(0, 2).map(s => ({ label: s.label, points: s.points.slice(-48) })) } : {}),
   };
   return mask(model);

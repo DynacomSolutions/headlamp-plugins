@@ -108,9 +108,23 @@ cluster-specific names and URLs out of this repository.
 `GET /api/widgets` lists panels and `GET /api/widgets/<id>` returns one. Both are
 read-only, need no auth and answer from the same tools as MCP, with the same
 masking. The Headlamps phone app reads them through the Headlamp service proxy.
-Panels: `uptime`, `usage`, `alerts`, `disks`, `hardware`, `sites`, `updates`,
+Panels: `uptime`, `usage`, `usage-dashboard`, `alerts`, `disks`, `hardware`, `sites`, `updates`,
 `incidents`, `github-runners`, `registry`, `vm-images` and `agent-memory`. An unknown id gives 404 and a failing backend
 gives 502 with a short reason. The `sites` panel takes `?q=<text>`.
+
+The `usage-dashboard` panel adds a typed `rings` field (at most two rings, CPU
+and memory). It uses the same numbers as the usage nodes dashboard. Each ring is
+`{ id, label, unit, capacity, used, segments }`:
+
+- `capacity` is the full circle. It is the sum of the node capacities.
+- `used` is the part that is filled. It is the sum of the node totals.
+- `unit` is `cores` (3 decimals) for CPU and `bytes` (whole numbers) for memory.
+- `segments` are the categories (`k8s`, `t3`, `system`, and so on). Each is
+  `{ key, label, value, children? }`, biggest first.
+- `children` hold the biggest users of one category (for example the namespace
+  `k8s/ns:shop`). There is one level only. Small children (below 0.2 % of
+  `capacity`) are left out and the list stops at 60. Their use stays inside the
+  value of the category. There is no "Other" entry.
 
 ## Incident diagnosis
 
