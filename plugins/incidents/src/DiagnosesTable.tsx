@@ -9,6 +9,7 @@ import TableRow from '@mui/material/TableRow';
 import React from 'react';
 import { Link as RouterLink, useHistory } from 'react-router-dom';
 import { DiagnosisSummary, severityColour, Status } from './model';
+import { RerunButton } from './RerunButton';
 import { diagnosisUrl } from './routes';
 
 const STATUS_COLOUR: Record<Status, 'default' | 'info' | 'success' | 'error'> = {
@@ -40,6 +41,11 @@ export interface DiagnosesTableProps {
   stickyHeader?: boolean;
   /** Turns the links and the page-opening click off (dashboard edit mode). */
   disableNavigation?: boolean;
+  /**
+   * Runs a failed diagnosis again. With it, each failed row has a "Run again" button. The promise
+   * resolves when the agent has queued the run and the parent has fetched the rows again.
+   */
+  onRerun?: (d: DiagnosisSummary) => Promise<void>;
 }
 
 function Row({
@@ -48,12 +54,16 @@ function Row({
   selected,
   compact,
   disableNavigation,
+  onRerun,
+  touch,
 }: {
   d: DiagnosisSummary;
   onSelect?: (d: DiagnosisSummary) => void;
   selected: boolean;
   compact: boolean;
   disableNavigation: boolean;
+  onRerun?: (d: DiagnosisSummary) => Promise<void>;
+  touch: boolean;
 }) {
   const history = useHistory();
   const open = () => {
@@ -107,6 +117,18 @@ function Row({
       {!compact && <TableCell>{d.confidence}</TableCell>}
       {!compact && <TableCell>{d.source}</TableCell>}
       {!compact && <TableCell>{d.resolved ? 'yes' : 'no'}</TableCell>}
+      {onRerun && (
+        <TableCell>
+          {d.status === 'failed' && (
+            <RerunButton
+              key={d.status}
+              touch={touch}
+              alertName={d.alertName || d.id}
+              onRerun={() => onRerun(d)}
+            />
+          )}
+        </TableCell>
+      )}
     </TableRow>
   );
 }
@@ -114,9 +136,9 @@ function Row({
 /** The table of diagnoses. The Incidents page and the dashboard list widget both render it. */
 export function DiagnosesTable(props: DiagnosesTableProps) {
   const compact = !!props.compact;
-  const headers = ['Time', 'Alert', 'Severity', 'Status', 'Likely cause'].concat(
-    compact ? [] : ['Confidence', 'Source', 'Resolved']
-  );
+  const headers = ['Time', 'Alert', 'Severity', 'Status', 'Likely cause']
+    .concat(compact ? [] : ['Confidence', 'Source', 'Resolved'])
+    .concat(props.onRerun ? ['Actions'] : []);
   return (
     <Table size={props.touch ? 'medium' : 'small'} stickyHeader={props.stickyHeader}>
       <TableHead>
@@ -135,6 +157,8 @@ export function DiagnosesTable(props: DiagnosesTableProps) {
             selected={props.selectedId === d.id}
             compact={compact}
             disableNavigation={!!props.disableNavigation}
+            onRerun={props.onRerun}
+            touch={!!props.touch}
           />
         ))}
       </TableBody>

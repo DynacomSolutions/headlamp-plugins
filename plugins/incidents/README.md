@@ -10,7 +10,10 @@ is read-only.
   severity (critical red, warning amber, other grey), status (queued, running,
   done, failed), likely cause (or the error), confidence, source and whether the
   alert is resolved. It refreshes every 15 seconds and lists every diagnosis (it reads all pages).
-  Click a row to open it.
+  Click a row to open it. A failed row has a "Run again" button. It calls
+  `POST /api/diagnoses/<id>/rerun` on the agent, stays disabled while the request runs
+  and shows an error under the button. The same button is in the `incidents.list`
+  dashboard widget and on the incident page of a failed diagnosis.
 - `/incidents/:id`: the full diagnosis. The report is not built in React: the
   diagnosis carries an [A2UI v1.0](https://a2ui.org/specification/v1.0-a2ui/)
   surface and the plugin renders it. The page polls every 5 seconds while the

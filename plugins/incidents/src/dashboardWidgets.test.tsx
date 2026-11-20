@@ -178,6 +178,35 @@ describe('incidents.list', () => {
     rerender(again({ refreshSignal: 1 }));
     await waitFor(() => expect(diagnosisCalls()).toHaveLength(2));
   });
+  it('runs a failed diagnosis again from its row and fetches the rows again', async () => {
+    view(<List {...props(incidentListWidget.defaultConfig)} />);
+    const button = await screen.findByRole('button', { name: 'Run again: OldAlert' });
+    expect(screen.getAllByRole('button', { name: /Run again/ })).toHaveLength(1);
+    const before = diagnosisCalls().filter(c => c.method === 'GET').length;
+    fireEvent.click(button);
+    await waitFor(() => expect(calls.filter(c => c.url.endsWith('/rerun'))).toHaveLength(1));
+    const post = calls.find(c => c.url.endsWith('/rerun'))!;
+    expect(post).toMatchObject({ method: 'POST', body: {} });
+    expect(post.url).toMatch(/\/api\/diagnoses\/3\/rerun$/);
+    await waitFor(() =>
+      expect(diagnosisCalls().filter(c => c.method === 'GET').length).toBeGreaterThan(before)
+    );
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+  it('shows a re-run error inline in the widget', async () => {
+    request.mockImplementation(async (url: string, params?: any) => {
+      if (params?.method === 'POST') throw new Error('{"error":"No model is configured"}');
+      return { total: 3, diagnoses: DIAGNOSES };
+    });
+    view(<List {...props(incidentListWidget.defaultConfig)} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Run again: OldAlert' }));
+    expect((await screen.findByRole('alert')).textContent).toBe('No model is configured');
+  });
+  it('has no re-run button while editing', async () => {
+    view(<List {...props(incidentListWidget.defaultConfig, { editing: true })} />);
+    await screen.findByText('OldAlert');
+    expect(screen.queryByRole('button', { name: /Run again/ })).toBeNull();
+  });
   it('keeps the last data when a refresh fails', async () => {
     const p = props(incidentListWidget.defaultConfig);
     const { rerender } = view(<List {...p} />);

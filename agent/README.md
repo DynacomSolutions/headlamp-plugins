@@ -211,6 +211,17 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
 `GET /api/diagnoses?limit=<n>&offset=<n>` answers `{ total, diagnoses }`, newest first. `limit` is 200 at most.
 `total` counts every stored diagnosis, so a client can page with `offset`.
 
+`POST /api/diagnoses/<id>/rerun` runs a failed diagnosis again under its own id.
+The body is optional: `{"model": "<route>/<model>"}` picks a model. Without it the run uses the
+current default model, not the model that failed. The record goes back to `queued`, the error
+clears and `attempts` starts at 1. The failed attempt moves to `previousAttempts`
+(`at`, `model`, `error`; the last 10 stay). `rerunAt` holds the time of the re-run. It works for
+resolved alerts too: the run uses the alert as it was, and a restart scan does not fail it
+because the alert is resolved. Answers: `202 {id, status, model}`; `404` unknown id; `409` when
+the status is not `failed`; `400` for an unknown model or body; `429` when the hourly limit is
+used; `503` without a model or while the pod stops. It has the same write protection as
+`POST /api/diagnoses`. Each re-run counts against `AGENT_MAX_DIAGNOSES_PER_HOUR`.
+
 Every diagnosis is kept for ever. Nothing deletes or prunes them. They live in
 PostgreSQL (`DATABASE_URL`, the shared `pg-shared` cluster): one row per diagnosis, the
 whole record as `jsonb` plus indexed columns for the queries. A list reads one page
@@ -557,7 +568,7 @@ turns launching off with a reason. It does not stop the service.
 | `AGENT_MAX_LAUNCHES` | `200` | Open (pending or active) launches at once. New requests get a 429 when all are open. Finished launches are never dropped |
 | `AGENT_MAX_LAUNCH_APPROVALS_PER_HOUR` | `4` | Approvals per hour. More get a 429 |
 | `AGENT_DIAGNOSE_SEVERITIES` | `warning,critical` | Severities that start a diagnosis from the webhook |
-| `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Webhook diagnoses per hour |
+| `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Diagnoses per hour: webhook diagnoses and re-runs together |
 | `AGENT_IGNORE_ALERTS` | `Watchdog,InfoInhibitor` | Alert names that are never diagnosed |
 
 ## Development
