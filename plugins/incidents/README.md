@@ -9,7 +9,8 @@ is read-only.
 - `/incidents`: a table of diagnoses, newest first, with time, alert name,
   severity (critical red, warning amber, other grey), status (queued, running,
   done, failed), likely cause (or the error), confidence, source and whether the
-  alert is resolved. It refreshes every 15 seconds. Click a row to open it.
+  alert is resolved. It refreshes every 15 seconds and lists every diagnosis (it reads all pages).
+  Click a row to open it.
 - `/incidents/:id`: the full diagnosis. The report is not built in React: the
   diagnosis carries an [A2UI v1.0](https://a2ui.org/specification/v1.0-a2ui/)
   surface and the plugin renders it. The page polls every 5 seconds while the

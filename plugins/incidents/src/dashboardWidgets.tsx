@@ -10,7 +10,6 @@
  * fetch when the dashboard refresh signal changes, never on a layout change. The chat also polls
  * its own chat once a second while the agent answers, as the chat page does.
  */
-import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -29,7 +28,7 @@ import {
 import { cleanErrorText } from './chat-model';
 import { Composer, EXAMPLE_PROMPTS, MessageView, useStickToBottom } from './ChatPage';
 import { registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
-import { useSettings } from './data';
+import { fetchAllDiagnoses, useSettings } from './data';
 import { DiagnosesTable } from './DiagnosesTable';
 import { IncidentSummary } from './IncidentSummary';
 import {
@@ -38,8 +37,6 @@ import {
   DiagnosisSummary,
   filterDiagnoses,
   IncidentFilter,
-  parseList,
-  parseTotal,
   Settings,
   summariseDiagnoses,
 } from './model';
@@ -67,33 +64,6 @@ export type IncidentListConfig = IncidentFilter;
 interface Fetched {
   rows: DiagnosisSummary[] | null;
   error: string | null;
-}
-
-const PAGE_SIZE = 200;
-const MAX_PAGES = 50;
-
-/**
- * Every diagnosis, read page by page, so the summary counts the real total and not the first page.
- * An agent that does not send `total` or ignore `offset` ends the loop as soon as a page is short
- * or holds nothing new.
- */
-export async function fetchAllDiagnoses(settings: Settings): Promise<DiagnosisSummary[]> {
-  const rows: DiagnosisSummary[] = [];
-  const seen = new Set<string>();
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const json = await ApiProxy.request(
-      backendUrl(settings, `/api/diagnoses?limit=${PAGE_SIZE}&offset=${rows.length}`)
-    );
-    const batch = parseList(json);
-    const fresh = batch.filter(d => !seen.has(d.id));
-    fresh.forEach(d => seen.add(d.id));
-    rows.push(...fresh);
-    const total = parseTotal(json);
-    const done =
-      fresh.length === 0 || (total !== null ? rows.length >= total : batch.length < PAGE_SIZE);
-    if (done) break;
-  }
-  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 /**

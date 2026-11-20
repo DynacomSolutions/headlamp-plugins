@@ -8,6 +8,7 @@ import {
   isActive,
   parseDetail,
   parseList,
+  parseTotal,
   resolveSettings,
   Settings,
 } from './model';
@@ -49,7 +50,7 @@ export interface Polled<T> {
 /** Polls a service-proxy path; `intervalMs` may depend on the last data (0 stops polling). */
 function usePolled<T>(
   url: string,
-  parse: (json: unknown) => T,
+  fetchData: () => Promise<T>,
   intervalMs: (data: T | null) => number
 ): Polled<T> {
   const [state, setState] = React.useState<Polled<T>>({ data: null, loading: true, error: null });
@@ -61,7 +62,7 @@ function usePolled<T>(
     setState({ data: null, loading: true, error: null });
     const load = async () => {
       try {
-        const data = parse(await ApiProxy.request(url));
+        const data = await fetchData();
         dataRef.current = data;
         if (alive) setState({ data, loading: false, error: null });
       } catch (e: any) {
@@ -80,12 +81,46 @@ function usePolled<T>(
   return state;
 }
 
+const PAGE_SIZE = 200;
+const MAX_PAGES = 50;
+
+/**
+ * Every diagnosis, read page by page, so the summary counts the real total and not the first page.
+ * An agent that does not send `total` or ignore `offset` ends the loop as soon as a page is short
+ * or holds nothing new.
+ */
+export async function fetchAllDiagnoses(settings: Settings): Promise<DiagnosisSummary[]> {
+  const rows: DiagnosisSummary[] = [];
+  const seen = new Set<string>();
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const json = await ApiProxy.request(
+      backendUrl(settings, `/api/diagnoses?limit=${PAGE_SIZE}&offset=${rows.length}`)
+    );
+    const batch = parseList(json);
+    const fresh = batch.filter(d => !seen.has(d.id));
+    fresh.forEach(d => seen.add(d.id));
+    rows.push(...fresh);
+    const total = parseTotal(json);
+    const done =
+      fresh.length === 0 || (total !== null ? rows.length >= total : batch.length < PAGE_SIZE);
+    if (done) break;
+  }
+  return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
 export function useDiagnoses(s: Settings): Polled<DiagnosisSummary[]> {
-  return usePolled(backendUrl(s, '/api/diagnoses?limit=100'), parseList, () => 15000);
+  return usePolled(
+    backendUrl(s, '/api/diagnoses'),
+    () => fetchAllDiagnoses(s),
+    () => 15000
+  );
 }
 
 export function useDiagnosis(s: Settings, id: string): Polled<DiagnosisDetail> {
-  return usePolled(backendUrl(s, `/api/diagnoses/${encodeURIComponent(id)}`), parseDetail, d =>
-    !d || isActive(d.status) ? 5000 : 0
+  const url = backendUrl(s, `/api/diagnoses/${encodeURIComponent(id)}`);
+  return usePolled(
+    url,
+    async () => parseDetail(await ApiProxy.request(url)),
+    d => (!d || isActive(d.status) ? 5000 : 0)
   );
 }

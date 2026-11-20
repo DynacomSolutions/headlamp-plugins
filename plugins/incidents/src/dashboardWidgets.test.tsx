@@ -21,12 +21,12 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 }));
 
 import {
-  fetchAllDiagnoses,
   INCIDENT_WIDGETS,
   incidentChatWidget,
   incidentListWidget,
   registerIncidentWidgets,
 } from './dashboardWidgets';
+import { fetchAllDiagnoses } from './data';
 import { summariseDiagnoses } from './model';
 import { selectIncident } from './selection';
 
