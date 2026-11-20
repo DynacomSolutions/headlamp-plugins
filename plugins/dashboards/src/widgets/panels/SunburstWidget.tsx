@@ -13,13 +13,12 @@ import { SettingsForm } from '../SettingsForm';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import { usePanel, usePanelList } from './data';
 import { ringToSunburst } from './model';
-import { sourceOf, SourcePanelPicker } from './PanelPicker';
+import { sourceOf, SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
 import { ringFormat } from './PanelView';
-import type { PanelConfig } from './PanelWidget';
 import { AGENT_SOURCE_ID } from './sources';
 import { useSourceLookup } from './sourcesConfig';
 
-export interface RingConfig extends PanelConfig {
+export interface RingConfig extends SourcePanelConfig {
   /** The ring id: `cpu` or `memory`. */
   ring: string;
 }
