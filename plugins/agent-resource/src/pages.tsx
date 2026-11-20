@@ -323,9 +323,9 @@ function CpuPressure({ unit }: { unit: MemUnit }) {
           size="small"
           variant={level === 'default' ? 'outlined' : 'filled'}
           color={level}
-          label={`some ${some.avg10.toFixed(1)}%`}
+          label={`some ${formatRatio(some.avg10 / 100)}`}
         />
-        {full && <Chip size="small" variant="outlined" label={`full ${full.avg10.toFixed(1)}%`} />}
+        {full && <Chip size="small" variant="outlined" label={`full ${formatRatio(full.avg10 / 100)}`} />}
       </Box>
     </Tooltip>
   );
