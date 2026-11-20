@@ -88,6 +88,8 @@ export interface Selection {
   kind: SunNode['kind'];
   icon?: SunNode['icon'];
   href?: string;
+  /** A thread's CPU limit and throttling; absent for other segments. */
+  note?: string;
   /** The segment has children in either chart, so it can be opened. */
   canOpen: boolean;
   cpu: SegmentInfo | null;
@@ -113,6 +115,7 @@ export function selectionFor(
     kind: n.kind,
     icon: m?.node.icon ?? c?.node.icon,
     href: m?.node.href ?? c?.node.href,
+    note: m?.node.note ?? c?.node.note,
     canOpen:
       n.kind !== 'unused' &&
       ((c?.node.children.length ?? 0) > 0 || (m?.node.children.length ?? 0) > 0),

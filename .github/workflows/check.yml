@@ -43,9 +43,9 @@ jobs:
           if [ "$android" = 1 ]; then echo "android=true" >> "$GITHUB_OUTPUT"; else echo "android=false" >> "$GITHUB_OUTPUT"; fi
           matrix='[]'
           if [ "$shared" = 1 ] || [ "$event" != pull_request ]; then
-            matrix='["agent-memory","alerting","disk-health","github-runners","incidents","node-hardware","registry","sites","updates","uptime","usage","vm-images"]'
+            matrix='["agent-resource","alerting","disk-health","github-runners","incidents","node-hardware","registry","sites","updates","uptime","usage","vm-images"]'
           else
-            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(agent-memory|alerting|disk-health|github-runners|incidents|node-hardware|registry|sites|updates|uptime|usage|vm-images)\// {print $2}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
+            matrix="$(printf '%s\n' "$changed" | awk -F/ '/^plugins\/(agent-resource|alerting|disk-health|github-runners|incidents|node-hardware|registry|sites|updates|uptime|usage|vm-images)\// {print $2}' | sort -u | jq -Rsc 'split("\n") | map(select(length > 0))')"
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           if [ "$matrix" = '[]' ]; then has_changes=false; else has_changes=true; fi

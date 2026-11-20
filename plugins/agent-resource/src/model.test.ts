@@ -6,6 +6,7 @@ import {
   agentSlices,
   alertsByUnit,
   arrangeRows,
+  backendCandidates,
   backendUrl,
   barGeometry,
   buildTree,
@@ -14,23 +15,39 @@ import {
   checkDefaults,
   checkEdit,
   cleanText,
+  cpuInput,
+  cpuLimitText,
+  cpuPressureLevel,
+  cpuShare,
+  cpuShareLevel,
   DEFAULT_SETTINGS,
   describeChange,
+  driftValue,
+  formatCores,
+  formatCpuUse,
+  formatRatio,
   formatSize,
   formatSpan,
   formatStall,
+  formatThrottled,
   guideCells,
+  hasCpu,
   matchesFilter,
   MemUnit,
   orchestratorAgents,
   orchestratorUnits,
+  parseCpu,
+  parseCpuQuota,
   parseProcTree,
   parseSize,
   parseState,
   parseWarnings,
+  pickError,
   processCommands,
   processCount,
   processTotal,
+  quotaString,
+  quotaText,
   raisedTitle,
   resolveSettings,
   safeUrl,
@@ -39,6 +56,8 @@ import {
   stallLevel,
   swapText,
   threadName,
+  throttleLevel,
+  throttleShare,
   TREE_COLUMN_WIDTHS,
   unitDetail,
   unitLabel,
@@ -242,6 +261,35 @@ describe('settings and payload', () => {
       '/api/v1/namespaces/ns/services/svc/proxy/api/state'
     );
     expect(() => backendUrl('https://example.com', '/x')).toThrow();
+  });
+  it('lists the new backend first and the old one as fallback', () => {
+    expect(backendCandidates('service/agent-memory/agent-resource:80')).toEqual([
+      'service/agent-memory/agent-resource:80',
+      'service/agent-memory/agent-memory:80',
+    ]);
+    expect(backendCandidates(' service/agent-memory/agent-memory:80 ')).toEqual([
+      'service/agent-memory/agent-resource:80',
+      'service/agent-memory/agent-memory:80',
+    ]);
+    expect(backendCandidates('service/ns/agent-resource')).toEqual([
+      'service/ns/agent-resource',
+      'service/ns/agent-memory',
+    ]);
+  });
+  it('keeps a custom backend alone', () => {
+    expect(backendCandidates('service/ns/other:80')).toEqual(['service/ns/other:80']);
+    expect(backendCandidates('not a backend')).toEqual(['not a backend']);
+  });
+  it('defaults to the new backend Service', () => {
+    expect(DEFAULT_SETTINGS.backend).toBe('service/agent-memory/agent-resource:80');
+  });
+  it('shows the first error that is not a 404', () => {
+    const notFound = { status: 404, message: 'new' };
+    const broken = { status: 500, message: 'old' };
+    expect(pickError([notFound, broken])).toBe(broken);
+    expect(pickError([broken, notFound])).toBe(broken);
+    expect(pickError([notFound, { status: 404, message: 'x' }])).toBe(notFound);
+    expect(pickError([])).toBeUndefined();
   });
   it('parses a partial payload', () => {
     const s = parseState({
@@ -982,9 +1030,313 @@ describe('process chevron and column widths', () => {
     expect(processTotal(unit({ procs: 0, processes: undefined }))).toBe(0);
   });
 
-  it('keeps the fixed table within 1440 px with a 420 px name column', () => {
+  it('keeps the fixed table within 1920 px with a 390 px name column', () => {
     expect(TREE_COLUMN_WIDTHS[0]).toBe(390);
-    expect(TREE_COLUMN_WIDTHS.length).toBe(12);
-    expect(TREE_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1400);
+    // 12 memory, alert and edit columns plus the 5 CPU columns.
+    expect(TREE_COLUMN_WIDTHS.length).toBe(17);
+    expect(TREE_COLUMN_WIDTHS.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1920);
+  });
+});
+
+describe('CPU limits, use and throttling', () => {
+  const rawCpuUnit = {
+    name: 't3code-claude-1.scope',
+    kind: 'scope',
+    current: G,
+    cpuCores: 3.2,
+    cpuQuotaCores: 16,
+    cpuWeight: 100,
+    cpuNrPeriods: 1200,
+    cpuNrThrottled: 34,
+    cpuThrottledUsec: 3_400_000,
+    cpuThrottledRatio: 4.2,
+    cpuPressureSome: { avg10: 12.5, avg60: 3, avg300: 1, totalUs: 5_000_000 },
+    cpuPressureFull: { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 },
+  };
+  const parsed = (raw: any) => parseState({ units: [raw] }).units[0];
+
+  it('parses every CPU field of a unit', () => {
+    const u = parsed(rawCpuUnit);
+    expect(u.cpuCores).toBe(3.2);
+    expect(u.cpuQuotaCores).toBe(16);
+    expect(u.cpuWeight).toBe(100);
+    expect(u.cpuNrPeriods).toBe(1200);
+    expect(u.cpuNrThrottled).toBe(34);
+    expect(u.cpuThrottledUsec).toBe(3_400_000);
+    expect(u.cpuThrottledRatio).toBe(4.2);
+    expect(u.cpuPressureSome?.avg10).toBe(12.5);
+    expect(u.cpuPressureFull?.totalUs).toBe(0);
+  });
+
+  it('treats a null or missing quota next to CPU stats as no limit', () => {
+    expect(parsed({ ...rawCpuUnit, cpuQuotaCores: null }).cpuQuotaCores).toBeNull();
+    const omitted: any = { ...rawCpuUnit };
+    delete omitted.cpuQuotaCores;
+    expect(parsed(omitted).cpuQuotaCores).toBeNull();
+    expect(parsed({ ...rawCpuUnit, cpuQuotaCores: 0 }).cpuQuotaCores).toBeNull();
+  });
+
+  it('leaves every CPU field unset for a backend that predates CPU limits', () => {
+    const u = parsed({ name: 'a.scope', kind: 'scope', current: 1, cpuCores: null });
+    expect(u.cpuQuotaCores).toBeUndefined();
+    expect(u.cpuCores).toBeUndefined();
+    expect(u.cpuThrottledRatio).toBeUndefined();
+    expect(u.cpuPressureSome).toBeUndefined();
+    expect(hasCpu(u)).toBe(false);
+    expect(hasCpu(parsed(rawCpuUnit))).toBe(true);
+  });
+
+  it('keeps a null throttle ratio (not measured yet) and drops junk', () => {
+    expect(parsed({ ...rawCpuUnit, cpuThrottledRatio: null }).cpuThrottledRatio).toBeNull();
+    const u = parsed({ ...rawCpuUnit, cpuCores: 'x', cpuNrThrottled: -1, cpuPressureSome: 5 });
+    expect(u.cpuCores).toBeUndefined();
+    expect(u.cpuNrThrottled).toBeUndefined();
+    expect(u.cpuPressureSome).toBeUndefined();
+    expect(parseCpu(null)).toEqual({});
+  });
+
+  it('formats limits, use and ratios', () => {
+    expect(cpuLimitText(null)).toBe('No limit');
+    expect(cpuLimitText(undefined)).toBe('-');
+    expect(cpuLimitText(16)).toBe('16 cores');
+    expect(cpuLimitText(1)).toBe('1 core');
+    expect(cpuLimitText(0.5)).toBe('0.5 core');
+    expect(formatCores(16)).toBe('16');
+    expect(formatCores(2.25)).toBe('2.3');
+    expect(formatCpuUse(0.04)).toBe('0.04');
+    expect(formatCpuUse(3.2)).toBe('3.2');
+    expect(formatCpuUse(127.6)).toBe('128');
+    expect(formatThrottled(0)).toBe('0 cores');
+    expect(formatThrottled(4.2)).toBe('4.2 cores');
+    expect(formatThrottled(4.24)).toBe('4.2 cores');
+    expect(formatThrottled(1)).toBe('1.0 cores');
+    expect(formatThrottled(0.02)).toBe('<0.1 cores');
+    expect(formatThrottled(NaN)).toBe('-');
+    expect(formatRatio(0)).toBe('0%');
+    expect(formatRatio(0.0004)).toBe('0%');
+    expect(formatRatio(0.034)).toBe('3.4%');
+    expect(formatRatio(0.125)).toBe('13%');
+    expect(formatRatio(2.5)).toBe('250%');
+  });
+
+  it('parses CPU limits in cores, percent and none', () => {
+    expect(parseCpuQuota('16')).toBe(16);
+    expect(parseCpuQuota(' 1.5 cores ')).toBe(1.5);
+    expect(parseCpuQuota('1600%')).toBe(16);
+    expect(parseCpuQuota('50 %')).toBe(0.5);
+    expect(parseCpuQuota('none')).toBeNull();
+    expect(parseCpuQuota('Infinity')).toBeNull();
+    expect(parseCpuQuota('')).toBeUndefined();
+    expect(parseCpuQuota('0')).toBeUndefined();
+    expect(parseCpuQuota('0%')).toBeUndefined();
+    expect(parseCpuQuota('-3')).toBeUndefined();
+    expect(parseCpuQuota('lots')).toBeUndefined();
+  });
+
+  it('converts between cores and the systemd spelling', () => {
+    expect(quotaString(16)).toBe('1600%');
+    expect(quotaString(0.5)).toBe('50%');
+    expect(quotaString(null)).toBe('');
+    expect(quotaText('1600%')).toBe('16 cores');
+    expect(quotaText('')).toBe('No limit');
+    expect(quotaText(undefined)).toBe('-');
+    expect(quotaText('weird')).toBe('weird');
+    expect(cpuInput('1600%')).toBe('16');
+    expect(cpuInput('')).toBe('none');
+    expect(cpuInput(undefined)).toBe('');
+    expect(parseCpuQuota(cpuInput('1250%'))).toBe(12.5);
+  });
+
+  it('computes use as a share of the limit', () => {
+    expect(cpuShare({ cpuCores: 8, cpuQuotaCores: 16 })).toBe(0.5);
+    expect(cpuShare({ cpuCores: 8, cpuQuotaCores: null })).toBeNull();
+    expect(cpuShare({ cpuCores: undefined, cpuQuotaCores: 16 })).toBeNull();
+    expect(cpuShare({ cpuCores: 1, cpuQuotaCores: undefined })).toBeNull();
+    expect(cpuShareLevel({ cpuCores: 8, cpuQuotaCores: 16 })).toBe('default');
+    expect(cpuShareLevel({ cpuCores: 14, cpuQuotaCores: 16 })).toBe('warning');
+    expect(cpuShareLevel({ cpuCores: 16, cpuQuotaCores: 16 })).toBe('error');
+  });
+
+  it('colours throttling and CPU pressure from the current values only', () => {
+    // The ratio is in cores; the colour follows its share of the CPU limit (amber 5%, red 25%).
+    const t = (cpuThrottledRatio: number | null, cpuQuotaCores: number | null | undefined = 16) => ({
+      cpuThrottledRatio,
+      cpuQuotaCores,
+    });
+    expect(throttleLevel(t(0))).toBe('default');
+    expect(throttleLevel(t(0.5))).toBe('default');
+    expect(throttleLevel(t(0.8))).toBe('warning');
+    expect(throttleLevel(t(3.9))).toBe('warning');
+    expect(throttleLevel(t(4))).toBe('error');
+    expect(throttleLevel(t(4.2))).toBe('error');
+    expect(throttleLevel(t(4.2, 128))).toBe('default');
+    expect(throttleLevel(t(4.2, 64))).toBe('warning');
+    expect(throttleLevel(t(4.2, 32))).toBe('warning');
+    expect(throttleLevel(t(null))).toBe('default');
+    expect(throttleLevel(t(4.2, null))).toBe('default');
+    expect(throttleLevel({ cpuThrottledRatio: 4.2 })).toBe('default');
+    expect(throttleShare(t(4, 16))).toBe(0.25);
+    expect(throttleShare(t(4, null))).toBeNull();
+    const p = (avg10: number) => ({ cpuPressureSome: { avg10, avg60: 0, avg300: 0, totalUs: 0 } });
+    expect(cpuPressureLevel(p(2))).toBe('default');
+    expect(cpuPressureLevel(p(15))).toBe('warning');
+    expect(cpuPressureLevel(p(60))).toBe('error');
+    expect(cpuPressureLevel({})).toBe('default');
+  });
+
+  it('reads the host CPU count and reserve', () => {
+    const s = parseState({ host: { total: 1, cpus: 128, cpuReserve: 32 } });
+    expect(s.host.cpus).toBe(128);
+    expect(s.host.cpuReserve).toBe(32);
+    expect(parseState({ host: { total: 1 } }).host.cpus).toBeUndefined();
+  });
+
+  it('reads the CPU policy of each layer and the drift of CPUQuota', () => {
+    const s = parseState({
+      orchestrators: [
+        {
+          name: 't3',
+          policy: {
+            control: { CPUWeight: 1000 },
+            agents: { CPUQuota: '9600%', CPUWeight: 100 },
+            agent: { CPUQuota: '1600%', CPUWeight: 100, memoryHigh: 8 * G },
+          },
+          drift: [
+            { layer: 'agent', unit: 'a.scope', property: 'CPUQuota', want: '1600%', have: '' },
+            { layer: 'agent', unit: 'a.scope', property: 'CPUWeight', want: 100, have: 50 },
+            { layer: 'agent', unit: 'a.scope', property: 'MemoryHigh', want: 8 * G, have: null },
+          ],
+        },
+      ],
+    });
+    const o = s.orchestrators[0];
+    expect(o.policy.control).toEqual({ cpuWeight: 1000 });
+    expect(o.policy.agents).toEqual({ cpuQuota: '9600%', cpuWeight: 100 });
+    expect(o.policy.agent.cpuQuota).toBe('1600%');
+    expect(o.drift[0]).toMatchObject({ want: '1600%', have: '' });
+    expect(driftValue('CPUQuota', o.drift[0].want)).toBe('16 cores');
+    expect(driftValue('CPUQuota', o.drift[0].have)).toBe('No limit');
+    expect(driftValue('CPUWeight', o.drift[1].have)).toBe('50');
+    expect(driftValue('MemoryHigh', o.drift[2].want)).toBe('8G');
+    expect(driftValue('MemoryHigh', o.drift[2].have)).toBe('∞');
+  });
+
+  it('reads the per-agent CPU default, with a null or empty value as none', () => {
+    const def = (cpuQuota: unknown) =>
+      parseState({
+        orchestrators: [{ name: 't3', defaults: { file: '/x/50.conf', cpuQuota } }],
+      }).orchestrators[0].defaults;
+    expect(def('1600%')?.cpuQuota).toBe('1600%');
+    expect(def(null)?.cpuQuota).toBe('');
+    expect(def('')?.cpuQuota).toBe('');
+    expect(parseState({ agentDefault: { file: '/x' } }).agentDefault?.cpuQuota).toBeUndefined();
+  });
+
+  it('marks a CPU raise like a memory raise', () => {
+    const raise = (extra: any) =>
+      parseState({
+        units: [
+          {
+            name: 'r.scope',
+            kind: 'scope',
+            raised: {
+              reason: 'build',
+              label: 'ok',
+              approvedAt: '2026-11-19T01:00:00Z',
+              at: '2026-11-19T01:00:01Z',
+              ...extra,
+            },
+          },
+        ],
+      }).units[0].raised;
+    const both = raise({ size: 16 * G, previous: 8 * G, cpuQuota: '3200%' });
+    expect(both?.cpuQuota).toBe('3200%');
+    expect(raisedTitle(both!, iso => `T(${iso})`)).toBe(
+      'approved T(2026-11-19T01:00:00.000Z): ok; reason: build; 8G → 16G; CPU limit 32 cores'
+    );
+    const cpuOnly = raise({ cpuQuota: '3200%' });
+    expect(cpuOnly?.size).toBeUndefined();
+    expect(raisedTitle(cpuOnly!, iso => `T(${iso})`)).toBe(
+      'approved T(2026-11-19T01:00:00.000Z): ok; reason: build; CPU limit 32 cores'
+    );
+    expect(raise({})).toBeUndefined();
+  });
+
+  it('sums the CPU use of a project and of the other scopes', () => {
+    const mk = (name: string, cpuCores?: number, extra: any = {}) => ({
+      name,
+      kind: 'scope',
+      role: 'agent',
+      orchestrator: 't3',
+      current: G,
+      displayName: `Proj > ${name}`,
+      agent: { provider: 'claude', id: name, names: { workspace: 'Proj' } },
+      ...(cpuCores === undefined ? {} : { cpuCores }),
+      ...extra,
+    });
+    const state = parseState({
+      orchestrators: [{ name: 't3', title: 'T3 Code', agentsSlice: 'agents.slice' }],
+      units: [
+        mk('a.scope', 1.5),
+        mk('b.scope', 2),
+        { ...mk('c.scope'), agent: undefined, role: '', displayName: 'c.scope', cpuCores: 0.5 },
+      ],
+    });
+    const rows = buildTree(state, new Set(), '');
+    const project = rows.find(r => r.kind === 'project' && !r.project?.other)?.project;
+    const other = rows.find(r => r.kind === 'project' && r.project?.other)?.project;
+    expect(project?.cpu).toBe(3.5);
+    expect(other?.cpu).toBe(0.5);
+    const none = buildTree(
+      parseState({ orchestrators: [{ name: 't3', title: 'T' }], units: [mk('d.scope')] }),
+      new Set(),
+      ''
+    );
+    expect(none.find(r => r.kind === 'project')?.project?.cpu).toBeUndefined();
+  });
+
+  it('checks the per-agent CPU default', () => {
+    const cur = { file: '/x/50.conf', memoryHigh: 8 * G, memoryMax: 12 * G, cpuQuota: '1600%' };
+    const base = { minLimit: 256 * M, hostTotal: 256 * G, hostCpus: 128 };
+    const ok = checkDefaults(cur, { cpuQuota: '32' }, base, [], {});
+    expect(ok.errors).toEqual([]);
+    expect(ok.changes).toEqual({ cpuQuota: '3200%' });
+    expect(checkDefaults(cur, { cpuQuota: '3200%' }, base, [], {}).changes.cpuQuota).toBe('3200%');
+    expect(checkDefaults(cur, { cpuQuota: 'none' }, base, [], {}).changes).toEqual({
+      cpuQuota: '',
+    });
+    expect(checkDefaults(cur, { cpuQuota: '16' }, base, [], {}).errors).toEqual([
+      'Nothing has changed.',
+    ]);
+    expect(checkDefaults(cur, { cpuQuota: '1600%' }, base, [], {}).errors).toEqual([
+      'Nothing has changed.',
+    ]);
+    expect(checkDefaults(cur, { cpuQuota: 'lots' }, base, [], {}).errors.join(' ')).toMatch(
+      /not a CPU limit/
+    );
+    expect(checkDefaults(cur, { cpuQuota: '0.01' }, base, [], {}).errors.join(' ')).toMatch(
+      /at least 0.1 cores/
+    );
+    expect(checkDefaults(cur, { cpuQuota: '256' }, base, [], {}).errors.join(' ')).toMatch(
+      /exceeds the host CPUs \(128\)/
+    );
+    expect(
+      checkDefaults(cur, { cpuQuota: '256' }, { ...base, hostCpus: undefined }, [], {}).errors
+    ).toEqual([]);
+  });
+
+  it('changes memory and CPU together, and a CPU change alone never trips the memory check', () => {
+    const base = { minLimit: 256 * M, hostTotal: 256 * G, hostCpus: 128 };
+    const cur = { file: '/x', memoryMax: 12 * G, cpuQuota: '1600%' };
+    // memoryHigh is not set in the file: a CPU-only change must not complain about it.
+    expect(checkDefaults(cur, { cpuQuota: '8' }, base, [], {}).errors).toEqual([]);
+    const both = checkDefaults(
+      { ...cur, memoryHigh: 8 * G },
+      { memoryHigh: '6G', cpuQuota: '8' },
+      base,
+      [],
+      {}
+    );
+    expect(both.changes).toEqual({ memoryHigh: '6G', cpuQuota: '800%' });
   });
 });

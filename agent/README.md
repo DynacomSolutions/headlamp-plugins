@@ -144,7 +144,7 @@ reads its own settings `job` and `slowSeconds` for `uptime_response_times`.
 read-only, need no auth and answer from the same tools as MCP, with the same
 masking. The Headlamps phone app reads them through the Headlamp service proxy.
 Panels: `uptime`, `usage`, `alerts`, `disks`, `hardware`, `sites`, `updates`,
-`incidents`, `github-runners`, `registry`, `vm-images` and `agent-memory`. An unknown id gives 404 and a failing backend
+`incidents`, `github-runners`, `registry`, `vm-images` and `agent-memory` (the panel id keeps its old name for existing clients, the panel title is Agent resources). An unknown id gives 404 and a failing backend
 gives 502 with a short reason. The `sites` panel takes `?q=<text>`.
 
 ## Incident diagnosis

@@ -1,6 +1,8 @@
 /*
- * Agent hosts: reads the agent-memory backend (/api/state) through the Kubernetes API service
- * proxy. Plugins cannot share code, so the small helpers here are copies of the agent-memory ones.
+ * Agent hosts: reads the agent-resource backend (/api/state) through the Kubernetes API service
+ * proxy. Plugins cannot share code, so the small helpers here are copies of the agent-resource
+ * ones. The backend Service was called agent-memory before: agent-resource is tried first and
+ * agent-memory is the fallback, so the dashboard works before and after the backend rollout.
  */
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 
@@ -22,6 +24,10 @@ export interface AgentUnit {
   depth?: number;
   memBytes: number;
   cpuCores?: number;
+  /** The CPU limit in cores (cpu.max); null for none; absent when the backend does not report it. */
+  cpuLimitCores?: number | null;
+  /** Time throttled over the last two samples, in cores' worth (0.25 is a quarter of one core). */
+  cpuThrottledRatio?: number;
   project?: string;
   projectId?: string;
   thread?: string;
@@ -45,7 +51,7 @@ export interface NodesSettings {
 }
 
 export const DEFAULT_NODES_SETTINGS: NodesSettings = {
-  agentBackends: ['service/agent-memory/agent-memory:80'],
+  agentBackends: ['service/agent-memory/agent-resource:80'],
   idleSeconds: 120,
   displayNames: {},
 };
@@ -65,12 +71,59 @@ function backendUrl(backend: string, path: string): string {
   }`;
 }
 
+const SERVICE = 'agent-resource';
+const LEGACY_SERVICE = 'agent-memory';
+
+/**
+ * The backends to try, best first. A backend named agent-resource also has its agent-memory twin
+ * as a fallback, and the other way round. Any other name stays alone.
+ */
+export function backendCandidates(backend: string): string[] {
+  const b = backend.trim();
+  const m = /^(service\/[^/]+\/)([^/:]+)(.*)$/.exec(b);
+  if (!m || (m[2] !== SERVICE && m[2] !== LEGACY_SERVICE)) return [b];
+  const twin = `${m[1]}${m[2] === SERVICE ? LEGACY_SERVICE : SERVICE}${m[3]}`;
+  return m[2] === SERVICE ? [b, twin] : [twin, b];
+}
+
+/** The candidate that answered last for each configured backend. */
+const answered = new Map<string, string>();
+
+function orderedCandidates(backend: string): string[] {
+  const list = backendCandidates(backend);
+  const good = answered.get(backend);
+  return good && list.includes(good) ? [good, ...list.filter(c => c !== good)] : list;
+}
+
+/** The first error that is not a 404 (the Service is missing), else the first error. */
+function pickError(errors: any[]): any {
+  return errors.find(e => e?.status !== 404) ?? errors[0];
+}
+
+/** GET with the fallback: the candidate that answers is remembered for the next poll. */
+async function requestBackend(backend: string, path: string): Promise<unknown> {
+  const errors: unknown[] = [];
+  for (const c of orderedCandidates(backend)) {
+    try {
+      const json = await ApiProxy.request(backendUrl(c, path));
+      answered.set(backend, c);
+      return json;
+    } catch (e) {
+      errors.push(e);
+    }
+  }
+  throw pickError(errors) ?? new Error('Request failed');
+}
+
 /**
  * The project icon route of a backend, as the Kubernetes service-proxy path. An <img> cannot send
  * Headlamp's auth headers, so this only loads where the proxy path is reachable without them.
  */
 export function iconUrl(backend: string, projectId: string): string {
-  return backendUrl(backend, `/api/project-icon?project=${encodeURIComponent(projectId)}`);
+  return backendUrl(
+    orderedCandidates(backend)[0],
+    `/api/project-icon?project=${encodeURIComponent(projectId)}`
+  );
 }
 
 function num(v: unknown): number {
@@ -107,6 +160,18 @@ function parseProc(p: any, depth: number): AgentProc {
   };
 }
 
+/** A limit of 0 or less is no limit. A backend that sends CPU stats without a quota means none. */
+function parseCpuLimit(u: any): number | null | undefined {
+  const reported =
+    u?.cpuQuotaCores !== undefined ||
+    u?.cpuWeight !== undefined ||
+    u?.cpuNrPeriods !== undefined ||
+    u?.cpuThrottledRatio !== undefined;
+  if (!reported) return undefined;
+  const q = optNum(u?.cpuQuotaCores);
+  return q !== undefined && q > 0 ? q : null;
+}
+
 function parseIcon(i: any): AgentUnit['icon'] {
   if (!i || (i.kind !== 'file' && i.kind !== 'lucide')) return undefined;
   return { kind: i.kind, name: optText(i.name), color: optText(i.color) };
@@ -126,6 +191,8 @@ function parseUnit(u: any): AgentUnit {
     depth: optNum(u?.depth),
     memBytes: num(u?.anon) + num(u?.shmem) + num(u?.kernel),
     cpuCores: optNum(u?.cpuCores),
+    cpuLimitCores: parseCpuLimit(u),
+    cpuThrottledRatio: optNum(u?.cpuThrottledRatio),
     project: optText(names?.workspace),
     projectId: optText(names?.projectId),
     thread: optText(names?.title) ?? optText(names?.tab),
@@ -137,11 +204,11 @@ function parseUnit(u: any): AgentUnit {
   };
 }
 
-/** Reads one backend's /api/state; throws when it is not an agent-memory payload. */
+/** Reads one backend's /api/state; throws when it is not an agent-resource payload. */
 export function parseAgentState(json: unknown, backend: string): AgentHost {
   const j = json as any;
   if (!j || typeof j !== 'object' || !Array.isArray(j.units)) {
-    throw new Error('Not an agent-memory state');
+    throw new Error('Not an agent-resource state');
   }
   return {
     node: text(j.node),
@@ -158,7 +225,7 @@ export async function fetchAgentHosts(
   backends: string[]
 ): Promise<{ hosts: AgentHost[]; errors: { backend: string; message: string }[] }> {
   const results = await Promise.allSettled(
-    backends.map(async b => parseAgentState(await ApiProxy.request(backendUrl(b, '/api/state')), b))
+    backends.map(async b => parseAgentState(await requestBackend(b, '/api/state'), b))
   );
   const hosts: AgentHost[] = [];
   const errors: { backend: string; message: string }[] = [];

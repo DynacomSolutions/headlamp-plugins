@@ -1,9 +1,9 @@
 {
-  "name": "agent-memory",
+  "name": "agent-resource",
   "version": "0.1.0",
   "license": "MIT",
   "headlamp": {"extraDist": {"LICENSE": "../../LICENSE"}},
-  "description": "Headlamp plugin: view and live-edit agent memory limits per orchestrator (T3 Code, Herdr): control, agents slice, per agent and default, with policy drift and alerts",
+  "description": "Headlamp plugin: view and live-edit agent resource limits (memory and CPU) per orchestrator (T3 Code, Herdr): control, agents slice, per agent and default, with policy drift and alerts",
   "scripts": {
     "start": "headlamp-plugin start",
     "build": "headlamp-plugin build",
