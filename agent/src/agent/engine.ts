@@ -61,6 +61,15 @@ export function evidencePlan(alert: Alert, available: Set<string>): Array<{ tool
   if (/smart|disk|nvme/i.test(alert.name) || l.device) add('disk_health_smart', 'What does SMART say about the disks?', node ? { node } : {});
   if (/disk|filesystem|space|inode/i.test(alert.name)) add('disk_health_capacity', 'How full are the filesystems, and how fast are they growing?', node ? { node, minUsedPercent: 50 } : { minUsedPercent: 80 });
   if (/probe|uptime|http|endpoint|tls|cert/i.test(alert.name) || l.target) add('uptime_status', 'What do the uptime probes show?', l.target || l.instance ? { target: l.target ?? l.instance } : { onlyFailing: true });
+  const host = l.host;
+  if (/dns|placement/i.test(alert.name)) {
+    add('dns_placement_status', 'Do the DNS records match the placement rules?', { onlyDrift: true, ...(host ? { host } : {}) });
+    add('dns_placement_plan', 'What exact DNS change would fix the placement? (proposal only)', host ? { hosts: [host] } : {});
+  }
+  if (/probe|uptime|slow|latency/i.test(alert.name)) {
+    const target = l.target ?? l.instance;
+    add('uptime_response_times', 'How slow are the probes, and from which site?', { ...(target ? { target } : {}), ...(host ? { host } : {}) });
+  }
   add('list_events', 'What warnings happened recently?', { ...(ns ? { namespace: ns } : {}), type: 'Warning', sinceMinutes: 120, limit: 25 });
   if (!ns && !pod && !node) add('cluster_overview', 'What else is broken right now?', {});
   return plan;

@@ -43,7 +43,8 @@ origin that is not in `ALLOWED_ORIGINS` get 403.
 | --- | --- |
 | kubernetes | `cluster_overview`, `list_resources`, `get_resource` (with events), `list_events`, `get_pod_logs`, `list_api_resources` |
 | metrics | `query_metrics`, `query_metrics_range` (cut to 40 points, peaks kept), `find_metrics`, `list_alerts`, `list_alert_rules` |
-| uptime | `uptime_status`: blackbox probe results per target and site, from `probe_*` series |
+| uptime | `uptime_status`: blackbox probe results per target and site, from `probe_*` series. `uptime_response_times`: current, average, p95 and maximum probe time, HTTP phases and size |
+| dns_placement | `dns_placement_status`: DNS records against the placement rules and probe latency. `dns_placement_plan`: propose-only change plan |
 | alerting | `alerting_watchdog_state`: the alerting backend's targets and down episodes |
 | disk_health | `disk_health_smart`, `disk_health_performance`, `disk_health_capacity` |
 | node_hardware | `node_hardware_thermals` |
@@ -102,6 +103,40 @@ provider that is not listed). The tool context offers only read-only clients:
 API), `serviceGet` (GET JSON from a `*.svc` name) and `settings`, which holds
 this provider's entry from the provider config file. Settings keep
 cluster-specific names and URLs out of this repository.
+
+### DNS placement settings
+
+The `dns_placement` provider reads the metrics of an external placement check
+and applies the placement rules. It runs in propose-only mode. It never
+changes DNS. It has no write client and no DNS credential. The plan lists the
+exact records to remove and add, and a person or agent with DNS access applies
+it. Settings in the provider config file (a value of the wrong type is ignored):
+
+```json
+{
+  "dns_placement": {
+    "metricPrefix": "dns_placement",
+    "zone": "example.com",
+    "defaultNode": "node-a",
+    "homeNodes": ["home-1", "home-2"],
+    "remoteNodes": ["remote-1"],
+    "pinned": { "app.example.com": ["home-1"] },
+    "exclude": ["^failover-.*\\.example\\.com$"],
+    "homeLocation": "home",
+    "slowSeconds": 2,
+    "uptimeJob": "uptime"
+  }
+}
+```
+
+The check exports `<metricPrefix>_match{host,expected,actual}`,
+`_skipped{host,reason}`, `_check_success` and `_last_success_timestamp_seconds`.
+The rules: a host that runs only on the default node needs no own record.
+Home-first: an app with pods on a home node gets only those home nodes. A
+pinned host wins over placement. An excluded host is reported and never
+changed. Records are A, DNS-only and never proxied. A move away from the
+rules needs an open board row and a planned return. The uptime provider
+reads its own settings `job` and `slowSeconds` for `uptime_response_times`.
 
 ## Widget panels
 
