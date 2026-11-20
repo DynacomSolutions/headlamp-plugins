@@ -22,8 +22,8 @@ import React from 'react';
 import { Link as RouterLink, useHistory, useLocation } from 'react-router-dom';
 import { useCanWrite, useDashboardList, useStorage } from './hooks';
 import { cloneSpec } from './spec/edit';
-import { countWidgets, emptySpec, slugify, uniqueSlug } from './spec/model';
-import { StoredDashboard } from './storage/storage';
+import { countWidgets, emptySpec } from './spec/model';
+import { createWithFreeName, StoredDashboard } from './storage/storage';
 import { buildPath, pathBase } from './urlState';
 
 type Dialogue =
@@ -96,20 +96,23 @@ export function DashboardsListPage(): JSX.Element {
     }
   };
 
-  const freeName = (title: string) =>
-    uniqueSlug(
-      slugify(title),
+  // The list shows only labelled ConfigMaps. A taken name without the label is found by the create.
+  const createFree = (title: string, spec: Parameters<typeof storage.create>[1]) =>
+    createWithFreeName(
+      storage,
+      title,
+      spec,
       items.map(i => i.name)
     );
 
   const create = (title: string) =>
     run(async () => {
-      const created = await storage.create(freeName(title), emptySpec(title));
+      const created = await createFree(title, emptySpec(title));
       history.push(buildPath({ name: created.name, tab: '' }, base) + '?edit=1');
     });
   const duplicate = (item: StoredDashboard, title: string) =>
     run(async () => {
-      const created = await storage.create(freeName(title), cloneSpec(item.spec, title));
+      const created = await createFree(title, cloneSpec(item.spec, title));
       list.reload();
       history.push(buildPath({ name: created.name, tab: '' }, base));
     });

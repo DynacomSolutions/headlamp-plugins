@@ -14,8 +14,10 @@ import {
   migrateSpec,
   parseSpec,
   serialiseSpec,
+  slugify,
   SpecError,
   SpecVersionError,
+  uniqueSlug,
 } from '../spec/model';
 
 export const DASHBOARD_LABEL = 'headlamp.dev/dashboard';
@@ -50,6 +52,15 @@ export class ConflictError extends Error {
   }
 }
 
+/** A create found the name taken (HTTP 409 AlreadyExists), for example by a ConfigMap without the dashboard label. */
+export class NameTakenError extends Error {
+  constructor(public readonly taken: string, namespace: string) {
+    super(
+      `A ConfigMap named "${taken}" already exists in the namespace "${namespace}". Choose another title.`
+    );
+  }
+}
+
 export class NotFoundError extends Error {
   constructor(what: string) {
     super(what);
@@ -68,6 +79,8 @@ export interface StoredDashboard {
   error?: string;
   /** True when the spec was saved by a newer plugin: it must not be overwritten. */
   tooNew?: boolean;
+  /** The ConfigMap as loaded. A save changes only the dashboard data and label in it. */
+  raw?: any;
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
@@ -79,7 +92,12 @@ function statusOf(e: unknown): number | undefined {
 }
 
 export function describeError(e: unknown, ns: string, verb: 'read' | 'write'): Error {
-  if (e instanceof AccessError || e instanceof ConflictError || e instanceof NotFoundError)
+  if (
+    e instanceof AccessError ||
+    e instanceof ConflictError ||
+    e instanceof NameTakenError ||
+    e instanceof NotFoundError
+  )
     return e;
   const s = statusOf(e);
   if (s === 401 || s === 403) return new AccessError(verb, ns);
@@ -105,11 +123,12 @@ export function fromConfigMap(cm: any, namespace: string): StoredDashboard {
       spec: empty(),
       migrated: false,
       error: `The ConfigMap has no "${DATA_KEY}" key.`,
+      raw: cm,
     };
   }
   try {
     const { spec, migrated } = parseSpec(text);
-    return { name, namespace, resourceVersion, spec, migrated };
+    return { name, namespace, resourceVersion, spec, migrated, raw: cm };
   } catch (e) {
     return {
       name,
@@ -119,24 +138,42 @@ export function fromConfigMap(cm: any, namespace: string): StoredDashboard {
       migrated: false,
       error: e instanceof Error ? e.message : String(e),
       tooNew: e instanceof SpecVersionError,
+      raw: cm,
     };
   }
 }
 
+/**
+ * The ConfigMap to write. With `base` (the object as loaded), only `data["dashboard.json"]` and
+ * the dashboard label change. Other labels, annotations, owner references and data keys stay,
+ * and so does the resourceVersion, so a replace does not wipe what other tools added.
+ */
 export function toConfigMap(
   name: string,
   namespace: string,
   spec: DashboardSpec,
-  resourceVersion?: string
+  resourceVersion?: string,
+  base?: any
 ): any {
   const stamped: DashboardSpec = { ...spec, modifiedAt: new Date().toISOString() };
+  const loaded = base && typeof base === 'object' ? base : undefined;
+  // The server keeps its own managed fields, so they are not sent back.
+  const meta: Record<string, any> = { ...loaded?.metadata };
+  delete meta.managedFields;
   const cm: any = {
+    ...loaded,
     apiVersion: 'v1',
     kind: 'ConfigMap',
-    metadata: { name, namespace, labels: { [DASHBOARD_LABEL]: 'true' } },
-    data: { [DATA_KEY]: serialiseSpec(stamped) },
+    metadata: {
+      ...meta,
+      name,
+      namespace,
+      labels: { ...meta.labels, [DASHBOARD_LABEL]: 'true' },
+    },
+    data: { ...loaded?.data, [DATA_KEY]: serialiseSpec(stamped) },
   };
-  if (resourceVersion) cm.metadata.resourceVersion = resourceVersion;
+  const version = resourceVersion || meta.resourceVersion;
+  if (version) cm.metadata.resourceVersion = version;
   return cm;
 }
 
@@ -171,15 +208,20 @@ export function createStorage(transport: Transport, namespace: string) {
       });
     },
 
-    /** Create a new ConfigMap. A taken name (HTTP 409) is a `ConflictError`. */
+    /** Create a new ConfigMap. A taken name (HTTP 409) is a `NameTakenError`. */
     create(name: string, spec: DashboardSpec): Promise<StoredDashboard> {
       return guard('write', async () => {
-        const cm = await transport.request(withManager(base(namespace)), {
-          method: 'POST',
-          headers: JSON_HEADERS,
-          body: JSON.stringify(toConfigMap(name, namespace, spec)),
-        });
-        return fromConfigMap(cm, namespace);
+        try {
+          const cm = await transport.request(withManager(base(namespace)), {
+            method: 'POST',
+            headers: JSON_HEADERS,
+            body: JSON.stringify(toConfigMap(name, namespace, spec)),
+          });
+          return fromConfigMap(cm, namespace);
+        } catch (e) {
+          if (statusOf(e) === 409) throw new NameTakenError(name, namespace);
+          throw e;
+        }
       });
     },
 
@@ -188,7 +230,7 @@ export function createStorage(transport: Transport, namespace: string) {
      * (HTTP 409, `ConflictError`) when the ConfigMap changed since it was read.
      */
     save(
-      stored: Pick<StoredDashboard, 'name' | 'resourceVersion' | 'tooNew' | 'error'>,
+      stored: Pick<StoredDashboard, 'name' | 'resourceVersion' | 'tooNew' | 'error' | 'raw'>,
       spec: DashboardSpec
     ): Promise<StoredDashboard> {
       if (stored.tooNew || stored.error) {
@@ -202,7 +244,9 @@ export function createStorage(transport: Transport, namespace: string) {
           {
             method: 'PUT',
             headers: JSON_HEADERS,
-            body: JSON.stringify(toConfigMap(stored.name, namespace, spec, stored.resourceVersion)),
+            body: JSON.stringify(
+              toConfigMap(stored.name, namespace, spec, stored.resourceVersion, stored.raw)
+            ),
           }
         );
         return fromConfigMap(cm, namespace);
@@ -220,3 +264,28 @@ export function createStorage(transport: Transport, namespace: string) {
 }
 
 export type DashboardStorage = ReturnType<typeof createStorage>;
+
+/**
+ * Create a dashboard under a free name made from the title. `taken` holds the names of the known
+ * dashboards. The list shows only labelled ConfigMaps, so a name can still be taken by one without
+ * the label. The server then answers 409, and this tries the next free name.
+ */
+export async function createWithFreeName(
+  storage: Pick<DashboardStorage, 'create' | 'namespace'>,
+  title: string,
+  spec: DashboardSpec,
+  taken: string[],
+  attempts = 5
+): Promise<StoredDashboard> {
+  const tried: string[] = [];
+  for (let i = 0; i < attempts; i += 1) {
+    const name = uniqueSlug(slugify(title), [...taken, ...tried]);
+    try {
+      return await storage.create(name, spec);
+    } catch (e) {
+      if (!(e instanceof NameTakenError)) throw e;
+      tried.push(name);
+    }
+  }
+  throw new NameTakenError(tried[tried.length - 1] ?? slugify(title), storage.namespace);
+}
