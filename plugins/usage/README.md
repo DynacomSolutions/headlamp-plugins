@@ -272,7 +272,7 @@ Settings (Headlamp **Settings > Plugins > usage**, stored in the browser):
 
 ## Dashboards widgets
 
-When the [Dashboards plugin](../dashboards/README.md) is installed, this plugin adds two widgets to its palette,
+When the [Dashboards plugin](../dashboards/README.md) is installed, this plugin adds three widgets to its palette,
 through the cross-plugin `window.headlampDashboards` contract (`src/dashboardsContract.ts` is a copy of the
 contract file). The registration works in any plugin load order. The Usage pages do not change.
 
@@ -280,11 +280,18 @@ contract file). The registration works in any plugin load order. The Usage pages
 | --- | --- |
 | `usage.sunburst` | CPU or memory as a two-level sunburst: the full circle is the cluster capacity (`kube_node_status_capacity`), the filled part is the use. The groups are the namespaces, workloads, nodes or a pod label. Each group has its children inside it (workloads, nodes or namespaces). Every group has its own arc. |
 | `usage.donut` | One donut for CPU, memory, disk or network, with a legend of every group (the `DonutCard` of the Usage page). |
+| `usage.dashboard-rings` | The Usage > Dashboard page itself: the CPU and memory sunbursts of every node, drawn by the same code, with zoom, Up, Open, the details card, the ring toggle and the node and category filters. Settings: `rings` (2 to 6, start value, default 4) and `filters` (show the filters, default on). |
 
 Both use the same data code as the Usage page. They take the dashboard filters into account: the namespaces,
 the nodes and the time range (5 and 15 minutes use the 1 hour data). The label selector is not used. They fetch
 when a filter, a setting or the dashboard refresh signal changes. Grouping by pod label needs
 `kube_pod_labels` (kube-state-metrics) and, over 24 hours, one of the recorded label keys.
+
+`usage.dashboard-rings` ignores the dashboard filters. It has its own node and category filters, as the page
+has. It keeps the zoom, the selection, the filters and the ring count in local state and never writes to the
+page URL. It fills the widget: the charts sit side by side, or one above the other in a narrow widget. It
+fetches once and then when the dashboard refresh signal changes, with no timer, and not when widgets move.
+In the kiosk it uses black surfaces, touch filters and the idle reset of the page.
 
 ## Groups that cannot be placed (workload fallback)
 

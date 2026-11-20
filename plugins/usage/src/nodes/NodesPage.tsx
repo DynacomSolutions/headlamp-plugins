@@ -14,10 +14,8 @@ import Button from '@mui/material/Button';
 import React from 'react';
 import { Redirect, useHistory, useLocation } from 'react-router-dom';
 import { useNodesSettings } from '../settings';
-import { iconUrl } from './agents';
 import { Filters } from './Filters';
 import { enterBrowserFullscreen, KioskOverlay } from './Kiosk';
-import type { NameContext } from './names';
 import {
   buildNodesPath,
   legacyPathRedirect,
@@ -26,11 +24,10 @@ import {
   parseNodesUrl,
   serialiseNodesUrl,
 } from './nodesUrl';
-import { agentAlertText, NodeView } from './NodeView';
-import { buildCombinedTree } from './tree';
+import { NodeView } from './NodeView';
 import { useIdle } from './useIdle';
-import { useNamespaceNames } from './useNamespaceNames';
 import { useNodesData } from './useNodesData';
+import { useNodeTrees } from './useNodeTrees';
 
 export function NodesPage(): JSX.Element {
   const history = useHistory();
@@ -71,30 +68,7 @@ export function NodesPage(): JSX.Element {
     resetZoom
   );
 
-  // The selection: the chosen nodes that have metrics; none chosen (or none left) means all.
-  const selected = React.useMemo(() => {
-    const picked = data.metrics.filter(m => state.nodes.includes(m.node));
-    return picked.length ? picked : data.metrics;
-  }, [data.metrics, state.nodes]);
-  const nsNames = useNamespaceNames();
-  const names = React.useMemo<NameContext>(
-    () => ({ overrides: settings.displayNames, namespaces: nsNames }),
-    [settings.displayNames, nsNames]
-  );
-  const trees = React.useMemo(() => {
-    const hostOf = (n: string) => data.agents.get(n) ?? null;
-    const src = (n: string, id: string) => {
-      const h = hostOf(n);
-      return h ? iconUrl(h.backend, id) : '';
-    };
-    return {
-      cpu: buildCombinedTree(selected, hostOf, 'cpu', src, state.cats, names),
-      mem: buildCombinedTree(selected, hostOf, 'memory', src, state.cats, names),
-    };
-  }, [selected, data.agents, state.cats, names]);
-  const alerts = selected
-    .filter(m => data.nodeErrors.has(m.node))
-    .map(m => `${m.node}: ${agentAlertText(data.nodeErrors.get(m.node) ?? '', data.agentsAsOf.get(m.node))}`);
+  const { cpu, mem, alerts } = useNodeTrees(data, state.nodes, state.cats);
 
   const filters = (
     <Filters
@@ -161,8 +135,8 @@ export function NodesPage(): JSX.Element {
       <>
         {banners}
         <NodeView
-          cpu={trees.cpu}
-          mem={trees.mem}
+          cpu={cpu}
+          mem={mem}
           alerts={alerts}
           path={state.path}
           sel={state.sel}

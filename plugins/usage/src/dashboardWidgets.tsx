@@ -4,6 +4,8 @@
  *   usage.sunburst  CPU or memory as a two-level sunburst: full circle = cluster capacity,
  *                   filled = used. Grouped by namespace, workload, node or a pod label.
  *   usage.donut     One donut for a resource, grouped the same way, with a legend of every group.
+ *   usage.dashboard-rings  The Usage > Dashboard page itself, as a widget: both sunbursts with the
+ *                   same zoom, selection, filters and data (see nodes/UsageRings.tsx).
  * They use the same data code as the Usage page (fetchUsage and the model). They fetch when the
  * dashboard filters, their settings or the dashboard refresh signal change, never on their own timer.
  * Dashboard filters: the namespaces, the nodes and the time range. The label selector is not used,
@@ -43,6 +45,8 @@ import {
   totalOf,
   UsageRow,
 } from './model';
+import { MAX_RINGS, MIN_RINGS } from './nodes/nodesUrl';
+import { DEFAULT_RINGS_CONFIG, ringsOf, UsageRings, UsageRingsConfig } from './nodes/UsageRings';
 import { assignColours } from './palette';
 import { rangeSeconds, RESOURCES } from './resources';
 import { formatBytes, formatCores } from './units';
@@ -372,7 +376,58 @@ export const usageDonutWidget: WidgetDefinition<UsageWidgetConfig> = {
   Component: UsageDonutWidget,
 };
 
-export const USAGE_WIDGETS = [usageSunburstWidget, usageDonutWidget];
+function UsageDashboardRingsWidget({
+  config,
+  refreshSignal,
+  reportRefreshed,
+  kiosk,
+}: WidgetProps<UsageRingsConfig>): JSX.Element {
+  return (
+    <UsageRings
+      config={{ ...config, rings: ringsOf(config.rings) }}
+      refreshSignal={refreshSignal}
+      reportRefreshed={reportRefreshed}
+      kiosk={kiosk}
+    />
+  );
+}
+
+/** The Usage > Dashboard page as a widget. It has its own filters, so it ignores the dashboard ones. */
+export const usageDashboardRingsWidget: WidgetDefinition<UsageRingsConfig> = {
+  type: 'usage.dashboard-rings',
+  title: 'Usage dashboard rings',
+  description:
+    'The Usage dashboard: CPU and memory sunbursts of every node, with tap to zoom, back, details and filters.',
+  icon: 'mdi:chart-donut',
+  category: 'Charts',
+  defaultSize: { w: 12, h: 18 },
+  minSize: { w: 4, h: 10 },
+  defaultConfig: DEFAULT_RINGS_CONFIG,
+  configSchema: [
+    {
+      key: 'rings',
+      label: 'Rings',
+      type: 'number',
+      min: MIN_RINGS,
+      max: MAX_RINGS,
+      step: 1,
+      help: 'Rings in each chart at the start. The widget has its own ring toggle.',
+    },
+    {
+      key: 'filters',
+      label: 'Show node and category filters',
+      type: 'boolean',
+    },
+  ],
+  selfScroll: true,
+  Component: UsageDashboardRingsWidget,
+};
+
+export const USAGE_WIDGETS: Array<WidgetDefinition<any>> = [
+  usageSunburstWidget,
+  usageDonutWidget,
+  usageDashboardRingsWidget,
+];
 
 /** Registers the widgets. Safe in any plugin load order (see dashboardsContract.ts). */
 export function registerUsageWidgets(): void {

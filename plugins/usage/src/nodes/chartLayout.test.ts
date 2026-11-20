@@ -31,6 +31,17 @@ describe('chartLayout', () => {
     expect(chartLayout(100, 110).twoUp).toBe(false);
   });
 
+  it('lets a widget pick the layout with the bigger charts', () => {
+    // Wide and short: side by side.
+    expect(chartLayout(1200, 500, false, false, true)).toEqual({ size: 436, twoUp: true });
+    // Narrow and tall: stacked at 378, instead of two charts at 252.
+    expect(chartLayout(520, 900, false, false, true)).toEqual({ size: 378, twoUp: false });
+    // The page rule would have chosen side by side at 252 here.
+    expect(chartLayout(520, 900).twoUp).toBe(true);
+    // Never under the minimum chart size.
+    expect(chartLayout(100, 100, false, false, true).size).toBe(200);
+  });
+
   it('stacks full width charts on a phone in portrait', () => {
     expect(chartLayout(390, 700, true, true)).toEqual({ size: 390, twoUp: false });
     // The page scrolls, so a short room does not shrink them.
