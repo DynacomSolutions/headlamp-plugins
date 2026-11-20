@@ -277,4 +277,17 @@ export function viewToSearch(v: View): string {
 }
 
 export const BASE_PATH = '/updates';
-export const detailPath = (id: string) => `${BASE_PATH}/${encodeURIComponent(id)}`;
+
+/**
+ * The list path of the current location. Headlamp serves the route under a cluster prefix
+ * (/c/<cluster>/updates/<id>), so the prefix is kept. On a detail page the last segment is the id.
+ */
+export function updatesBase(pathname: string, onDetail: boolean): string {
+  const path = pathname.replace(/\/+$/, '');
+  if (!onDetail) return path || BASE_PATH;
+  const cut = path.lastIndexOf('/');
+  return cut > 0 ? path.slice(0, cut) : BASE_PATH;
+}
+
+export const detailPath = (id: string, base: string = BASE_PATH) =>
+  `${base}/${encodeURIComponent(id)}`;

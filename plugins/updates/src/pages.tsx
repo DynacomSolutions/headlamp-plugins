@@ -20,7 +20,6 @@ import React from 'react';
 import { Link as RouterLink, useHistory, useLocation, useParams } from 'react-router-dom';
 import { LoadState, useReport } from './data';
 import {
-  BASE_PATH,
   blockerChain,
   Component,
   countsOf,
@@ -35,6 +34,7 @@ import {
   SortKey,
   STALE_AFTER_HOURS,
   STATUSES,
+  updatesBase,
   View,
   viewFromSearch,
   viewToSearch,
@@ -200,6 +200,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 function ListView({ report }: { report: Report }) {
   const history = useHistory();
   const location = useLocation();
+  const base = updatesBase(location.pathname, false);
   const view = viewFromSearch(location.search);
   const setView = (patch: Partial<View>) =>
     history.replace({ pathname: location.pathname, search: viewToSearch({ ...view, ...patch }) });
@@ -287,7 +288,7 @@ function ListView({ report }: { report: Report }) {
                 <TableCell>
                   <MuiLink
                     component={RouterLink}
-                    to={{ pathname: detailPath(c.id), search: location.search }}
+                    to={{ pathname: detailPath(c.id, base), search: location.search }}
                   >
                     {c.name}
                   </MuiLink>
@@ -340,14 +341,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function ComponentLinks({ list, search }: { list: Component[]; search: string }) {
+function ComponentLinks({
+  list,
+  search,
+  base,
+}: {
+  list: Component[];
+  search: string;
+  base: string;
+}) {
   if (!list.length) return <>None</>;
   return (
     <>
       {list.map((x, i) => (
         <React.Fragment key={x.id}>
           {i > 0 && ', '}
-          <MuiLink component={RouterLink} to={{ pathname: detailPath(x.id), search }}>
+          <MuiLink component={RouterLink} to={{ pathname: detailPath(x.id, base), search }}>
             {x.name}
           </MuiLink>
         </React.Fragment>
@@ -358,9 +367,10 @@ function ComponentLinks({ list, search }: { list: Component[]; search: string })
 
 function DetailView({ report, id }: { report: Report; id: string }) {
   const location = useLocation();
+  const base = updatesBase(location.pathname, true);
   const c = report.components.find(x => x.id === id);
   const back = (
-    <MuiLink component={RouterLink} to={{ pathname: BASE_PATH, search: location.search }}>
+    <MuiLink component={RouterLink} to={{ pathname: base, search: location.search }}>
       Back to all components
     </MuiLink>
   );
@@ -425,12 +435,12 @@ function DetailView({ report, id }: { report: Report; id: string }) {
             {c.blockers.length ? <Blockers c={c} /> : 'Nothing'}
             {blockedBy.length > 0 && (
               <div>
-                Also blocked by <ComponentLinks list={blockedBy} search={location.search} />
+                Also blocked by <ComponentLinks list={blockedBy} search={location.search} base={base} />
               </div>
             )}
           </Field>
           <Field label="Blocks">
-            <ComponentLinks list={blocks} search={location.search} />
+            <ComponentLinks list={blocks} search={location.search} base={base} />
             {c.blocks.filter(b => !blocks.some(x => x.id === b)).length > 0 && (
               <div>
                 Not tracked: {c.blocks.filter(b => !blocks.some(x => x.id === b)).join(', ')}
