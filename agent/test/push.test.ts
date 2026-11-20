@@ -522,6 +522,26 @@ describe('push in the server', () => {
     }
   });
 
+  it('pushes when a failed diagnosis is run again and ends done', async () => {
+    const { server, api } = await start();
+    const d = device();
+    try {
+      await api('POST', `/api/push/subscriptions/${d.id}`, subscribeBody(d));
+      gate.status = 'failed';
+      const started = await api('POST', '/api/diagnoses', { alert: { name: 'NodeNotReady', severity: 'critical', labels: {}, annotations: {}, startsAt: '', fingerprint: '' } });
+      const id = started.body.id as string;
+      await until(() => svc.sent.length === 0 && true);
+      await new Promise(r => setTimeout(r, 150));
+      expect(svc.sent).toHaveLength(0); // the first run failed: no push
+      gate.status = 'done';
+      expect((await api('POST', `/api/diagnoses/${id}/rerun`, {})).status).toBe(202);
+      await until(() => svc.sent.length === 1);
+      expect(JSON.parse(decrypt(svc.sent[0]!.body, d.ecdh.getPrivateKey(), d.ecdh.getPublicKey(), d.auth))).toMatchObject({ kind: 'diagnosis', url: `/c/main/incidents/${id}` });
+    } finally {
+      await server.close();
+    }
+  });
+
   it('pushes a diagnosis that an outside agent publishes as done', async () => {
     const { server, api } = await start();
     const d = device();
