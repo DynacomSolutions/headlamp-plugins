@@ -4,6 +4,10 @@
  * components skip work.
  */
 import {
+  Band,
+  BandKey,
+  bandKeyOf,
+  BandShow,
   DashboardSpec,
   emptySection,
   emptyTab,
@@ -25,7 +29,26 @@ export function moveItem<T>(list: T[], from: number, to: number): T[] {
   return next;
 }
 
+/** The header or the footer seen as a tab with one section, or undefined for a real tab id. */
+const bandAsTab = (spec: DashboardSpec, tabId: string): { key: BandKey; tab: Tab } | undefined => {
+  const key = bandKeyOf(tabId);
+  return key
+    ? { key, tab: { id: tabId, label: key, icon: '', sections: [spec[key].section] } }
+    : undefined;
+};
+
+/** The sections of a tab, or the one section of the header or the footer. */
+export const sectionsOf = (spec: DashboardSpec, tabId: string): Section[] =>
+  bandAsTab(spec, tabId)?.tab.sections ?? spec.tabs.find(t => t.id === tabId)?.sections ?? [];
+
 const mapTab = (spec: DashboardSpec, tabId: string, fn: (t: Tab) => Tab): DashboardSpec => {
+  const band = bandAsTab(spec, tabId);
+  if (band) {
+    const n = fn(band.tab);
+    const section = n.sections[0];
+    if (n === band.tab || !section || section === spec[band.key].section) return spec;
+    return { ...spec, [band.key]: { ...spec[band.key], section } };
+  }
   let changed = false;
   const tabs = spec.tabs.map(t => {
     if (t.id !== tabId) return t;
@@ -85,6 +108,18 @@ export function deleteTab(spec: DashboardSpec, tabId: string): DashboardSpec {
 export function reorderTabs(spec: DashboardSpec, from: number, to: number): DashboardSpec {
   const tabs = moveItem(spec.tabs, from, to);
   return tabs === spec.tabs ? spec : { ...spec, tabs };
+}
+
+// ---- header and footer ----
+
+export function updateBand(
+  spec: DashboardSpec,
+  key: BandKey,
+  patch: Partial<Pick<Band, 'sticky'>> & { show?: BandShow }
+): DashboardSpec {
+  const band = spec[key];
+  const next = { ...band, ...patch };
+  return next.sticky === band.sticky && next.show === band.show ? spec : { ...spec, [key]: next };
 }
 
 // ---- sections ----
@@ -228,12 +263,10 @@ export function moveWidgetToSection(
   widgetId: string
 ): DashboardSpec {
   if (fromSectionId === toSectionId) return spec;
-  const tab = spec.tabs.find(t => t.id === tabId);
-  const widget = tab?.sections
-    .find(s => s.id === fromSectionId)
-    ?.widgets.find(w => w.id === widgetId);
-  const target = tab?.sections.find(s => s.id === toSectionId);
-  if (!tab || !widget || !target) return spec;
+  const sections = sectionsOf(spec, tabId);
+  const widget = sections.find(s => s.id === fromSectionId)?.widgets.find(w => w.id === widgetId);
+  const target = sections.find(s => s.id === toSectionId);
+  if (!widget || !target) return spec;
   return mapTab(spec, tabId, t => ({
     ...t,
     sections: t.sections.map(s => {
@@ -256,9 +289,8 @@ export function moveWidgetToTabSection(
 ): DashboardSpec {
   if (from.tabId === to.tabId)
     return moveWidgetToSection(spec, from.tabId, from.sectionId, to.sectionId, widgetId);
-  const widget = spec.tabs
-    .find(t => t.id === from.tabId)
-    ?.sections.find(s => s.id === from.sectionId)
+  const widget = sectionsOf(spec, from.tabId)
+    .find(s => s.id === from.sectionId)
     ?.widgets.find(w => w.id === widgetId);
   if (!widget) return spec;
   const removed = deleteWidget(spec, from.tabId, from.sectionId, widgetId);

@@ -1,11 +1,10 @@
 import { cleanup, fireEvent, render } from '@testing-library/react';
-import { act } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@iconify/react', () => ({ Icon: (p: { icon: string }) => <i data-icon={p.icon} /> }));
 
 import { createTheme, ThemeProvider } from '@mui/material/styles';
-import { Clock, formatClock, KioskOverlay } from './Kiosk';
+import { KioskOverlay } from './Kiosk';
 
 afterEach(() => {
   cleanup();
@@ -115,53 +114,17 @@ describe('KioskOverlay background', () => {
   });
 });
 
-describe('formatClock', () => {
-  it('gives HH:mm in 24 hours and a short date', () => {
-    expect(formatClock(new Date(2026, 10, 19, 7, 5))).toEqual({
-      time: '07:05',
-      date: 'Thu 19 Nov 2026',
-    });
-    expect(formatClock(new Date(2026, 10, 19, 23, 59)).time).toBe('23:59');
-  });
-});
-
-describe('Clock', () => {
-  it('updates on the minute boundary with one timer, and clears it on unmount', () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date(2026, 10, 19, 10, 29, 45));
-      const { container, unmount } = render(<Clock />);
-      const time = () => container.querySelector('[data-clock-time]')?.textContent;
-      expect(time()).toBe('10:29');
-      expect(container.querySelector('[data-clock-date]')?.textContent).toBe('Thu 19 Nov 2026');
-      expect(vi.getTimerCount()).toBe(1);
-      act(() => {
-        vi.advanceTimersByTime(14_000);
-      });
-      expect(time()).toBe('10:29');
-      act(() => {
-        vi.advanceTimersByTime(1_000);
-      });
-      expect(time()).toBe('10:30');
-      expect(vi.getTimerCount()).toBe(1);
-      unmount();
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-});
-
 describe('KioskOverlay layout', () => {
-  it('never scrolls, shows the clock beside Exit, and the Exit button is touch sized', () => {
+  it('never scrolls, draws no clock of its own, and the Exit button is touch sized', () => {
     const { container, getByRole } = render(
       <KioskOverlay onExit={() => undefined}>x</KioskOverlay>
     );
     const overlay = container.querySelector('[data-kiosk-overlay]') as HTMLElement;
     expect(getComputedStyle(overlay).overflow).toBe('hidden');
-    const exit = getByRole('button', { name: 'Exit full screen' });
-    const clock = container.querySelector('[data-kiosk-clock]') as HTMLElement;
-    expect(clock.parentElement).toBe(exit.parentElement);
-    expect(exit.compareDocumentPosition(clock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      parseInt(getComputedStyle(getByRole('button', { name: 'Exit full screen' })).minHeight, 10)
+    ).toBeGreaterThanOrEqual(48);
+    expect(container.querySelector('[data-kiosk-clock]')).toBeNull();
+    expect(container.querySelector('[data-clock-time]')).toBeNull();
   });
 });

@@ -21,6 +21,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, Prompt, useHistory, useLocation } from 'react-router-dom';
+import { BandActions, BandView } from './components/BandView';
 import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
 import { FilterBar } from './components/FilterBar';
 import { PaletteDrawer } from './components/PaletteDrawer';
@@ -55,11 +56,21 @@ import {
   reorderSections,
   reorderTabs,
   saveView,
+  sectionsOf,
+  updateBand,
   updateSection,
   updateTab,
   updateWidget,
 } from './spec/edit';
-import { baseWidgetType, DashboardSpec, sameFilters } from './spec/model';
+import {
+  BandKey,
+  baseWidgetType,
+  DashboardSpec,
+  FOOTER_ID,
+  HEADER_ID,
+  isBandId,
+  sameFilters,
+} from './spec/model';
 import { ConflictError, StoredDashboard } from './storage/storage';
 import {
   baseFilters,
@@ -72,6 +83,10 @@ import {
 } from './urlState';
 import { ensureClusterSources } from './widgets/panels/clusterSources';
 import { transportFor } from './widgets/panels/sourcesConfig';
+
+/** The tab id the edit operations use for a section: the header and the footer have their own. */
+const tabOf = (sectionId: string, activeTabId: string): string =>
+  isBandId(sectionId) ? sectionId : activeTabId;
 
 type SaveState = { saving: boolean; error?: string; conflict: boolean };
 
@@ -308,36 +323,50 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     []
   );
 
-  const sectionActions = React.useMemo<SectionActions>(
-    () => ({
-      rename: (id, title) => edit(s => updateSection(s, activeTabId, id, { title })),
-      setMode: (id, mode) => edit(s => updateSection(s, activeTabId, id, { mode })),
+  // One set of section actions for the tab sections, and one for each of the header and the footer.
+  const makeSectionActions = React.useCallback(
+    (tabId: string): SectionActions => ({
+      rename: (id, title) => edit(s => updateSection(s, tabId, id, { title })),
+      setMode: (id, mode) => edit(s => updateSection(s, tabId, id, { mode })),
       setHeight: (id, height) =>
         edit(s =>
-          updateSection(s, activeTabId, id, {
+          updateSection(s, tabId, id, {
             height: Math.max(120, Math.min(4000, Math.round(height) || 400)),
           })
         ),
-      setShowTitle: (id, showTitle) => edit(s => updateSection(s, activeTabId, id, { showTitle })),
+      setShowTitle: (id, showTitle) => edit(s => updateSection(s, tabId, id, { showTitle })),
       move: (id, dir) =>
         edit(s => {
-          const sections = s.tabs.find(t => t.id === activeTabId)?.sections ?? [];
+          const sections = sectionsOf(s, tabId);
           const i = sections.findIndex(x => x.id === id);
-          return reorderSections(s, activeTabId, i, i + dir);
+          return reorderSections(s, tabId, i, i + dir);
         }),
-      remove: id => edit(s => deleteSection(s, activeTabId, id)),
-      positions: (id, positions) => edit(s => applyPositions(s, activeTabId, id, positions)),
+      remove: id => edit(s => deleteSection(s, tabId, id)),
+      positions: (id, positions) => edit(s => applyPositions(s, tabId, id, positions)),
       moveWidget: (from, to, widgetId) =>
         edit(s =>
           moveWidgetToTabSection(
             s,
-            { tabId: activeTabId, sectionId: from },
-            { tabId: activeTabId, sectionId: to },
+            { tabId: tabOf(from, activeTabId), sectionId: from },
+            { tabId: tabOf(to, activeTabId), sectionId: to },
             widgetId
           )
         ),
     }),
     [edit, activeTabId]
+  );
+  const sectionActions = React.useMemo(
+    () => makeSectionActions(activeTabId),
+    [makeSectionActions, activeTabId]
+  );
+  const headerActions = React.useMemo(() => makeSectionActions(HEADER_ID), [makeSectionActions]);
+  const footerActions = React.useMemo(() => makeSectionActions(FOOTER_ID), [makeSectionActions]);
+  const bandActions = React.useMemo<BandActions>(
+    () => ({
+      setSticky: (key, sticky) => edit(s => updateBand(s, key, { sticky })),
+      setShow: (key, show) => edit(s => updateBand(s, key, { show })),
+    }),
+    [edit]
   );
 
   const tabsActions = React.useMemo<TabsActions>(
@@ -348,6 +377,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       move: (from, to) => edit(s => reorderTabs(s, from, to)),
       remove: id => edit(s => deleteTab(s, id)),
       setPosition: tabPosition => edit(s => ({ ...s, tabPosition })),
+      setRail: tabRail => edit(s => ({ ...s, tabRail })),
     }),
     [edit]
   );
@@ -405,6 +435,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     ? paletteSection
     : sectionsOfTab[0].id;
   const left = spec.tabPosition === 'left';
+  const compact = left && spec.tabRail === 'compact';
   const showTabs = spec.tabs.length > 1 || editing;
 
   const onAddWidget = (def: WidgetDefinition, sectionId: string) => {
@@ -415,8 +446,14 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     if (variant) config.source = variant.source;
     edit(
       s =>
-        addWidget(s, activeTabId, sectionId, variant?.type ?? def.type, def.defaultSize, config)
-          .spec
+        addWidget(
+          s,
+          tabOf(sectionId, activeTabId),
+          sectionId,
+          variant?.type ?? def.type,
+          def.defaultSize,
+          config
+        ).spec
     );
   };
 
@@ -461,6 +498,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   const tabBar = showTabs && (
     <Box
+      data-tab-rail={left ? (compact ? 'compact' : 'wide') : undefined}
       sx={{
         flex: 'none',
         borderBottom: left ? 0 : 1,
@@ -468,7 +506,9 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         borderColor: 'divider',
         mb: left ? 0 : 1,
         mr: left ? 1 : 0,
-        minWidth: left ? 160 : undefined,
+        // The compact rail is narrow: an icon with its label under it.
+        width: compact ? COMPACT_RAIL_WIDTH : undefined,
+        minWidth: left && !compact ? 160 : undefined,
       }}
     >
       <Tabs
@@ -483,14 +523,31 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           <Tab
             key={t.id}
             value={t.id}
-            label={t.label}
-            icon={<Icon icon={t.icon} width={20} height={20} />}
-            iconPosition="start"
-            sx={{
-              minHeight: 48,
-              textTransform: 'none',
-              justifyContent: left ? 'flex-start' : undefined,
-            }}
+            label={compact ? <RailLabel text={t.label} /> : t.label}
+            title={compact ? t.label : undefined}
+            aria-label={compact ? t.label : undefined}
+            icon={<Icon icon={t.icon} width={compact ? 24 : 20} height={compact ? 24 : 20} />}
+            iconPosition={compact ? 'top' : 'start'}
+            sx={
+              compact
+                ? {
+                    minHeight: 64,
+                    width: '100%',
+                    minWidth: 0,
+                    maxWidth: 'none',
+                    px: 0.5,
+                    py: 1,
+                    textTransform: 'none',
+                    fontSize: '0.6875rem',
+                    lineHeight: 1.2,
+                    '& .MuiTab-iconWrapper': { mb: 0.5, mr: 0 },
+                  }
+                : {
+                    minHeight: 48,
+                    textTransform: 'none',
+                    justifyContent: left ? 'flex-start' : undefined,
+                  }
+            }
           />
         ))}
       </Tabs>
@@ -514,11 +571,42 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     </Box>
   );
 
+  const bandView = (key: BandKey) => (
+    <BandView
+      bandKey={key}
+      band={spec[key]}
+      editing={editing && !save.saving}
+      kiosk={query.kiosk}
+      frameActions={frameActions}
+      sectionActions={key === 'header' ? headerActions : footerActions}
+      bandActions={bandActions}
+    />
+  );
+
+  // The header and the footer sit outside the tabs, so they stay when the tab changes. In the
+  // kiosk the block is at least as tall as the screen, so a footer sits at the bottom.
   const content = (
     <DashboardContext.Provider value={ctx}>
-      <Box sx={{ display: 'flex', flexDirection: left ? 'row' : 'column', alignItems: 'stretch' }}>
-        {tabBar}
-        {sections}
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: query.kiosk ? '100%' : undefined,
+        }}
+      >
+        {bandView('header')}
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: left ? 'row' : 'column',
+            alignItems: 'stretch',
+            flex: 1,
+          }}
+        >
+          {tabBar}
+          {sections}
+        </Box>
+        {bandView('footer')}
       </Box>
     </DashboardContext.Provider>
   );
@@ -538,7 +626,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         open={editing && paletteOpen}
         onClose={() => setPaletteOpen(false)}
         definitions={definitions}
-        sections={sectionsOfTab.map(s => ({ id: s.id, title: s.title }))}
+        sections={[
+          ...sectionsOfTab.map(s => ({ id: s.id, title: s.title })),
+          { id: HEADER_ID, title: 'Header (every tab)' },
+          { id: FOOTER_ID, title: 'Footer (every tab)' },
+        ]}
         sectionId={paletteTarget}
         onSectionChange={setPaletteSection}
         onAdd={onAddWidget}
@@ -561,12 +653,18 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       {editing && widgetSettings && (
         <WidgetSettingsHost
           spec={spec}
-          tabId={activeTabId}
+          tabId={tabOf(widgetSettings.sectionId, activeTabId)}
           target={widgetSettings}
           onCancel={() => setWidgetSettings(null)}
           onApply={r => {
             edit(s =>
-              updateWidget(s, activeTabId, widgetSettings.sectionId, widgetSettings.widgetId, r)
+              updateWidget(
+                s,
+                tabOf(widgetSettings.sectionId, activeTabId),
+                widgetSettings.sectionId,
+                widgetSettings.widgetId,
+                r
+              )
             );
             setWidgetSettings(null);
           }}
@@ -580,19 +678,30 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         {menu &&
           widgetMenuItems({
             spec,
-            tabId: activeTabId,
+            tabId: tabOf(menu.sectionId, activeTabId),
             target: menu,
             close: () => setMenu(null),
             onSettings: () =>
               setWidgetSettings({ sectionId: menu.sectionId, widgetId: menu.widgetId }),
             onDuplicate: () =>
-              edit(s => duplicateWidget(s, activeTabId, menu.sectionId, menu.widgetId).spec),
-            onDelete: () => edit(s => deleteWidget(s, activeTabId, menu.sectionId, menu.widgetId)),
+              edit(
+                s =>
+                  duplicateWidget(
+                    s,
+                    tabOf(menu.sectionId, activeTabId),
+                    menu.sectionId,
+                    menu.widgetId
+                  ).spec
+              ),
+            onDelete: () =>
+              edit(s =>
+                deleteWidget(s, tabOf(menu.sectionId, activeTabId), menu.sectionId, menu.widgetId)
+              ),
             onMove: to =>
               edit(s =>
                 moveWidgetToTabSection(
                   s,
-                  { tabId: activeTabId, sectionId: menu.sectionId },
+                  { tabId: tabOf(menu.sectionId, activeTabId), sectionId: menu.sectionId },
                   to,
                   menu.widgetId
                 )
@@ -799,6 +908,28 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   );
 }
 
+/** Width of the compact left tab rail, in px. */
+const COMPACT_RAIL_WIDTH = 80;
+
+/** The label under the icon of a compact tab: at most two lines, long words break. */
+function RailLabel({ text }: { text: string }): JSX.Element {
+  return (
+    <Box
+      component="span"
+      sx={{
+        display: '-webkit-box',
+        WebkitBoxOrient: 'vertical',
+        WebkitLineClamp: 2,
+        overflow: 'hidden',
+        overflowWrap: 'anywhere',
+        maxWidth: '100%',
+      }}
+    >
+      {text}
+    </Box>
+  );
+}
+
 function WidgetSettingsHost(props: {
   spec: DashboardSpec;
   tabId: string;
@@ -807,9 +938,8 @@ function WidgetSettingsHost(props: {
   onApply: (r: WidgetSettingsResult) => void;
 }): JSX.Element | null {
   const { spec, tabId, target } = props;
-  const widget = spec.tabs
-    .find(t => t.id === tabId)
-    ?.sections.find(s => s.id === target.sectionId)
+  const widget = sectionsOf(spec, tabId)
+    .find(s => s.id === target.sectionId)
     ?.widgets.find(w => w.id === target.widgetId);
   const def = useWidgetDefinition(widget?.type ?? '');
   if (!widget) return null;
@@ -836,16 +966,24 @@ function widgetMenuItems(props: {
   onMove: (to: { tabId: string; sectionId: string }) => void;
 }): JSX.Element[] {
   const { spec, tabId, target, close } = props;
-  const destinations = spec.tabs.flatMap(t =>
-    t.sections
-      .filter(s => !(t.id === tabId && s.id === target.sectionId))
-      .map(s => ({
-        tabId: t.id,
-        sectionId: s.id,
-        label:
-          spec.tabs.length > 1 ? `${t.label} / ${s.title || 'Untitled'}` : s.title || 'Untitled',
-      }))
-  );
+  const destinations = [
+    ...spec.tabs.flatMap(t =>
+      t.sections
+        .filter(s => !(t.id === tabId && s.id === target.sectionId))
+        .map(s => ({
+          tabId: t.id,
+          sectionId: s.id,
+          label:
+            spec.tabs.length > 1 ? `${t.label} / ${s.title || 'Untitled'}` : s.title || 'Untitled',
+        }))
+    ),
+    ...(target.sectionId === HEADER_ID
+      ? []
+      : [{ tabId: HEADER_ID, sectionId: HEADER_ID, label: 'Header (every tab)' }]),
+    ...(target.sectionId === FOOTER_ID
+      ? []
+      : [{ tabId: FOOTER_ID, sectionId: FOOTER_ID, label: 'Footer (every tab)' }]),
+  ];
   const run = (fn: () => void) => () => {
     fn();
     close();

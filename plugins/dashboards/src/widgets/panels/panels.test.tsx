@@ -337,7 +337,13 @@ describe('agent panel widget', () => {
 
   it('is registered with a settings component and no raw id in its defaults', () => {
     expect(panelWidget.type).toBe('agent.panel');
-    expect(panelWidget.defaultConfig).toEqual({ source: 'agent', panel: '' });
+    expect(panelWidget.defaultConfig).toEqual({
+      source: 'agent',
+      panel: '',
+      showSummary: true,
+      showStats: true,
+      rowLayout: 'list',
+    });
     expect(panelWidget.SettingsComponent).toBeDefined();
   });
 });

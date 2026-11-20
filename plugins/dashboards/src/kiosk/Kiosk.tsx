@@ -1,7 +1,7 @@
 /*
- * COPY of plugins/usage/src/nodes/Kiosk.tsx. Headlamp plugins are separate bundles, so the kiosk
- * cannot be imported from the Usage plugin. Keep both in step when you change the kiosk
- * behaviour. Only this comment differs.
+ * Adapted from plugins/usage/src/nodes/Kiosk.tsx. Headlamp plugins are separate bundles, so the
+ * kiosk cannot be imported from the Usage plugin. This copy has no built-in clock: a clock is a
+ * normal clock widget that the dashboard puts in its header (see the README).
  */
 /*
  * Kiosk view of the dashboard: a fixed overlay over Headlamp's app bar and sidebar, so only the
@@ -10,13 +10,12 @@
  * ?kiosk=1 shows the overlay without it). Leaving the browser's full screen by any other way
  * (Esc, F11, a system gesture) leaves the kiosk too; being not full screen on boot does not.
  * The screen is a touch screen: no scrollbars, no focus rings or outlines, no hover states.
- * The active state shows as a change of fill, with a short transition. It also shows a clock.
+ * The active state shows as a change of fill, with a short transition.
  */
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import { createTheme, ThemeProvider, useTheme } from '@mui/material/styles';
-import Typography from '@mui/material/Typography';
 import React from 'react';
 
 /** Asks the browser for full screen, where it can; a refusal is ignored. */
@@ -77,56 +76,6 @@ export const kioskQuietSx = {
   },
 } as const;
 
-const TIME_STEP_MS = 60_000;
-
-/** Time as HH:mm (24 h) and date as "Thu 19 Nov 2026", in the browser's local time. */
-export function formatClock(d: Date): { time: string; date: string } {
-  const two = (n: number) => String(n).padStart(2, '0');
-  const part = (o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-GB', o).format(d);
-  return {
-    time: `${two(d.getHours())}:${two(d.getMinutes())}`,
-    date: `${part({ weekday: 'short' })} ${d.getDate()} ${part({
-      month: 'short',
-    })} ${d.getFullYear()}`,
-  };
-}
-
-/** The current time, updated on each minute boundary with one timer at a time. */
-export function useMinuteClock(): Date {
-  const [now, setNow] = React.useState(() => new Date());
-  React.useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    const tick = () => {
-      const t = new Date();
-      setNow(t);
-      timer = setTimeout(tick, TIME_STEP_MS - (t.getTime() % TIME_STEP_MS));
-    };
-    const t = new Date();
-    timer = setTimeout(tick, TIME_STEP_MS - (t.getTime() % TIME_STEP_MS));
-    return () => clearTimeout(timer);
-  }, []);
-  return now;
-}
-
-/** Large time over the date, for the top right corner. */
-export function Clock(): JSX.Element {
-  const { time, date } = formatClock(useMinuteClock());
-  return (
-    <Box data-kiosk-clock sx={{ flex: 'none', textAlign: 'right', lineHeight: 1.1, pl: 1 }}>
-      <Typography
-        component="div"
-        data-clock-time
-        sx={{ fontSize: 40, fontWeight: 600, lineHeight: 1 }}
-      >
-        {time}
-      </Typography>
-      <Typography component="div" data-clock-date color="text.secondary" sx={{ fontSize: 16 }}>
-        {date}
-      </Typography>
-    </Box>
-  );
-}
-
 /** Pure black, so an OLED screen switches its pixels off. */
 export const KIOSK_BLACK = '#000';
 
@@ -181,7 +130,7 @@ export function KioskOverlay(props: {
     onExit();
   };
 
-  const exitButton0 = (
+  const exitButton = (
     <Button
       variant="contained"
       onClick={leave}
@@ -191,13 +140,6 @@ export function KioskOverlay(props: {
     >
       Exit full screen
     </Button>
-  );
-  // The Exit control and the clock sit together in the top right corner, the clock last.
-  const exitButton = (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: 'none' }}>
-      {exitButton0}
-      <Clock />
-    </Box>
   );
   const inline = typeof children === 'function';
 

@@ -17,51 +17,12 @@ import {
   PanelStatus,
   ringToSunburst,
 } from './model';
+import { PanelBars } from './PanelBars';
 import { PanelTables } from './PanelTables';
 import { Sparkline } from './Sparkline';
+import { STATUS_WORD, StatusMark, useStatusColours } from './StatusMark';
 
-export const STATUS_WORD: Record<PanelStatus, string> = {
-  ok: 'OK',
-  warn: 'Warning',
-  crit: 'Critical',
-  unknown: 'Unknown',
-};
-
-/** Status colours from the theme. They are reserved for status, never used for a series. */
-export function useStatusColours(): Record<PanelStatus, string> {
-  const t = useTheme();
-  return {
-    ok: t.palette.success.main,
-    warn: t.palette.warning.main,
-    crit: t.palette.error.main,
-    unknown: t.palette.text.secondary,
-  };
-}
-
-/** A status mark with its own shape: circle (ok), triangle (warning), square (critical), ring (unknown). */
-export function StatusMark(props: { status: PanelStatus; size?: number }): JSX.Element {
-  const colours = useStatusColours();
-  const { status, size = 12 } = props;
-  const c = colours[status];
-  return (
-    <svg
-      role="img"
-      aria-label={STATUS_WORD[status]}
-      width={size}
-      height={size}
-      viewBox="0 0 12 12"
-      data-status={status}
-      style={{ flex: 'none' }}
-    >
-      {status === 'ok' && <circle cx="6" cy="6" r="5" fill={c} />}
-      {status === 'warn' && <path d="M6 1 L11 11 L1 11 Z" fill={c} />}
-      {status === 'crit' && <rect x="1.5" y="1.5" width="9" height="9" rx="1" fill={c} />}
-      {status === 'unknown' && (
-        <circle cx="6" cy="6" r="4" fill="none" stroke={c} strokeWidth="2" />
-      )}
-    </svg>
-  );
-}
+export { STATUS_WORD, StatusMark, useStatusColours };
 
 function Label(props: { row: PanelRow; editing: boolean }): JSX.Element {
   const { row, editing } = props;
@@ -117,13 +78,50 @@ export const ringFormat =
     return `${v}`;
   };
 
+/** How the rows draw: a table (`list`) or one bar per label with a segment per row (`grouped-bars`). */
+export type RowLayout = 'list' | 'grouped-bars';
+export const ROW_LAYOUTS: ReadonlyArray<RowLayout> = ['list', 'grouped-bars'];
+
+export interface PanelDisplay {
+  /** The status line with the summary. Default on. */
+  showSummary: boolean;
+  /** The stat tiles. Default on. */
+  showStats: boolean;
+  rowLayout: RowLayout;
+}
+
+export const DEFAULT_DISPLAY: PanelDisplay = {
+  showSummary: true,
+  showStats: true,
+  rowLayout: 'list',
+};
+
+/** Reads the display options of a saved widget config. A missing or wrong value gets its default. */
+export function displayOf(config: {
+  showSummary?: unknown;
+  showStats?: unknown;
+  rowLayout?: unknown;
+}): PanelDisplay {
+  return {
+    showSummary: config.showSummary !== false,
+    showStats: config.showStats !== false,
+    rowLayout: config.rowLayout === 'grouped-bars' ? 'grouped-bars' : 'list',
+  };
+}
+
 export interface PanelViewProps {
   panel: PanelModel;
   kiosk: boolean;
   editing: boolean;
+  display?: PanelDisplay;
 }
 
-export function PanelView({ panel, kiosk, editing }: PanelViewProps): JSX.Element {
+export function PanelView({
+  panel,
+  kiosk,
+  editing,
+  display = DEFAULT_DISPLAY,
+}: PanelViewProps): JSX.Element {
   const withBar = panel.rows.some(r => r.fraction !== undefined);
   if (isEmptyPanel(panel)) {
     return (
@@ -139,7 +137,7 @@ export function PanelView({ panel, kiosk, editing }: PanelViewProps): JSX.Elemen
       data-panel={panel.id}
       sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, minWidth: 0 }}
     >
-      {(panel.summary || panel.status !== 'unknown') && (
+      {display.showSummary && (panel.summary || panel.status !== 'unknown') && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <StatusMark status={panel.status} size={14} />
           <Typography variant="body2" data-panel-summary sx={{ fontWeight: 500 }}>
@@ -147,7 +145,7 @@ export function PanelView({ panel, kiosk, editing }: PanelViewProps): JSX.Elemen
           </Typography>
         </Box>
       )}
-      {panel.stats.length > 0 && (
+      {display.showStats && panel.stats.length > 0 && (
         <Box
           sx={{
             display: 'grid',
@@ -221,7 +219,10 @@ export function PanelView({ panel, kiosk, editing }: PanelViewProps): JSX.Elemen
           ))}
         </Box>
       )}
-      {panel.rows.length > 0 && (
+      {panel.rows.length > 0 && display.rowLayout === 'grouped-bars' && (
+        <PanelBars rows={panel.rows} kiosk={kiosk} editing={editing} />
+      )}
+      {panel.rows.length > 0 && display.rowLayout === 'list' && (
         <Box
           component="table"
           data-rows

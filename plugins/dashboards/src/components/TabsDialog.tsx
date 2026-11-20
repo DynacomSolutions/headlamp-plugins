@@ -12,7 +12,7 @@ import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import type { DashboardSpec, TabPosition } from '../spec/model';
+import type { DashboardSpec, TabPosition, TabRail } from '../spec/model';
 import { IconPickerDialog } from './IconPicker';
 
 export interface TabsActions {
@@ -22,6 +22,7 @@ export interface TabsActions {
   move(from: number, to: number): void;
   remove(tabId: string): void;
   setPosition(p: TabPosition): void;
+  setRail(r: TabRail): void;
 }
 
 export function TabsDialog(props: {
@@ -49,6 +50,21 @@ export function TabsDialog(props: {
             <ToggleButton value="left">Left side</ToggleButton>
           </ToggleButtonGroup>
         </Box>
+        {spec.tabPosition === 'left' && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+            <Typography variant="body2">Left tab style</Typography>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              value={spec.tabRail}
+              aria-label="Left tab style"
+              onChange={(_e, v: TabRail | null) => v && actions.setRail(v)}
+            >
+              <ToggleButton value="compact">Compact rail</ToggleButton>
+              <ToggleButton value="wide">Wide</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+        )}
         {spec.tabs.map((t, i) => (
           <Box key={t.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.5 }}>
             <IconButton

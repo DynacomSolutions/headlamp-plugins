@@ -64,6 +64,8 @@ export interface SectionViewProps {
   kiosk: boolean;
   frameActions: FrameActions;
   actions: SectionActions;
+  /** The header and the footer own their edit controls, so the section draws none of its own. */
+  bare?: boolean;
 }
 
 const limitsOf = (type: string): Pick<WidgetDefinition, 'minSize' | 'maxSize'> | undefined =>
@@ -155,7 +157,7 @@ function SectionHeader(
 }
 
 function SectionViewImpl(props: SectionViewProps): JSX.Element {
-  const { section, index, count, editing, kiosk, frameActions, actions } = props;
+  const { section, index, count, editing, kiosk, frameActions, actions, bare } = props;
   const [breakpoint, setBreakpoint] = React.useState<Breakpoint>('lg');
   const canEditLayout = editing && isEditableBreakpoint(breakpoint);
 
@@ -203,7 +205,9 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
         ...(editing ? { border: '1px dashed', borderColor: 'divider', borderRadius: 1, p: 1 } : {}),
       }}
     >
-      {editing && <SectionHeader section={section} index={index} count={count} actions={actions} />}
+      {editing && !bare && (
+        <SectionHeader section={section} index={index} count={count} actions={actions} />
+      )}
       {!editing && section.showTitle && section.title && (
         <Typography variant="subtitle1" component="h2" sx={{ mb: 0.5 }}>
           {section.title}
@@ -260,7 +264,7 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
           </Typography>
         )}
       </Box>
-      {editing && section.mode !== 'flow' && (
+      {editing && !bare && section.mode !== 'flow' && (
         <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
           {section.mode === 'self-scroll'
             ? 'In view mode this section keeps its height and scrolls inside.'
