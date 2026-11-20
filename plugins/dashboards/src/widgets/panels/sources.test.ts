@@ -7,9 +7,12 @@ import {
   draftToSource,
   listUrl,
   normalisePrefix,
+  overriddenClusterIds,
   panelUrl,
+  parseClusterSources,
   readDrafts,
   resolveSources,
+  serialiseClusterSources,
   SOURCES_KEY,
   sourceUrl,
 } from './sources';
@@ -160,5 +163,129 @@ describe('URL building', () => {
     expect(normalisePrefix('')).toBe('');
     expect(normalisePrefix('/')).toBe('');
     expect(normalisePrefix('a/b/')).toBe('/a/b');
+  });
+});
+
+describe('draft rules that keep a source safe in a URL path', () => {
+  const ok = { ...blankDraft('a'), namespace: 'n', service: 's' };
+  it('accepts names, ports and prefixes that Kubernetes allows', () => {
+    expect(draftProblem({ ...ok, port: 'widgets', pathPrefix: '/my-app/v1.2' })).toBeNull();
+    expect(draftProblem({ ...ok, port: '65535' })).toBeNull();
+  });
+  it('rejects names that are not Kubernetes names', () => {
+    expect(draftProblem({ ...ok, namespace: '..' })).toMatch(/namespace must/);
+    expect(draftProblem({ ...ok, namespace: 'A/b' })).toMatch(/namespace must/);
+    expect(draftProblem({ ...ok, service: 'x/../y' })).toMatch(/service must/);
+    expect(draftProblem({ ...ok, service: 'a:80' })).toMatch(/service must/);
+  });
+  it('rejects a bad port', () => {
+    expect(draftProblem({ ...ok, port: '0' })).toMatch(/port must/);
+    expect(draftProblem({ ...ok, port: '70000' })).toMatch(/port must/);
+    expect(draftProblem({ ...ok, port: '80/x' })).toMatch(/port must/);
+  });
+  it('rejects a prefix that climbs out of the proxy path', () => {
+    expect(draftProblem({ ...ok, pathPrefix: '/../api' })).toMatch(/path prefix/);
+    expect(draftProblem({ ...ok, pathPrefix: '/a/./b' })).toMatch(/path prefix/);
+    expect(draftProblem({ ...ok, pathPrefix: '/a b' })).toMatch(/path prefix/);
+    expect(draftProblem({ ...ok, pathPrefix: '/a?x=1' })).toMatch(/path prefix/);
+  });
+  it('rejects a URL with a password, and a long title', () => {
+    expect(
+      draftProblem({
+        ...blankDraft('u'),
+        kind: 'url',
+        baseUrl: ['https://me:pw', 'x.example.com'].join('@'),
+      })
+    ).toMatch(/user name/);
+    expect(draftProblem({ ...ok, title: 'x'.repeat(81) })).toMatch(/title/);
+  });
+});
+
+describe('cluster sources', () => {
+  const svc = (id: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    title: id.toUpperCase(),
+    icon: 'mdi:database',
+    kind: 'service',
+    namespace: 'apps',
+    service: id,
+    port: '80',
+    ...extra,
+  });
+  const file = (sources: unknown[], version: unknown = 1) => JSON.stringify({ version, sources });
+
+  it('reads a valid file', () => {
+    const r = parseClusterSources(file([svc('one'), svc('two', { port: 'widgets' })]));
+    expect(r.problems).toEqual([]);
+    expect(r.sources.map(s => s.id)).toEqual(['one', 'two']);
+    expect(r.sources[0]).toMatchObject({ kind: 'service', pathPrefix: '', title: 'ONE' });
+  });
+  it('gives a reason and no sources for a file that cannot be used', () => {
+    expect(parseClusterSources(undefined).problems[0]).toMatch(/no "sources.json" key/);
+    expect(parseClusterSources('{').problems[0]).toMatch(/not valid JSON/);
+    expect(parseClusterSources('[]').problems[0]).toMatch(/must be an object/);
+    expect(parseClusterSources(file([svc('a')], 2)).problems[0]).toMatch(/unsupported version/);
+    expect(parseClusterSources('{"version":1}').problems[0]).toMatch(/no "sources" list/);
+    expect(parseClusterSources(' '.repeat(70 * 1024)).problems[0]).toMatch(/larger than/);
+    expect(parseClusterSources('{}').sources).toEqual([]);
+  });
+  it('ignores an unsafe or repeated entry and keeps the rest', () => {
+    const r = parseClusterSources(
+      file([
+        svc('good'),
+        svc('good'),
+        svc('agent'),
+        svc('bad-ns', { namespace: '../x' }),
+        svc('bad-prefix', { pathPrefix: '/../../x' }),
+        { id: 'ftp', kind: 'url', baseUrl: 'ftp://x.example.com' },
+        { id: 'js', kind: 'url', baseUrl: 'javascript:alert(1)' },
+        { id: 'cred', kind: 'url', baseUrl: ['https://u:p', 'x.example.com'].join('@') },
+        'text',
+        null,
+        { id: 'ok-url', kind: 'url', baseUrl: 'https://x.example.com/' },
+      ])
+    );
+    expect(r.sources.map(s => s.id)).toEqual(['good', 'ok-url']);
+    expect(r.sources[1]).toMatchObject({ baseUrl: 'https://x.example.com' });
+    expect(r.problems).toHaveLength(9);
+    expect(r.problems.join('\n')).toMatch(/"bad-ns" was ignored/);
+  });
+  it('limits the number of sources and the length of an id in a message', () => {
+    const many = Array.from({ length: 60 }, (_, i) => svc(`s${i}`));
+    const r = parseClusterSources(file(many));
+    expect(r.sources).toHaveLength(50);
+    expect(r.problems.at(-1)).toMatch(/first 50/);
+    const long = parseClusterSources(file([{ id: 'Z'.repeat(500) }]));
+    expect(long.problems[0].length).toBeLessThan(200);
+  });
+  it('writes a file that reads back the same', () => {
+    const r = parseClusterSources(
+      file([svc('one'), { id: 'u', kind: 'url', baseUrl: 'https://x.example.com' }])
+    );
+    const back = parseClusterSources(serialiseClusterSources(r.sources));
+    expect(back.problems).toEqual([]);
+    expect(back.sources).toEqual(r.sources);
+    expect(JSON.parse(serialiseClusterSources(r.sources)).version).toBe(1);
+  });
+
+  it('lists the agent, then the cluster sources, then the browser sources', () => {
+    const cluster = parseClusterSources(file([svc('c1'), svc('c2')])).sources;
+    const stored = { [SOURCES_KEY]: [svc('mine')] };
+    expect(resolveSources(stored, cluster).map(s => s.id)).toEqual(['agent', 'c1', 'c2', 'mine']);
+    expect(resolveSources(undefined, cluster).map(s => s.id)).toEqual(['agent', 'c1', 'c2']);
+  });
+  it('lets a browser source win on an id clash, and reports it', () => {
+    const cluster = parseClusterSources(file([svc('c1'), svc('c2')])).sources;
+    const stored = { [SOURCES_KEY]: [svc('c2', { namespace: 'mine', title: 'Mine' })] };
+    const list = resolveSources(stored, cluster);
+    expect(list.map(s => s.id)).toEqual(['agent', 'c1', 'c2']);
+    expect(list.find(s => s.id === 'c2')).toMatchObject({ namespace: 'mine', title: 'Mine' });
+    expect([...overriddenClusterIds(stored, cluster)]).toEqual(['c2']);
+    expect(overriddenClusterIds(undefined, cluster).size).toBe(0);
+  });
+  it('never lets a cluster source replace the agent', () => {
+    const forged = [{ ...svc('agent'), kind: 'service' as const, pathPrefix: '' }];
+    expect(resolveSources(undefined, forged).map(s => s.id)).toEqual(['agent']);
+    expect(resolveSources(undefined, forged)[0]).toMatchObject({ namespace: 'headlamp-agent' });
   });
 });

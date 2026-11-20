@@ -16,8 +16,8 @@ import { ringToSunburst } from './model';
 import { sourceOf, SourcePanelPicker } from './PanelPicker';
 import { ringFormat } from './PanelView';
 import type { PanelConfig } from './PanelWidget';
-import { AGENT_SOURCE_ID, findSource } from './sources';
-import { useSources } from './sourcesConfig';
+import { AGENT_SOURCE_ID } from './sources';
+import { useSourceLookup } from './sourcesConfig';
 
 export interface RingConfig extends PanelConfig {
   /** The ring id: `cpu` or `memory`. */
@@ -31,7 +31,7 @@ function RingWidget({
   kiosk,
 }: WidgetProps<RingConfig>): JSX.Element {
   const sourceId = sourceOf(config);
-  const source = findSource(useSources(), sourceId);
+  const { source, pending } = useSourceLookup(sourceId);
   const list = usePanelList(source, sourceId);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
   const state = usePanel(
@@ -53,7 +53,7 @@ function RingWidget({
       </Box>
     );
   }
-  if (state.loading) {
+  if (state.loading || pending) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
         <CircularProgress size={24} aria-label="Loading the ring" />

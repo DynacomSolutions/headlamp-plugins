@@ -7,13 +7,14 @@ export const apiTransport: Transport = {
 };
 
 /**
- * Whether the user may write ConfigMaps in the namespace, asked of the API server with a
+ * Whether the user may use `verbs` (default: create, update and delete) on ConfigMaps in the namespace, asked of the API server with a
  * SelfSubjectAccessReview. Returns undefined when the check itself fails, and the caller then
  * lets the user try (a refused save still shows the read-only message).
  */
 export async function canWriteConfigMaps(
   transport: Transport,
-  namespace: string
+  namespace: string,
+  verbs: ReadonlyArray<string> = ['create', 'update', 'delete']
 ): Promise<boolean | undefined> {
   const check = async (verb: string): Promise<boolean> => {
     const res = await transport.request('/apis/authorization.k8s.io/v1/selfsubjectaccessreviews', {
@@ -28,7 +29,7 @@ export async function canWriteConfigMaps(
     return res?.status?.allowed === true;
   };
   try {
-    const results = await Promise.all(['create', 'update', 'delete'].map(check));
+    const results = await Promise.all(verbs.map(check));
     return results.every(Boolean);
   } catch {
     return undefined;

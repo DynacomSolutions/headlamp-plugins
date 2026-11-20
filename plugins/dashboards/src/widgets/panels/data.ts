@@ -186,7 +186,7 @@ export async function testSource(source: PanelSource, cluster?: string): Promise
 }
 
 const missing = (id: string): string =>
-  `The source "${id}" is not configured. Choose another source in the widget settings, or add it on the Dashboards settings page.`;
+  `The source "${id}" is not configured. Choose another source in the widget settings, or add it on the Dashboards settings page. A cluster source needs read access to the ConfigMap dashboard-sources in the dashboards namespace.`;
 
 export interface PanelListState {
   loading: boolean;

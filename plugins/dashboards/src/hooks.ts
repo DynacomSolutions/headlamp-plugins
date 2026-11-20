@@ -6,7 +6,8 @@ import { getRegistry } from './registry';
 import { useDashboardNamespace } from './settings';
 import { createStorage, DashboardStorage, StoredDashboard } from './storage/storage';
 import { apiTransport, canWriteConfigMaps } from './transport';
-import { useSources } from './widgets/panels/sourcesConfig';
+import { loadClusterSources } from './widgets/panels/clusterSources';
+import { transportFor, useSources } from './widgets/panels/sourcesConfig';
 import { useSyncSourceWidgets } from './widgets/panels/variants';
 
 export function useStorage(): DashboardStorage {
@@ -56,8 +57,13 @@ function useLoaded<T>(load: () => Promise<T>, deps: React.DependencyList): Loade
   };
 }
 
+/** The dashboards. Each load also refreshes the shared cluster sources, in one request. */
 export function useDashboardList(storage: DashboardStorage): Loaded<StoredDashboard[]> {
-  return useLoaded(() => storage.list(), [storage]);
+  return useLoaded(() => {
+    // The page is a cluster route, so no cluster name is needed. Widgets use the same cache entry.
+    void loadClusterSources(transportFor(undefined), undefined, storage.namespace);
+    return storage.list();
+  }, [storage]);
 }
 
 export function useDashboard(storage: DashboardStorage, name: string): Loaded<StoredDashboard> {

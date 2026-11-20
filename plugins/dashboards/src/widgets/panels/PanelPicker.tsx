@@ -5,8 +5,8 @@ import TextField from '@mui/material/TextField';
 import React from 'react';
 import type { WidgetSettingsProps } from '../../contract';
 import { usePanelList } from './data';
-import { AGENT_SOURCE_ID, findSource } from './sources';
-import { useSources } from './sourcesConfig';
+import { AGENT_SOURCE_ID } from './sources';
+import { useSourceLookup, useSources } from './sourcesConfig';
 
 export interface SourcePanelConfig {
   /** The id of the panel source. Saved dashboards without it use the built-in `agent`. */
@@ -24,7 +24,7 @@ export function SourcePanelPicker<C extends SourcePanelConfig>({
 }: WidgetSettingsProps<C>): JSX.Element {
   const sources = useSources();
   const sourceId = sourceOf(config);
-  const source = findSource(sources, sourceId);
+  const { source, pending } = useSourceLookup(sourceId);
   const list = usePanelList(source, sourceId);
   // A source or panel that is no longer listed stays selectable, so the saved choice is never lost.
   const knownPanel = list.panels.some(p => p.id === config.panel);
@@ -36,11 +36,15 @@ export function SourcePanelPicker<C extends SourcePanelConfig>({
         size="small"
         label="Source"
         value={sourceId}
-        helperText="Where the panels come from. Add sources on the Dashboards settings page."
+        helperText="Where the panels come from. Cluster sources are shared. Add sources of this browser on the Dashboards settings page."
         // Another source has other panels, so the panel choice starts again.
         onChange={e => onChange({ ...config, source: e.target.value, panel: '' })}
       >
-        {!source && <MenuItem value={sourceId}>{sourceId} (not configured)</MenuItem>}
+        {!source && (
+          <MenuItem value={sourceId}>
+            {sourceId} ({pending ? 'loading' : 'not configured'})
+          </MenuItem>
+        )}
         {sources.map(s => (
           <MenuItem key={s.id} value={s.id}>
             {s.title}
