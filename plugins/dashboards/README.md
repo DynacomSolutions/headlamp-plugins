@@ -242,3 +242,42 @@ lighter hues for dark mode and the kiosk). Rules:
 
 The widgets use theme colours only, so they follow the black kiosk background. The kiosk has no scrollbars,
 no focus rings and no hover. The legend and the donut do not scroll in the kiosk.
+
+## Kubernetes reports
+
+The **Kubernetes report** widget (`core.k8s-report`, category Kubernetes) is a Salesforce style report
+over any resource kind. Its settings editor has five steps (Source, Columns, Filters, Grouping, Chart)
+and a live preview that uses the real cluster data.
+
+- **Source**: any listable kind. The editor asks API discovery for the kinds. Built-in kinds come first
+  (Pods, Deployments and so on), then custom resources (CRDs). The dashboard filters narrow the report:
+  namespaces, the label selector (sent to the API server) and nodes (Pods and Nodes).
+- **Columns**: pick, reorder and rename columns. A column is a common field (`name`, `namespace`, `age`,
+  `status`, `labels`, `owner`, `node`, `restarts`, `ready`) or a field path such as `.spec.replicas`,
+  `.metadata.labels.app`, `.metadata.labels["app.kubernetes.io/name"]`, `.spec.containers[0].image` or
+  `.spec.containers[*].image`. The editor suggests paths found in the loaded objects. Quantities such as
+  `250m` and `1Gi` count as numbers.
+- **Filters**: field, operator (equals, not equals, contains, starts with, exists, greater than, less than,
+  in), value. All filters apply with AND. An optional logic string such as `1 AND (2 OR 3)` (also `NOT`)
+  replaces that. A wrong logic string shows a message and falls back to AND. For `exists`, the value
+  `false` means "does not exist". Text tests ignore case.
+- **Report types**:
+  - *Tabular*: the columns, sortable.
+  - *Summary*: group by up to two fields, with row counts and sum, avg, min or max of numeric fields.
+    Groups collapse. Each group has a subtotal and the report has a grand total. The rows can show inside
+    the groups.
+  - *Matrix*: rows by one field, columns by another, with a row count or an aggregate in each cell, and
+    row, column and grand totals.
+- **Chart** (summary only): bar, horizontal bar, donut or stacked bar (two group fields). Every group is its
+  own bar or slice at its real size. There is no "Other" group and no top-N cut. After eight groups the
+  chart reuses the eight series hues at lower opacity, and the tooltips and the legend name every group.
+- **Table**: sort by any column header, a link to the Headlamp page of each resource (turned off in edit
+  mode), a sticky header, windowed rows (only the visible rows are in the DOM) and a CSV export (hidden in
+  the kiosk). The CSV neutralises cells that start with `=`, `+`, `-` or `@`.
+- **Live data**: one Headlamp list and watch stream per chosen namespace (or one for the cluster).
+  Updates are coalesced. The streams restart only when the kind, the namespaces, the label selector or the
+  refresh signal changes, so moving a widget never refetches. The grouping is a memoised pure model in
+  `src/widgets/k8s/model.ts`.
+- **Kiosk**: the widget uses the black background, larger rows and no scrollbars.
+
+Users need `list` (and `watch`) access to the chosen kind. A refused list shows a message in the widget.
