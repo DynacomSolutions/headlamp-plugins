@@ -7,6 +7,9 @@ import type { Diagnosis } from '../src/agent/report.js';
 import { MemoryDiagnosisStore, type DiagnosisStore } from '../src/store.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
 
+// Every test here starts a real PostgreSQL (PGlite). On a busy CI runner it takes about 10 s, so these tests get a long timeout.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
+
 const engine = vi.hoisted(() => ({ hold: undefined as Promise<void> | undefined, started: 0, ids: [] as string[], models: [] as string[], fail: undefined as string | undefined, alerts: [] as unknown[] }));
 
 vi.mock('../src/agent/engine.js', () => ({
