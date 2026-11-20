@@ -2,13 +2,19 @@
 import { NameValueTable, SectionBox, SimpleTable } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Alert from '@mui/material/Alert';
 import CircularProgress from '@mui/material/CircularProgress';
+import Tab from '@mui/material/Tab';
+import Tabs from '@mui/material/Tabs';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { useHistory, useLocation } from 'react-router-dom';
+import { BoardDiagram } from './BoardDiagram';
+import { HW_TABS, HwTabId, parseHwTab, withHwTab } from './hwTab';
 import {
   formatBytes,
   formatGhz,
   formatLinkWithMax,
   GPU_KIND_LABEL,
+  gpuColumn,
   HardwareProfile,
   isBelowMax,
   LinkInfo,
@@ -258,6 +264,63 @@ function NvmeTable({ p }: { p: HardwareProfile }): JSX.Element {
   );
 }
 
+function OverviewSummary({ p }: { p: HardwareProfile }): JSX.Element {
+  const populated = p.cpu.sockets.filter(c => c.populated);
+  const cpu = populated.length === 0 ? '-' : populated.map(c => `${dash(c.model)}${c.cores !== undefined ? ` (${c.cores} cores)` : ''}`).join(', ');
+  const gpus = gpuColumn(p);
+  return (
+    <NameValueTable
+      rows={[
+        { name: 'Board', value: p.board ? `${p.board.vendor} ${p.board.model}`.trim() || '-' : '-' },
+        { name: 'CPU', value: cpu },
+        { name: 'Memory', value: memorySummary(p.memory) },
+        { name: 'GPUs', value: gpus ? `${gpus.text}${p.gpus.length > 0 ? `: ${gpus.tooltip}` : ''}` : '-' },
+        { name: 'Drives', value: p.nvme.length === 0 ? 'No NVMe drive reported' : `${p.nvme.length} NVMe. ${m2Summary(p)}` },
+      ]}
+    />
+  );
+}
+
+function HardwareTabs({ p }: { p: HardwareProfile }): JSX.Element {
+  const location = useLocation();
+  const history = useHistory();
+  const tab = parseHwTab(location.search);
+  // The tab is a view option: replace the history entry, never push.
+  const select = (_: React.SyntheticEvent, id: HwTabId) => history.replace({ pathname: location.pathname, search: withHwTab(location.search, id), hash: location.hash });
+  return (
+    <>
+      <Tabs value={tab} onChange={select} variant="scrollable" scrollButtons="auto" aria-label="Hardware profile views" sx={{ mb: 1 }}>
+        {HW_TABS.map(t => (
+          <Tab key={t.id} value={t.id} label={t.label} id={`hw-tab-${t.id}`} aria-controls={`hw-panel-${t.id}`} />
+        ))}
+      </Tabs>
+      <div role="tabpanel" id={`hw-panel-${tab}`} aria-labelledby={`hw-tab-${tab}`}>
+        {tab === 'overview' && (
+          <>
+            <BoardDiagram profile={p} />
+            <OverviewSummary p={p} />
+          </>
+        )}
+        {tab === 'board' && (
+          <>
+            <BoardTable p={p} />
+            <CpuTable p={p} />
+          </>
+        )}
+        {tab === 'memory' && <MemoryTable p={p} />}
+        {tab === 'slots' && (
+          <>
+            <SlotsTable p={p} />
+            <PciTable p={p} />
+          </>
+        )}
+        {tab === 'gpus' && <GpuTable p={p} />}
+        {tab === 'storage' && <NvmeTable p={p} />}
+      </div>
+    </>
+  );
+}
+
 function ProfileBody({ nodeName }: { nodeName: string }): JSX.Element {
   const { profiles, loading, error } = useInventory();
   if (loading) {
@@ -292,13 +355,7 @@ function ProfileBody({ nodeName }: { nodeName: string }): JSX.Element {
           The last run of the hardware inventory collector failed on this node. Data may be stale or incomplete.
         </Alert>
       )}
-      <BoardTable p={p} />
-      <CpuTable p={p} />
-      <MemoryTable p={p} />
-      <SlotsTable p={p} />
-      <PciTable p={p} />
-      <GpuTable p={p} />
-      <NvmeTable p={p} />
+      <HardwareTabs p={p} />
     </>
   );
 }
