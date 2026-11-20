@@ -6,6 +6,7 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { DEFAULT_NAMESPACE } from './storage/storage';
 import { AgentSettingsSection } from './widgets/panels/AgentSettingsSection';
+import { MetricsEndpointSection } from './widgets/promql/EndpointSettings';
 
 export const CONFIG_KEY = 'dashboards';
 export const configStore = new ConfigStore<Record<string, unknown>>(CONFIG_KEY);
@@ -47,6 +48,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
         fullWidth
       />
       <AgentSettingsSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
+      <MetricsEndpointSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
     </Box>
   );
 }
