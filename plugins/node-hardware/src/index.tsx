@@ -3,7 +3,7 @@
  * a Prometheus-compatible metrics service. Adds "Temp", "Power", "RAM" and "GPUs"
  * columns to the Nodes list and "Hardware profile" and "Hardware sensors" sections to the Node details page.
  */
-import { registerDetailsViewSection, registerResourceTableColumnsProcessor } from '@kinvolk/headlamp-plugin/lib';
+import { registerDetailsViewSection, registerDetailsViewSectionsProcessor, registerResourceTableColumnsProcessor } from '@kinvolk/headlamp-plugin/lib';
 import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import type { ResourceTableColumn } from '@kinvolk/headlamp-plugin/lib/components/common/Resource/ResourceTable';
 import Alert from '@mui/material/Alert';
@@ -21,6 +21,7 @@ import { HardwareProfileSection } from './HardwareProfile';
 import { getHardwareSnapshot, startHardwarePolling, useHardware } from './hardwareStore';
 import { gpuColumn, ramColumn } from './inventory';
 import { getInventorySnapshot, startInventoryPolling, useInventory } from './inventoryStore';
+import { HARDWARE_PROFILE_SECTION_ID, HARDWARE_SENSORS_SECTION_ID, moveHardwareProfileSection } from './sectionOrder';
 
 const SEVERITY_COLOUR: Record<Severity, string | undefined> = {
   ok: undefined,
@@ -287,21 +288,34 @@ function HardwareSection({ nodeName }: { nodeName: string }): JSX.Element {
   );
 }
 
-registerDetailsViewSection(({ resource }) => {
+function nodeNameFrom(resource: any): string | undefined {
   if (!resource || resource.kind !== 'Node') {
-    return null;
+    return undefined;
   }
-  const nodeName: string | undefined = resource.jsonData?.metadata?.name || resource.metadata?.name;
-  if (!nodeName) {
-    return null;
-  }
-  return (
-    <>
-      <HardwareProfileSection nodeName={nodeName} />
-      <SensorsSection nodeName={nodeName} />
-    </>
-  );
-});
+  return resource.jsonData?.metadata?.name || resource.metadata?.name || undefined;
+}
+
+registerDetailsViewSection({
+  id: HARDWARE_PROFILE_SECTION_ID,
+  section: ({ resource }: { resource?: any }) => {
+    const nodeName = nodeNameFrom(resource);
+    return nodeName ? <HardwareProfileSection nodeName={nodeName} /> : null;
+  },
+} as any);
+
+registerDetailsViewSection({
+  id: HARDWARE_SENSORS_SECTION_ID,
+  section: ({ resource }: { resource?: any }) => {
+    const nodeName = nodeNameFrom(resource);
+    return nodeName ? <SensorsSection nodeName={nodeName} /> : null;
+  },
+} as any);
+
+// Show the hardware profile right after the node's main info section.
+registerDetailsViewSectionsProcessor({
+  id: 'node-hardware.order',
+  processor: (resource: any, sections: any[]) => moveHardwareProfileSection(resource?.kind, sections),
+} as any);
 
 function SensorsSection({ nodeName }: { nodeName: string }): JSX.Element {
   return (
