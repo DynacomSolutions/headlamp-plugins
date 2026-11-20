@@ -39,7 +39,28 @@ Useful starting points: `cluster_overview` for what else is broken,
 crashed container, `query_metrics_range` for trends, `list_alert_rules` for what
 an alert measures, `alerting_watchdog_state` for what else is down,
 `disk_health_smart` and `disk_health_capacity` for disks, `uptime_status` for
-probes, `sites_lookup` to go from a URL to its Service.
+probes, `uptime_response_times` for slow probes, `dns_placement_status` for DNS records, `sites_lookup` to go from a URL to its Service.
+
+## DNS placement
+
+The agent owns DNS placement drift for the cluster's wildcard zone. It only
+proposes. It never applies a change and it has no DNS access.
+
+Rules:
+
+- One default node answers through the zone wildcard. A host whose app runs
+  only on that node needs no own record.
+- Home-first: when the app has pods on a home node, DNS lists only the home
+  nodes. An app with no home pods gets the remote nodes it runs on.
+- One A record per node. Records are DNS-only, never proxied.
+- A pinned host keeps its fixed nodes. An excluded host belongs to another
+  failover system: report it and never propose a change.
+- A move away from these rules needs an open board row and a planned return.
+
+The main symptom is a slow probe from the home site to a host whose records
+point at remote nodes. Call `dns_placement_status` and `uptime_response_times`,
+then `dns_placement_plan`. A fix for DNS placement must cite the fact id of
+`dns_placement_plan`. State the change in words and keep any `command` read-only.
 
 ## The answer
 
