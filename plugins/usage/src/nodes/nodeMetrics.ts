@@ -74,8 +74,10 @@ export const NODE_QUERIES: Record<QueryKey, string> = {
     'sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!=""})',
   runnerLabels:
     'max by (namespace, pod, label_runwarden_io_tenant, label_runwarden_io_pool, label_runwarden_io_role) (kube_pod_labels{label_runwarden_io_managed_by="runwarden"})',
+  // The scrape adds its own pod and job labels, so the series keeps the runner's as exported_pod and
+  // exported_job. Copy them back when present. A scrape with honor_labels keeps pod and job as they are.
   runnerJobs:
-    'max by (namespace, pod, owner, repo, pool, runs_on, workflow, job, run_id) (runwarden_runner_job_info)',
+    'max by (namespace, pod, owner, repo, pool, runs_on, workflow, job, run_id) (label_replace(label_replace(runwarden_runner_job_info, "pod", "$1", "exported_pod", "(.+)"), "job", "$1", "exported_job", "(.+)"))',
   cgroupInfo: 'max by (node, unit, parent, agent_unit) (agent_memory_cgroup_info)',
   cgroupCpu: 'sum by (node, unit) (rate(agent_memory_cgroup_cpu_seconds_total[2m]))',
   cgroupMem: 'sum by (node, unit) (agent_memory_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',

@@ -182,6 +182,9 @@ describe('RunWarden runner info', () => {
   it('queries pod labels and job info', () => {
     expect(NODE_QUERIES.runnerLabels).toContain('label_runwarden_io_managed_by="runwarden"');
     expect(NODE_QUERIES.runnerJobs).toContain('runwarden_runner_job_info');
+    // The scrape renames the runner's pod and job labels. The query copies them back.
+    expect(NODE_QUERIES.runnerJobs).toContain('"pod", "$1", "exported_pod"');
+    expect(NODE_QUERIES.runnerJobs).toContain('"job", "$1", "exported_job"');
   });
 
   it('attaches labels and job info to pods', () => {
