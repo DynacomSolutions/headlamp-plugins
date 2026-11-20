@@ -279,14 +279,15 @@ const plan = defineTool({
     const rec = (node: string) => ({ node, ip: ips.get(node) ?? null, type: 'A' as const, proxied: false as const, ttl: 1 as const });
     const changes = drift.map(h => {
       const wildcard = Boolean(s.defaultNode) && sameSet(h.ruleExpected, [s.defaultNode]);
+      const removeNodes = h.actual.filter(n => wildcard || !h.ruleExpected.includes(n));
       return {
         host: h.host,
         reason: wildcard
           ? `The app runs only on the default node ${s.defaultNode}, so the zone wildcard answers. The own records are not needed.`
           : `The rules want ${h.ruleExpected.join(', ')}; DNS has ${h.actual.join(', ') || 'no record'}.`,
-        remove: h.actual.filter(n => wildcard || !h.ruleExpected.includes(n)).map(rec),
+        remove: removeNodes.map(rec),
         add: wildcard ? [] : h.ruleExpected.filter(n => !h.actual.includes(n)).map(rec),
-        note: h.actual.includes(s.defaultNode) && s.defaultNode
+        note: s.defaultNode && removeNodes.includes(s.defaultNode)
           ? 'A remove entry for the default node can be the wildcard answer. Remove it only when the host has its own record for that node.'
           : null,
         useWildcard: wildcard,
