@@ -6,7 +6,11 @@
  * node_edac_*). Every query degrades on its own: a missing series gives "-" in
  * the UI, never a failed profile. All joins happen in code, per node.
  */
-import type { MetricSample } from './metrics';
+/** Same shape as MetricSample in metrics.ts, declared here so the agent build needs no Headlamp types. */
+export interface MetricSample {
+  metric: Record<string, string>;
+  value: [number, string];
+}
 
 /** Reads the scalar of a sample. Local copy so this file has no runtime import and the agent can reuse it. */
 function numberFromValue(sample: MetricSample | undefined): number | undefined {
