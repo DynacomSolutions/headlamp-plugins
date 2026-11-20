@@ -1,7 +1,8 @@
 /*
  * A compact strip under the toolbar with the details of the selected segment (or, with nothing
  * selected, of the zoom root): its icon, name, raw id and kind, the CPU and memory it holds with
- * its share of the active section (the zoom focus, or capacity at the root), and a thread link. Under it a
+ * its share of the active section (the zoom focus, or capacity at the root), the CPU limit and
+ * throttling of a thread, and a thread link. Under it a
  * horizontal, scrollable row of chips, one per child, sorted by value; tapping a chip selects that
  * child, as tapping its arc does. Touch sized.
  */
@@ -171,6 +172,11 @@ export function DetailPanel(props: {
           <Typography sx={{ fontSize: 14 }}>
             {figures('Memory', formatBytes, subject.mem, opts)}
           </Typography>
+          {subject.note && (
+            <Typography data-cpu-note sx={{ fontSize: 14 }} color="text.secondary">
+              {subject.note}
+            </Typography>
+          )}
           {subject.href && /^https?:\/\//i.test(subject.href) && (
             <Button
               component="a"

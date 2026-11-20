@@ -451,16 +451,16 @@ async function incidents(d: PanelDeps): Promise<PanelBody> {
   };
 }
 
-// ---------- agent memory ----------
+// ---------- agent resources ----------
 
 async function agentMemory(d: PanelDeps): Promise<PanelBody> {
   let state: Obj;
   try {
     state = (await d.serviceGet(d.agentMemoryUrl)) as Obj;
   } catch {
-    throw new PanelError('agent-memory is not reachable');
+    throw new PanelError('agent-resource is not reachable');
   }
-  if (typeof state.error === 'string' && state.error) throw new PanelError(`agent-memory reports: ${state.error.slice(0, 120)}`);
+  if (typeof state.error === 'string' && state.error) throw new PanelError(`agent-resource reports: ${state.error.slice(0, 120)}`);
   const GIB = 2 ** 30;
   const orchestrators = list(state.orchestrators);
   const softLimit = new Map(orchestrators.map(o => [String(o.name), Number(o.policy?.agent?.memoryHigh) || 0] as const));
@@ -688,7 +688,7 @@ export const PANELS: PanelDefinition[] = [
   { id: 'github-runners', title: 'GitHub runners', description: 'Runner sets, running and pending runners.', plugin: 'github-runners', link: '/c/{cluster}/github-runners', refreshSeconds: 300, build: githubRunners },
   { id: 'registry', title: 'Registry', description: 'Repositories, tags and size of the registry.', plugin: 'registry', link: '/c/{cluster}/registry', refreshSeconds: 3600, build: registry },
   { id: 'vm-images', title: 'VM images', description: 'VM images, disk imports and virtual machines.', plugin: 'vm-images', link: '/c/{cluster}/vm-images', refreshSeconds: 900, build: vmImages },
-  { id: 'agent-memory', title: 'Agent memory', description: 'Memory use and warnings of the coding agents.', plugin: 'agent-memory', link: '/c/{cluster}/agent-memory', refreshSeconds: 300, build: agentMemory },
+  { id: 'agent-memory', title: 'Agent resources', description: 'Memory use and warnings of the coding agents.', plugin: 'agent-resource', link: '/c/{cluster}/agent-resource', refreshSeconds: 300, build: agentMemory },
 ];
 
 export function listPanels(): { version: 1; panels: PanelInfo[] } {

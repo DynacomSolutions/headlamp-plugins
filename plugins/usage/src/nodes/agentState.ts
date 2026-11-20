@@ -1,7 +1,7 @@
 /*
- * Agent hosts, pure part: the types and the parser of the agent-memory /api/state payload. This
+ * Agent hosts, pure part: the types and the parser of the agent-resource /api/state payload. This
  * file imports no React and no Headlamp library, so the agent service can bundle it. Plugins
- * cannot share code, so the small helpers here are copies of the agent-memory ones.
+ * cannot share code, so the small helpers here are copies of the agent-resource ones.
  */
 
 export interface AgentProc {
@@ -22,6 +22,10 @@ export interface AgentUnit {
   depth?: number;
   memBytes: number;
   cpuCores?: number;
+  /** The CPU limit in cores (cpu.max); null for none; absent when the backend does not report it. */
+  cpuLimitCores?: number | null;
+  /** Time throttled over the last two samples, in cores' worth (0.25 is a quarter of one core). */
+  cpuThrottledRatio?: number;
   project?: string;
   projectId?: string;
   thread?: string;
@@ -73,6 +77,18 @@ function parseProc(p: any, depth: number): AgentProc {
   };
 }
 
+/** A limit of 0 or less is no limit. A backend that sends CPU stats without a quota means none. */
+function parseCpuLimit(u: any): number | null | undefined {
+  const reported =
+    u?.cpuQuotaCores !== undefined ||
+    u?.cpuWeight !== undefined ||
+    u?.cpuNrPeriods !== undefined ||
+    u?.cpuThrottledRatio !== undefined;
+  if (!reported) return undefined;
+  const q = optNum(u?.cpuQuotaCores);
+  return q !== undefined && q > 0 ? q : null;
+}
+
 function parseIcon(i: any): AgentUnit['icon'] {
   if (!i || (i.kind !== 'file' && i.kind !== 'lucide')) return undefined;
   return { kind: i.kind, name: optText(i.name), color: optText(i.color) };
@@ -92,6 +108,8 @@ function parseUnit(u: any): AgentUnit {
     depth: optNum(u?.depth),
     memBytes: num(u?.anon) + num(u?.shmem) + num(u?.kernel),
     cpuCores: optNum(u?.cpuCores),
+    cpuLimitCores: parseCpuLimit(u),
+    cpuThrottledRatio: optNum(u?.cpuThrottledRatio),
     project: optText(names?.workspace),
     projectId: optText(names?.projectId),
     thread: optText(names?.title) ?? optText(names?.tab),
@@ -103,11 +121,11 @@ function parseUnit(u: any): AgentUnit {
   };
 }
 
-/** Reads one backend's /api/state; throws when it is not an agent-memory payload. */
+/** Reads one backend's /api/state; throws when it is not an agent-resource payload. */
 export function parseAgentState(json: unknown, backend: string): AgentHost {
   const j = json as any;
   if (!j || typeof j !== 'object' || !Array.isArray(j.units)) {
-    throw new Error('Not an agent-memory state');
+    throw new Error('Not an agent-resource state');
   }
   return {
     node: text(j.node),

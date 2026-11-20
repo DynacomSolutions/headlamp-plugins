@@ -4,7 +4,8 @@
  * one node selected the first ring is one arc per node. Tap an arc to select it in both charts, and Open to zoom. The URL
  * holds the whole view. The zoom path is in path segments and a zoom change is pushed, so Back
  * goes up one level. Filters, selection and kiosk are query params and are replaced.
- * With no touch for the idle time the zoom goes back to the root, keeping filters and kiosk.
+ * In the kiosk only, with no touch for the idle time the zoom goes back to the root, keeping
+ * filters and kiosk. The normal page keeps its zoom.
  */
 import { Loader, SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Alert from '@mui/material/Alert';
@@ -63,7 +64,12 @@ export function NodesPage(): JSX.Element {
   const setRings = (rings: number) => replace({ ...state, rings });
   const setKiosk = (kiosk: boolean) => replace({ ...state, kiosk });
   const resetZoom = React.useCallback(() => replace({ ...state, path: [], sel: [] }), [replace, state]);
-  useIdle(state.path.length > 0 || state.sel.length > 0, settings.idleSeconds, resetZoom);
+  // Only the kiosk resets: on the normal page the zoom stays until the user changes it.
+  useIdle(
+    state.kiosk && (state.path.length > 0 || state.sel.length > 0),
+    settings.idleSeconds,
+    resetZoom
+  );
 
   // The selection: the chosen nodes that have metrics; none chosen (or none left) means all.
   const selected = React.useMemo(() => {

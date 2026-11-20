@@ -5,6 +5,7 @@
  */
 import type { AgentHost, AgentProc, AgentUnit } from './agentState';
 import { GENERIC, iconForContainer, iconForNamespace, iconForProcess } from './appIcons';
+import { cpuNote } from './cpuNote';
 import { cgroupLabel, processLabel, unitLabel } from './labels';
 import { applyNames, NameContext, NO_NAMES } from './names';
 import type { NodeMetrics, SystemUsage } from './types';
@@ -39,6 +40,8 @@ export interface SunNode {
   displayName?: string;
   /** The raw command line of a process, its id. */
   command?: string;
+  /** A thread's CPU limit and throttling, for the details strip. */
+  note?: string;
   /**
    * Node ring only: the angular size of the node's wedge, its capacity or its use when that is
    * higher. `value` stays the use. Absent everywhere else.
@@ -274,6 +277,7 @@ function orchestrator(
       node(key, u.thread || u.name, 'thread', v, procNodes(u.procs, key, r), {
         href: u.threadUrl,
         icon: GENERIC.thread,
+        note: cpuNote(u),
       })
     );
   }

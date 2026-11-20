@@ -28,7 +28,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
       </Typography>
       <TextField
         label="Agent backends"
-        helperText="Comma-separated agent-memory backends, each as service/<namespace>/<name>:<port>. They are reached through the Kubernetes API service proxy."
+        helperText="Comma-separated agent-resource backends, each as service/<namespace>/<name>:<port>. They are reached through the Kubernetes API service proxy. A Service named agent-memory is the fallback when agent-resource does not answer."
         value={Array.isArray(backends) ? backends.join(', ') : backends ?? ''}
         placeholder={DEFAULT_NODES_SETTINGS.agentBackends.join(', ')}
         onChange={e => set('agentBackends', e.target.value)}
@@ -36,7 +36,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
       />
       <TextField
         label="Idle threshold (seconds)"
-        helperText="At least 30."
+        helperText="Full screen (kiosk) only: with no touch for this time, the dashboard goes back to the overview. At least 30."
         value={(data as any)?.idleSeconds ?? ''}
         placeholder={String(DEFAULT_NODES_SETTINGS.idleSeconds)}
         onChange={e => set('idleSeconds', e.target.value)}

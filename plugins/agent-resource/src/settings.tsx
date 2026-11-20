@@ -17,7 +17,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
       </Typography>
       <TextField
         label="Backend"
-        helperText="The agent-memory backend as service/<namespace>/<name>:<port>. It is reached through the Kubernetes API service proxy, which is also what authorises limit changes."
+        helperText="The agent-resource backend as service/<namespace>/<name>:<port>. It is reached through the Kubernetes API service proxy, which is also what authorises limit changes. A Service named agent-memory is the fallback when agent-resource does not answer."
         value={(data as any)?.backend ?? ''}
         placeholder={DEFAULT_SETTINGS.backend}
         onChange={e => set('backend', e.target.value)}

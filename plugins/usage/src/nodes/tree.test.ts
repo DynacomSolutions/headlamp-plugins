@@ -224,7 +224,7 @@ describe('buildNodeTree', () => {
 });
 
 describe('buildNodeTree with nested backend units', () => {
-  // Mirrors the unit shapes a live agent-memory backend reports: every unit under a control
+  // Mirrors the unit shapes a live agent-resource backend reports: every unit under a control
   // slice has role control, and an agents slice has role-less sub-slices.
   const live = (): AgentUnit[] => [
     unit({
