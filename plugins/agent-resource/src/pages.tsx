@@ -67,6 +67,7 @@ import {
   formatSize,
   formatSpan,
   formatStall,
+  formatThrottled,
   GuideCell,
   guideCells,
   hasCpu,
@@ -90,6 +91,7 @@ import {
   swapText,
   threadName,
   throttleLevel,
+  throttleShare,
   TREE_COLUMN_WIDTHS,
   unitDetail,
   unitLabel,
@@ -263,7 +265,7 @@ function Pressure({ unit }: { unit: MemUnit }) {
   );
 }
 
-/** Throttling: the share of time spent throttled over the last sample, and the period count. */
+/** Throttling: the cores of CPU time held back over the last sample, and the period count. */
 function ThrottleChips({ unit }: { unit: MemUnit }) {
   const r = unit.cpuThrottledRatio;
   if (typeof r !== 'number') {
@@ -275,9 +277,12 @@ function ThrottleChips({ unit }: { unit: MemUnit }) {
   }
   const level = throttleLevel(unit);
   const n = unit.cpuNrThrottled ?? 0;
-  const title = `Throttled for ${formatRatio(
+  const sh = throttleShare(unit);
+  const title = `${formatThrottled(
     r
-  )} of the last sample (100% is the time of one core). ${n.toLocaleString()} of ${(
+  )} of CPU time was throttled between the last two samples${
+    sh === null ? '' : `, ${formatRatio(sh)} of the CPU limit`
+  }. ${n.toLocaleString()} of ${(
     unit.cpuNrPeriods ?? 0
   ).toLocaleString()} scheduler periods were throttled since the cgroup was created, ${formatStall(
     unit.cpuThrottledUsec ?? 0
@@ -289,7 +294,7 @@ function ThrottleChips({ unit }: { unit: MemUnit }) {
           size="small"
           variant={level === 'default' ? 'outlined' : 'filled'}
           color={level}
-          label={formatRatio(r)}
+          label={formatThrottled(r)}
         />
         <Chip size="small" variant="outlined" label={`${n.toLocaleString()} periods`} />
       </Box>
@@ -1423,7 +1428,7 @@ function AgentTree({
             </Tooltip>
           </TableCell>
           <TableCell>
-            <Tooltip title="Time spent throttled by the CPU limit between two refreshes (100% is the time of one core), and the number of throttled scheduler periods in total">
+            <Tooltip title="Time spent throttled by the CPU limit between two refreshes, in cores (4.2 cores is 4.2 cores of CPU time held back; the colour shows its share of the limit), and the number of throttled scheduler periods in total">
               <span>Throttled</span>
             </Tooltip>
           </TableCell>

@@ -558,16 +558,40 @@ export function cpuShareLevel(
     : 'default';
 }
 
-/** Throttled time, in cores' worth, that turns the throttling badge amber and red. */
+/**
+ * Throttled time as a share of the CPU limit that turns the throttling badge amber and red.
+ * 0.05 is 5% of the limit.
+ */
 export const THROTTLE_WARN = 0.05;
 export const THROTTLE_CRIT = 0.25;
 
-export function throttleLevel(
-  u: Pick<MemUnit, 'cpuThrottledRatio'>
-): 'default' | 'warning' | 'error' {
+/**
+ * Throttled time in cores' worth: "4.2 cores", "0 cores" at 0. The backend ratio is the throttled
+ * time over the wall time summed over CPUs, so 4.2 is 4.2 cores of time spent throttled.
+ */
+export function formatThrottled(r: number): string {
+  if (!Number.isFinite(r) || r < 0) return '-';
+  if (r === 0) return '0 cores';
+  if (r < 0.05) return '<0.1 cores';
+  return `${r.toFixed(1)} cores`;
+}
+
+/** Throttled cores as a share of the CPU limit; null with no limit or no sample. */
+export function throttleShare(
+  u: Pick<MemUnit, 'cpuThrottledRatio' | 'cpuQuotaCores'>
+): number | null {
   const r = u.cpuThrottledRatio;
-  if (typeof r !== 'number') return 'default';
-  return r >= THROTTLE_CRIT ? 'error' : r >= THROTTLE_WARN ? 'warning' : 'default';
+  const q = u.cpuQuotaCores;
+  if (typeof r !== 'number' || typeof q !== 'number' || q <= 0) return null;
+  return r / q;
+}
+
+export function throttleLevel(
+  u: Pick<MemUnit, 'cpuThrottledRatio' | 'cpuQuotaCores'>
+): 'default' | 'warning' | 'error' {
+  const sh = throttleShare(u);
+  if (sh === null) return 'default';
+  return sh >= THROTTLE_CRIT ? 'error' : sh >= THROTTLE_WARN ? 'warning' : 'default';
 }
 
 /** Share of time (percent, 10 s average) with some task waiting for CPU that turns the badge amber and red. */

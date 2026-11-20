@@ -29,6 +29,7 @@ import {
   formatSize,
   formatSpan,
   formatStall,
+  formatThrottled,
   guideCells,
   hasCpu,
   matchesFilter,
@@ -56,6 +57,7 @@ import {
   swapText,
   threadName,
   throttleLevel,
+  throttleShare,
   TREE_COLUMN_WIDTHS,
   unitDetail,
   unitLabel,
@@ -1047,7 +1049,7 @@ describe('CPU limits, use and throttling', () => {
     cpuNrPeriods: 1200,
     cpuNrThrottled: 34,
     cpuThrottledUsec: 3_400_000,
-    cpuThrottledRatio: 0.125,
+    cpuThrottledRatio: 4.2,
     cpuPressureSome: { avg10: 12.5, avg60: 3, avg300: 1, totalUs: 5_000_000 },
     cpuPressureFull: { avg10: 0, avg60: 0, avg300: 0, totalUs: 0 },
   };
@@ -1061,7 +1063,7 @@ describe('CPU limits, use and throttling', () => {
     expect(u.cpuNrPeriods).toBe(1200);
     expect(u.cpuNrThrottled).toBe(34);
     expect(u.cpuThrottledUsec).toBe(3_400_000);
-    expect(u.cpuThrottledRatio).toBe(0.125);
+    expect(u.cpuThrottledRatio).toBe(4.2);
     expect(u.cpuPressureSome?.avg10).toBe(12.5);
     expect(u.cpuPressureFull?.totalUs).toBe(0);
   });
@@ -1104,6 +1106,12 @@ describe('CPU limits, use and throttling', () => {
     expect(formatCpuUse(0.04)).toBe('0.04');
     expect(formatCpuUse(3.2)).toBe('3.2');
     expect(formatCpuUse(127.6)).toBe('128');
+    expect(formatThrottled(0)).toBe('0 cores');
+    expect(formatThrottled(4.2)).toBe('4.2 cores');
+    expect(formatThrottled(4.24)).toBe('4.2 cores');
+    expect(formatThrottled(1)).toBe('1.0 cores');
+    expect(formatThrottled(0.02)).toBe('<0.1 cores');
+    expect(formatThrottled(NaN)).toBe('-');
     expect(formatRatio(0)).toBe('0%');
     expect(formatRatio(0.0004)).toBe('0%');
     expect(formatRatio(0.034)).toBe('3.4%');
@@ -1150,10 +1158,25 @@ describe('CPU limits, use and throttling', () => {
   });
 
   it('colours throttling and CPU pressure from the current values only', () => {
-    expect(throttleLevel({ cpuThrottledRatio: 0 })).toBe('default');
-    expect(throttleLevel({ cpuThrottledRatio: 0.06 })).toBe('warning');
-    expect(throttleLevel({ cpuThrottledRatio: 0.3 })).toBe('error');
-    expect(throttleLevel({ cpuThrottledRatio: null })).toBe('default');
+    // The ratio is in cores; the colour follows its share of the CPU limit (amber 5%, red 25%).
+    const t = (cpuThrottledRatio: number | null, cpuQuotaCores: number | null | undefined = 16) => ({
+      cpuThrottledRatio,
+      cpuQuotaCores,
+    });
+    expect(throttleLevel(t(0))).toBe('default');
+    expect(throttleLevel(t(0.5))).toBe('default');
+    expect(throttleLevel(t(0.8))).toBe('warning');
+    expect(throttleLevel(t(3.9))).toBe('warning');
+    expect(throttleLevel(t(4))).toBe('error');
+    expect(throttleLevel(t(4.2))).toBe('error');
+    expect(throttleLevel(t(4.2, 128))).toBe('default');
+    expect(throttleLevel(t(4.2, 64))).toBe('warning');
+    expect(throttleLevel(t(4.2, 32))).toBe('warning');
+    expect(throttleLevel(t(null))).toBe('default');
+    expect(throttleLevel(t(4.2, null))).toBe('default');
+    expect(throttleLevel({ cpuThrottledRatio: 4.2 })).toBe('default');
+    expect(throttleShare(t(4, 16))).toBe(0.25);
+    expect(throttleShare(t(4, null))).toBeNull();
     const p = (avg10: number) => ({ cpuPressureSome: { avg10, avg60: 0, avg300: 0, totalUs: 0 } });
     expect(cpuPressureLevel(p(2))).toBe('default');
     expect(cpuPressureLevel(p(15))).toBe('warning');

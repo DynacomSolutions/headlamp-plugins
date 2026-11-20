@@ -188,9 +188,9 @@ describe('CPU limits of agent units', () => {
   });
   const first = (extra: object) => parseAgentState(unitWith(extra), 'b').units[0];
   it('reads the CPU limit and throttling', () => {
-    const u = first({ cpuQuotaCores: 16, cpuThrottledRatio: 0.125, cpuWeight: 100 });
+    const u = first({ cpuQuotaCores: 16, cpuThrottledRatio: 4.2, cpuWeight: 100 });
     expect(u.cpuLimitCores).toBe(16);
-    expect(u.cpuThrottledRatio).toBe(0.125);
+    expect(u.cpuThrottledRatio).toBe(4.2);
   });
   it('treats CPU stats without a quota as no limit', () => {
     expect(first({ cpuWeight: 100 }).cpuLimitCores).toBeNull();

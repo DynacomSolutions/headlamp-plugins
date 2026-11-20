@@ -4,7 +4,7 @@
  */
 import type { AgentUnit } from './agents';
 
-/** "CPU limit 16 cores, throttled 12%" for the details of a thread; undefined without a limit. */
+/** "CPU limit 16 cores, throttled 4.2 cores" for the details of a thread; undefined without a limit. */
 export function cpuNote(
   u: Pick<AgentUnit, 'cpuLimitCores' | 'cpuThrottledRatio'>
 ): string | undefined {
@@ -17,8 +17,9 @@ export function cpuNote(
         }`,
   ];
   if (u.cpuThrottledRatio !== undefined) {
-    const p = u.cpuThrottledRatio * 100;
-    parts.push(`throttled ${p < 0.05 ? '0' : p < 10 ? p.toFixed(1) : Math.round(p)}%`);
+    // The ratio is in cores' worth of time: 4.2 is 4.2 cores of CPU time held back.
+    const r = u.cpuThrottledRatio;
+    parts.push(`throttled ${r === 0 ? '0' : r < 0.05 ? '<0.1' : r.toFixed(1)} cores`);
   }
   return parts.join(', ');
 }
