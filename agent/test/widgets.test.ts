@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { startServer } from '../src/server.js';
+import { provider } from '../../plugins/usage/agent/provider.js';
+import { usageFixture } from './usage-dashboard-fixture.js';
 import { PanelError, PANELS, buildPanel, listPanels, sortRows, type PanelDeps, type Row } from '../src/widgets.js';
 
 const FAKE_PASSWORD = ['hun', 'ter2'].join('');
@@ -29,7 +31,7 @@ describe('panel list', () => {
   it('lists the v1 panels with the contract fields', () => {
     const { version, panels } = listPanels();
     expect(version).toBe(1);
-    expect(panels.map(p => p.id)).toEqual(['uptime', 'usage', 'alerts', 'disks', 'hardware', 'sites', 'updates', 'incidents', 'github-runners', 'registry', 'vm-images', 'agent-memory']);
+    expect(panels.map(p => p.id)).toEqual(['uptime', 'usage', 'usage-dashboard', 'alerts', 'disks', 'hardware', 'sites', 'updates', 'incidents', 'github-runners', 'registry', 'vm-images', 'agent-memory']);
     for (const p of panels) {
       expect(p.title).toBeTruthy();
       expect(p.description).toBeTruthy();
@@ -82,7 +84,7 @@ describe('panel mappings', () => {
       }),
     );
     expect(m!.status).toBe('warn');
-    expect(m!.rows[0]).toMatchObject({ label: 'worker-1', value: '90%', fraction: 0.9, status: 'warn' });
+    expect(m!.rows[0]).toMatchObject({ label: 'worker-1', value: '90.0%', fraction: 0.9, status: 'warn' });
     expect(m!.stats[0]).toMatchObject({ label: 'CPU', value: '57.5%' });
   });
 
@@ -200,6 +202,98 @@ describe('panel mappings', () => {
     expect(m!.stats[0]).toMatchObject({ label: 'Open', value: '1' });
   });
 
+  it('incidents: an open incident with a finished diagnosis shows open, not done', async () => {
+    const m = await buildPanel(
+      'incidents',
+      deps({
+        list_diagnoses: {
+          diagnoses: [
+            { id: '1', alert: 'Old', severity: 'warning', status: 'done', likelyCause: '', resolved: true },
+            { id: '2', alert: 'New', severity: 'critical', status: 'done', likelyCause: '', resolved: false },
+            { id: '3', alert: 'Broken', severity: 'critical', status: 'failed', likelyCause: '', resolved: false },
+            { id: '4', alert: 'Busy', severity: 'warning', status: 'running', likelyCause: '', resolved: false },
+          ],
+        },
+      }),
+    );
+    const byLabel = Object.fromEntries(m!.rows.map(r => [r.label, r]));
+    expect(byLabel.New).toMatchObject({ value: 'open', detail: 'open', status: 'crit' });
+    expect(byLabel.Old.value).toBe('resolved');
+    expect(byLabel.Broken).toMatchObject({ value: 'failed', status: 'unknown' });
+    expect(byLabel.Busy.value).toBe('running');
+    expect(m!.rows.some(r => r.value === 'done')).toBe(false);
+    // The failed row stays out of the panel status.
+    expect(m!.status).toBe('crit');
+  });
+
+  it('prints one decimal in every percentage', async () => {
+    const m = await buildPanel('agent-memory', deps({}, { serviceGet: async () => ({ error: '', host: { total: 100, available: 53 }, orchestrators: [], units: [] }) }));
+    expect(m!.stats[1].value).toBe('53.0%');
+    expect(m!.summary).toContain('53.0% memory free');
+  });
+
+  describe('usage-dashboard', () => {
+    const ring = (id: 'cpu' | 'memory', capacity: number, used: number) => ({
+      id,
+      label: id === 'cpu' ? 'CPU' : 'Memory',
+      unit: id === 'cpu' ? 'cores' : 'bytes',
+      capacity,
+      used,
+      segments: [
+        { key: 'k8s', label: 'Kubernetes', value: used * 0.7, children: [{ key: 'k8s/ns:shop', label: 'Shop', value: used * 0.4 }, { key: 'k8s/ns:web', label: 'Web', value: used * 0.2 }] },
+        { key: 'system', label: 'System', value: used * 0.3 },
+      ],
+    });
+    const out = (cpuUsed: number, memUsed: number) => ({ nodes: 5, hostMetrics: true, rings: [ring('cpu', 100, cpuUsed), ring('memory', 1000, memUsed)] });
+
+    it('passes the rings through and maps stats, summary and rows', async () => {
+      const m = await buildPanel('usage-dashboard', deps({ usage_dashboard: out(53.1, 652) }));
+      expect(m!.rings).toEqual(out(53.1, 652).rings);
+      expect(m!.status).toBe('ok');
+      expect(m!.summary).toBe('CPU 53.1%, memory 65.2% on 5 nodes');
+      expect(m!.stats).toEqual([
+        { label: 'CPU', value: '53.1%', status: 'ok' },
+        { label: 'Memory', value: '65.2%', status: 'ok' },
+        { label: 'Nodes', value: '5', status: 'ok' },
+      ]);
+      // Shop and Web come from the children. System has no children and counts as its own entry.
+      expect(m!.rows.map(r => r.label)).toEqual(['Shop', 'System', 'Web']);
+      expect(m!.rows[0]).toMatchObject({ detail: 'CPU 21.2%, Mem 26.1%', value: '26.1%', fraction: 0.2608, status: 'ok' });
+      expect(m!.rows[1]).toMatchObject({ detail: 'CPU 15.9%, Mem 19.6%' });
+    });
+
+    it('takes the status from the worse of the two percentages', async () => {
+      expect((await buildPanel('usage-dashboard', deps({ usage_dashboard: out(76, 100) })))!.status).toBe('warn');
+      expect((await buildPanel('usage-dashboard', deps({ usage_dashboard: out(50, 910) })))!.status).toBe('crit');
+      expect((await buildPanel('usage-dashboard', deps({ usage_dashboard: out(75, 900) })))!.status).toBe('warn');
+      const busy = await buildPanel('usage-dashboard', deps({ usage_dashboard: out(93, 810) }));
+      expect(busy!.status).toBe('crit');
+      expect(busy!.stats[0]).toMatchObject({ value: '93.0%', status: 'crit' });
+      expect(busy!.stats[1]).toMatchObject({ value: '81.0%', status: 'warn' });
+    });
+
+    it('is unknown without capacity and keeps at most two rings', async () => {
+      const none = await buildPanel('usage-dashboard', deps({ usage_dashboard: { nodes: 0, hostMetrics: false, rings: [] } }));
+      expect(none).toMatchObject({ status: 'unknown', summary: 'No usage data', rows: [] });
+      expect(none).not.toHaveProperty('rings');
+      const zero = await buildPanel('usage-dashboard', deps({ usage_dashboard: { nodes: 2, hostMetrics: false, rings: [ring('cpu', 0, 0), ring('memory', 0, 0)] } }));
+      expect(zero!.status).toBe('unknown');
+      expect(zero!.stats[0]).toMatchObject({ value: '-', status: 'unknown' });
+      const three = await buildPanel('usage-dashboard', deps({ usage_dashboard: { ...out(10, 100), rings: [ring('cpu', 100, 10), ring('memory', 1000, 100), ring('cpu', 100, 10)] } }));
+      expect(three!.rings).toHaveLength(2);
+    });
+
+    it('runs the real tool on the fixture cluster', async () => {
+      const fx = usageFixture({ nodes: 5, cpuPct: 93, memPct: 81, projects: 3 });
+      const tool = provider.tools.find(t => t.name === 'usage_dashboard')!;
+      const m = await buildPanel('usage-dashboard', deps({}, { call: async (name, args) => (await tool.run(args, fx.context())).data }));
+      expect(m!.summary).toBe('CPU 93.0%, memory 81.0% on 5 nodes');
+      expect(m!.status).toBe('crit');
+      expect(m!.rings).toHaveLength(2);
+      expect(m!.rows.length).toBeGreaterThan(5);
+    });
+  });
+
   it('agent-memory reads the state endpoint', async () => {
     let asked = '';
     const m = await buildPanel(
@@ -228,7 +322,7 @@ describe('panel mappings', () => {
     expect(m!.rows.map(r => r.label)).toEqual(['Agent A', 'Agent B']);
     expect(m!.rows[0]).toMatchObject({ value: '2 GiB', fraction: 1, status: 'warn' });
     expect(m!.stats[0]).toMatchObject({ label: 'Agents', value: '2' });
-    expect(m!.stats[1]).toMatchObject({ label: 'Free', value: '50%' });
+    expect(m!.stats[1]).toMatchObject({ label: 'Free', value: '50.0%' });
   });
 
   it('keeps stats to four items with short labels and values', async () => {

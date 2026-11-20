@@ -51,6 +51,24 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             repository.savePanelSnapshot(widgetId, snapshot)
         }
         PanelWidget().updateAll(applicationContext)
+
+        // Usage dashboard widgets. One fetch serves every widget with the same instance and cluster.
+        val fetchedRings = mutableMapOf<Pair<String, String>, PanelSnapshot>()
+        for (glanceId in manager.getGlanceIds(UsageDashboardWidget::class.java)) {
+            val widgetId = manager.getAppWidgetId(glanceId)
+            val config = repository.ringsConfig(widgetId) ?: continue
+            val instance = repository.instance(config.instanceId)
+            val now = System.currentTimeMillis()
+            val snapshot = if (instance == null) {
+                PanelSnapshot(now, error = ErrorKind.INSTANCE_MISSING)
+            } else {
+                fetchedRings.getOrPut(config.instanceId to config.cluster) {
+                    client.panelOrError(instance.baseUrl, instance.token, config.cluster, USAGE_PANEL_ID, now)
+                }
+            }
+            repository.saveRingsSnapshot(widgetId, snapshot)
+        }
+        UsageDashboardWidget().updateAll(applicationContext)
         return Result.success()
     }
 
@@ -71,10 +89,10 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             WorkManager.getInstance(context).cancelUniqueWork(PERIODIC)
         }
 
-        /** Cancels the periodic job only when no widget of either kind is left. */
+        /** Cancels the periodic job only when no widget of any kind is left. */
         fun cancelPeriodicIfIdle(context: Context) {
             val manager = AppWidgetManager.getInstance(context)
-            val left = listOf(NodeUsageReceiver::class.java, PanelWidgetReceiver::class.java)
+            val left = listOf(NodeUsageReceiver::class.java, PanelWidgetReceiver::class.java, UsageDashboardReceiver::class.java)
                 .sumOf { manager.getAppWidgetIds(ComponentName(context, it)).size }
             if (left == 0) cancelPeriodic(context)
         }

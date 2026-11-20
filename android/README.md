@@ -1,7 +1,8 @@
 # Headlamps for Android
 
 Headlamps is an Android app. It shows home-screen widgets with CPU and memory use
-for each node of a Kubernetes cluster. It reads the data from one or more
+for each node of a Kubernetes cluster. It also shows the use as rings, so that you see
+who uses the capacity. It reads the data from one or more
 [Headlamp](https://headlamp.dev/) instances.
 
 ## What the app does
@@ -26,6 +27,43 @@ The widget shows a status colour, up to four numbers and a list of rows, worst f
 It needs the headlamp-agent in the cluster. The app reads the agent through the
 Headlamp Kubernetes service proxy.
 
+## Usage dashboard widget
+
+The "Usage dashboard" widget shows CPU and memory use of one cluster as rings.
+You pick the instance and the cluster when you add the widget.
+Each ring is a circle of the cluster capacity. The coloured arcs say who uses it.
+The rest of the circle stays empty. The centre shows the used percent.
+
+- The inner ring is a status ring. It is green up to 75%, amber above 75% and red above 90%.
+- The middle ring has one arc per category: Kubernetes, system, other and each orchestrator.
+- The outer ring has the consumers of each category, for example the namespaces of Kubernetes.
+  Below 76 dp the widget draws the category ring only.
+- Sizes are exact. The widget adds no "Other" entry and cuts nothing.
+
+The legend is one list for both rings. It has two value columns, CPU and Mem.
+First it lists each category (Kubernetes, system and so on). Then it lists the consumers, such as namespaces.
+Each group is sorted by the higher of its two shares, biggest first.
+Each dot has the colour of its arc. A consumer takes the colour of the ring where its share is higher.
+A share is a whole percent of that ring's capacity, "<1%" below 0.5%, or "-" when the ring does not hold the entry.
+
+The widget shows more when you make it bigger:
+
+- Small: the ring of the resource with the higher use, and a small bar for the other one.
+- Narrow and tall: CPU above memory.
+- Wide and short: both rings side by side. When there is room, a key (dot and name) sits beside the rings.
+  When there is more room, the full legend with both columns sits there. Otherwise only the rings show.
+- Tall and wide: a caption under each ring, such as "CPU 51 of 96 cores", then the legend header and a scrolling legend.
+  The list is as high as a whole number of rows, so no row is cut at rest.
+- The "Updated" line shows only from 250 dp wide and 180 dp high.
+
+Tap anywhere on the widget (also a legend row) to open the dashboard of the usage plugin for the cluster.
+Tap Refresh in the header to update at once.
+The widget draws each ring into a bitmap at the exact pixel size, in a light and a dark version.
+The launcher can switch the theme without the app.
+
+The widget needs the headlamp-agent with the `usage-dashboard` panel and the usage plugin of this repository.
+When the agent is too old, the widget says so.
+
 ## Data the app reads
 
 The app sends only GET requests. `<base>` is the base URL of the instance.
@@ -43,8 +81,15 @@ The panel widget reads these paths (GET only):
 | `<base>/clusters/<cluster>/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets` | List of panels |
 | `<base>/clusters/<cluster>/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets/<id>` | One panel |
 
+The usage dashboard widget reads one panel (GET only):
+
+| Request | Use |
+| --- | --- |
+| `<base>/clusters/<cluster>/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets/usage-dashboard` | CPU and memory rings |
+
 The node usage widget needs the Kubernetes metrics server in the cluster.
 The widget opens `<base>/c/<cluster>/usage/nodes`. This page needs the usage plugin of this repository.
+The usage dashboard widget opens the same page.
 
 ## Authentication
 

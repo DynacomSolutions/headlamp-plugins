@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ring colours of the widget preview. They match plugins/usage/src/palette.ts. -->
+<resources>
+    <color name="ring_k8s">#FF0072B2</color>
+    <color name="ring_k8s_a">#FF0089D6</color>
+    <color name="ring_k8s_b">#FF0096EA</color>
+    <color name="ring_t3">#FFE69F00</color>
+    <color name="ring_t3_a">#FFFFB40B</color>
+    <color name="ring_system">#FFD55E00</color>
+</resources>

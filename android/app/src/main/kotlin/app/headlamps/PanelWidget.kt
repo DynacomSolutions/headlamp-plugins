@@ -57,6 +57,7 @@ import java.util.Date
 
 private val P_SMALL = DpSize(110.dp, 110.dp)
 private val P_TALL = DpSize(110.dp, 180.dp)
+private val P_MEDIUM = DpSize(170.dp, 110.dp)
 private val P_WIDE = DpSize(250.dp, 180.dp)
 private val P_CHART = DpSize(250.dp, 260.dp)
 
@@ -75,7 +76,7 @@ private fun argbOf(status: PanelStatus): Color = when (status) {
 private fun statusColour(status: PanelStatus): ColorProvider = ColorProvider(argbOf(status))
 
 class PanelWidget : GlanceAppWidget() {
-    override val sizeMode = SizeMode.Responsive(setOf(P_SMALL, P_TALL, P_WIDE, P_CHART))
+    override val sizeMode = SizeMode.Responsive(setOf(P_SMALL, P_MEDIUM, P_TALL, P_WIDE, P_CHART))
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val repository = Repository(context)

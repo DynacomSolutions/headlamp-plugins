@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="180dp"
+    android:viewportWidth="303"
+    android:viewportHeight="273">
+    <path android:fillColor="@color/preview_background" android:pathData="M24,0 H279 A24,24 0 0 1 303,24 V249 A24,24 0 0 1 279,273 H24 A24,24 0 0 1 0,249 V24 A24,24 0 0 1 24,0 Z" />
+    <path android:fillColor="@color/preview_text" android:pathData="M12,14 h30 v9 h-30 Z" />
+    <path android:fillColor="@color/preview_accent" android:pathData="M240,14 h50 v9 h-50 Z" />
+    <path android:fillColor="@color/preview_track" android:pathData="M82,30 A54,54 0 1 1 81.97,30 L81.98,51.6 A32.4,32.4 0 1 0 82,51.6 Z" />
+    <path android:fillColor="@color/preview_track" android:pathData="M82,53.76 A30.24,30.24 0 1 1 81.98,53.76 L81.99,57 A27,27 0 1 0 82,57 Z" />
+    <path android:fillColor="@color/preview_ok" android:pathData="M82,53.76 A30.24,30.24 0 1 1 76.1,113.66 L76.73,110.48 A27,27 0 1 0 82,57 Z" />
+    <path android:fillColor="@color/ring_k8s" android:pathData="M82,41.34 A42.66,42.66 0 0 1 120.86,101.61 L111.51,97.37 A32.4,32.4 0 0 0 82,51.6 Z" />
+    <path android:fillColor="@color/ring_k8s_a" android:pathData="M82,30 A54,54 0 0 1 119.93,45.57 L112.54,53.06 A43.47,43.47 0 0 0 82,40.53 Z" />
+    <path android:fillColor="@color/ring_k8s_b" android:pathData="M119.93,45.57 A54,54 0 0 1 132.02,63.66 L122.27,67.63 A43.47,43.47 0 0 0 112.54,53.06 Z" />
+    <path android:fillColor="@color/ring_t3" android:pathData="M120.86,101.61 A42.66,42.66 0 0 1 96.24,124.21 L92.82,114.54 A32.4,32.4 0 0 0 111.51,97.37 Z" />
+    <path android:fillColor="@color/ring_t3_a" android:pathData="M131.19,106.29 A54,54 0 0 1 116.26,125.74 L109.58,117.6 A43.47,43.47 0 0 0 121.6,101.94 Z" />
+    <path android:fillColor="@color/ring_system" android:pathData="M100.03,134.9 A54,54 0 0 1 71.47,136.96 L75.68,115.78 A32.4,32.4 0 0 0 92.82,114.54 Z" />
+    <path android:fillColor="@color/preview_track" android:pathData="M221,30 A54,54 0 1 1 220.97,30 L220.98,51.6 A32.4,32.4 0 1 0 221,51.6 Z" />
+    <path android:fillColor="@color/preview_track" android:pathData="M221,53.76 A30.24,30.24 0 1 1 220.98,53.76 L220.99,57 A27,27 0 1 0 221,57 Z" />
+    <path android:fillColor="@color/preview_high" android:pathData="M221,53.76 A30.24,30.24 0 1 1 193.25,71.97 L196.23,73.26 A27,27 0 1 0 221,57 Z" />
+    <path android:fillColor="@color/ring_k8s" android:pathData="M221,41.34 A42.66,42.66 0 0 1 242.33,120.94 L237.2,112.06 A32.4,32.4 0 0 0 221,51.6 Z" />
+    <path android:fillColor="@color/ring_k8s_a" android:pathData="M221,30 A54,54 0 0 1 274.74,78.71 L264.26,79.74 A43.47,43.47 0 0 0 221,40.53 Z" />
+    <path android:fillColor="@color/ring_k8s_b" android:pathData="M274.74,78.71 A54,54 0 0 1 266.86,112.52 L257.91,106.96 A43.47,43.47 0 0 0 264.26,79.74 Z" />
+    <path android:fillColor="@color/ring_t3" android:pathData="M242.33,120.94 A42.66,42.66 0 0 1 186.32,108.85 L194.66,102.87 A32.4,32.4 0 0 0 237.2,112.06 Z" />
+    <path android:fillColor="@color/ring_t3_a" android:pathData="M248,130.77 A54,54 0 0 1 197.12,132.43 L201.77,122.99 A43.47,43.47 0 0 0 242.74,121.65 Z" />
+    <path android:fillColor="@color/ring_system" android:pathData="M177.11,115.45 A54,54 0 0 1 171.46,62.52 L191.27,71.11 A32.4,32.4 0 0 0 194.66,102.87 Z" />
+    <path android:fillColor="@color/preview_text" android:pathData="M70,77 h24 v9 h-24 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M75,90 h14 v5 h-14 Z" />
+    <path android:fillColor="@color/preview_text" android:pathData="M209,77 h24 v9 h-24 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M214,90 h14 v5 h-14 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M32,144 h100 v5 h-100 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M171,144 h100 v5 h-100 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M220,160 h20 v4 h-20 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M258,160 h20 v4 h-20 Z" />
+    <path android:fillColor="@color/ring_k8s" android:pathData="M12,181 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 Z" />
+    <path android:fillColor="@color/preview_text" android:pathData="M25,180 h56 v7 h-56 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M222,180 h18 v7 h-18 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M260,180 h18 v7 h-18 Z" />
+    <path android:fillColor="@color/ring_system" android:pathData="M12,199 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 Z" />
+    <path android:fillColor="@color/preview_text" android:pathData="M25,198 h44 v7 h-44 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M222,198 h18 v7 h-18 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M260,198 h18 v7 h-18 Z" />
+    <path android:fillColor="@color/ring_k8s_a" android:pathData="M12,217 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 Z" />
+    <path android:fillColor="@color/preview_text" android:pathData="M25,216 h30 v7 h-30 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M222,216 h18 v7 h-18 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M260,216 h18 v7 h-18 Z" />
+    <path android:fillColor="@color/ring_k8s_b" android:pathData="M12,235 a4,4 0 1 0 8,0 a4,4 0 1 0 -8,0 Z" />
+    <path android:fillColor="@color/preview_text" android:pathData="M25,234 h50 v7 h-50 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M222,234 h18 v7 h-18 Z" />
+    <path android:fillColor="@color/preview_text_muted" android:pathData="M260,234 h18 v7 h-18 Z" />
+</vector>

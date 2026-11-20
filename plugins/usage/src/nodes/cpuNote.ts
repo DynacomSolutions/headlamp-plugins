@@ -2,7 +2,7 @@
  * The CPU limit and throttling of an agent thread as one line for the details strip. Kept apart
  * from agents.ts so that the tree code does not import the Kubernetes API client.
  */
-import type { AgentUnit } from './agents';
+import type { AgentUnit } from './agentState';
 
 /** "CPU limit 16 cores, throttled 4.2 cores" for the details of a thread; undefined without a limit. */
 export function cpuNote(

@@ -44,6 +44,26 @@ data class PanelRow(
 @Serializable
 data class PanelSeries(val label: String = "", val points: List<Double> = emptyList())
 
+/** One arc of a ring. Children lie inside their parent and may sum to less than it. */
+@Serializable
+data class RingSegment(
+    val key: String = "",
+    val label: String = "",
+    val value: Double = 0.0,
+    val children: List<RingSegment> = emptyList(),
+)
+
+/** One ring of the usage dashboard: [capacity] is the full circle and [used] is the centre total. */
+@Serializable
+data class PanelRing(
+    val id: String = "",
+    val label: String = "",
+    val unit: String = "",
+    val capacity: Double = 0.0,
+    val used: Double = 0.0,
+    val segments: List<RingSegment> = emptyList(),
+)
+
 @Serializable
 data class PanelModel(
     val version: Int = 1,
@@ -56,6 +76,7 @@ data class PanelModel(
     val stats: List<PanelStat> = emptyList(),
     val rows: List<PanelRow> = emptyList(),
     val series: List<PanelSeries> = emptyList(),
+    val rings: List<PanelRing> = emptyList(),
 )
 
 /** What the worker stores for one panel widget. */

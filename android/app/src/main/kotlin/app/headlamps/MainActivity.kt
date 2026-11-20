@@ -120,6 +120,10 @@ fun InstancesScreen(repository: Repository) {
                         choosing = false
                         AppWidgetManager.getInstance(pinContext).requestPinAppWidget(ComponentName(pinContext, PanelWidgetReceiver::class.java), null, null)
                     }) { Text(androidx.compose.ui.res.stringResource(R.string.pin_panel)) }
+                    TextButton(onClick = {
+                        choosing = false
+                        AppWidgetManager.getInstance(pinContext).requestPinAppWidget(ComponentName(pinContext, UsageDashboardReceiver::class.java), null, null)
+                    }) { Text(androidx.compose.ui.res.stringResource(R.string.pin_usage_dashboard)) }
                 }
             },
             confirmButton = {},
