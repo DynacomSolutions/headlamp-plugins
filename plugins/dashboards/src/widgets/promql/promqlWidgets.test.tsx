@@ -164,7 +164,8 @@ describe('time series widget', () => {
     request.mockResolvedValue(reply('matrix', matrix()));
     const C = timeSeriesWidget.Component;
     const bars = render(<C {...props({ ...DEFAULT_TIMESERIES, kind: 'bar' })} />);
-    await waitFor(() => expect(bars.container.querySelectorAll('svg path[fill^="#"]').length).toBeGreaterThanOrEqual(10));
+    // Two series and five times: bars stack, so there are two segments for each time.
+    await waitFor(() => expect(bars.container.querySelectorAll('svg path[fill^="#"][stroke]').length).toBe(10));
     cleanup();
     const area = render(<C {...props({ ...DEFAULT_TIMESERIES, kind: 'stacked' })} />);
     await waitFor(() => expect(area.container.querySelectorAll('svg path[fill-opacity]').length).toBe(2));

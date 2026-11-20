@@ -56,7 +56,7 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
 
   const model = React.useMemo(() => {
     const times = mergeTimes(series);
-    const stacked = kind === 'stacked' ? stackSeries(series, times) : undefined;
+    const stacked = kind === 'stacked' || (kind === 'bar' && series.length > 1) ? stackSeries(series, times) : undefined;
     let min = Infinity;
     let max = -Infinity;
     if (stacked) {
@@ -126,19 +126,29 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
 
   const bars = React.useMemo(() => {
     if (kind !== 'bar') return [];
-    const n = Math.max(1, series.length);
     const slot = times.length > 1 ? Math.abs(x(times[1]) - x(times[0])) : plotW;
-    const group = Math.max(1, Math.min(48, slot - GAP));
-    const w = Math.max(1, group / n - (n > 1 ? 1 : 0));
-    const base = clampY(Math.max(0, domain.min));
-    const out: Array<{ key: string; d: string; colour: string }> = [];
-    series.forEach((s, i) => {
-      const colour = colourFor(s.key);
+    const w = Math.max(1, Math.min(48, slot - GAP));
+    const out: Array<{ key: string; d: string; colour: string; gap: boolean }> = [];
+    if (series.length === 1) {
+      // One series: each bar stands on the baseline with a rounded top.
+      const base = clampY(Math.max(0, domain.min));
+      const s = series[0];
       for (const p of s.points) {
         if (p.v === null) continue;
-        const cx = x(p.t) - group / 2 + i * (group / n);
-        out.push({ key: `${s.key}@${p.t}`, d: barPath(cx, base, w, clampY(p.v), Math.min(4, w / 2)), colour });
+        out.push({ key: `${s.key}@${p.t}`, d: barPath(x(p.t) - w / 2, base, w, clampY(p.v), Math.min(4, w / 2)), colour: colourFor(s.key), gap: false });
       }
+      return out;
+    }
+    // Several series stack, so one time is one column. A 2 px surface gap separates the segments.
+    const st = stackSeries(series, times);
+    series.forEach((s, i) => {
+      times.forEach((t, j) => {
+        if (st.tops[i][j] <= st.bases[i][j]) return;
+        const x0 = x(t) - w / 2;
+        const top = clampY(st.tops[i][j]);
+        const bottom = clampY(st.bases[i][j]);
+        out.push({ key: `${s.key}@${t}`, d: `M${x0},${bottom}V${top}H${x0 + w}V${bottom}Z`, colour: colourFor(s.key), gap: true });
+      });
     });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -207,7 +217,7 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
           </text>
         ))}
         {kind === 'bar'
-          ? bars.map(b => <path key={b.key} d={b.d} fill={b.colour} />)
+          ? bars.map(b => <path key={b.key} d={b.d} fill={b.colour} stroke={b.gap ? ink.surface : 'none'} strokeWidth={b.gap ? GAP : 0} />)
           : shapes.map(s => (
               <g key={s.key}>
                 {s.d && (
