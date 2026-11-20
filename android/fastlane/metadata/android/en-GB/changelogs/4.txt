@@ -1,0 +1,1 @@
+New widget: Usage dashboard. It shows CPU and memory use of a cluster as rings, so you can see who uses the capacity. Tap the widget to open the full dashboard.
