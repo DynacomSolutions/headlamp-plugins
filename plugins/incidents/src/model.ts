@@ -56,10 +56,22 @@ export interface DiagnosisSummary {
   resolved: boolean;
 }
 
+export interface DiagnosisFix {
+  title: string;
+  detail: string;
+  command?: string;
+  recommended: boolean;
+}
+
 export interface DiagnosisDetail {
   id: string;
   status: Status;
   a2ui: A2uiMessage[];
+  alertName: string;
+  /** The suggested fixes, in the order the agent keeps them (a launch cites the index). */
+  fixes: DiagnosisFix[];
+  /** Fact ids of evidence items that hold a DNS placement plan. */
+  planFactIds: string[];
 }
 
 const STATUSES: Status[] = ['queued', 'running', 'done', 'failed'];
@@ -94,10 +106,29 @@ export function parseList(json: unknown): DiagnosisSummary[] {
 
 export function parseDetail(json: unknown): DiagnosisDetail {
   const d = rec(json);
+  const fixes = Array.isArray(rec(d.result).fixes) ? (rec(d.result).fixes as unknown[]) : [];
+  const evidence = Array.isArray(d.evidence) ? (d.evidence as unknown[]) : [];
   return {
     id: str(d.id),
     status: status(d.status),
     a2ui: Array.isArray(d.a2ui) ? (d.a2ui as A2uiMessage[]) : [],
+    alertName: str(rec(d.alert).name),
+    fixes: fixes
+      .map(raw => {
+        const f = rec(raw);
+        return {
+          title: str(f.title),
+          detail: str(f.detail),
+          command: str(f.command) || undefined,
+          recommended: f.recommended === true,
+        };
+      })
+      .filter(f => f.title),
+    planFactIds: evidence
+      .map(rec)
+      .filter(e => e.tool === 'dns_placement_plan' && e.ok !== false)
+      .map(e => str(e.id))
+      .filter(Boolean),
   };
 }
 

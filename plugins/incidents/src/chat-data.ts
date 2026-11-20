@@ -66,7 +66,7 @@ export interface Loaded<T> {
  * Polls a service-proxy path. `intervalMs` may depend on the last data (0 stops polling).
  * A change of `url` resets the state; `refresh()` does not.
  */
-function useLoaded<T>(
+export function useLoaded<T>(
   url: string,
   parse: (json: unknown) => T,
   intervalMs: (data: T | null) => number
