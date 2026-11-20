@@ -4,6 +4,7 @@ import {
   elapsed,
   fixCitesPlan,
   formatDuration,
+  hasToken,
   isFinalLaunch,
   isLiveLaunch,
   LAUNCH_STATUSES,
@@ -24,16 +25,22 @@ describe('status pill mapping', () => {
       ['launching', 'Launching', 'info'],
       ['running', 'Running', 'info'],
       ['waiting', 'Waiting', 'warning'],
+      ['tracking_lost', 'Tracking lost, retrying', 'warning'],
       ['completed', 'Completed', 'success'],
       ['failed', 'Failed', 'error'],
       ['rejected', 'Rejected', 'default'],
+      ['expired', 'Expired', 'default'],
       ['cancelled', 'Cancelled', 'default'],
     ]);
     for (const s of LAUNCH_STATUSES) expect(statusMeta(s).icon).toMatch(/^mdi:/);
   });
 
   it('shows a spinner only while the agent works', () => {
-    expect(LAUNCH_STATUSES.filter(s => statusMeta(s).busy)).toEqual(['launching', 'running']);
+    expect(LAUNCH_STATUSES.filter(s => statusMeta(s).busy)).toEqual([
+      'launching',
+      'running',
+      'tracking_lost',
+    ]);
   });
 
   it('splits final and live states', () => {
@@ -41,9 +48,15 @@ describe('status pill mapping', () => {
       'completed',
       'failed',
       'rejected',
+      'expired',
       'cancelled',
     ]);
-    expect(LAUNCH_STATUSES.filter(isLiveLaunch)).toEqual(['launching', 'running', 'waiting']);
+    expect(LAUNCH_STATUSES.filter(isLiveLaunch)).toEqual([
+      'launching',
+      'running',
+      'waiting',
+      'tracking_lost',
+    ]);
   });
 });
 
@@ -140,6 +153,14 @@ describe('fixes and filter', () => {
     expect(fixCitesPlan({ title: 'Use dns_placement_plan' }, ['e2'])).toBe(true);
     expect(fixCitesPlan({ title: 'Move', detail: 'see e2' }, ['e2'])).toBe(true);
     expect(fixCitesPlan({ title: 'Fix the DNS records' }, ['e2'])).toBe(true);
+  });
+
+  it('matches a fact id with regex characters as plain text', () => {
+    expect(hasToken('use f(1 now', 'f(1')).toBe(true);
+    expect(hasToken('use xf(1y', 'f(1')).toBe(false);
+    expect(fixCitesPlan({ title: 'Use f(1 now' }, ['f(1'])).toBe(true);
+    expect(fixCitesPlan({ title: 'Restart the pod' }, ['f(1'])).toBe(false);
+    expect(() => fixCitesPlan({ title: 'x' }, ['[', '(', '*'])).not.toThrow();
   });
 
   it('reads and writes the status filter in the query string', () => {

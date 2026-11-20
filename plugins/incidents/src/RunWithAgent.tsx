@@ -56,7 +56,7 @@ export function RunWithAgentDialog({
   const body: LaunchRequestBody = {
     purpose: purpose.trim(),
     diagnosisId: target.diagnosisId,
-    fix: target.fix,
+    fix: target.fix.index,
     projectKey,
   };
   const bodyKey = JSON.stringify(body);

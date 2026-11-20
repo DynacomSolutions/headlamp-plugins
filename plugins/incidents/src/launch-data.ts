@@ -4,7 +4,6 @@ import {
   isLiveLaunch,
   LaunchConfig,
   LaunchDetail,
-  LaunchFix,
   LaunchSummary,
   parseLaunch,
   parseLaunchConfig,
@@ -22,7 +21,8 @@ export interface LaunchRequestBody {
   purpose: string;
   diagnosisId?: string;
   chatId?: string;
-  fix?: LaunchFix;
+  /** Index into the fixes of the diagnosis. The server reads the fix and builds the brief. */
+  fix?: number;
   projectKey?: string;
 }
 

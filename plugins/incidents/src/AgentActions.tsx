@@ -8,7 +8,13 @@ import { Link as RouterLink, useHistory } from 'react-router-dom';
 import { AgentStatusPill } from './AgentStatusPill';
 import { cleanErrorText } from './chat-model';
 import { useSettings } from './data';
-import { approveLaunch, rejectLaunch, useLaunchConfig, useLaunches } from './launch-data';
+import {
+  approveLaunch,
+  rejectLaunch,
+  useLaunch,
+  useLaunchConfig,
+  useLaunches,
+} from './launch-data';
 import { fixCitesPlan, isLiveLaunch, launchElapsed, LaunchSummary } from './launch-model';
 import { ApprovalCard } from './LaunchApproval';
 import { useNow } from './LaunchPages';
@@ -20,6 +26,7 @@ import { RunTarget, RunWithAgentDialog } from './RunWithAgent';
 function PendingLaunch({ launch }: { launch: LaunchSummary }) {
   const settings = useSettings();
   const history = useHistory();
+  const detail = useLaunch(settings, launch.id);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const act = async (work: () => Promise<unknown>) => {
@@ -37,8 +44,9 @@ function PendingLaunch({ launch }: { launch: LaunchSummary }) {
     <ApprovalCard
       purpose={launch.purpose}
       requestedBy={launch.requestedBy}
+      brief={detail.data?.brief}
       busy={busy}
-      error={error}
+      error={error ?? detail.error}
       onApprove={() => act(() => approveLaunch(settings, launch.id))}
       onReject={() => act(() => rejectLaunch(settings, launch.id))}
     />

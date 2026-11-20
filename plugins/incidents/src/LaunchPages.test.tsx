@@ -56,7 +56,13 @@ beforeEach(() => {
       return launch;
     }
     if (method === 'POST') return {};
-    if (url.endsWith('/api/launches/l1')) return launch;
+    const one = /\/api\/launches\/([^/?]+)$/.exec(url);
+    if (one)
+      return {
+        ...launch,
+        id: one[1],
+        ...(one[1] === 'p1' ? { status: 'pending_approval', brief: 'THE STORED BRIEF' } : {}),
+      };
     return {};
   });
 });
@@ -161,6 +167,53 @@ describe('launch detail page', () => {
     await waitFor(() =>
       expect(screen.getByRole('status').getAttribute('data-status')).toBe('running')
     );
+    expect(screen.queryByRole('button', { name: 'Approve and launch' })).toBeNull();
+  });
+
+  it('shows the exact brief in the approval card on the launch page, above the Approve button', async () => {
+    launch.status = 'pending_approval';
+    launch.brief = 'THE EXACT BRIEF';
+    render(
+      <MemoryRouter initialEntries={['/incidents/launches/l1']}>
+        <Route path="/incidents/launches/:id" component={LaunchPage} />
+      </MemoryRouter>
+    );
+    const block = await screen.findByLabelText('Brief the agent gets');
+    expect(block.textContent).toBe('THE EXACT BRIEF');
+    expect(screen.getByText('This is the exact brief the agent gets.')).toBeTruthy();
+    const approve = screen.getByRole('button', { name: 'Approve and launch' });
+    expect(block.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The collapsible brief is for launches that were decided already.
+    expect(screen.queryByRole('button', { name: 'Brief the agent got' })).toBeNull();
+  });
+
+  it('shows tracking lost with a retry note and keeps polling', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    launch.status = 'tracking_lost';
+    launch.error = 'Lost contact with T3: T3 is not reachable';
+    render(
+      <MemoryRouter initialEntries={['/incidents/launches/l1']}>
+        <Route path="/incidents/launches/:id" component={LaunchPage} />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText(/Lost contact with T3: T3 is not reachable/)).toBeTruthy();
+    expect(screen.getAllByText('Tracking lost, retrying').length).toBeGreaterThan(0);
+    const gets = () => calls.filter(c => c.url.endsWith('/api/launches/l1')).length;
+    const before = gets();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+    expect(gets()).toBeGreaterThan(before);
+  });
+
+  it('shows an expired request as an end state', async () => {
+    launch.status = 'expired';
+    render(
+      <MemoryRouter initialEntries={['/incidents/launches/l1']}>
+        <Route path="/incidents/launches/:id" component={LaunchPage} />
+      </MemoryRouter>
+    );
+    expect(await screen.findByText(/expired before anyone decided/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Approve and launch' })).toBeNull();
   });
 
@@ -359,12 +412,14 @@ describe('Run with an agent on a diagnosis page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Request' }));
     await waitFor(() => expect(posts().some(p => p.url.endsWith('/api/launches'))).toBe(true));
     const post = posts().find(p => p.url.endsWith('/api/launches'))!;
+    // The fix goes as an index. The server reads it and builds the brief.
     expect(post.body).toEqual({
       purpose: 'Fix the drift',
       diagnosisId: 'd1',
-      fix: { index: 0, title: 'Apply the DNS placement plan', detail: 'Use e2.' },
+      fix: 0,
       projectKey: 'default',
     });
+    expect(post.body).not.toHaveProperty('brief');
     expect((await screen.findByTestId('loc')).textContent).toBe('/c/test/incidents-launch/new1');
     // The request did not approve anything.
     expect(posts().some(p => p.url.endsWith('/approve'))).toBe(false);
@@ -384,6 +439,9 @@ describe('Run with an agent on a diagnosis page', () => {
     ];
     renderActions();
     expect(await screen.findByText(/asked to run an agent: Pending work/)).toBeTruthy();
+    // The approval card on the diagnosis page shows the exact stored brief.
+    expect(await screen.findByText('THE STORED BRIEF')).toBeTruthy();
+    expect(screen.getByText('This is the exact brief the agent gets.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Running work' })).toBeTruthy();
     expect(screen.queryByText('Other incident')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Approve and launch' }));

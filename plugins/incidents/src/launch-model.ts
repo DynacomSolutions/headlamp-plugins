@@ -3,9 +3,11 @@
 export type LaunchStatus =
   | 'pending_approval'
   | 'rejected'
+  | 'expired'
   | 'launching'
   | 'running'
   | 'waiting'
+  | 'tracking_lost'
   | 'completed'
   | 'failed'
   | 'cancelled';
@@ -15,9 +17,11 @@ export const LAUNCH_STATUSES: LaunchStatus[] = [
   'launching',
   'running',
   'waiting',
+  'tracking_lost',
   'completed',
   'failed',
   'rejected',
+  'expired',
   'cancelled',
 ];
 
@@ -35,7 +39,7 @@ export interface TimelineEntry {
 }
 
 export interface LaunchFix {
-  index?: number;
+  index: number;
   title: string;
   detail?: string;
   command?: string;
@@ -183,18 +187,25 @@ const META: Record<LaunchStatus, StatusMeta> = {
     busy: false,
   },
   failed: { label: 'Failed', colour: 'error', icon: 'mdi:alert-circle-outline', busy: false },
+  tracking_lost: {
+    label: 'Tracking lost, retrying',
+    colour: 'warning',
+    icon: 'mdi:lan-disconnect',
+    busy: true,
+  },
   rejected: { label: 'Rejected', colour: 'default', icon: 'mdi:close-circle-outline', busy: false },
+  expired: { label: 'Expired', colour: 'default', icon: 'mdi:clock-remove-outline', busy: false },
   cancelled: { label: 'Cancelled', colour: 'default', icon: 'mdi:cancel', busy: false },
 };
 
 export const statusMeta = (s: LaunchStatus): StatusMeta => META[s];
 
 export const isFinalLaunch = (s: LaunchStatus): boolean =>
-  s === 'completed' || s === 'failed' || s === 'rejected' || s === 'cancelled';
+  s === 'completed' || s === 'failed' || s === 'rejected' || s === 'expired' || s === 'cancelled';
 
 /** The launch changes without an operator action: poll it. */
 export const isLiveLaunch = (s: LaunchStatus): boolean =>
-  s === 'launching' || s === 'running' || s === 'waiting';
+  s === 'launching' || s === 'running' || s === 'waiting' || s === 'tracking_lost';
 
 export const STEP_COLOUR: Record<StepStatus, PillColour> = {
   running: 'info',
@@ -225,7 +236,8 @@ export function elapsed(from: string | undefined, to: string | undefined, now: n
 
 /** Time the launch has been active: from start (or request) to the end, or to `now`. */
 export function launchElapsed(l: LaunchSummary, now: number): string {
-  if (l.status === 'pending_approval' || l.status === 'rejected') return '';
+  if (l.status === 'pending_approval' || l.status === 'rejected' || l.status === 'expired')
+    return '';
   return elapsed(
     l.startedAt ?? l.requestedAt,
     isFinalLaunch(l.status) ? l.finishedAt : undefined,
@@ -237,6 +249,13 @@ export function launchElapsed(l: LaunchSummary, now: number): string {
 
 export const PLAN_TOOL = 'dns_placement_plan';
 
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** True when `text` holds `token` as a whole word. The token is matched as plain text, not as a pattern. */
+export function hasToken(text: string, token: string): boolean {
+  return token !== '' && new RegExp(`(?<!\\w)${escapeRegExp(token)}(?!\\w)`).test(text);
+}
+
 /** True when a fix talks about the DNS plan: it names the tool, cites its fact id, or is about DNS and a plan exists. Same rule as the agent. */
 export function fixCitesPlan(
   fix: Pick<LaunchFix, 'title' | 'detail' | 'command'>,
@@ -245,7 +264,7 @@ export function fixCitesPlan(
   if (planFactIds.length === 0) return false;
   const text = `${fix.title} ${fix.detail ?? ''} ${fix.command ?? ''}`;
   if (text.includes(PLAN_TOOL)) return true;
-  if (planFactIds.some(id => new RegExp(`\\b${id}\\b`).test(text))) return true;
+  if (planFactIds.some(id => hasToken(text, id))) return true;
   return /\bdns\b/i.test(text);
 }
 

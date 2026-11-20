@@ -210,7 +210,8 @@ export function LaunchDetailView({ id }: { id: string }) {
   const running = l?.timeline.filter(e => e.status === 'running' && e.kind !== 'run').at(-1);
   const threadLink = l?.threadLink ? safeUrl(l.threadLink) : null;
   const canMessage =
-    !!l?.threadId && ['running', 'waiting', 'completed', 'failed'].includes(l.status);
+    !!l?.threadId &&
+    ['running', 'waiting', 'tracking_lost', 'completed', 'failed'].includes(l.status);
 
   return (
     <SectionBox
@@ -260,6 +261,7 @@ export function LaunchDetailView({ id }: { id: string }) {
             <ApprovalCard
               purpose={l.purpose}
               requestedBy={l.requestedBy}
+              brief={l.brief}
               busy={busy}
               error={actionError}
               onApprove={() => act(() => approveLaunch(settings, id))}
@@ -275,8 +277,18 @@ export function LaunchDetailView({ id }: { id: string }) {
           {l.status === 'rejected' && (
             <Alert severity="info">This request was rejected. No agent was started.</Alert>
           )}
+          {l.status === 'expired' && (
+            <Alert severity="info">
+              This request expired before anyone decided. No agent was started.
+            </Alert>
+          )}
+          {l.status === 'tracking_lost' && (
+            <Alert severity="warning">
+              {l.error || 'Lost contact with T3.'} The page keeps trying.
+            </Alert>
+          )}
 
-          {l.status !== 'pending_approval' && l.status !== 'rejected' && (
+          {l.status !== 'pending_approval' && l.status !== 'rejected' && l.status !== 'expired' && (
             <AgentTimeline timeline={l.timeline} now={now} />
           )}
 
@@ -316,7 +328,7 @@ export function LaunchDetailView({ id }: { id: string }) {
             </Box>
           )}
 
-          {l.brief && (
+          {l.brief && l.status !== 'pending_approval' && (
             <Collapsible title="Brief the agent got">
               <Box
                 component="pre"

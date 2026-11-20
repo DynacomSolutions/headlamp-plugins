@@ -25,9 +25,14 @@ When `GET /api/launches/config` answers `enabled: true`, the diagnosis page has 
   prominent button. The dialog holds the purpose (filled in), the project
   (keys from the agent settings) and a read-only, collapsible preview of the
   brief. **Request** stores a request. It starts nothing.
-- **Approval card**: **Approve and launch** starts the agent. **Reject** ends the
+- **Approval card**: it shows the exact stored brief, open by default in a scrollable
+  block, with the line "This is the exact brief the agent gets." **Approve and
+  launch** (off until the brief has loaded) starts the agent. **Reject** ends the
   request. One operator may approve their own request. The card says so. The
-  card shows on the diagnosis page and on the launch page.
+  card shows on the diagnosis page and on the launch page. A request that nobody
+  decides expires after 24 hours. The page then shows **Expired**.
+- The dialog sends the fix as its index in the diagnosis. The server builds the
+  brief. The plugin cannot send its own brief text.
 - `/incidents/launches`: the **Agents** list, newest first, with status pills.
   The status filter is the query string `?status=running`. A change of the filter
   replaces the history entry, so Back leaves the page.
@@ -36,7 +41,8 @@ When `GET /api/launches/config` answers `enabled: true`, the diagnosis page has 
   cancelled, each with a colour and an icon) and the elapsed time. Below it a
   vertical timeline shows the runs and their steps with live timers. A step is
   an expandable card (title, status, time, detail) for a command, a tool call or
-  a file change. The agent's latest reply is rendered as Markdown. A box sends a
+  a file change. When the agent service cannot read T3, the pill shows **Tracking lost,
+  retrying** and the page keeps polling. The agent's latest reply is rendered as Markdown. A box sends a
   follow-up message. A link opens the thread in T3 Code when the agent settings
   have a `threadUrlTemplate`. The page reads the launch every 1.5 seconds while
   it is launching, running or waiting, and stops when it is final.

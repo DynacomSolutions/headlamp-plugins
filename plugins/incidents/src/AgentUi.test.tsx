@@ -18,6 +18,16 @@ describe('AgentStatusPill', () => {
     }
   });
 
+  it('shows tracking lost as a retrying state with a spinner, and expired as an end state', () => {
+    const { container, unmount } = render(<AgentStatusPill status="tracking_lost" />);
+    expect(screen.getByText('Tracking lost, retrying')).toBeTruthy();
+    expect(container.querySelector('[role="progressbar"]')).toBeTruthy();
+    unmount();
+    const expired = render(<AgentStatusPill status="expired" />);
+    expect(screen.getByText('Expired')).toBeTruthy();
+    expect(expired.container.querySelector('[role="progressbar"]')).toBeNull();
+  });
+
   it('shows what the agent does now', () => {
     render(<AgentStatusPill status="running" activity="kubectl get nodes" />);
     expect(screen.getByText('kubectl get nodes')).toBeTruthy();
@@ -82,6 +92,7 @@ describe('ApprovalCard', () => {
       <ApprovalCard
         purpose="Apply the plan"
         requestedBy="alice"
+        brief={'## Purpose\nApply the plan'}
         busy={false}
         onApprove={onApprove}
         onReject={onReject}
@@ -100,6 +111,7 @@ describe('ApprovalCard', () => {
     render(
       <ApprovalCard
         purpose="x"
+        brief="the brief"
         busy
         error="2 launches are active already"
         onApprove={() => {}}
@@ -113,5 +125,41 @@ describe('ApprovalCard', () => {
       true
     );
     expect(screen.getByText('2 launches are active already')).toBeTruthy();
+  });
+
+  it('shows the exact brief above the buttons, with the sentence that says so', () => {
+    const brief = '## Purpose\nApply the plan\n\n```json\n{"a": 1}\n```';
+    render(
+      <ApprovalCard
+        purpose="x"
+        brief={brief}
+        busy={false}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />
+    );
+    expect(screen.getByText('This is the exact brief the agent gets.')).toBeTruthy();
+    const block = screen.getByLabelText('Brief the agent gets');
+    expect(block.tagName).toBe('PRE');
+    expect(block.textContent).toBe(brief);
+    const approve = screen.getByRole('button', { name: 'Approve and launch' });
+    // The brief comes before the Approve button in the page.
+    expect(block.compareDocumentPosition(approve) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('does not allow approval before the brief has loaded', () => {
+    render(
+      <ApprovalCard
+        purpose="x"
+        brief={undefined}
+        busy={false}
+        onApprove={() => {}}
+        onReject={() => {}}
+      />
+    );
+    expect(screen.getByText('Loading...')).toBeTruthy();
+    expect(
+      (screen.getByRole('button', { name: 'Approve and launch' }) as HTMLButtonElement).disabled
+    ).toBe(true);
   });
 });
