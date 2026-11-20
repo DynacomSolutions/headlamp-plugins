@@ -7,6 +7,7 @@ import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
 import IconButton from '@mui/material/IconButton';
+import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
@@ -19,6 +20,8 @@ export interface TabsActions {
   add(): void;
   rename(tabId: string, label: string): void;
   setIcon(tabId: string, icon: string): void;
+  /** `undefined` makes the tab follow the dashboard setting. */
+  setFitHeight(tabId: string, fitHeight: boolean | undefined): void;
   move(from: number, to: number): void;
   remove(tabId: string): void;
   setPosition(p: TabPosition): void;
@@ -80,6 +83,24 @@ export function TabsDialog(props: {
               onChange={e => actions.rename(t.id, e.target.value)}
               sx={{ flex: 1 }}
             />
+            <TextField
+              select
+              size="small"
+              label="Fit height"
+              value={t.fitHeight === undefined ? 'inherit' : t.fitHeight ? 'on' : 'off'}
+              inputProps={{ 'aria-label': `Fit height of ${t.label}` }}
+              onChange={e =>
+                actions.setFitHeight(
+                  t.id,
+                  e.target.value === 'inherit' ? undefined : e.target.value === 'on'
+                )
+              }
+              sx={{ width: 150 }}
+            >
+              <MenuItem value="inherit">{`Dashboard (${spec.fitHeight ? 'on' : 'off'})`}</MenuItem>
+              <MenuItem value="on">On</MenuItem>
+              <MenuItem value="off">Off</MenuItem>
+            </TextField>
             <IconButton
               aria-label={`Move ${t.label} earlier`}
               disabled={i === 0}

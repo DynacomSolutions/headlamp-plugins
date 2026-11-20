@@ -7,7 +7,7 @@
 import type { DashboardFilters, TimeRange } from '../contract';
 import { isBundledIcon } from '../icons/iconNames';
 
-export const SPEC_VERSION = 2;
+export const SPEC_VERSION = 3;
 
 export const TIME_RANGES: ReadonlyArray<TimeRange> = ['5m', '15m', '1h', '6h', '24h', '7d', '30d'];
 export const DEFAULT_RANGE: TimeRange = '1h';
@@ -93,6 +93,8 @@ export interface Tab {
   label: string;
   /** An Iconify name, `mdi:` for the picker. */
   icon: string;
+  /** Overrides the dashboard's `fitHeight` for this tab. Missing means follow the dashboard. */
+  fitHeight?: boolean;
   sections: Section[];
 }
 
@@ -117,6 +119,11 @@ export interface DashboardSpec {
   refreshSeconds: number;
   /** Show the filter bar in kiosk mode. Off by default: a wall screen needs no filters. */
   kioskShowFilters: boolean;
+  /**
+   * Stretch the grid rows so the widgets of a tab fill the height of the screen. Off keeps the
+   * fixed row height. A tab can override it with its own `fitHeight`.
+   */
+  fitHeight: boolean;
   /** The filter values of a plain open (no saved view, no URL filters). */
   filters: DashboardFilters;
   tabs: Tab[];
@@ -124,6 +131,12 @@ export interface DashboardSpec {
   /** ISO time of the last save made by the UI. */
   modifiedAt?: string;
 }
+
+/** Whether a tab stretches its grid rows to the screen height: its own setting, else the dashboard's. */
+export const tabFitsHeight = (
+  spec: Pick<DashboardSpec, 'fitHeight'>,
+  tab: Pick<Tab, 'fitHeight'>
+) => tab.fitHeight ?? spec.fitHeight;
 
 export class SpecError extends Error {}
 /** The spec was saved by a newer version of the plugin. It is shown read-only. */
@@ -224,6 +237,7 @@ export function emptySpec(title: string): DashboardSpec {
     footer: emptyBand('footer'),
     refreshSeconds: 0,
     kioskShowFilters: false,
+    fitHeight: true,
     filters: defaultFilters(),
     tabs: [emptyTab()],
     views: [],
@@ -239,7 +253,11 @@ type Raw = Record<string, any>;
  * step here and raise SPEC_VERSION when the shape changes.
  * - 1 to 2: adds an empty `header` and `footer` and `tabRail: 'compact'`. Nothing else changes,
  *   so an old dashboard looks the same, except that its left tab bar becomes the compact rail.
+ * - 2 to 3: adds `fitHeight: false`, so an old dashboard keeps its fixed row height until
+ *   someone turns the setting on. A new dashboard starts with it on.
  */
+/** Specs older than this show the "older format" notice. The 2 to 3 step changes nothing visible. */
+export const NOTICE_BELOW_VERSION = 2;
 export const MIGRATIONS: Record<number, (raw: Raw) => Raw> = {
   1: raw => ({
     ...raw,
@@ -247,6 +265,7 @@ export const MIGRATIONS: Record<number, (raw: Raw) => Raw> = {
     footer: emptyBand('footer'),
     tabRail: 'compact',
   }),
+  2: raw => ({ ...raw, fitHeight: false }),
 };
 
 const isObject = (v: unknown): v is Raw => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -362,13 +381,15 @@ function normaliseTab(raw: unknown, taken: string[]): Tab | null {
     'sec'
   );
   const label = str(raw.label, 'Tab');
-  return {
+  const tab: Tab = {
     id: str(raw.id) || uniqueSlug(slugify(label, 'tab'), taken),
     label,
     // A name that is not bundled would make the browser ask the public Iconify service.
     icon: isBundledIcon(raw.icon) ? raw.icon : DEFAULT_TAB_ICON,
     sections: sections.length > 0 ? sections : [emptySection('Main')],
   };
+  if (typeof raw.fitHeight === 'boolean') tab.fitHeight = raw.fitHeight;
+  return tab;
 }
 
 /**
@@ -426,12 +447,14 @@ export function migrateSpec(input: unknown): { spec: DashboardSpec; migrated: bo
       ? raw.refreshSeconds
       : 0,
     kioskShowFilters: raw.kioskShowFilters === true,
+    // On unless it is switched off: a version 3 spec without the key is a hand written one.
+    fitHeight: raw.fitHeight !== false,
     filters: normaliseFilters(raw.filters),
     tabs: tabs.length > 0 ? tabs : [emptyTab()],
     views,
   };
   if (typeof raw.modifiedAt === 'string') spec.modifiedAt = raw.modifiedAt;
-  return { spec, migrated: from < SPEC_VERSION };
+  return { spec, migrated: from < NOTICE_BELOW_VERSION };
 }
 
 export function parseSpec(text: string): { spec: DashboardSpec; migrated: boolean } {

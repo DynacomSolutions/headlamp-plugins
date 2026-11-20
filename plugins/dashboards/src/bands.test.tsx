@@ -23,7 +23,14 @@ vi.mock('@kinvolk/headlamp-plugin/lib/CommonComponents', () => ({
 import { DashboardPage } from './DashboardPage';
 import { getRegistry } from './registry';
 import { addTab, addWidget } from './spec/edit';
-import { BandShow, DashboardSpec, emptySpec, FOOTER_ID, HEADER_ID } from './spec/model';
+import {
+  BandShow,
+  DashboardSpec,
+  emptySpec,
+  FOOTER_ID,
+  HEADER_ID,
+  SPEC_VERSION,
+} from './spec/model';
 import { DATA_KEY } from './storage/storage';
 import { registerBuiltinWidgets } from './widgets/builtin';
 
@@ -222,7 +229,7 @@ describe('header and footer', () => {
     await waitFor(() => expect(version).toBe(2));
     expect(spec.header.sticky).toBe(true);
     expect(spec.footer.sticky).toBe(false);
-    expect(spec.version).toBe(2);
+    expect(spec.version).toBe(SPEC_VERSION);
   });
 
   it('lets a widget in the header open its settings in edit mode', async () => {

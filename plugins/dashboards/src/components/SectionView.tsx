@@ -64,6 +64,13 @@ export interface SectionViewProps {
   kiosk: boolean;
   frameActions: FrameActions;
   actions: SectionActions;
+  /**
+   * The tab fits the screen height: the grid uses `rowHeight`, and a self-scroll section gives up
+   * its fixed pixel height, so the grid sets the height. Off keeps `ROW_HEIGHT` and the fixed height.
+   */
+  fit?: boolean;
+  /** Grid row height in px when `fit` is on. */
+  rowHeight?: number;
   /** The header and the footer own their edit controls, so the section draws none of its own. */
   bare?: boolean;
 }
@@ -157,7 +164,8 @@ function SectionHeader(
 }
 
 function SectionViewImpl(props: SectionViewProps): JSX.Element {
-  const { section, index, count, editing, kiosk, frameActions, actions, bare } = props;
+  const { section, index, count, editing, kiosk, frameActions, actions, bare, fit, rowHeight } =
+    props;
   const [breakpoint, setBreakpoint] = React.useState<Breakpoint>('lg');
   const canEditLayout = editing && isEditableBreakpoint(breakpoint);
 
@@ -184,6 +192,7 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
   );
 
   const sticky = !editing && (section.mode === 'sticky-top' || section.mode === 'sticky-bottom');
+  const fixedHeight = section.mode === 'self-scroll' && !fit;
   const hideScrollbars = kiosk
     ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }
     : {};
@@ -216,10 +225,13 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
       <Box
         data-section-scroll={section.mode === 'self-scroll' ? '' : undefined}
         sx={{
-          height: section.mode === 'self-scroll' ? section.height : undefined,
-          overflowY: section.mode === 'self-scroll' ? 'auto' : undefined,
-          overflowX: section.mode === 'self-scroll' ? 'hidden' : undefined,
+          height: fixedHeight ? section.height : undefined,
+          overflowY: fixedHeight ? 'auto' : undefined,
+          overflowX: fixedHeight ? 'hidden' : undefined,
           ...hideScrollbars,
+          // The grid animates its height on a change of the row height. The fit measures the height
+          // right after the change, so in a fitted tab it must jump, not slide.
+          ...(fit ? { '& .react-grid-layout, & .react-grid-item': { transition: 'none' } } : {}),
           '& .react-resizable-handle::after': { borderColor: 'text.secondary' },
           '& .react-grid-placeholder': { bgcolor: 'primary.main', borderRadius: 1 },
         }}
@@ -233,7 +245,7 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
           layouts={layouts}
           breakpoints={BREAKPOINTS}
           cols={COLS}
-          rowHeight={ROW_HEIGHT}
+          rowHeight={fit ? rowHeight ?? ROW_HEIGHT : ROW_HEIGHT}
           margin={GRID_MARGIN}
           containerPadding={[0, 0]}
           isDraggable={canEditLayout}
