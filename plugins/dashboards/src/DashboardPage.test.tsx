@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter, Route, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -35,6 +35,8 @@ import { registerBuiltinWidgets } from './widgets/builtin';
 
 let version = 1;
 let spec = emptySpec('Ops');
+/** When set, a PUT waits for it. */
+let gate: Promise<void> | null = null;
 
 function configMap() {
   return {
@@ -63,6 +65,7 @@ function mount(
 beforeEach(() => {
   registerBuiltinWidgets(getRegistry());
   version = 1;
+  gate = null;
   const a = addTab(emptySpec('Ops'), 'Nodes', 'mdi:server');
   const tabId = a.spec.tabs[0].id;
   spec = addWidget(
@@ -78,6 +81,7 @@ beforeEach(() => {
     if (path.startsWith('/apis/authorization')) return { status: { allowed: true } };
     if (path.startsWith('/api/v1/namespaces/headlamp-dashboards/configmaps/ops')) {
       if (params?.method === 'PUT') {
+        if (gate) await gate;
         const body = JSON.parse(params.body);
         if (body.metadata.resourceVersion !== String(version))
           throw Object.assign(new Error('conflict'), { status: 409 });
@@ -189,6 +193,61 @@ describe('dashboard page', () => {
     });
     mount('/dashboards/nope');
     expect(await screen.findByText(/was not found/)).toBeTruthy();
+  });
+
+  it('saves only the view, not the other edits in the draft, when a view is saved in edit mode', async () => {
+    mount('/dashboards/ops?edit=1');
+    fireEvent.click(await screen.findByRole('button', { name: /Add section/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Views/ }));
+    fireEvent.click(await screen.findByText(/Save the current filters as a view/));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('View name'), { target: { value: 'Mine' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(version).toBe(2));
+    // The stored spec has the view and not the new section.
+    expect(spec.views.map(v => v.name)).toEqual(['Mine']);
+    expect(spec.tabs[0].sections).toHaveLength(1);
+    // The draft is still there, with the view in it, and still unsaved.
+    expect(await screen.findByText('Unsaved changes')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(version).toBe(3));
+    expect(spec.tabs[0].sections).toHaveLength(2);
+    expect(spec.views.map(v => v.name)).toEqual(['Mine']);
+  });
+
+  it('overwrites after a conflict on a view saved outside edit mode', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Hello header');
+    version = 5; // someone else saved
+    fireEvent.click(screen.getByRole('button', { name: /Views/ }));
+    fireEvent.click(await screen.findByText(/Save the current filters as a view/));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('View name'), { target: { value: 'Mine' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/Someone else saved this dashboard/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Overwrite with my changes/ }));
+    await waitFor(() => expect(version).toBe(6));
+    expect(spec.views.map(v => v.name)).toEqual(['Mine']);
+    await waitFor(() => expect(screen.queryByText(/Someone else saved/)).toBeNull());
+  });
+
+  it('ignores edits made while a save runs, and leaves edit mode with what was saved', async () => {
+    mount('/dashboards/ops?edit=1');
+    fireEvent.click(await screen.findByRole('button', { name: /Add section/ }));
+    let release = () => {};
+    gate = new Promise<void>(resolve => {
+      release = resolve;
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: 'Saving…' });
+    // The grid is read-only while the save runs.
+    expect(screen.queryByLabelText('Settings for Header or divider')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Add section/ }));
+    release();
+    await waitFor(() => expect(version).toBe(2));
+    expect(spec.tabs[0].sections).toHaveLength(2);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
+    expect(screen.queryByText('Unsaved changes')).toBeNull();
   });
 
   it('adds a panel source entry of the palette as the base type with the source set', async () => {

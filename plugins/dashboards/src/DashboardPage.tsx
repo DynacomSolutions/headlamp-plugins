@@ -106,6 +106,15 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     widgetId: string;
   } | null>(null);
 
+  // The latest draft and the running save, for the callbacks that must not see an old value.
+  const draftRef = React.useRef<DashboardSpec | null>(null);
+  draftRef.current = draft;
+  const savingRef = React.useRef(false);
+  // True when the last save was of the draft that is on screen now (nothing was edited since).
+  const savedDraftRef = React.useRef(false);
+  // How to build the spec for "Overwrite" after a conflict: from the newest stored spec.
+  const retryRef = React.useRef<((latest: DashboardSpec) => DashboardSpec) | null>(null);
+
   const refresh = React.useMemo(() => createRefreshStore(), []);
   const signal = React.useSyncExternalStore(refresh.subscribe, () => refresh.getState().signal);
   const definitions = useWidgetDefinitions();
@@ -122,7 +131,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const storedSpec = stored?.spec;
   const edit = React.useCallback(
     (fn: (s: DashboardSpec) => DashboardSpec) => {
-      if (!storedSpec) return;
+      // The grid is read-only while a save runs, so the saved spec and the draft stay in step.
+      if (!storedSpec || savingRef.current) return;
       setDraft(prev => fn(prev ?? storedSpec));
     },
     [storedSpec]
@@ -201,13 +211,26 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   // ---- saving ----
 
-  const persist = async (next: DashboardSpec, target: StoredDashboard | undefined = stored) => {
+  /**
+   * Save the spec that `build` makes from `base` (the stored spec, or the newest one after a
+   * conflict). The draft is cleared only when it is still the object that was saved, so an edit
+   * made while the save runs stays on screen.
+   */
+  const persist = async (
+    build: (base: DashboardSpec) => DashboardSpec,
+    target: StoredDashboard | undefined = stored
+  ) => {
     if (!target) return false;
+    const next = build(target.spec);
+    savingRef.current = true;
+    retryRef.current = build;
     setSave({ saving: true, conflict: false });
     try {
       const result = await storage.save(target, next);
       loaded.set(result);
-      setDraft(null);
+      savedDraftRef.current = draftRef.current === next;
+      setDraft(d => (d === next ? null : d));
+      retryRef.current = null;
       setSave({ saving: false, conflict: false });
       return true;
     } catch (e) {
@@ -217,22 +240,29 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         error: e instanceof Error ? e.message : String(e),
       });
       return false;
+    } finally {
+      savingRef.current = false;
     }
   };
 
+  /** Save the whole draft. */
+  const saveDraft = (d: DashboardSpec) => persist(() => draftRef.current ?? d);
+
   const reloadLatest = () => {
     setDraft(null);
+    retryRef.current = null;
     setSave({ saving: false, conflict: false });
     loaded.reload();
   };
 
-  /** An explicit choice after a conflict: take the newest version, then save the draft over it. */
+  /** An explicit choice after a conflict: take the newest version, then save my change over it. */
   const overwrite = async () => {
-    if (!draft) return;
+    const build = retryRef.current;
+    if (!build) return;
     setSave({ saving: true, conflict: false });
     try {
       const latest = await storage.get(name);
-      await persist(draft, latest);
+      await persist(build, latest);
     } catch (e) {
       setSave({
         saving: false,
@@ -320,11 +350,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     () => ({
       filters,
       refreshSignal: signal,
-      editing,
+      // The grid and the widget controls are read-only while a save runs.
+      editing: editing && !save.saving,
       kiosk: query.kiosk,
       reportRefreshed: refresh.report,
     }),
-    [filters, signal, editing, query.kiosk, refresh]
+    [filters, signal, editing, save.saving, query.kiosk, refresh]
   );
 
   // ---- render ----
@@ -378,15 +409,10 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     if (variant) config.source = variant.source;
     edit(
       s =>
-        addWidget(
-          s,
-          activeTabId,
-          sectionId,
-          def.type,
-          def.defaultSize,
-          JSON.parse(JSON.stringify(def.defaultConfig))
-        ).spec
+        addWidget(s, activeTabId, sectionId, variant?.type ?? def.type, def.defaultSize, config)
+          .spec
     );
+  };
 
   const filterBar = (
     <FilterBar
@@ -402,21 +428,24 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       onSaveView={
         writable
           ? async viewName => {
-              const next = saveView(spec, viewName, filters);
-              const id = next.views.find(v => v.name === viewName)?.id ?? '';
-              if (await persist(next))
-                replaceQuery({
-                  view: id,
-                  filters: next.views.find(v => v.id === id)?.filters ?? filters,
-                });
+              // Only the view is saved. Other edits in the draft stay unsaved.
+              const build = (base: DashboardSpec) => saveView(base, viewName, filters);
+              const view = build(stored.spec).views.find(v => v.name === viewName);
+              if (await persist(build)) {
+                setDraft(d => (d ? saveView(d, viewName, filters) : d));
+                replaceQuery({ view: view?.id ?? '', filters: view?.filters ?? filters });
+              }
             }
           : undefined
       }
       onDeleteView={
         writable
           ? async id => {
-              if ((await persist(deleteView(spec, id))) && query.view === id)
-                replaceQuery({ view: '', filters });
+              const build = (base: DashboardSpec) => deleteView(base, id);
+              if (await persist(build)) {
+                setDraft(d => (d ? deleteView(d, id) : d));
+                if (query.view === id) replaceQuery({ view: '', filters });
+              }
             }
           : undefined
       }
@@ -470,7 +499,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           section={section}
           index={i}
           count={sectionsOfTab.length}
-          editing={editing}
+          editing={editing && !save.saving}
           kiosk={query.kiosk}
           frameActions={frameActions}
           actions={sectionActions}
@@ -536,7 +565,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           }}
         />
       )}
-      <Menu anchorEl={menu?.anchor} open={!!menu && editing} onClose={() => setMenu(null)}>
+      <Menu
+        anchorEl={menu?.anchor}
+        open={!!menu && editing && !save.saving}
+        onClose={() => setMenu(null)}
+      >
         {menu &&
           widgetMenuItems({
             spec,
@@ -718,7 +751,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             variant="contained"
             disabled={!dirty || save.saving}
             onClick={async () => {
-              if (draft && (await persist(draft))) setEdit(false);
+              // Stay in edit mode when the draft changed while the save ran.
+              if (draft && (await saveDraft(draft)) && savedDraftRef.current) setEdit(false);
             }}
           >
             {save.saving ? 'Saving…' : 'Save'}
