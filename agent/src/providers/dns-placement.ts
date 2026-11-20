@@ -254,6 +254,7 @@ const plan = defineTool({
         reason: z.string(),
         remove: z.array(record),
         add: z.array(record),
+        note: z.string().nullable().describe('Extra care for the person who applies the change'),
         useWildcard: z.boolean().describe('True when the host needs no own record and the wildcard answers'),
         evidence: z.object({ homeLatencyMs: z.number().nullable(), remoteLatencyMs: z.number().nullable(), slow: z.boolean() }),
       }),
@@ -285,6 +286,9 @@ const plan = defineTool({
           : `The rules want ${h.ruleExpected.join(', ')}; DNS has ${h.actual.join(', ') || 'no record'}.`,
         remove: h.actual.filter(n => wildcard || !h.ruleExpected.includes(n)).map(rec),
         add: wildcard ? [] : h.ruleExpected.filter(n => !h.actual.includes(n)).map(rec),
+        note: h.actual.includes(s.defaultNode) && s.defaultNode
+          ? 'A remove entry for the default node can be the wildcard answer. Remove it only when the host has its own record for that node.'
+          : null,
         useWildcard: wildcard,
         evidence: { homeLatencyMs: h.homeLatencyMs, remoteLatencyMs: h.remoteLatencyMs, slow: h.slow },
       };

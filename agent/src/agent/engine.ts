@@ -33,6 +33,15 @@ export interface DiagnoseOptions {
 const SUBMIT = 'submit_diagnosis';
 const MAX_TURNS = 16;
 
+function urlHost(instance: string | undefined): string | undefined {
+  if (!instance) return undefined;
+  try {
+    return new URL(instance).hostname.toLowerCase() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The deterministic first look, chosen from the alert's labels; costs no budget. */
 export function evidencePlan(alert: Alert, available: Set<string>): Array<{ tool: string; reason: string; args: Record<string, unknown> }> {
   const l = alert.labels;
@@ -69,6 +78,10 @@ export function evidencePlan(alert: Alert, available: Set<string>): Array<{ tool
   if (/probe|uptime|slow|latency/i.test(alert.name)) {
     const target = l.target ?? l.instance;
     add('uptime_response_times', 'How slow are the probes, and from which site?', { ...(target ? { target } : {}), ...(host ? { host } : {}) });
+    if (/slow|latency/i.test(alert.name) && !/dns|placement/i.test(alert.name)) {
+      const probeHost = host ?? urlHost(l.instance);
+      if (probeHost) add('dns_placement_status', 'Do the DNS records of this host point at the right nodes?', { host: probeHost });
+    }
   }
   add('list_events', 'What warnings happened recently?', { ...(ns ? { namespace: ns } : {}), type: 'Warning', sinceMinutes: 120, limit: 25 });
   if (!ns && !pod && !node) add('cluster_overview', 'What else is broken right now?', {});

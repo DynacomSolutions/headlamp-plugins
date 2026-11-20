@@ -47,7 +47,7 @@ const data: Record<string, Sample[]> = {
     match('moved.example.com', 'home-1', 'remote-1', 0), // drift
     match('default.example.com', 'node-a', 'node-a', 1), // default node, own record
     match('wild.example.com', 'node-a', '', 0), // absent record, wildcard answers
-    match('own.example.com', 'node-a', 'home-1', 0), // default only but own record elsewhere
+    match('own.example.com', 'node-a', 'home-1,node-a', 0), // default only but own record elsewhere
     match('remote.example.com', 'remote-1', 'remote-1', 1), // no home pods
     match('pinned.example.com', 'home-1', 'remote-1', 0), // pinned wins: ok
     match('failover-x.example.com', 'home-1', 'remote-1', 0), // excluded
@@ -117,8 +117,10 @@ describe('dns_placement_plan', () => {
     expect(by['home.example.com'].remove.map((r: any) => r.node)).toEqual(['remote-1']);
     expect(by['home.example.com'].add).toEqual([]);
     expect(by['own.example.com']).toMatchObject({ useWildcard: true, add: [] });
-    expect(by['own.example.com'].remove.map((r: any) => r.node)).toEqual(['home-1']);
+    expect(by['own.example.com'].remove.map((r: any) => r.node)).toEqual(['home-1', 'node-a']);
     expect(by['own.example.com'].reason).toMatch(/wildcard/);
+    expect(by['own.example.com'].note).toMatch(/wildcard answer/);
+    expect(by['moved.example.com'].note).toBeNull();
     expect(out.notes.join(' ')).toMatch(/never proxied|not proxied/i);
     expect(out.notes.join(' ')).toMatch(/board row/);
     expect(out.steps.length).toBeGreaterThan(3);
@@ -185,6 +187,13 @@ describe('evidence plan for DNS and slow alerts', () => {
     const plan = evidencePlan(alert('UptimeSlowProbe', { target: 'shop' }), all);
     expect(plan.find(p => p.tool === 'uptime_response_times')?.args).toEqual({ target: 'shop' });
     expect(plan.some(p => p.tool === 'dns_placement_status')).toBe(false);
+  });
+
+  it('adds a placement check for a slow probe alert, with the host taken from the instance URL', () => {
+    const plan = evidencePlan(alert('ProbeSlowFromHome', { target: 'shop', instance: 'https://Shop.example.com:8443/x' }), all);
+    expect(plan.find(p => p.tool === 'dns_placement_status')).toMatchObject({ args: { host: 'shop.example.com' }, reason: 'Do the DNS records of this host point at the right nodes?' });
+    expect(evidencePlan(alert('ProbeSlowFromHome', { host: 'a.example.com' }), all).find(p => p.tool === 'dns_placement_status')?.args).toEqual({ host: 'a.example.com' });
+    expect(evidencePlan(alert('ProbeSlowFromHome', { target: 'shop' }), all).some(p => p.tool === 'dns_placement_status')).toBe(false);
   });
 
   it('adds both for a DNS alert that is also a latency alert and skips unavailable tools', () => {
