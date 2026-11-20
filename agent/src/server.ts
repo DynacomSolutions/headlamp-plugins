@@ -18,6 +18,7 @@ import { DiagnosisStore, openDiagnosisStore } from './store.js';
 import { LaunchError, LaunchService } from './launch/service.js';
 import { LaunchStore, type Launch } from './launch/store.js';
 import { T3Client, tokenFromFile } from './t3/client.js';
+import { PushError, PushService } from './push/service.js';
 
 const MAX_BODY = 1024 * 1024;
 
@@ -88,6 +89,8 @@ export class Runner {
     private readonly store: DiagnosisStore,
     private readonly config: Config,
     readonly catalogue: ModelCatalogue = new ModelCatalogue(config.models),
+    /** Called once when a diagnosis that this process ran has reached `done`. Must not throw. */
+    private readonly onDone: (d: Diagnosis) => void = () => {},
   ) {}
 
   get configured(): boolean {
@@ -295,6 +298,7 @@ export class Runner {
         if (lost) return;
         if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts }))) return;
         log('info', 'diagnosis finished', { id: result.id, alert: alert.name, status: result.status, toolCalls: result.toolCalls, error: result.error });
+        if (result.status === 'done') this.onDone({ ...result, createdAt: queued.createdAt });
       } catch (error) {
         log('error', 'diagnosis crashed', { id: queued.id, error: String(error) });
         // Best effort: a crash must not leave a record that the next scan runs again and again.
@@ -340,7 +344,7 @@ const publishSchema = z.object({
 
 const rerunSchema = z.object({ model: z.string().max(200).nullish() }).strict();
 const createChatSchema = z.object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional() }).strict();
-const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional() });
+const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional(), push: z.string().regex(/^[0-9a-f]{32}$/).optional() });
 const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional() });
 
 const launchSchema = z
@@ -391,8 +395,24 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   const store = deps.store ?? (await openDiagnosisStore(config.databaseUrl, config.dataDir, (message, extra) => log('info', message, extra)));
   const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
   const runtime = new Runtime(config, store, launchStore);
-  const runner = new Runner(runtime, store, config);
-  const chats = new ChatService({ store: new ChatStore(config.dataDir), diagnoses: store, tools: runtime.toolHost(), catalogue: runner.catalogue, budget: config.diagnosis.toolBudget, maxTurns: config.maxChatTurns });
+  const push = new PushService({
+    store: store.pushStore(),
+    keys: config.push.publicKey && config.push.privateKey ? { publicKey: config.push.publicKey, privateKey: config.push.privateKey, subject: config.push.subject } : undefined,
+    extraHosts: config.push.extraHosts,
+    maxPerWindow: config.push.maxPer10Min,
+    log: (level, message, extra) => log(level, message, extra),
+  });
+  // A push is best effort and never holds up the diagnosis or the answer.
+  const runner = new Runner(runtime, store, config, undefined, d => void push.notifyDiagnosis(d));
+  const chats = new ChatService({
+    store: new ChatStore(config.dataDir),
+    diagnoses: store,
+    tools: runtime.toolHost(),
+    catalogue: runner.catalogue,
+    budget: config.diagnosis.toolBudget,
+    maxTurns: config.maxChatTurns,
+    onAnswer: e => void push.notifyChatAnswer(e.subscription, e.chatId, e.text),
+  });
   const launches = new LaunchService({
     store: launchStore,
     diagnoses: store,
@@ -590,7 +610,35 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         });
         d.a2ui = renderDiagnosis(d);
         await store.put(d);
+        if (d.status === 'done') void push.notifyDiagnosis(d);
         return send(res, 201, { id: d.id });
+      }
+      if (path === '/api/push' || path.startsWith('/api/push/')) {
+        const parts = path.split('/').slice(3).map(decodeURIComponent);
+        const [kind, id, action] = parts;
+        try {
+          if (parts.length === 1 && kind === 'config' && req.method === 'GET') return send(res, 200, push.publicConfig());
+          // Only GET and POST: the service proxy maps them to the `get` and `create` rights the chat already needs.
+          if (kind === 'subscriptions' && id && (parts.length === 2 || (parts.length === 3 && ['settings', 'presence', 'unsubscribe'].includes(action ?? '')))) {
+            if (req.method === 'POST') guardWrite(req, config);
+            if (parts.length === 2 && req.method === 'GET') return send(res, 200, await push.get(id));
+            if (parts.length === 2 && req.method === 'POST') return send(res, 200, await push.subscribe(id, await readBody(req)));
+            if (parts.length === 3 && req.method === 'POST') {
+              const body = (await readBody(req)) as Record<string, unknown>;
+              if (action === 'settings') return send(res, 200, await push.update(id, body));
+              if (action === 'unsubscribe') {
+                await push.unsubscribe(id);
+                return send(res, 200, { ok: true });
+              }
+              await push.presence(id, body && typeof body === 'object' ? (body.chatId ?? null) : null);
+              return send(res, 200, { ok: true });
+            }
+          }
+        } catch (error) {
+          if (error instanceof PushError) throw new HttpError(error.status, error.message);
+          throw error;
+        }
+        return send(res, 404, { error: 'not found' });
       }
       if (path === '/api/chats' || path.startsWith('/api/chats/')) {
         const parts = path.split('/').slice(3).map(decodeURIComponent);
@@ -612,7 +660,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           }
           if (id && action === 'messages' && req.method === 'POST') {
             const body = await chatBody(req, sendSchema);
-            return send(res, 202, await chats.send(id, body.text, body.model));
+            return send(res, 202, await chats.send(id, body.text, body.model, body.push));
           }
           if (id && action === 'cancel' && req.method === 'POST') {
             chats.cancel(id);

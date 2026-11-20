@@ -44,6 +44,8 @@ export interface ChatDeps {
   budget: number;
   /** Turns that may run at once across chats. */
   maxTurns: number;
+  /** Called when an answer is done, with the push subscription of the page that asked (if it named one). Must not throw. */
+  onAnswer?: (event: { chatId: string; subscription: string; text: string }) => void;
 }
 
 /** Replaces the oldest tool results with a short note until the kept results fit `limit` characters. */
@@ -153,7 +155,7 @@ export class ChatService {
   }
 
   /** Starts one assistant turn. Returns the id of the assistant message. */
-  async send(id: string, text: string, model?: string): Promise<{ messageId: string }> {
+  async send(id: string, text: string, model?: string, subscription?: string): Promise<{ messageId: string }> {
     const { store } = this.deps;
     const chat = this.chat(id);
     if (store.running(chat) || this.turns.has(id)) throw new ChatError(409, 'A turn is already running in this chat');
@@ -174,7 +176,7 @@ export class ChatService {
     const reply: ChatMessage = { id: randomUUID(), role: 'assistant', text: '', createdAt: now, status: 'running', model: resolved, steps: [] };
     chat.messages.push(reply);
     store.save(chat);
-    this.run(chat, reply, controller).catch(() => undefined);
+    this.run(chat, reply, controller, subscription).catch(() => undefined);
     return { messageId: reply.id };
   }
 
@@ -222,7 +224,7 @@ export class ChatService {
     return out;
   }
 
-  private async run(chat: Chat, reply: ChatMessage, controller: AbortController): Promise<void> {
+  private async run(chat: Chat, reply: ChatMessage, controller: AbortController, subscription?: string): Promise<void> {
     const { store, tools: host, budget } = this.deps;
     const signal = controller.signal;
     const cancelled = new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
@@ -295,6 +297,13 @@ export class ChatService {
       reply.trace = mask(turn);
       reply.status = 'done';
       store.save(chat);
+      if (subscription) {
+        try {
+          this.deps.onAnswer?.({ chatId: chat.id, subscription, text: reply.text });
+        } catch {
+          // A push problem never changes the answer.
+        }
+      }
     } catch (error) {
       if (signal.aborted) return;
       reply.status = 'failed';

@@ -33,6 +33,19 @@ export interface Config {
   models: ModelRoutesConfig;
   diagnosis: DiagnosisConfig;
   launch: LaunchConfig;
+  push: PushConfig;
+}
+
+/** Web Push to browsers and installed apps. Without both keys push is off. The agent has its own key pair, not the one of the Alerting plugin. */
+export interface PushConfig {
+  publicKey: string;
+  privateKey: string;
+  /** VAPID contact: a `mailto:` or `https:` URL. */
+  subject: string;
+  /** Extra exact push-service host names. Empty in production. */
+  extraHosts: string[];
+  /** Pushes one device may get in ten minutes. */
+  maxPer10Min: number;
 }
 
 /** Launching T3 Code agents from the incident agent. Every value comes from the environment or the settings file. */
@@ -279,6 +292,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ignoreAlerts: list(env.AGENT_IGNORE_ALERTS, ['Watchdog', 'InfoInhibitor']),
     },
     launch: loadLaunchConfig(env),
+    push: {
+      publicKey: (env.PUSH_VAPID_PUBLIC_KEY ?? '').trim(),
+      privateKey: (env.PUSH_VAPID_PRIVATE_KEY ?? '').trim(),
+      subject: (env.PUSH_SUBJECT ?? '').trim() || 'mailto:noreply@example.com',
+      extraHosts: list(env.PUSH_EXTRA_HOSTS, []).map(h => h.toLowerCase()),
+      maxPer10Min: int(env.PUSH_MAX_PER_10_MIN, 10),
+    },
   };
 }
 
