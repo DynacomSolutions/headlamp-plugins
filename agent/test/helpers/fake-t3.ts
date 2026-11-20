@@ -31,6 +31,10 @@ export interface FakeT3 {
   readStatus?: number;
   /** When set, RPC calls fail with a Die defect. */
   rpcDie?: string;
+  /** When true, launchThread creates the thread and then answers with a failure, like a lost answer. */
+  failAfterCreate?: boolean;
+  /** When true, a message does not create a run at once, like a server that is slow to start it. */
+  slowRun?: boolean;
   connections: number;
   close(): Promise<void>;
 }
@@ -161,12 +165,14 @@ export async function startFakeT3(token = 'fake-bearer-value'): Promise<FakeT3> 
           t.projection.runs.push({ id: `${threadId}-run1`, ordinal: 1, status: 'running', requestedAt: '2026-11-20T07:00:00.000Z', startedAt: '2026-11-20T07:00:01.000Z', completedAt: null });
           t.projection.messages.push({ id: initial.messageId, role: 'user', text: initial.text, streaming: false, createdAt: '2026-11-20T07:00:00.000Z', runId: `${threadId}-run1` });
           fake.threads.set(threadId, t);
+          if (fake.failAfterCreate) return fail('connection lost after the thread was created');
           return send({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value: { threadId, projection: t.projection, resumed: false, sequence: 10 } } });
         }
         if (frame.tag === 'orchestration.dispatchCommand') {
           if ('command' in payload || payload.type !== 'message.dispatch') return fail('Expected the bare command object');
           const t = fake.threads.get(String(payload.threadId));
           if (!t) return fail('thread not found');
+          if (fake.slowRun) return send({ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value: { sequence: 11 } } });
           const n = t.projection.runs.length + 1;
           t.projection.messages.push({ id: payload.messageId, role: 'user', text: payload.text, streaming: false, createdAt: '2026-11-20T07:10:00.000Z', runId: `${payload.threadId}-run${n}` });
           t.projection.runs.push({ id: `${payload.threadId}-run${n}`, ordinal: n, status: 'running', requestedAt: '2026-11-20T07:10:00.000Z', startedAt: '2026-11-20T07:10:01.000Z', completedAt: null });

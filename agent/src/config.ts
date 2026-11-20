@@ -41,6 +41,8 @@ export interface LaunchConfig {
   /** File that holds the bearer token. It is read on each use, so a rotated token needs no restart. */
   t3TokenFile: string;
   settingsFile: string;
+  /** Approvals per hour across all launches. More get a 429. */
+  maxApprovalsPerHour: number;
   settings: LaunchSettings;
   /** Why the settings file could not be used (missing, not JSON). Shown as the reason when launching is off. */
   settingsError?: string;
@@ -210,7 +212,7 @@ export function parseLaunchSettings(raw: unknown): LaunchSettings {
   const r = raw as Record<string, unknown>;
   if (r.projects && typeof r.projects === 'object' && !Array.isArray(r.projects)) {
     for (const [key, value] of Object.entries(r.projects as Record<string, unknown>)) {
-      if (!/^[A-Za-z0-9_.-]{1,60}$/.test(key) || !value || typeof value !== 'object') continue;
+      if (!/^[A-Za-z0-9_.-]{1,60}$/.test(key) || ['__proto__', 'constructor', 'prototype'].includes(key) || !value || typeof value !== 'object') continue;
       const v = value as Record<string, unknown>;
       const projectId = plainString(v.projectId, 100);
       if (!projectId) continue;
@@ -246,7 +248,7 @@ export function loadLaunchConfig(env: NodeJS.ProcessEnv): LaunchConfig {
       settingsError = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'The launch settings file does not exist' : 'The launch settings file is not valid JSON';
     }
   }
-  return { t3Url: (env.T3_URL ?? '').trim().replace(/\/+$/, ''), t3TokenFile: env.T3_TOKEN_FILE ?? '', settingsFile, settings, settingsError };
+  return { t3Url: (env.T3_URL ?? '').trim().replace(/\/+$/, ''), t3TokenFile: env.T3_TOKEN_FILE ?? '', settingsFile, maxApprovalsPerHour: int(env.AGENT_MAX_LAUNCH_APPROVALS_PER_HOUR, 4), settings, settingsError };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
