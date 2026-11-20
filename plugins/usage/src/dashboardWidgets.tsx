@@ -24,11 +24,25 @@ import {
   SunburstResource,
   usageRange,
 } from './dashboard/widgetModel';
-import { DashboardFilters, registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
+import {
+  DashboardFilters,
+  registerDashboardWidget,
+  WidgetDefinition,
+  WidgetProps,
+} from './dashboardsContract';
 import { fetchUsage } from './data';
 import { DonutCard } from './DonutCard';
 import { numberFromValue, queryMetrics } from './metrics';
-import { aggregate, buildContext, displayKey, filterRows, planFor, slicesFor, totalOf, UsageRow } from './model';
+import {
+  aggregate,
+  buildContext,
+  displayKey,
+  filterRows,
+  planFor,
+  slicesFor,
+  totalOf,
+  UsageRow,
+} from './model';
 import { assignColours } from './palette';
 import { rangeSeconds, RESOURCES } from './resources';
 import { formatBytes, formatCores } from './units';
@@ -74,7 +88,13 @@ export function useUsageData(
   capacity: { resource: SunburstResource; nodes: string[] } | null,
   refreshSignal: number,
   reportRefreshed: (at?: number) => void
-): { loading: boolean; error: string | null; rows: UsageRow[]; windowSeconds: number; capacity: number } {
+): {
+  loading: boolean;
+  error: string | null;
+  rows: UsageRow[];
+  windowSeconds: number;
+  capacity: number;
+} {
   const [loaded, setLoaded] = React.useState<Loaded | null>(null);
   const usage = usageRange(range);
   const plan = planFor(groupingOf(groupBy, labelKey), []);
@@ -85,11 +105,22 @@ export function useUsageData(
     Promise.all([
       fetchUsage(usage, { live: plan.live, labelKey: plan.labelKey }),
       // The capacity is optional: without it the circle is the used part.
-      capQuery ? queryMetrics(capQuery).then(s => numberFromValue(s[0]) ?? 0, () => 0) : Promise.resolve(0),
+      capQuery
+        ? queryMetrics(capQuery).then(
+            s => numberFromValue(s[0]) ?? 0,
+            () => 0
+          )
+        : Promise.resolve(0),
     ]).then(
       ([data, cap]) => {
         if (!live) return;
-        setLoaded({ key, rows: data.rows, windowSeconds: data.coverage?.coveredSeconds ?? rangeSeconds(usage), capacity: cap, error: null });
+        setLoaded({
+          key,
+          rows: data.rows,
+          windowSeconds: data.coverage?.coveredSeconds ?? rangeSeconds(usage),
+          capacity: cap,
+          error: null,
+        });
         reportRefreshed(Date.now());
       },
       (e: unknown) =>
@@ -126,7 +157,10 @@ function Loading(): JSX.Element {
   );
 }
 
-function Message(props: { severity: 'error' | 'warning' | 'info'; children: React.ReactNode }): JSX.Element {
+function Message(props: {
+  severity: 'error' | 'warning' | 'info';
+  children: React.ReactNode;
+}): JSX.Element {
   return (
     <Alert severity={props.severity} sx={{ mb: 1 }}>
       {props.children}
@@ -134,10 +168,23 @@ function Message(props: { severity: 'error' | 'warning' | 'info'; children: Reac
   );
 }
 
-function UsageSunburstWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }: WidgetProps<UsageWidgetConfig>): JSX.Element {
+function UsageSunburstWidget({
+  config,
+  filters,
+  refreshSignal,
+  reportRefreshed,
+  kiosk,
+}: WidgetProps<UsageWidgetConfig>): JSX.Element {
   const resource: SunburstResource = config.resource === 'memory' ? 'memory' : 'cpu';
   const cap = React.useMemo(() => ({ resource, nodes: filters.nodes }), [resource, filters.nodes]);
-  const state = useUsageData(filters.range, config.groupBy, config.labelKey, cap, refreshSignal, reportRefreshed);
+  const state = useUsageData(
+    filters.range,
+    config.groupBy,
+    config.labelKey,
+    cap,
+    refreshSignal,
+    reportRefreshed
+  );
   const data = React.useMemo(
     () =>
       buildSunburst(state.rows, {
@@ -149,7 +196,16 @@ function UsageSunburstWidget({ config, filters, refreshSignal, reportRefreshed, 
         nodes: filters.nodes,
         capacity: state.capacity,
       }),
-    [state.rows, state.windowSeconds, state.capacity, resource, config.groupBy, config.labelKey, filters.namespaces, filters.nodes]
+    [
+      state.rows,
+      state.windowSeconds,
+      state.capacity,
+      resource,
+      config.groupBy,
+      config.labelKey,
+      filters.namespaces,
+      filters.nodes,
+    ]
   );
   if (state.loading) return <Loading />;
   const failed = state.error && state.rows.length === 0;
@@ -157,10 +213,14 @@ function UsageSunburstWidget({ config, filters, refreshSignal, reportRefreshed, 
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       {state.error && (
         <Message severity={failed ? 'error' : 'warning'}>
-          {failed ? `Could not query the metrics service: ${state.error}` : `Refresh failed, showing the last data: ${state.error}`}
+          {failed
+            ? `Could not query the metrics service: ${state.error}`
+            : `Refresh failed, showing the last data: ${state.error}`}
         </Message>
       )}
-      {!failed && data.categories.length === 0 && <Message severity="info">No usage metrics match the current filters.</Message>}
+      {!failed && data.categories.length === 0 && (
+        <Message severity="info">No usage metrics match the current filters.</Message>
+      )}
       {!failed && data.categories.length > 0 && (
         <Box sx={{ flex: '1 1 0', minHeight: 0 }}>
           <SunburstChart
@@ -175,19 +235,40 @@ function UsageSunburstWidget({ config, filters, refreshSignal, reportRefreshed, 
   );
 }
 
-function UsageDonutWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }: WidgetProps<UsageWidgetConfig>): JSX.Element {
+function UsageDonutWidget({
+  config,
+  filters,
+  refreshSignal,
+  reportRefreshed,
+  kiosk,
+}: WidgetProps<UsageWidgetConfig>): JSX.Element {
   const theme = useTheme();
   const def = RESOURCES.find(r => r.id === config.resource) ?? RESOURCES[0];
-  const state = useUsageData(filters.range, config.groupBy, config.labelKey, null, refreshSignal, reportRefreshed);
+  const state = useUsageData(
+    filters.range,
+    config.groupBy,
+    config.labelKey,
+    null,
+    refreshSignal,
+    reportRefreshed
+  );
   const view = React.useMemo(() => {
     const ctx = buildContext([], []);
     const rows = filterRows(state.rows, { namespaces: filters.namespaces, nodes: filters.nodes });
     const groups = aggregate(rows, groupingOf(config.groupBy, config.labelKey), ctx);
     const slices = slicesFor(groups, def.measure);
-    return { slices, total: totalOf(groups, def.measure), fallback: new Set(groups.filter(g => g.fallback).map(g => g.key)) };
+    return {
+      slices,
+      total: totalOf(groups, def.measure),
+      fallback: new Set(groups.filter(g => g.fallback).map(g => g.key)),
+    };
   }, [state.rows, filters.namespaces, filters.nodes, config.groupBy, config.labelKey, def.measure]);
   const colourOf = React.useMemo(
-    () => assignColours(view.slices.map(s => s.key).sort(), theme.palette.mode === 'dark' ? 'dark' : 'light'),
+    () =>
+      assignColours(
+        view.slices.map(s => s.key).sort(),
+        theme.palette.mode === 'dark' ? 'dark' : 'light'
+      ),
     [view.slices, theme.palette.mode]
   );
   if (state.loading) return <Loading />;
@@ -196,12 +277,25 @@ function UsageDonutWidget({ config, filters, refreshSignal, reportRefreshed, kio
     <Box sx={{ height: '100%', overflowY: kiosk ? 'hidden' : 'auto', minWidth: 0 }}>
       {state.error && (
         <Message severity={failed ? 'error' : 'warning'}>
-          {failed ? `Could not query the metrics service: ${state.error}` : `Refresh failed, showing the last data: ${state.error}`}
+          {failed
+            ? `Could not query the metrics service: ${state.error}`
+            : `Refresh failed, showing the last data: ${state.error}`}
         </Message>
       )}
       {!failed && (
         // The card already has a border and a width, so the donut card loses its own here.
-        <Box sx={{ '& > .MuiPaper-root': { minWidth: 0, flex: 'none', border: 0, boxShadow: 'none', backgroundColor: 'transparent', p: 0 } }}>
+        <Box
+          sx={{
+            '& > .MuiPaper-root': {
+              minWidth: 0,
+              flex: 'none',
+              border: 0,
+              boxShadow: 'none',
+              backgroundColor: 'transparent',
+              p: 0,
+            },
+          }}
+        >
           <DonutCard
             def={def}
             slices={view.slices}
@@ -220,7 +314,8 @@ function UsageDonutWidget({ config, filters, refreshSignal, reportRefreshed, kio
 export const usageSunburstWidget: WidgetDefinition<UsageWidgetConfig> = {
   type: 'usage.sunburst',
   title: 'Usage sunburst',
-  description: 'CPU or memory use as a sunburst of the whole cluster: every group at its real size.',
+  description:
+    'CPU or memory use as a sunburst of the whole cluster: every group at its real size.',
   icon: 'mdi:chart-donut',
   category: 'Charts',
   defaultSize: { w: 4, h: 10 },
@@ -252,7 +347,12 @@ export const usageDonutWidget: WidgetDefinition<UsageWidgetConfig> = {
   minSize: { w: 3, h: 6 },
   defaultConfig: { resource: 'cpu', groupBy: 'namespace', labelKey: '' },
   configSchema: [
-    { key: 'resource', label: 'Resource', type: 'select', options: RESOURCES.map(r => ({ value: r.id, label: r.label })) },
+    {
+      key: 'resource',
+      label: 'Resource',
+      type: 'select',
+      options: RESOURCES.map(r => ({ value: r.id, label: r.label })),
+    },
     { key: 'groupBy', label: 'Group by', type: 'select', options: GROUP_OPTIONS },
     LABEL_FIELD,
   ],

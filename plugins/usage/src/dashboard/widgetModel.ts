@@ -30,11 +30,16 @@ const CHILD_DIMENSION: Record<SunburstGroup, 'namespace' | 'workload' | 'node'> 
   label: 'workload',
 };
 
-export const childDimension = (group: SunburstGroup): 'namespace' | 'workload' | 'node' => CHILD_DIMENSION[group];
+export const childDimension = (group: SunburstGroup): 'namespace' | 'workload' | 'node' =>
+  CHILD_DIMENSION[group];
 
 /** The grouping string the Usage model uses: `label:<key>` for a label. */
 export const groupingOf = (group: SunburstGroup, labelKey: string): string =>
-  group === 'label' && labelKey.trim() !== '' ? `${LABEL_PREFIX}${labelKey.trim()}` : group === 'label' ? 'namespace' : group;
+  group === 'label' && labelKey.trim() !== ''
+    ? `${LABEL_PREFIX}${labelKey.trim()}`
+    : group === 'label'
+    ? 'namespace'
+    : group;
 
 const EMPTY_CONTEXT: GroupContext = { pods: new Map(), serviceByPod: new Map() };
 
@@ -49,12 +54,25 @@ function rowValue(r: UsageRow, resource: SunburstResource, windowSeconds: number
  */
 export function buildSunburst(
   rows: UsageRow[],
-  opts: { resource: SunburstResource; group: SunburstGroup; labelKey: string; windowSeconds: number; namespaces: string[]; nodes: string[]; capacity: number }
+  opts: {
+    resource: SunburstResource;
+    group: SunburstGroup;
+    labelKey: string;
+    windowSeconds: number;
+    namespaces: string[];
+    nodes: string[];
+    capacity: number;
+  }
 ): SunburstData {
   const scoped = filterRows(rows, { namespaces: opts.namespaces, nodes: opts.nodes });
   const grouping = groupingOf(opts.group, opts.labelKey);
   const dim = childDimension(opts.group);
-  const keyOf = (r: UsageRow): string => (dim === 'workload' ? `${r.namespace}/${r.workload}` : dim === 'node' ? r.node || 'no node' : r.namespace);
+  const keyOf = (r: UsageRow): string =>
+    dim === 'workload'
+      ? `${r.namespace}/${r.workload}`
+      : dim === 'node'
+      ? r.node || 'no node'
+      : r.namespace;
   const groups = new Map<string, { value: number; kids: Map<string, number> }>();
   for (const r of scoped) {
     const v = rowValue(r, opts.resource, opts.windowSeconds);
@@ -78,10 +96,13 @@ export function buildSunburst(
   return { capacity: Math.max(0, opts.capacity), categories };
 }
 
-const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '\\\\"');
+const escapeRegex = (s: string): string =>
+  s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '\\\\"');
 
 /** The PromQL for the cluster capacity of CPU (cores) or memory (bytes), limited to the chosen nodes. */
 export function capacityQuery(resource: SunburstResource, nodes: string[]): string {
   const node = nodes.length > 0 ? `, node=~"${nodes.map(escapeRegex).join('|')}"` : '';
-  return `sum(kube_node_status_capacity{resource="${resource === 'cpu' ? 'cpu' : 'memory'}"${node}})`;
+  return `sum(kube_node_status_capacity{resource="${
+    resource === 'cpu' ? 'cpu' : 'memory'
+  }"${node}})`;
 }

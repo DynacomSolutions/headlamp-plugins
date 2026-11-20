@@ -58,7 +58,9 @@ const positive = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0);
  * overflows. Children that are larger together than their category are scaled down to fit it.
  */
 export function layoutArcs(data: SunburstData, radius: number): ArcShape[] {
-  const cats = data.categories.map(c => ({ ...c, value: positive(c.value) })).filter(c => c.value > 0);
+  const cats = data.categories
+    .map(c => ({ ...c, value: positive(c.value) }))
+    .filter(c => c.value > 0);
   const total = cats.reduce((s, c) => s + c.value, 0);
   const scale = Math.max(positive(data.capacity), total);
   if (scale <= 0) return [];
@@ -81,7 +83,9 @@ export function layoutArcs(data: SunburstData, radius: number): ArcShape[] {
       inner: centre,
       outer: split - RING_GAP / 2,
     });
-    const kids = (cat.children ?? []).map(k => ({ ...k, value: positive(k.value) })).filter(k => k.value > 0);
+    const kids = (cat.children ?? [])
+      .map(k => ({ ...k, value: positive(k.value) }))
+      .filter(k => k.value > 0);
     const kidTotal = kids.reduce((s, k) => s + k.value, 0);
     const fit = kidTotal > cat.value ? cat.value / kidTotal : 1;
     let kat = start;
@@ -106,7 +110,10 @@ export function layoutArcs(data: SunburstData, radius: number): ArcShape[] {
   return arcs;
 }
 
-const pt = (r: number, angle: number): [number, number] => [r * Math.sin(angle), -r * Math.cos(angle)];
+const pt = (r: number, angle: number): [number, number] => [
+  r * Math.sin(angle),
+  -r * Math.cos(angle),
+];
 const f = (n: number): string => (Math.abs(n) < 1e-9 ? '0' : n.toFixed(3).replace(/\.?0+$/, ''));
 
 /**
@@ -118,7 +125,9 @@ export function arcPath(inner: number, outer: number, start: number, end: number
   if (!(span > 0) || !(outer > inner)) return '';
   if (span >= TAU - 1e-6) {
     const ring = (r: number, sweep: 0 | 1) =>
-      `M 0 ${f(-r)} A ${f(r)} ${f(r)} 0 1 ${sweep} 0 ${f(r)} A ${f(r)} ${f(r)} 0 1 ${sweep} 0 ${f(-r)} Z`;
+      `M 0 ${f(-r)} A ${f(r)} ${f(r)} 0 1 ${sweep} 0 ${f(r)} A ${f(r)} ${f(r)} 0 1 ${sweep} 0 ${f(
+        -r
+      )} Z`;
     return `${ring(outer, 1)} ${inner > 0 ? ring(inner, 0) : ''}`.trim();
   }
   const large = span > Math.PI ? 1 : 0;

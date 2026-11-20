@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { emptyValues, UsageRow } from '../model';
-import { buildSunburst, capacityQuery, childDimension, groupingOf, usageRange } from './widgetModel';
+import {
+  buildSunburst,
+  capacityQuery,
+  childDimension,
+  groupingOf,
+  usageRange,
+} from './widgetModel';
 
-const row = (namespace: string, node: string, workload: string, cpuSeconds: number, memAvg = 0, label?: string): UsageRow => ({
+const row = (
+  namespace: string,
+  node: string,
+  workload: string,
+  cpuSeconds: number,
+  memAvg = 0,
+  label?: string
+): UsageRow => ({
   namespace,
   node,
   workload,
@@ -18,7 +31,15 @@ const rows = [
   row('ops', 'n1', 'DaemonSet/agent', 900),
   row('idle', 'n1', 'Deployment/none', 0),
 ];
-const base = { resource: 'cpu' as const, group: 'namespace' as const, labelKey: '', windowSeconds: 3600, namespaces: [], nodes: [], capacity: 8 };
+const base = {
+  resource: 'cpu' as const,
+  group: 'namespace' as const,
+  labelKey: '',
+  windowSeconds: 3600,
+  namespaces: [],
+  nodes: [],
+  capacity: 8,
+};
 
 describe('usageRange', () => {
   it('maps the short dashboard ranges to 1 h and keeps the rest', () => {
@@ -32,8 +53,14 @@ describe('buildSunburst', () => {
   it('groups by namespace with workloads as children, as average cores', () => {
     const d = buildSunburst(rows, base);
     expect(d.capacity).toBe(8);
-    expect(d.categories.map(c => [c.key, c.value])).toEqual([['shop', 2.5], ['ops', 0.25]]);
-    expect(d.categories[0].children?.map(c => [c.label, c.value])).toEqual([['shop/Deployment/web', 2], ['shop/Deployment/db', 0.5]]);
+    expect(d.categories.map(c => [c.key, c.value])).toEqual([
+      ['shop', 2.5],
+      ['ops', 0.25],
+    ]);
+    expect(d.categories[0].children?.map(c => [c.label, c.value])).toEqual([
+      ['shop/Deployment/web', 2],
+      ['shop/Deployment/db', 0.5],
+    ]);
   });
   it('keeps every group: no other bucket and no top-n', () => {
     const many = Array.from({ length: 80 }, (_, i) => row(`ns${i}`, 'n1', 'Deployment/a', 36 + i));
@@ -42,7 +69,9 @@ describe('buildSunburst', () => {
     expect(JSON.stringify(d)).not.toMatch(/other/i);
   });
   it('takes the namespace and node dashboard filters into account', () => {
-    expect(buildSunburst(rows, { ...base, namespaces: ['ops'] }).categories.map(c => c.key)).toEqual(['ops']);
+    expect(
+      buildSunburst(rows, { ...base, namespaces: ['ops'] }).categories.map(c => c.key)
+    ).toEqual(['ops']);
     const byNode = buildSunburst(rows, { ...base, nodes: ['n2'] });
     expect(byNode.categories.map(c => [c.key, c.value])).toEqual([['shop', 1]]);
   });
@@ -55,12 +84,18 @@ describe('buildSunburst', () => {
     expect(n.categories[0].children?.map(c => c.label)).toEqual(['shop', 'ops']);
   });
   it('groups by label and puts rows without it under their workload', () => {
-    const labelled = [row('shop', 'n1', 'Deployment/web', 3600, 0, 'web'), row('shop', 'n1', 'Deployment/db', 3600, 0, '')];
+    const labelled = [
+      row('shop', 'n1', 'Deployment/web', 3600, 0, 'web'),
+      row('shop', 'n1', 'Deployment/db', 3600, 0, ''),
+    ];
     const d = buildSunburst(labelled, { ...base, group: 'label', labelKey: 'app' });
     expect(d.categories.map(c => c.key).sort()).toEqual(['shop/Deployment/db', 'web']);
   });
   it('uses memory bytes for memory', () => {
-    const d = buildSunburst([row('a', 'n', 'Deployment/x', 0, 1000)], { ...base, resource: 'memory' });
+    const d = buildSunburst([row('a', 'n', 'Deployment/x', 0, 1000)], {
+      ...base,
+      resource: 'memory',
+    });
     expect(d.categories[0].value).toBe(1000);
   });
   it('returns no categories for no rows', () => {
@@ -77,6 +112,8 @@ describe('helpers', () => {
   });
   it('builds the capacity query, limited to the chosen nodes', () => {
     expect(capacityQuery('cpu', [])).toBe('sum(kube_node_status_capacity{resource="cpu"})');
-    expect(capacityQuery('memory', ['a.b', 'c'])).toBe('sum(kube_node_status_capacity{resource="memory", node=~"a\\.b|c"})');
+    expect(capacityQuery('memory', ['a.b', 'c'])).toBe(
+      'sum(kube_node_status_capacity{resource="memory", node=~"a\\.b|c"})'
+    );
   });
 });
