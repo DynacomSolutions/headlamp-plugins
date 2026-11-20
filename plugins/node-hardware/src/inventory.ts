@@ -138,8 +138,11 @@ export interface Slot {
   devices: PciDevice[];
 }
 
+export type GpuKind = 'discrete' | 'integrated' | 'bmc';
+
 export interface Gpu {
   address: string;
+  kind: GpuKind;
   vendor: string;
   model: string;
   driver: string;
@@ -375,6 +378,22 @@ function buildSlots(d: Record<string, MetricSample[]>, devices: PciDevice[]): Sl
     .sort((a, b) => a.designation.localeCompare(b.designation, undefined, { numeric: true }));
 }
 
+const GPU_IGPU_MAX_VRAM = 2 * 1024 ** 3;
+
+/** BMC display chips and CPU-integrated GPUs are not counted as discrete cards. */
+export function classifyGpu(g: { vendor: string; model: string; driver: string; vramBytes?: number }): GpuKind {
+  if (g.driver === 'ast' || g.driver === 'mgag200' || /aspeed|matrox/i.test(g.vendor)) {
+    return 'bmc';
+  }
+  if ((g.driver === 'i915' || g.driver === 'xe') && !/\bArc\b/.test(g.model)) {
+    return 'integrated';
+  }
+  if (/\bAMD\b|Advanced Micro Devices/i.test(g.vendor) && g.vramBytes !== undefined && g.vramBytes <= GPU_IGPU_MAX_VRAM) {
+    return 'integrated';
+  }
+  return 'discrete';
+}
+
 function buildGpus(d: Record<string, MetricSample[]>, devices: PciDevice[]): Gpu[] {
   const byAddress = new Map<string, Gpu>();
   const linkOf = (address: string) => devices.find(dev => dev.address === address)?.link;
@@ -382,6 +401,7 @@ function buildGpus(d: Record<string, MetricSample[]>, devices: PciDevice[]): Gpu
     const address = normalizePciAddress(s.metric.address);
     byAddress.set(address, {
       address,
+      kind: 'discrete',
       vendor: str(s.metric.vendor),
       model: str(s.metric.model),
       driver: str(s.metric.driver),
@@ -394,7 +414,7 @@ function buildGpus(d: Record<string, MetricSample[]>, devices: PciDevice[]): Gpu
   for (const s of d.dcgmMemory) {
     const address = normalizePciAddress(s.metric.pci_bus_id);
     if (!byAddress.has(address)) {
-      byAddress.set(address, { address, vendor: 'NVIDIA', model: str(s.metric.modelName), driver: '', link: linkOf(address) });
+      byAddress.set(address, { address, kind: 'discrete', vendor: 'NVIDIA', model: str(s.metric.modelName), driver: '', link: linkOf(address) });
     }
   }
   for (const gpu of byAddress.values()) {
@@ -402,6 +422,7 @@ function buildGpus(d: Record<string, MetricSample[]>, devices: PciDevice[]): Gpu
     if (!gpu.model) {
       gpu.model = str(d.dcgmMemory.find(s => normalizePciAddress(s.metric.pci_bus_id) === gpu.address)?.metric.modelName);
     }
+    gpu.kind = classifyGpu(gpu);
   }
   return [...byAddress.values()].sort((a, b) => a.address.localeCompare(b.address));
 }
@@ -486,13 +507,18 @@ export function formatGhz(hz: number | undefined): string {
 /** Slot label for a memory module: "bank / locator" when the bank is known. */
 export const moduleLabel = (m: { bank: string; locator: string }): string => (m.bank ? `${m.bank} / ${m.locator}` : m.locator);
 
-/** "Gen1 x16 (max Gen5)" when the link speed runs below its maximum, else the plain link text. */
+/** "Gen4 x2 (16 GT/s) (max x4)": the maximum is added when the width or the speed runs below it. */
 export function formatLinkWithMax(l: LinkInfo): string {
-  if (!l.belowMaxSpeed) {
-    return formatLink(l.width, l.speedGts);
-  }
+  const base = formatLink(l.width, l.speedGts);
   const gen = pcieGeneration(l.maxSpeedGts);
-  return `${formatLink(l.width, l.speedGts)} (max ${gen ? `Gen${gen}` : `${l.maxSpeedGts} GT/s`})`;
+  const parts: string[] = [];
+  if (l.belowMaxSpeed) {
+    parts.push(gen ? `Gen${gen}` : `${l.maxSpeedGts} GT/s`);
+  }
+  if (l.belowMaxWidth) {
+    parts.push(`x${l.maxWidth}`);
+  }
+  return parts.length > 0 ? `${base} (max ${parts.join(' ')})` : base;
 }
 
 /** PCIe and M.2 slot counts for the summary line. Firmware often lists fewer M.2 slots than exist. */
@@ -536,13 +562,30 @@ export function ramColumn(p: HardwareProfile | undefined): { text: string; toolt
   return { text, tooltip: `${slots}${source}`, sortValue: m.installedBytes };
 }
 
-/** Nodes-list GPUs cell: count with the models in the tooltip. */
-export function gpuColumn(p: HardwareProfile | undefined): { count: number; tooltip: string } | undefined {
+export const GPU_KIND_LABEL: Record<GpuKind, string> = { discrete: 'Discrete', integrated: 'Integrated', bmc: 'BMC display' };
+
+/** Nodes-list GPUs cell: discrete count (plus integrated), every GPU with its kind in the tooltip. */
+export function gpuColumn(p: HardwareProfile | undefined): { count: number; text: string; tooltip: string } | undefined {
   if (!p) {
     return undefined;
   }
-  const lines = p.gpus.map(g => `${g.model || 'Unknown GPU'}${g.vramBytes !== undefined ? ` (${formatBytes(g.vramBytes)})` : ''}`);
-  return { count: p.gpus.length, tooltip: lines.length > 0 ? lines.join(', ') : 'No GPU reported' };
+  const count = p.gpus.filter(g => g.kind === 'discrete').length;
+  const igpu = p.gpus.filter(g => g.kind === 'integrated').length;
+  const text = igpu > 0 ? `${count} (+${igpu} iGPU)` : String(count);
+  let tooltip: string;
+  if (p.gpus.length === 0) {
+    tooltip = 'No GPU reported';
+  } else if (p.gpus.every(g => g.kind === 'bmc')) {
+    tooltip = 'BMC display only';
+  } else {
+    tooltip = p.gpus
+      .map(g => {
+        const vram = g.vramBytes !== undefined ? `${formatBytes(g.vramBytes)}, ` : '';
+        return `${g.model || 'Unknown GPU'} (${vram}${GPU_KIND_LABEL[g.kind].toLowerCase()})`;
+      })
+      .join(', ');
+  }
+  return { count, text, tooltip };
 }
 
 export const SLOT_KIND_LABEL: Record<SlotKind, string> = { pcie: 'PCIe', m2: 'M.2', other: 'Other' };
@@ -563,7 +606,8 @@ export function summarizeProfile(p: HardwareProfile) {
     memory: memorySummary(p.memory),
     pcieSlots: slotCounts(p, 'pcie'),
     m2Slots: slotCounts(p, 'm2'),
-    gpus: p.gpus.map(g => `${g.model}${g.vramBytes !== undefined ? ` ${formatBytes(g.vramBytes)}` : ''}`),
+    gpus: p.gpus.map(g => `${g.model}${g.vramBytes !== undefined ? ` ${formatBytes(g.vramBytes)}` : ''} (${g.kind})`),
+    discreteGpus: p.gpus.filter(g => g.kind === 'discrete').length,
     nvme: p.nvme.map(n => `${n.model} ${formatBytes(n.capacityBytes)}`),
     belowMaxLinks: p.pciDevices.filter(d => isBelowMax(d.link)).map(d => `${d.address} ${d.device}`),
   };
