@@ -230,10 +230,60 @@ dashes and underscores), a title, an optional `mdi:` icon and a kind:
 - **The agent** is always the first source, with the id `agent`. It uses the three agent fields of earlier versions
   (`agentNamespace`, `agentService`, `agentPort`), kept under the same keys, so an old setting works with no change.
   Blank fields use `headlamp-agent`, `headlamp-agent` and `80`.
-- **Other sources** are stored as a list under `panelSources`. An entry with an invalid or repeated id is ignored.
+- **Cluster sources** are shared by every browser. See [Cluster sources](#cluster-sources).
+- **Browser sources** are stored as a list under `panelSources`. An entry with an invalid or repeated id is ignored.
+- **Order and clashes**: the effective list is the agent, then the cluster sources, then the browser sources. When a
+  browser source has the id of a cluster source, the browser source wins, in that browser only. The settings page shows
+  which cluster sources are overridden.
 - **Test**: each source has a Test button. It calls `/api/widgets` and shows the panel count or the error.
 - **Errors**: a wrong shape, a CORS or network failure, 401, 403 and 404 each give a clear message on the widget
   and on the Test button.
+
+### Cluster sources
+
+A source of this kind is saved in the cluster, so a shared dashboard works in every new browser with no setup. The
+sources live in one ConfigMap in the dashboards namespace (the same namespace setting as the dashboards):
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dashboard-sources
+  namespace: headlamp-dashboards
+  labels:
+    headlamp.dev/dashboard-sources: 'true'
+data:
+  sources.json: |
+    {
+      "version": 1,
+      "sources": [
+        { "id": "my-app", "title": "My app", "icon": "mdi:database", "kind": "service",
+          "namespace": "apps", "service": "my-app", "port": "80" }
+      ]
+    }
+```
+
+- **Shape**: each entry has the same fields as a browser source (`id`, `title`, `icon`, `kind`, and `namespace`,
+  `service`, `port`, `pathPrefix` or `baseUrl`).
+- **The content is untrusted**: it is checked before use. An entry is ignored (the settings page says why) when the id
+  is not valid or repeated, the id is `agent`, the namespace or service is not a Kubernetes name, the port is not 1 to
+  65535 or a port name, the path prefix has a `.` or `..` segment or a character that is not URL safe, or a `url`
+  source does not use http or https or holds a user name or password. The file may have 50 sources and 64 KiB at most.
+  A file that is not valid JSON or has another `version` gives no sources and an error on the settings page.
+- **Caching**: the ConfigMap is read once and shared by all widgets and the palette. It is read again with the
+  dashboards list (open or reload the list), when the page asks after 5 minutes (a dashboard that stays open), and
+  with the Reload button on the settings page. A failed read keeps the last good sources.
+- **Palette**: each cluster source has "Panel from <title>" and "Sunburst from <title>" like a browser source.
+  A widget saves the base type with `config.source`.
+- **Settings page**: cluster sources show as read-only rows with a **Cluster** badge and a Test button. A user with
+  create and update on ConfigMaps in the namespace can use **Edit cluster sources**. It saves the ConfigMap with its
+  resourceVersion and keeps other labels, annotations and data keys. A change by someone else gives a conflict message
+  and the edits stay in the dialog. Without write access the page shows a read-only message.
+- **Access**: reading needs `list` on ConfigMaps in the dashboards namespace (the same as the dashboards). A user who
+  cannot read the ConfigMap sees an error on the settings page and gets "source not configured" on widgets that use a
+  cluster source.
+- **GitOps**: when Argo CD or another tool owns the ConfigMap, it reverts edits made on the settings page. Change
+  the source in Git then.
 
 ### Panel widget (`agent.panel`)
 
@@ -243,7 +293,7 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
 - **Palette**: besides the base entry, the palette has "Panel from <source title>" and "Sunburst from <source title>"
   for each extra source. They are widget types `agent.panel.<source id>` and `agent.sunburst.<source id>` that
   pre-select the source. A saved widget keeps its own `source`. A removed source leaves its entry until the page
-  reloads.
+  reloads. This includes the cluster sources.
 - **What it draws**: the status and summary, the stats as tiles, the rows as a table (a fraction bar and a link
   when the row has them), the series as sparklines, the rings as sunbursts and the tables. A status is a shape and a
   word, never colour alone. A link must be a web or path link: other schemes are dropped. Links are off in edit mode.
@@ -254,7 +304,7 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   minute). A panel request is shared while it runs and is reused for the `refreshSeconds` of the panel. A failed
   request is not kept.
 - **States**: a spinner while the first load runs, an error card with a short reason, a hint when no panel is
-  chosen, an error card when the source is not configured and a hint when the panel has nothing to show.
+  chosen (a spinner while the cluster sources load), an error card when the source is not configured and a hint when the panel has nothing to show.
 
 ### Optional `tables` field (v1 extension)
 
