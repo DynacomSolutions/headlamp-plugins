@@ -251,6 +251,46 @@ describe('widget frame', () => {
     expect(renders).toBeGreaterThan(first);
   });
 
+  it('gives a failed widget a new try when its config changes', () => {
+    const quiet = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    getRegistry().registerWidget({
+      type: 'test.fragile',
+      title: 'Fragile',
+      icon: 'mdi:cube-outline',
+      category: 'Other',
+      defaultSize: { w: 2, h: 2 },
+      defaultConfig: {},
+      Component: ({ config }) => {
+        if (config.broken) throw new Error('bad config');
+        return <span>works</span>;
+      },
+    });
+    const value = ctxValue();
+    const tree = (id: string, config: Record<string, unknown>) => (
+      <DashboardContext.Provider value={value}>
+        <WidgetFrame
+          sectionId="s"
+          id={id}
+          type="test.fragile"
+          title=""
+          config={config}
+          selfScroll={undefined}
+          actions={actions}
+        />
+      </DashboardContext.Provider>
+    );
+    const { container, rerender } = render(tree('w1', { broken: true }));
+    expect(container.textContent).toContain('This widget failed: bad config');
+    // The same config stays failed.
+    rerender(tree('w1', { broken: true }));
+    expect(container.textContent).toContain('This widget failed');
+    // A new config (the user fixed the settings) gets a new try.
+    rerender(tree('w1', { broken: false }));
+    expect(container.textContent).toContain('works');
+    expect(container.textContent).not.toContain('This widget failed');
+    quiet.mockRestore();
+  });
+
   it('shows the edit controls only in edit mode and calls the actions', () => {
     const a = { menu: vi.fn(), settings: vi.fn() };
     const view = render(

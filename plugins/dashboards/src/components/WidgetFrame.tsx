@@ -38,12 +38,14 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
     [def, config]
   );
 
+  // A failed widget tries again when its id or config changes, for example after a settings edit.
+  const resetKey = React.useMemo(() => `${id}\u0000${JSON.stringify(config)}`, [id, config]);
   const shownTitle = title || def?.title || type;
   const card = def ? def.card !== false : true;
   const scroll = selfScroll ?? def?.selfScroll ?? false;
 
   const body = def ? (
-    <ErrorBoundary>
+    <ErrorBoundary resetKey={resetKey}>
       <def.Component
         instanceId={id}
         config={merged}
