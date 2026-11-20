@@ -5,6 +5,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { DEFAULT_NAMESPACE } from './storage/storage';
+import { AgentSettingsSection } from './widgets/panels/AgentSettingsSection';
 
 export const CONFIG_KEY = 'dashboards';
 export const configStore = new ConfigStore<Record<string, unknown>>(CONFIG_KEY);
@@ -45,6 +46,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
         onChange={e => onDataChange?.({ ...((data || {}) as Record<string, unknown>), namespace: e.target.value })}
         fullWidth
       />
+      <AgentSettingsSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
     </Box>
   );
 }
