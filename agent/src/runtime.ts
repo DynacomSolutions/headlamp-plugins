@@ -34,7 +34,7 @@ function diagnosesProvider(store: DiagnosisStore): ProviderDefinition {
         name: 'list_diagnoses',
         title: 'List past diagnoses',
         description: 'Diagnoses made so far, newest first, with the likely cause. Check here before investigating an alert that may already be diagnosed.',
-        input: z.object({ alert: z.string().optional().describe('Substring of the alert name'), limit: z.number().int().min(1).max(100).default(20) }),
+        input: z.object({ alert: z.string().optional().describe('Substring of the alert name'), limit: z.number().int().min(1).max(1000).default(20) }),
         output: z.object({ diagnoses: z.array(brief) }),
         async run(args) {
           const f = args.alert?.toLowerCase();

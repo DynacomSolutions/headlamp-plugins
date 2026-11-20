@@ -19,8 +19,7 @@ const lookup = defineTool({
         namespace: m.metadata?.namespace ?? '',
         mapping: m.metadata?.name ?? '',
       }))
-      .filter(s => [s.host, s.service, s.namespace, s.mapping].some(v => v.toLowerCase().includes(q)))
-      .slice(0, 50);
+      .filter(s => [s.host, s.service, s.namespace, s.mapping].some(v => v.toLowerCase().includes(q)));
     return {
       data: { sites },
       summary: `${sites.length} Mapping${sites.length === 1 ? '' : 's'} match "${args.query}".`,

@@ -25,6 +25,8 @@ export interface ListOptions {
   labelSelector?: string;
   fieldSelector?: string;
   limit?: number;
+  /** Continue token from a truncated page. */
+  continueToken?: string;
 }
 
 export class ForbiddenResourceError extends Error {}
@@ -141,18 +143,31 @@ export class KubeClient {
     return `${prefix}${ns}/${info.resource}${name ? `/${encodeURIComponent(name)}` : ''}`;
   }
 
-  async list(kind: string, options: ListOptions = {}): Promise<{ info: ResourceInfo; items: KubeObject[]; truncated: boolean }> {
+  async list(kind: string, options: ListOptions = {}): Promise<{ info: ResourceInfo; items: KubeObject[]; truncated: boolean; continueToken?: string }> {
     const info = await this.resolve(kind);
     const query = new URLSearchParams();
     if (options.labelSelector) query.set('labelSelector', options.labelSelector);
     if (options.fieldSelector) query.set('fieldSelector', options.fieldSelector);
     const limit = Math.min(Math.max(options.limit ?? 200, 1), 2000);
     query.set('limit', String(limit));
+    if (options.continueToken) query.set('continue', options.continueToken);
     const body = await this.getJson<{ items?: KubeObject[]; metadata?: { continue?: string } }>(
       `${this.path(info, options.namespace)}?${query}`,
     );
     const items = (body.items ?? []).map(item => clean({ ...item, kind: info.kind }));
-    return { info, items, truncated: Boolean(body.metadata?.continue) };
+    return { info, items, truncated: Boolean(body.metadata?.continue), ...(body.metadata?.continue ? { continueToken: body.metadata.continue } : {}) };
+  }
+
+  /** Every object of a kind: follows the continue tokens, so no page limit cuts the list. */
+  async listAll(kind: string, options: Omit<ListOptions, 'continueToken'> = {}): Promise<KubeObject[]> {
+    const items: KubeObject[] = [];
+    let continueToken: string | undefined;
+    do {
+      const page = await this.list(kind, { ...options, limit: 500, ...(continueToken ? { continueToken } : {}) });
+      items.push(...page.items);
+      continueToken = page.continueToken;
+    } while (continueToken);
+    return items;
   }
 
   async get(kind: string, name: string, namespace?: string): Promise<{ info: ResourceInfo; object: KubeObject }> {

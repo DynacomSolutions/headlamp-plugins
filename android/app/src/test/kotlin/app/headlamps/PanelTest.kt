@@ -122,4 +122,12 @@ class PanelTest {
         val again = AppJson.decodeFromString<PanelSnapshot>(AppJson.encodeToString(PanelSnapshot.serializer(), snapshot))
         assertEquals(snapshot, again)
     }
+
+    @Test
+    fun longRowListsKeepEveryRowAndTheWorstFirst() {
+        val rows = (0 until 500).map { PanelRow(label = "row $it", detail = "", value = "", status = if (it % 50 == 0) PanelStatus.CRIT else PanelStatus.OK) }
+        val sorted = sortPanelRows(rows)
+        assertEquals(500, sorted.size)
+        assertEquals(10, sorted.takeWhile { it.status == PanelStatus.CRIT }.size)
+    }
 }
