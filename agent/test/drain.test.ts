@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { DiagnosisStore } from '../src/store.js';
+import { MemoryDiagnosisStore, type DiagnosisStore } from '../src/store.js';
+import { pgliteDb, podStore } from './helpers/pglite.js';
 import type { Diagnosis } from '../src/agent/report.js';
 
 const gate = vi.hoisted(() => ({
@@ -59,8 +60,12 @@ function diagnosis(id: string, status: Diagnosis['status'], extra: Partial<Diagn
 }
 
 let dir: string;
-beforeEach(() => {
+let db: ReturnType<typeof pgliteDb>;
+let reader: DiagnosisStore;
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'agent-drain-'));
+  db = pgliteDb();
+  reader = await podStore(db, { owner: 'reader' });
   gate.release = undefined;
   gate.started = 0;
   gate.ids = [];
@@ -69,109 +74,188 @@ beforeEach(() => {
   gate.signal = undefined;
   gate.hook = undefined;
 });
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(async () => {
+  await db.close();
+  rmSync(dir, { recursive: true, force: true });
+});
 
-const until = async (check: () => boolean) => {
-  for (let i = 0; i < 200 && !check(); i++) await new Promise(r => setTimeout(r, 10));
-  expect(check()).toBe(true);
+const until = async (check: () => boolean | Promise<boolean>) => {
+  for (let i = 0; i < 300 && !(await check()); i++) await new Promise(r => setTimeout(r, 10));
+  expect(await check()).toBe(true);
 };
 
 const past = '2020-01-01T00:00:00.000Z';
-const files = (d: string) => readdirSync(join(d, 'diagnoses')).sort();
-const read = (d: string, id: string) => JSON.parse(readFileSync(join(d, 'diagnoses', `${id}.json`), 'utf8')) as Diagnosis;
+const read = async (id: string) => (await reader.get(id)) as Diagnosis;
+const ids = async () => (await reader.page()).diagnoses.map(d => d.id).sort();
+/** One pod: a store on the shared database. */
+const pod = (owner: string, now?: () => number) => podStore(db, { owner, now });
 
-describe('DiagnosisStore files', () => {
-  it('writes one file per diagnosis and reads it back, newest first', () => {
-    const store = new DiagnosisStore(dir, 50);
-    store.put(diagnosis('a', 'done', { createdAt: '2026-11-18T01:00:00.000Z' }));
-    store.put(diagnosis('b', 'done', { createdAt: '2026-11-18T02:00:00.000Z' }));
-    expect(files(dir)).toEqual(['a.json', 'b.json']);
-    const other = new DiagnosisStore(dir, 50);
-    expect(other.list().map(d => d.id)).toEqual(['b', 'a']);
-    expect(other.get('a')).toMatchObject({ id: 'a', status: 'done' });
-    expect(other.findByFingerprint('f-a', '2026-11-18T04:59:00Z')?.id).toBe('a');
+describe('PgDiagnosisStore', () => {
+  it('stores one row per diagnosis and pages them newest first', async () => {
+    const store = await pod('A');
+    await store.put(diagnosis('a', 'done', { createdAt: '2026-11-18T01:00:00.000Z' }));
+    await store.put(diagnosis('b', 'done', { createdAt: '2026-11-18T02:00:00.000Z' }));
+    const other = await pod('B');
+    const page = await other.page();
+    expect(page.total).toBe(2);
+    expect(page.diagnoses.map(d => d.id)).toEqual(['b', 'a']);
+    expect(page.diagnoses[0]).toMatchObject({ evidenceCount: 1 });
+    expect(page.diagnoses[0]).not.toHaveProperty('evidence');
+    expect(page.diagnoses[0]).not.toHaveProperty('a2ui');
+    expect(await other.get('a')).toMatchObject({ id: 'a', status: 'done' });
+    expect((await other.findByFingerprint('f-a', '2026-11-18T04:59:00Z'))?.id).toBe('a');
   });
 
-  it('prunes only finished files, oldest first', () => {
-    const store = new DiagnosisStore(dir, 2);
-    store.put(diagnosis('old', 'running', { createdAt: '2026-11-18T01:00:00.000Z' }));
-    store.put(diagnosis('mid', 'done', { createdAt: '2026-11-18T02:00:00.000Z' }));
-    store.put(diagnosis('new', 'done', { createdAt: '2026-11-18T03:00:00.000Z' }));
-    expect(files(dir)).toEqual(['new.json', 'old.json']);
+  it('keeps every diagnosis: nothing is pruned past 200, and the pages cover them all', async () => {
+    const store = await pod('A');
+    for (let i = 0; i < 250; i++) {
+      const n = String(i).padStart(3, '0');
+      await store.put(diagnosis(`d${n}`, i % 2 ? 'failed' : 'done', { createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString() }));
+    }
+    const first = await store.page({ limit: 100 });
+    expect(first.total).toBe(250);
+    expect(first.diagnoses).toHaveLength(100);
+    expect(first.diagnoses[0]!.id).toBe('d249');
+    const last = await store.page({ offset: 200, limit: 100 });
+    expect(last.total).toBe(250);
+    expect(last.diagnoses.map(d => d.id)).toEqual(Array.from({ length: 50 }, (_, i) => `d${String(49 - i).padStart(3, '0')}`));
+    expect(await store.get('d000')).toMatchObject({ id: 'd000', status: 'done' });
+    const all = new Set<string>();
+    for (let offset = 0; offset < 250; offset += 60) for (const d of (await store.page({ offset, limit: 60 })).diagnoses) all.add(d.id);
+    expect(all.size).toBe(250);
   });
 
-  it('migrates diagnoses.json once', () => {
-    writeFileSync(join(dir, 'diagnoses.json'), JSON.stringify([diagnosis('a', 'done'), diagnosis('b', 'running')]));
-    const store = new DiagnosisStore(dir, 50);
-    expect(files(dir)).toEqual(['a.json', 'b.json']);
-    expect(existsSync(join(dir, 'diagnoses.json'))).toBe(false);
-    expect(existsSync(join(dir, 'diagnoses.json.migrated'))).toBe(true);
-    expect(store.get('b')?.status).toBe('running');
+  it('filters the page by alert name and counts the matches', async () => {
+    const store = await pod('A');
+    await store.put(diagnosis('a', 'done'));
+    await store.put(diagnosis('b', 'done', { alert: { ...diagnosis('b', 'done').alert, name: 'DiskFull' } }));
+    const r = await store.page({ alert: 'disk' });
+    expect(r.total).toBe(1);
+    expect(r.diagnoses.map(d => d.id)).toEqual(['b']);
+  });
+
+  it('keeps the records when the process restarts', async () => {
+    const dbDir = join(dir, 'pg');
+    const first = pgliteDb(dbDir);
+    const a = await podStore(first, { owner: 'A' });
+    for (let i = 0; i < 230; i++) await a.put(diagnosis(`r${i}`, 'done', { createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString() }));
+    await a.put(diagnosis('open', 'running', { owner: 'A', leaseUntil: past }));
+    await first.close();
+    const second = pgliteDb(dbDir);
+    const b = await podStore(second, { owner: 'B' });
+    expect((await b.page()).total).toBe(231);
+    expect(await b.get('r0')).toMatchObject({ status: 'done' });
+    expect((await b.stale()).map(d => d.id)).toEqual(['open']);
+    await second.close();
+  });
+
+  it('imports the old JSON files once and leaves them in place', async () => {
+    const { mkdirSync } = await import('node:fs');
+    mkdirSync(join(dir, 'diagnoses'));
+    writeFileSync(join(dir, 'diagnoses', 'a.json'), JSON.stringify(diagnosis('a', 'done')));
+    writeFileSync(join(dir, 'diagnoses', 'broken.json'), '{ not json');
+    writeFileSync(join(dir, 'diagnoses.json.migrated'), JSON.stringify([diagnosis('a', 'running'), diagnosis('b', 'running')]));
+    const store = await podStore(db, { owner: 'A' }, dir);
+    expect(await ids()).toEqual(['a', 'b']);
+    expect((await read('a')).status).toBe('done'); // The first copy wins.
+    // A new start imports nothing again and does not overwrite what the database holds.
+    await store.update('b', d => (d ? { ...d, status: 'failed' } : undefined), { force: true });
+    await podStore(db, { owner: 'B' }, dir);
+    expect((await read('b')).status).toBe('failed');
+    expect(await ids()).toEqual(['a', 'b']);
+  });
+
+  it('only one of two parallel creates of the same id wins', async () => {
+    const a = await pod('A');
+    const b = await pod('B');
+    const results = await Promise.all([a.putNew(diagnosis('x', 'queued', { owner: 'A' })), b.putNew(diagnosis('x', 'queued', { owner: 'B' }))]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect((await reader.page()).total).toBe(1);
+  });
+
+  it('counts webhook diagnoses since a time', async () => {
+    const a = await pod('A');
+    await a.put(diagnosis('one', 'done', { createdAt: new Date().toISOString() }));
+    await a.put(diagnosis('old', 'done', { createdAt: '2026-01-01T00:00:00.000Z' }));
+    await a.put(diagnosis('api', 'done', { createdAt: new Date().toISOString(), source: 'api' }));
+    expect(await a.countWebhookSince(Date.now() - 3600_000)).toBe(1);
   });
 });
 
-describe('two stores on one directory', () => {
+describe('MemoryDiagnosisStore', () => {
+  it('never prunes and pages like the database store', async () => {
+    const store = new MemoryDiagnosisStore();
+    for (let i = 0; i < 300; i++) await store.put(diagnosis(`m${i}`, 'done', { createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString() }));
+    const page = await store.page({ offset: 250, limit: 100 });
+    expect(page.total).toBe(300);
+    expect(page.diagnoses).toHaveLength(50);
+    expect(await store.stale()).toEqual([]);
+  });
+});
+
+describe('two stores on one database', () => {
   const live = () => new Date(Date.now() + 60_000).toISOString();
 
-  it('does not overwrite a record that another owner holds with a live lease', () => {
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    const b = new DiagnosisStore(dir, 50, { owner: 'B' });
-    expect(a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: live() }))).toBe(true);
-    expect(b.put(diagnosis('x', 'queued', { owner: 'B', leaseUntil: live() }))).toBe(false);
-    expect(read(dir, 'x')).toMatchObject({ owner: 'A', status: 'running' });
+  it('does not overwrite a record that another owner holds with a live lease', async () => {
+    const a = await pod('A');
+    const b = await pod('B');
+    expect(await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: live() }))).toBe(true);
+    expect(await b.put(diagnosis('x', 'queued', { owner: 'B', leaseUntil: live() }))).toBe(false);
+    expect(await read('x')).toMatchObject({ owner: 'A', status: 'running' });
   });
 
-  it('markResolved by B survives a later put by A', () => {
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    const b = new DiagnosisStore(dir, 50, { owner: 'B' });
-    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: live() }));
-    b.markResolved('f-x', '2026-11-18T06:00:00Z');
-    a.put(diagnosis('x', 'done', { owner: 'A' }));
-    expect(read(dir, 'x')).toMatchObject({ status: 'done', resolvedAt: '2026-11-18T06:00:00Z' });
+  it('markResolved by B survives a later put by A', async () => {
+    const a = await pod('A');
+    const b = await pod('B');
+    await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: live() }));
+    await b.markResolved('f-x', '2026-11-18T06:00:00Z');
+    await a.put(diagnosis('x', 'done', { owner: 'A' }));
+    expect(await read('x')).toMatchObject({ status: 'done', resolvedAt: '2026-11-18T06:00:00Z' });
   });
 
   it('B takes over only after the lease ends, keeping the id', async () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: dir };
     config.models = legacyModels();
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: live() }));
-    const b = new DiagnosisStore(dir, 50, { owner: 'B' });
+    const a = await pod('A');
+    await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: live() }));
+    const b = await pod('B');
     const runner = new Runner({ toolHost: () => ({}) } as never, b, config);
-    runner.scan();
+    await runner.scan();
     expect(gate.started).toBe(0);
-    expect(read(dir, 'x').owner).toBe('A');
+    expect((await read('x')).owner).toBe('A');
 
-    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past }));
-    runner.scan();
+    await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past }));
+    await runner.scan();
     await until(() => gate.started === 1);
     expect(gate.ids).toEqual(['x']);
-    expect(read(dir, 'x')).toMatchObject({ owner: 'B', createdAt: '2026-11-18T05:00:00.000Z' });
+    expect(await read('x')).toMatchObject({ owner: 'B', createdAt: '2026-11-18T05:00:00.000Z' });
     gate.release?.();
     await runner.drain();
-    expect(read(dir, 'x').status).toBe('done');
+    expect((await read('x')).status).toBe('done');
   });
 
-  it('marks an expired record failed without a model, or when resolved', () => {
+  it('marks an expired record failed without a model, or when resolved', async () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: dir };
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past }));
-    const b = new DiagnosisStore(dir, 50, { owner: 'B' });
-    new Runner({ toolHost: () => ({}) } as never, b, config).scan();
-    expect(read(dir, 'x')).toMatchObject({ status: 'failed', error: 'Interrupted by a restart' });
+    const a = await pod('A');
+    await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past }));
+    const b = await pod('B');
+    await new Runner({ toolHost: () => ({}) } as never, b, config).scan();
+    expect(await read('x')).toMatchObject({ status: 'failed', error: 'Interrupted by a restart' });
   });
 
   it('drain releases the lease of items that have not started', async () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: dir };
     config.models = legacyModels();
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
+    const a = await pod('A');
     const runner = new Runner({ toolHost: () => ({}) } as never, a, config);
     const alert = diagnosis('x', 'queued').alert;
-    const first = runner.enqueue(alert, 'api');
-    const second = runner.enqueue({ ...alert, fingerprint: 'two' }, 'api');
+    const first = await runner.enqueue(alert, 'api');
+    const second = await runner.enqueue({ ...alert, fingerprint: 'two' }, 'api');
     await until(() => gate.started === 1);
     const draining = runner.drain();
-    expect(read(dir, second.id)).toMatchObject({ owner: 'A', status: 'queued', leaseUntil: new Date(0).toISOString() });
-    expect(Date.parse(read(dir, first.id).leaseUntil ?? '')).toBeGreaterThan(Date.now());
+    await until(async () => (await read(second.id)).leaseUntil === new Date(0).toISOString());
+    expect(await read(second.id)).toMatchObject({ owner: 'A', status: 'queued' });
+    expect(Date.parse((await read(first.id)).leaseUntil ?? '')).toBeGreaterThan(Date.now());
     gate.release?.();
     await draining;
   });
@@ -187,105 +271,110 @@ describe('review fixes', () => {
 
   it('renewal keeps a running lease alive past the lease time', async () => {
     let t = Date.parse('2026-11-18T06:00:00Z');
-    const a = new DiagnosisStore(dir, 50, { owner: 'A', now: () => t });
-    const b = new DiagnosisStore(dir, 50, { owner: 'B', now: () => t });
+    const a = await pod('A', () => t);
+    const b = await pod('B', () => t);
     const runnerA = new Runner(host(), a, modelConfig());
     const runnerB = new Runner(host(), b, modelConfig());
-    const d = runnerA.enqueue(diagnosis('x', 'queued').alert, 'api');
+    const d = await runnerA.enqueue(diagnosis('x', 'queued').alert, 'api');
     await until(() => gate.started === 1);
     t += 50_000;
-    (runnerA as unknown as { renew(): void }).renew();
+    await (runnerA as unknown as { renew(): Promise<void> }).renew();
     t += 50_000; // 100 s after the start: the first lease is over, the renewed one is not.
-    runnerB.scan();
+    await runnerB.scan();
     expect(gate.started).toBe(1);
-    expect(read(dir, d.id).owner).toBe('A');
+    expect((await read(d.id)).owner).toBe('A');
     gate.release?.();
     await runnerA.drain();
   });
 
   it('a crash does not loop: the record fails and no scan runs it again', async () => {
     let t = Date.parse('2026-11-18T06:00:00Z');
-    const a = new DiagnosisStore(dir, 50, { owner: 'A', now: () => t });
+    const a = await pod('A', () => t);
     gate.fail = true;
     const runner = new Runner(host(), a, modelConfig());
-    const d = runner.enqueue(diagnosis('x', 'queued').alert, 'api');
-    await until(() => read(dir, d.id).status === 'failed');
-    expect(read(dir, d.id).error).toBe('boom');
+    const d = await runner.enqueue(diagnosis('x', 'queued').alert, 'api');
+    await until(async () => (await read(d.id)).status === 'failed');
+    expect((await read(d.id)).error).toBe('boom');
     t += 10 * 60_000;
-    runner.scan();
-    runner.scan();
+    await runner.scan();
+    await runner.scan();
     await new Promise(r => setTimeout(r, 50));
     expect(gate.started).toBe(1);
   });
 
-  it('gives up after 3 attempts', () => {
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past, attempts: 3 }));
-    new Runner(host(), new DiagnosisStore(dir, 50, { owner: 'B' }), modelConfig()).scan();
+  it('gives up after 3 attempts', async () => {
+    const a = await pod('A');
+    await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past, attempts: 3 }));
+    await new Runner(host(), await pod('B'), modelConfig()).scan();
     expect(gate.started).toBe(0);
-    expect(read(dir, 'x')).toMatchObject({ status: 'failed', error: 'Gave up after 3 attempts' });
+    expect(await read('x')).toMatchObject({ status: 'failed', error: 'Gave up after 3 attempts' });
   });
 
   it('counts an attempt on each takeover', async () => {
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past, attempts: 1 }));
-    const runner = new Runner(host(), new DiagnosisStore(dir, 50, { owner: 'B' }), modelConfig());
-    runner.scan();
+    const a = await pod('A');
+    await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past, attempts: 1 }));
+    const runner = new Runner(host(), await pod('B'), modelConfig());
+    await runner.scan();
     await until(() => gate.started === 1);
-    expect(read(dir, 'x').attempts).toBe(2);
+    expect((await read('x')).attempts).toBe(2);
     gate.release?.();
     await runner.drain();
   });
 
   it('pod B takes over what pod A released on drain, A keeps the running one', async () => {
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    const b = new DiagnosisStore(dir, 50, { owner: 'B' });
+    const a = await pod('A');
+    const b = await pod('B');
     const runnerA = new Runner(host(), a, modelConfig());
     const runnerB = new Runner(host(), b, modelConfig());
     const alert = diagnosis('x', 'queued').alert;
-    const first = runnerA.enqueue(alert, 'api');
-    const second = runnerA.enqueue({ ...alert, fingerprint: 'two' }, 'api');
+    const first = await runnerA.enqueue(alert, 'api');
+    const second = await runnerA.enqueue({ ...alert, fingerprint: 'two' }, 'api');
     await until(() => gate.started === 1);
     const releaseA = gate.release;
     const draining = runnerA.drain();
-    runnerB.scan();
+    await until(async () => (await read(second.id)).leaseUntil === new Date(0).toISOString());
+    await runnerB.scan();
     await until(() => gate.started === 2);
     expect(gate.ids).toEqual([first.id, second.id]);
-    expect(read(dir, first.id).owner).toBe('A');
-    expect(read(dir, second.id)).toMatchObject({ owner: 'B', id: second.id });
+    expect((await read(first.id)).owner).toBe('A');
+    expect(await read(second.id)).toMatchObject({ owner: 'B', id: second.id });
     gate.release?.();
     releaseA?.();
     await draining;
     await runnerB.drain();
-    expect(read(dir, second.id).status).toBe('done');
-    expect(read(dir, first.id).status).toBe('done');
+    expect((await read(second.id)).status).toBe('done');
+    expect((await read(first.id)).status).toBe('done');
   });
 
   it('aborts the run when a progress write says ownership is lost', async () => {
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    const b = new DiagnosisStore(dir, 50, { owner: 'B' });
+    const a = await pod('A');
+    const b = await pod('B');
     gate.progress = true;
     // Before A's first progress write, B takes the record over.
-    gate.hook = id => b.update(id, c => (c ? { ...c, owner: 'B', leaseUntil: b.lease() } : undefined), { force: true });
+    let taken: Promise<boolean> | undefined;
+    gate.hook = id => {
+      taken = b.update(id, c => (c ? { ...c, owner: 'B', leaseUntil: b.lease() } : undefined), { force: true });
+    };
     const runner = new Runner(host(), a, modelConfig());
-    const d = runner.enqueue(diagnosis('x', 'queued').alert, 'api');
+    const d = await runner.enqueue(diagnosis('x', 'queued').alert, 'api');
     await until(() => gate.started === 1);
     await runner.drain();
+    await taken;
     expect(gate.signal?.aborted).toBe(true);
-    expect(read(dir, d.id)).toMatchObject({ owner: 'B', status: 'queued' });
+    expect(await read(d.id)).toMatchObject({ owner: 'B', status: 'queued' });
   });
 
   it('one diagnosis for a duplicate webhook alert on two stores', async () => {
-    const runnerA = new Runner(host(), new DiagnosisStore(dir, 50, { owner: 'A' }), modelConfig());
-    const runnerB = new Runner(host(), new DiagnosisStore(dir, 50, { owner: 'B' }), modelConfig());
+    const runnerA = new Runner(host(), await pod('A'), modelConfig());
+    const runnerB = new Runner(host(), await pod('B'), modelConfig());
     const alert = diagnosis('x', 'queued').alert;
-    const one = runnerA.enqueue(alert, 'webhook');
-    const two = runnerB.enqueue(alert, 'webhook');
+    const one = await runnerA.enqueue(alert, 'webhook');
+    const two = await runnerB.enqueue(alert, 'webhook');
     expect(two.id).toBe(one.id);
     expect(one.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    expect(files(dir)).toEqual([`${one.id}.json`]);
+    expect(await ids()).toEqual([one.id]);
     await until(() => gate.started === 1);
-    expect(read(dir, one.id).owner).toBe('A');
+    expect((await read(one.id)).owner).toBe('A');
     gate.release?.();
     await runnerA.drain();
     await runnerB.drain();
@@ -297,17 +386,17 @@ describe('restart and shutdown', () => {
   const base = () => ({ ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir });
 
   it('marks an interrupted diagnosis failed when no model is configured', async () => {
-    writeFileSync(join(dir, 'diagnoses.json'), JSON.stringify([diagnosis('a', 'running')]));
-    const server = await startServer(base(), 'test');
+    await (await pod('old')).put(diagnosis('a', 'running'));
+    const server = await startServer(base(), 'test', { store: await pod('new') });
     await server.close();
-    expect(read(dir, 'a')).toMatchObject({ id: 'a', status: 'failed', error: 'Interrupted by a restart' });
+    expect(await read('a')).toMatchObject({ id: 'a', status: 'failed', error: 'Interrupted by a restart' });
   });
 
   it('runs an interrupted diagnosis again with the same id, and close waits for it', async () => {
-    writeFileSync(join(dir, 'diagnoses.json'), JSON.stringify([diagnosis('a', 'running')]));
+    await (await pod('old')).put(diagnosis('a', 'running'));
     const config = base();
     config.models = legacyModels();
-    const server = await startServer(config, 'test');
+    const server = await startServer(config, 'test', { store: await pod('new') });
     await until(() => gate.started === 1);
     expect(gate.ids).toEqual(['a']);
     const url = `http://127.0.0.1:${server.port}`;
@@ -318,9 +407,25 @@ describe('restart and shutdown', () => {
     expect(closed).toBe(false);
     gate.release?.();
     await closing;
-    expect(files(dir)).toEqual(['a.json']);
-    expect(read(dir, 'a')).toMatchObject({ id: 'a', status: 'done', createdAt: '2026-11-18T05:00:00.000Z' });
+    expect(await ids()).toEqual(['a']);
+    expect(await read('a')).toMatchObject({ id: 'a', status: 'done', createdAt: '2026-11-18T05:00:00.000Z' });
     await expect(fetch(`${url}/readyz`)).rejects.toThrow();
+  });
+
+  it('GET /api/diagnoses pages over more than 200 records and reports the total', async () => {
+    const store = await pod('seed');
+    for (let i = 0; i < 230; i++) await store.put(diagnosis(`p${i}`, 'done', { createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString() }));
+    const server = await startServer(base(), 'test', { store: await pod('new') });
+    const get = async (query: string) => (await fetch(`http://127.0.0.1:${server.port}/api/diagnoses?${query}`)).json();
+    const first = await get('limit=200');
+    expect(first.total).toBe(230);
+    expect(first.diagnoses).toHaveLength(200);
+    expect(first.diagnoses[0]).toMatchObject({ id: 'p229', evidenceCount: 1 });
+    const rest = await get('offset=200&limit=200');
+    expect(rest.total).toBe(230);
+    expect(rest.diagnoses.map((d: { id: string }) => d.id)).toHaveLength(30);
+    expect(rest.diagnoses.at(-1).id).toBe('p0');
+    await server.close();
   });
 });
 
@@ -328,41 +433,40 @@ describe('Runner.drain', () => {
   it('waits for the running task and leaves later ones queued', async () => {
     const config = { ...loadConfig({} as NodeJS.ProcessEnv), dataDir: '' };
     config.models = legacyModels();
-    const store = new DiagnosisStore('', 50);
+    const store = new MemoryDiagnosisStore();
     const runner = new Runner({ toolHost: () => ({}) } as never, store, config);
     const alert = diagnosis('x', 'queued').alert;
-    runner.enqueue(alert, 'api');
-    const second = runner.enqueue({ ...alert, fingerprint: 'other' }, 'api');
+    await runner.enqueue(alert, 'api');
+    const second = await runner.enqueue({ ...alert, fingerprint: 'other' }, 'api');
     await until(() => gate.started === 1);
     let drained = false;
     const draining = runner.drain().then(() => (drained = true));
     await new Promise(r => setTimeout(r, 30));
     expect(drained).toBe(false);
-    const late = runner.enqueue({ ...alert, fingerprint: 'late' }, 'api');
+    const late = await runner.enqueue({ ...alert, fingerprint: 'late' }, 'api');
     gate.release?.();
     await draining;
     expect(gate.started).toBe(1);
-    expect(store.get(second.id)?.status).toBe('queued');
-    expect(store.get(late.id)?.status).toBe('queued');
+    expect((await store.get(second.id))?.status).toBe('queued');
+    expect((await store.get(late.id))?.status).toBe('queued');
   });
 });
 
 describe('hourly cap across pods', () => {
   it('counts webhook diagnoses from the shared store, so a new pod does not reset it', async () => {
     const { AlertGate } = await import('../src/alerts.js');
-    const a = new DiagnosisStore(dir, 50);
-    const b = new DiagnosisStore(dir, 50);
+    const a = await pod('A');
+    const b = await pod('B');
     const config = { toolBudget: 5, severities: ['critical'], maxPerHour: 2, ignoreAlerts: [] as string[] };
-    const counter = (s: DiagnosisStore) => (since: number) => s.list().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= since).length;
     const recent = new Date().toISOString();
-    a.put(diagnosis('one', 'done', { createdAt: recent }));
-    a.put(diagnosis('two', 'done', { createdAt: recent }));
-    a.put(diagnosis('old', 'done', { createdAt: '2026-01-01T00:00:00.000Z' }));
-    a.put(diagnosis('api', 'done', { createdAt: recent, source: 'api' }));
+    await a.put(diagnosis('one', 'done', { createdAt: recent }));
+    await a.put(diagnosis('two', 'done', { createdAt: recent }));
+    await a.put(diagnosis('old', 'done', { createdAt: '2026-01-01T00:00:00.000Z' }));
+    await a.put(diagnosis('api', 'done', { createdAt: recent, source: 'api' }));
     const alert = { name: 'X', severity: 'critical', labels: {}, annotations: {}, startsAt: '', fingerprint: 'f' };
     // Pod B starts fresh but sees pod A's two webhook diagnoses from the last hour.
-    expect(new AlertGate(config, counter(b)).wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
-    expect(new AlertGate({ ...config, maxPerHour: 3 }, counter(b)).wants(alert).ok).toBe(true);
+    expect(await new AlertGate(config, since => b.countWebhookSince(since)).wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
+    expect((await new AlertGate({ ...config, maxPerHour: 3 }, since => b.countWebhookSince(since)).wants(alert)).ok).toBe(true);
   });
 });
 
@@ -377,7 +481,7 @@ describe('model choice per run', () => {
   const alert = { name: 'NodeNotReady', severity: 'critical', labels: { alertname: 'NodeNotReady' }, annotations: {}, startsAt: '2026-11-18T04:59:00Z' };
 
   it('lists the models on /api/models and counts them on /', async () => {
-    const server = await startServer(two(), 'test');
+    const server = await startServer(two(), 'test', { store: await pod('S') });
     const res = await (await fetch(`http://127.0.0.1:${server.port}/api/models`)).json();
     expect(res.default).toBe('one/a');
     expect(res.models.map((m: { id: string }) => m.id)).toEqual(['one/a', 'one/b', 'two/c']);
@@ -388,17 +492,17 @@ describe('model choice per run', () => {
 
   it('runs a diagnosis with the model that POST /api/diagnoses names, and records the full id', async () => {
     gate.progress = true;
-    const server = await startServer(two(), 'test');
+    const server = await startServer(two(), 'test', { store: await pod('S') });
     const res = await post(server.port, '/api/diagnoses', { alert, model: 'two/c' });
     expect(res.status).toBe(202);
     const { id } = await res.json();
-    await until(() => read(dir, id).status === 'done');
-    expect(read(dir, id).model).toBe('two/c');
+    await until(async () => (await read(id)).status === 'done');
+    expect((await read(id)).model).toBe('two/c');
     await server.close();
   });
 
   it('answers 400 with the valid ids for an unknown model', async () => {
-    const server = await startServer(two(), 'test');
+    const server = await startServer(two(), 'test', { store: await pod('S') });
     const res = await post(server.port, '/api/diagnoses', { alert, model: 'two/zzz' });
     expect(res.status).toBe(400);
     const { error } = await res.json();
@@ -410,25 +514,25 @@ describe('model choice per run', () => {
 
   it('uses the agent_model label of a webhook alert, and the default when it is unknown', async () => {
     gate.progress = true;
-    const server = await startServer(two(), 'test');
+    const server = await startServer(two(), 'test', { store: await pod('S') });
     const labels = (n: string, m: string) => ({ alertname: 'NodeNotReady', severity: 'critical', node: n, agent_model: m });
     await post(server.port, '/api/v2/alerts', [{ labels: labels('n1', 'two/c'), startsAt: '2026-11-18T04:59:00Z' }]);
     await post(server.port, '/api/v2/alerts', [{ labels: labels('n2', 'nope'), startsAt: '2026-11-18T04:59:00Z' }]);
     await until(() => gate.started === 2);
     await server.close();
-    const models = readdirSync(join(dir, 'diagnoses')).map(f => read(dir, f.replace(/\.json$/, '')).model).sort();
+    const models = (await Promise.all((await ids()).map(async id => (await read(id)).model))).sort();
     expect(models).toEqual(['one/a', 'two/c']);
   });
 
   it('runs an interrupted diagnosis again with its recorded model', async () => {
     gate.progress = true;
-    const a = new DiagnosisStore(dir, 50, { owner: 'A' });
-    a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past, model: 'two/c' }));
-    const runner = new Runner(host2(), new DiagnosisStore(dir, 50, { owner: 'B' }), two());
-    runner.scan();
+    const a = await pod('A');
+    await a.put(diagnosis('x', 'running', { owner: 'A', leaseUntil: past, model: 'two/c' }));
+    const runner = new Runner(host2(), await pod('B'), two());
+    await runner.scan();
     await until(() => gate.started === 1);
     await runner.drain();
-    expect(read(dir, 'x').model).toBe('two/c');
+    expect((await read('x')).model).toBe('two/c');
   });
 });
 

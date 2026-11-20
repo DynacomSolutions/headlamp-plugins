@@ -10,7 +10,7 @@ import { LaunchStore, type Launch } from '../src/launch/store.js';
 import { mapProjection } from '../src/launch/timeline.js';
 import { Runtime } from '../src/runtime.js';
 import { startServer } from '../src/server.js';
-import { DiagnosisStore } from '../src/store.js';
+import { MemoryDiagnosisStore, type DiagnosisStore } from '../src/store.js';
 import { T3Client, tokenFromFile } from '../src/t3/client.js';
 import { fenced, hasToken, isPublished, MAX_BRIEF_CHARS, UNTRUSTED_NOTE } from '../src/launch/brief.js';
 import { sampleThread, startFakeT3, type FakeT3 } from './helpers/fake-t3.js';
@@ -92,8 +92,8 @@ beforeEach(async () => {
   fake = await startFakeT3();
   tokenFile = join(dir, 'token');
   writeFileSync(tokenFile, fake.token);
-  diagnoses = new DiagnosisStore('', 50);
-  diagnoses.put(diagnosis());
+  diagnoses = new MemoryDiagnosisStore();
+  await diagnoses.put(diagnosis());
   launchStore = new LaunchStore(dir, 200);
   services = [];
 });
@@ -365,15 +365,16 @@ describe('restart', () => {
     await until(() => reloaded.get(l.id)!.status === 'completed');
   });
 
-  it('keeps one JSON file per launch and at most the cap', async () => {
+  it('keeps one JSON file per launch and never drops a finished one', async () => {
     const store = new LaunchStore(dir, 3);
     const s = service(launchConfig(), store);
     for (let i = 0; i < 5; i++) {
       const l = (await s.create({ purpose: `p${i}` }, 'a'));
       (await s.reject(l.id, 'a'));
     }
-    expect(store.list()).toHaveLength(3);
-    expect(readdirSync(join(dir, 'launches')).filter(f => f.endsWith('.json'))).toHaveLength(3);
+    expect(store.list()).toHaveLength(5);
+    expect(readdirSync(join(dir, 'launches')).filter(f => f.endsWith('.json'))).toHaveLength(5);
+    expect(new LaunchStore(dir, 3).list()).toHaveLength(5);
   });
 
   it('counts pending requests in the cap and refuses new ones above it', async () => {
@@ -385,7 +386,7 @@ describe('restart', () => {
     (await s.reject(first.id, 'a'));
     // A finished request gives its place back.
     expect((await s.create({ purpose: 'c' }, 'a')).status).toBe('pending_approval');
-    expect(store.list()).toHaveLength(1);
+    expect(store.list()).toHaveLength(2); // The rejected one stays in the history.
   });
 });
 
@@ -627,7 +628,7 @@ describe('review fixes', () => {
     it('builds the same brief in preview and create from the same state, and stores it', async () => {
       const s = service();
       const req = { purpose: 'Fix DNS', diagnosisId: 'd1', fix: 0 };
-      const preview = s.brief(req);
+      const preview = await s.brief(req);
       const l = (await s.create(req, 'a'));
       expect(l.brief).toBe(preview);
       await s.approve(l.id, 'a');
@@ -845,8 +846,9 @@ describe('review fixes', () => {
 describe('write checks over HTTP', () => {
   async function api(extra: Record<string, unknown> = {}, launch: LaunchConfig = launchConfig()) {
     const base = loadConfig({} as NodeJS.ProcessEnv);
-    new DiagnosisStore(dir, 50).put(diagnosis());
-    const server = await startServer({ ...base, port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir, launch, ...extra });
+    const store = new MemoryDiagnosisStore();
+    await store.put(diagnosis());
+    const server = await startServer({ ...base, port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir, launch, ...extra }, '0.0.0', { store });
     const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = { 'content-type': 'application/json' }) => {
       const res = await fetch(`http://127.0.0.1:${server.port}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
       return { status: res.status, body: (await res.json().catch(() => null)) as any };

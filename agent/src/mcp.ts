@@ -63,16 +63,13 @@ export async function mcpHandler(runtime: Runtime, store: DiagnosisStore, versio
       'diagnosis-surface',
       new ResourceTemplate(DIAGNOSIS_URI, {
         list: async () => ({
-          resources: store
-            .list()
-            .slice(0, 50)
-            .map(d => ({ uri: DIAGNOSIS_URI.replace('{id}', d.id), name: `${d.alert.name} ${d.createdAt}`, mimeType: A2UI_MIME })),
+          resources: (await store.page({ limit: 50 })).diagnoses.map(d => ({ uri: DIAGNOSIS_URI.replace('{id}', d.id), name: `${d.alert.name} ${d.createdAt}`, mimeType: A2UI_MIME })),
         }),
       }),
       { title: 'Diagnosis as an A2UI surface', description: 'A self-contained A2UI v1.0 surface for one diagnosis.', mimeType: A2UI_MIME },
       async (uri, variables) => {
         const id = String(variables.id ?? '');
-        const d = store.get(id);
+        const d = await store.get(id);
         if (!d) throw new Error(`No diagnosis ${id}`);
         return { contents: [{ uri: uri.href, mimeType: A2UI_MIME, text: JSON.stringify(d.a2ui) }] };
       },

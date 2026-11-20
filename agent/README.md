@@ -211,9 +211,16 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
 `GET /api/diagnoses?limit=<n>&offset=<n>` answers `{ total, diagnoses }`, newest first. `limit` is 200 at most.
 `total` counts every stored diagnosis, so a client can page with `offset`.
 
-Diagnoses are stored one file per diagnosis. During a rollout the old pod
-finishes its running diagnosis, and the new pod takes over queued and
-interrupted ones.
+Every diagnosis is kept for ever. Nothing deletes or prunes them. They live in
+PostgreSQL (`DATABASE_URL`, the shared `pg-shared` cluster): one row per diagnosis, the
+whole record as `jsonb` plus indexed columns for the queries. A list reads one page
+(`LIMIT`/`OFFSET`) and the count comes from SQL, so a request never loads the history.
+The service creates its table on start. It also imports the JSON files of the old
+store from `DATA_DIR/diagnoses/` (and `diagnoses.json`) once, and leaves them in place.
+Without `DATABASE_URL` the diagnoses live in memory only (tests, local runs).
+During a rollout two pods share the table. A change locks the row, so a record that
+another pod holds with a live lease is never overwritten. The old pod finishes its
+running diagnosis, and the new pod takes over queued and interrupted ones.
 
 ## Hosts
 
@@ -455,8 +462,8 @@ takes the launch over after the lease ends.
 
 All text is masked before it is stored or served: the brief, the timeline, the
 reply and errors. Launches are one file each, `launches/<id>.json` under
-`DATA_DIR`, and live in memory without it. The service keeps at most
-`AGENT_MAX_LAUNCHES` (default 200). The oldest finished ones go first.
+`DATA_DIR`, and live in memory without it. The service never drops a finished launch.
+`AGENT_MAX_LAUNCHES` (default 200) is only the number of open requests it accepts.
 
 **Brief.** The server always builds the brief. A request cannot send its own text.
 The brief holds the
@@ -539,16 +546,15 @@ turns launching off with a reason. It does not stop the service.
 | `PROVIDER_CONFIG_FILE` | – | JSON with each provider's settings, `{"<provider>": {...}}` |
 | `AGENT_RESOURCE_URL` | `http://agent-resource.agent-resource.svc/api/state` | State endpoint for the agent-resource panel. The old name `AGENT_MEMORY_URL` is still read when this one is not set. With neither set, the panel falls back to `http://agent-memory.agent-memory.svc/api/state` when the default URL fails |
 | `REGISTRY_CATALOGUE_URL` | `http://registry-catalog.registry.svc/api/repositories` | Registry catalogue backend, for the registry and VM images panels. Set the namespace of your catalogue Service. |
-| `DATA_DIR` | memory only | Where the diagnoses, chats and launches are kept, one file each in `diagnoses/`, `chats/` and `launches/` |
-| `MAX_DIAGNOSES` | `200` | Diagnoses kept |
+| `DATABASE_URL` | memory only | PostgreSQL URI of the diagnosis history (`sslmode=require` encrypts without verifying the certificate). Diagnoses are never deleted |
+| `DATA_DIR` | memory only | Where chats and launches are kept, one file each in `chats/` and `launches/`. Old diagnosis files here are imported into the database at start |
 | `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` and the write routes (`POST` on diagnoses, chats and launches). A request without an `Origin` header is always allowed |
 | `AGENT_TOOL_BUDGET` | `10` | Tool calls per diagnosis after the evidence pack, and per chat turn |
-| `AGENT_MAX_CHATS` | `200` | Chats kept in `chats/` under `DATA_DIR`. The oldest are dropped first |
 | `AGENT_MAX_CHAT_TURNS` | `3` | Chat turns that may run at once across all chats. More get a 429 |
 | `T3_URL` | – | Base URL of the T3 server. Launching agents is off without it |
 | `T3_TOKEN_FILE` | – | Path of a mounted file with the T3 bearer token (plain text, or the JSON of `t3 auth session issue --json`). Read on each use, so a rotated token needs no restart. Needs the scopes `orchestration:read` and `orchestration:operate` |
 | `AGENT_LAUNCH_SETTINGS_FILE` | – | JSON with `projects` (a `default` key is required), `model`, `briefPreamble`, `maxRunning` (default 2) and `threadUrlTemplate`. See [Agent launches](#agent-launches) |
-| `AGENT_MAX_LAUNCHES` | `200` | Launches kept in `launches/` under `DATA_DIR`. Pending requests count. The oldest finished ones are dropped first. New requests get a 429 when all are open |
+| `AGENT_MAX_LAUNCHES` | `200` | Open (pending or active) launches at once. New requests get a 429 when all are open. Finished launches are never dropped |
 | `AGENT_MAX_LAUNCH_APPROVALS_PER_HOUR` | `4` | Approvals per hour. More get a 429 |
 | `AGENT_DIAGNOSE_SEVERITIES` | `warning,critical` | Severities that start a diagnosis from the webhook |
 | `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Webhook diagnoses per hour |

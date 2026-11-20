@@ -21,21 +21,21 @@ describe('vmalert notifier payload', () => {
   it('fingerprints ignore label order', () => {
     expect(fingerprint({ a: '1', b: '2' })).toBe(fingerprint({ b: '2', a: '1' }));
   });
-  it('gates by severity, ignore list and hourly cap', () => {
+  it('gates by severity, ignore list and hourly cap', async () => {
     const gate = new AlertGate({ toolBudget: 5, severities: ['critical'], maxPerHour: 1, ignoreAlerts: ['Watchdog'] });
     const alert = { name: 'X', severity: 'critical', labels: {}, annotations: {}, startsAt: '', fingerprint: 'f' };
-    expect(gate.wants({ ...alert, severity: 'info' }).ok).toBe(false);
-    expect(gate.wants({ ...alert, name: 'Watchdog' }).ok).toBe(false);
-    expect(gate.wants(alert).ok).toBe(true);
+    expect((await gate.wants({ ...alert, severity: 'info' })).ok).toBe(false);
+    expect((await gate.wants({ ...alert, name: 'Watchdog' })).ok).toBe(false);
+    expect((await gate.wants(alert)).ok).toBe(true);
     gate.record();
-    expect(gate.wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
+    expect(await gate.wants(alert)).toEqual({ ok: false, reason: 'hourly diagnosis limit reached' });
   });
-  it('uses the shared count when one is given', () => {
+  it('uses the shared count when one is given', async () => {
     let count = 0;
     const gate = new AlertGate({ toolBudget: 5, severities: ['critical'], maxPerHour: 2, ignoreAlerts: [] }, () => count);
     const alert = { name: 'X', severity: 'critical', labels: {}, annotations: {}, startsAt: '', fingerprint: 'f' };
-    expect(gate.wants(alert).ok).toBe(true);
+    expect((await gate.wants(alert)).ok).toBe(true);
     count = 2;
-    expect(gate.wants(alert).ok).toBe(false);
+    expect((await gate.wants(alert)).ok).toBe(false);
   });
 });

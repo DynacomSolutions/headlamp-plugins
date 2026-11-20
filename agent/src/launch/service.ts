@@ -134,8 +134,8 @@ export class LaunchService {
   }
 
   /** The brief and the fix for a request. `preview` and `create` both use it, so they give the same text. */
-  private prepare(req: LaunchRequest): { brief: string; fix?: LaunchFix } {
-    const diagnosis = req.diagnosisId ? this.o.diagnoses.get(req.diagnosisId) : undefined;
+  private async prepare(req: LaunchRequest): Promise<{ brief: string; fix?: LaunchFix }> {
+    const diagnosis = req.diagnosisId ? await this.o.diagnoses.get(req.diagnosisId) : undefined;
     if (req.diagnosisId && !diagnosis) throw new LaunchError(404, `No diagnosis ${req.diagnosisId}`);
     let fix: LaunchFix | undefined;
     if (req.fix !== undefined) {
@@ -147,8 +147,8 @@ export class LaunchService {
     return { brief: buildBrief({ preamble: this.o.config.settings.briefPreamble, purpose: req.purpose, diagnosis, fix }), fix };
   }
 
-  brief(req: LaunchRequest): string {
-    return this.prepare(req).brief;
+  async brief(req: LaunchRequest): Promise<string> {
+    return (await this.prepare(req)).brief;
   }
 
   /** Marks pending requests older than the limit as expired. */
@@ -166,7 +166,7 @@ export class LaunchService {
     this.requireEnabled();
     await this.expireStale();
     const project = this.project(req.projectKey);
-    const { brief, fix } = this.prepare(req);
+    const { brief, fix } = await this.prepare(req);
     const open = this.o.store.list().filter(l => !FINAL_STATUSES.has(l.status)).length;
     if (open >= this.o.store.capacity) throw new LaunchError(429, `${open} requests and launches are open (the limit). Approve, reject or wait.`);
     const m = this.o.config.settings.model;
