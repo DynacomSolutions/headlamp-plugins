@@ -96,7 +96,7 @@ describe('usage_dashboard tool', () => {
   it('tries both default backends and one answer is enough', async () => {
     const fx = usageFixture();
     const { data } = await run(fx.context());
-    expect(fx.urls).toEqual(['http://agent-resource.agent-memory.svc/api/state', AGENT_STATE_URL]);
+    expect(fx.urls).toEqual(['http://agent-resource.agent-resource.svc/api/state', AGENT_STATE_URL]);
     expect(data.rings[0].segments.map(s => s.key)).toContain('t3');
   });
 

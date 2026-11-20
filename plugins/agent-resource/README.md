@@ -117,15 +117,18 @@ built-ins.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `backend` | `service/agent-memory/agent-resource:80` | Backend Service as `service/<namespace>/<name>:<port>` |
+| `backend` | `service/agent-resource/agent-resource:80` | Backend Service as `service/<namespace>/<name>:<port>` |
 | `refreshSeconds` | `10` | Refresh interval, 2 to 300 |
 
-The backend Service was called `agent-memory` before. When the Service is
-named `agent-resource`, the plugin falls back to the `agent-memory` Service in
-the same namespace if the new Service does not answer. When the setting names
-`agent-memory`, the plugin tries `agent-resource` first. The Service that
-answers is used for the next requests and for changes. This keeps the page
-working before and after the backend rollout.
+The backend ran as Service `agent-resource` in the namespace `agent-memory`
+before. It now runs as Service `agent-resource` in the namespace
+`agent-resource`. When the setting names either namespace and either Service
+name, the plugin tries `service/agent-resource/agent-resource` first and falls
+back to `service/agent-memory/agent-resource` if the new place does not
+answer. In any other namespace, an `agent-resource` Service falls back to an
+`agent-memory` Service of the same namespace, and the other way round. The
+place that answers is used for the next requests and for changes. This keeps
+the page working before and after the backend rollout.
 
 Settings saved under the old plugin name `agent-memory` stay in use until you
 save new ones. A `defaults.json` under the old plugin directory is read when
@@ -134,7 +137,7 @@ the new directory has none.
 Example `defaults.json`:
 
 ```json
-{ "backend": "service/agent-memory/agent-resource:80", "refreshSeconds": 10 }
+{ "backend": "service/agent-resource/agent-resource:80", "refreshSeconds": 10 }
 ```
 
 ## Development
