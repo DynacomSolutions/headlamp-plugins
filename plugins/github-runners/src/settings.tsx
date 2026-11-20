@@ -1,19 +1,124 @@
 import type { PluginSettingsDetailsProps } from '@kinvolk/headlamp-plugin/lib';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { useConfig } from './data';
+import { getJson, useConfig } from './data';
 import { DEFAULT_STRIP_SUFFIXES } from './model';
+import { DEFAULT_RUNWARDEN, listPath, resolveSource } from './runwarden';
 import type { PluginConfig } from './types';
+
+type TestState =
+  | { state: 'idle' }
+  | { state: 'running' }
+  | { state: 'ok'; count: number }
+  | { state: 'error'; message: string };
+
+/** The Test button: asks the RunWarden service for its panel list, as the Dashboards sources do. */
+function RunWardenTest({ cfg }: { cfg: PluginConfig }) {
+  const [result, setResult] = React.useState<TestState>({ state: 'idle' });
+  const source = resolveSource(cfg);
+  const run = () => {
+    setResult({ state: 'running' });
+    getJson(listPath(source)).then(
+      body => {
+        const panels = Array.isArray(body?.panels) ? body.panels : null;
+        if (panels) setResult({ state: 'ok', count: panels.length });
+        else setResult({ state: 'error', message: 'The service did not return a panel list.' });
+      },
+      e => setResult({ state: 'error', message: String((e as Error)?.message || e) })
+    );
+  };
+  return (
+    <Box display="flex" alignItems="center" gap={1.5} flexWrap="wrap">
+      <Button
+        size="small"
+        variant="outlined"
+        disabled={source.problem !== null || result.state === 'running'}
+        onClick={run}
+      >
+        Test
+      </Button>
+      <Box role="status" aria-live="polite" sx={{ minWidth: 0 }}>
+        {result.state === 'running' && <Typography variant="body2">Asking RunWarden.</Typography>}
+        {result.state === 'ok' && (
+          <Typography variant="body2" data-test-result="ok">
+            Works: {result.count} {result.count === 1 ? 'panel' : 'panels'}.
+          </Typography>
+        )}
+        {result.state === 'error' && (
+          <Alert severity="error" data-test-result="error" sx={{ py: 0 }}>
+            {result.message}
+          </Alert>
+        )}
+        {result.state === 'idle' && source.problem && (
+          <Typography variant="caption" color="text.secondary">
+            {source.problem}
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+}
 
 export function Settings(props: PluginSettingsDetailsProps) {
   const { data, onDataChange } = props;
   const cfg = useConfig();
-  const set = (key: keyof PluginConfig) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  const set = (key: keyof PluginConfig) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     onDataChange?.({ ...((data || {}) as PluginConfig), [key]: e.target.value });
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={640}>
+      <Typography variant="h6" component="h2">
+        RunWarden
+      </Typography>
+      <Typography variant="body2">
+        The page reads RunWarden when it can. RunWarden serves its widget panels on a Kubernetes
+        Service. The browser reaches it through the Kubernetes API service proxy, so Kubernetes
+        permissions apply (the get verb on services/proxy there). A blank field uses the default.
+      </Typography>
+      <TextField
+        select
+        label="RunWarden"
+        helperText="Auto uses RunWarden and falls back to the ARC feed when it does not answer. On uses RunWarden only. Off uses the ARC feed only."
+        value={['on', 'off'].includes(cfg.runwardenMode || '') ? cfg.runwardenMode : 'auto'}
+        onChange={set('runwardenMode')}
+        fullWidth
+      >
+        <MenuItem value="auto">Auto (fall back to the ARC feed)</MenuItem>
+        <MenuItem value="on">On (RunWarden only)</MenuItem>
+        <MenuItem value="off">Off (ARC feed only)</MenuItem>
+      </TextField>
+      <TextField
+        label="RunWarden namespace"
+        helperText="Namespace of the RunWarden widgets Service."
+        value={cfg.runwardenNamespace || ''}
+        onChange={set('runwardenNamespace')}
+        placeholder={DEFAULT_RUNWARDEN.namespace}
+        fullWidth
+      />
+      <TextField
+        label="RunWarden service"
+        helperText="Name of the Service that serves /api/widgets."
+        value={cfg.runwardenService || ''}
+        onChange={set('runwardenService')}
+        placeholder={DEFAULT_RUNWARDEN.service}
+        fullWidth
+      />
+      <TextField
+        label="RunWarden port"
+        helperText="Service port number or name."
+        value={cfg.runwardenPort || ''}
+        onChange={set('runwardenPort')}
+        placeholder={DEFAULT_RUNWARDEN.port}
+        fullWidth
+      />
+      <RunWardenTest cfg={cfg} />
+      <Typography variant="h6" component="h2">
+        ARC feed (fallback)
+      </Typography>
       <Typography variant="body2">
         Everything works from Kubernetes objects alone. The optional fields below add GitHub-side
         detail and history from a JSON status endpoint (the scanner&apos;s status.json /
