@@ -39,8 +39,64 @@ export function useTick(step: number): Date {
   return now;
 }
 
-export function ClockView(props: { config: ClockConfig; now: Date }): JSX.Element {
+/** The clock in the one row header: time over date, in the height of the row, with no card. */
+function CompactClock(props: { config: ClockConfig; now: Date }): JSX.Element {
   const { config, now } = props;
+  const { time, date } = formatClockParts(now, config);
+  const zone = config.showZone
+    ? config.timeZone === LOCAL_ZONE
+      ? 'Local time'
+      : config.timeZone
+    : '';
+  const second = [date, zone].filter(Boolean).join(' · ');
+  return (
+    <Box
+      data-clock-widget
+      data-clock-compact=""
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'flex-end',
+        justifyContent: 'center',
+        textAlign: 'right',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {time && (
+        <Typography
+          component="div"
+          data-clock-time
+          sx={{
+            fontSize: '1.5rem',
+            fontWeight: 600,
+            lineHeight: 1.1,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
+          {time}
+        </Typography>
+      )}
+      {second && (
+        <Typography
+          component="div"
+          data-clock-date
+          color="text.secondary"
+          sx={{ fontSize: '0.75rem', lineHeight: 1.2 }}
+        >
+          {second}
+        </Typography>
+      )}
+    </Box>
+  );
+}
+
+export function ClockView(props: {
+  config: ClockConfig;
+  now: Date;
+  compact?: boolean;
+}): JSX.Element {
+  const { config, now } = props;
+  if (props.compact) return <CompactClock config={config} now={now} />;
   const { time, date } = formatClockParts(now, config);
   const size = SIZES[config.size] ?? SIZES.large;
   return (
@@ -95,10 +151,10 @@ export function ClockView(props: { config: ClockConfig; now: Date }): JSX.Elemen
   );
 }
 
-function ClockWidget({ config }: WidgetProps<ClockConfig>): JSX.Element {
+function ClockWidget({ config, compact }: WidgetProps<ClockConfig>): JSX.Element {
   const merged = React.useMemo(() => ({ ...DEFAULT_CLOCK, ...config }), [config]);
   const now = useTick(tickMs(merged));
-  return <ClockView config={merged} now={now} />;
+  return <ClockView config={merged} now={now} compact={compact} />;
 }
 
 function ClockSettings({ config, onChange }: WidgetSettingsProps<ClockConfig>): JSX.Element {

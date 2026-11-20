@@ -55,7 +55,7 @@ function LabelSelectorField(props: { value: string; onCommit: (v: string) => voi
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => e.key === 'Enter' && commit()}
-      sx={{ minWidth: 190 }}
+      sx={{ minWidth: 150 }}
     />
   );
 }
@@ -98,7 +98,7 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
             placeholder={filters.namespaces.length ? '' : 'All'}
           />
         )}
-        sx={{ minWidth: 200, maxWidth: 360, flex: '1 1 200px' }}
+        sx={{ minWidth: 150, maxWidth: 300, flex: '1 1 160px' }}
       />
       <Autocomplete
         multiple
@@ -110,7 +110,7 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
         renderInput={p => (
           <TextField {...p} label="Nodes" placeholder={filters.nodes.length ? '' : 'All'} />
         )}
-        sx={{ minWidth: 200, maxWidth: 360, flex: '1 1 200px' }}
+        sx={{ minWidth: 150, maxWidth: 300, flex: '1 1 160px' }}
       />
       <LabelSelectorField
         key={filters.labelSelector}

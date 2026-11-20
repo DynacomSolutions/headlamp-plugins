@@ -1,13 +1,14 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CATEGORICAL } from '../promql/palette';
 import { limitColour, REUSED_OPACITY } from './limitColours';
 import { parsePanel } from './model';
+import { drawOrder } from './PanelBars';
 import { DEFAULT_DISPLAY, displayOf, PanelDisplay, PanelView } from './PanelView';
-import { groupRows, limitRank, orderLimits, UNNAMED_LIMIT } from './rowGroups';
+import { groupRows, limitRank, orderLimits, UNNAMED_LIMIT, worstStatus } from './rowGroups';
 
 afterEach(cleanup);
 
@@ -105,7 +106,7 @@ describe('display options', () => {
 });
 
 describe('grouped bars', () => {
-  it('draws one bar per group and one segment per row, replacing the table', () => {
+  it('draws exactly one track per group and every limit of the group on it', () => {
     const c = view();
     expect(c.querySelector('[data-rows]')).toBeNull();
     const groups = c.querySelectorAll('[data-bar-group]');
@@ -114,23 +115,99 @@ describe('grouped bars', () => {
       'Anthropic / work',
       'Other / solo',
     ]);
+    expect(Array.from(groups).map(g => g.querySelectorAll('[data-bar]').length)).toEqual([1, 1, 1]);
     expect(Array.from(groups).map(g => g.querySelectorAll('[data-segment]').length)).toEqual([
       3, 2, 1,
     ]);
-    // Every row is a segment.
+    // Every row is a fill on a track, and every fill has an end tick.
     expect(c.querySelectorAll('[data-segment]')).toHaveLength(LIMITS.rows.length);
+    expect(c.querySelectorAll('[data-tick]')).toHaveLength(LIMITS.rows.length);
   });
 
-  it('fills each segment to the fraction of its row and names the value in the tooltip text', () => {
+  it('has no fixed slots: a group with one limit has a single fill, not a row of empty slots', () => {
+    const c = view(bars, 'light', LIMIT_ROWS);
+    const kimi = c.querySelector('[data-bar-group="Kimi / team-a"]') as HTMLElement;
+    expect(kimi.querySelectorAll('[data-segment]')).toHaveLength(1);
+    expect(c.querySelector('[data-segment-empty]')).toBeNull();
+  });
+
+  it('draws the largest fraction at the back and the smaller ones in front', () => {
     const c = view();
     const personal = c.querySelector('[data-bar-group="Anthropic / personal"]') as HTMLElement;
     const fills = Array.from(personal.querySelectorAll('[data-fill]'));
-    expect(fills.map(f => Number(f.getAttribute('data-fill')))).toEqual([0.42, 0.81, 0.2]);
-    expect(fills.map(f => getComputedStyle(f).width)).toEqual(['42%', '81%', '20%']);
-    const weekly = personal.querySelector('[data-segment="weekly"]') as HTMLElement;
-    expect(weekly.getAttribute('aria-label')).toBe(
-      'Anthropic / personal, weekly: 81%, 81 percent. Warning'
+    // DOM order is the stacking order: weekly 0.81, 5-hour 0.42, monthly 0.2.
+    expect(fills.map(f => f.getAttribute('data-segment'))).toEqual(['weekly', '5-hour', 'monthly']);
+    expect(fills.map(f => Number(f.getAttribute('data-fill')))).toEqual([0.81, 0.42, 0.2]);
+    expect(fills.map(f => getComputedStyle(f).width)).toEqual(['81%', '42%', '20%']);
+    expect(drawOrder(groupRows(LIMITS.rows).groups[0].segments).map(s => s.name)).toEqual([
+      'weekly',
+      '5-hour',
+      'monthly',
+    ]);
+  });
+
+  it('keeps equal fractions drawn in row order and gives each a tick of its own', () => {
+    const rows = [row('A', '5-hour', 0.5), row('A', 'weekly', 0.5), row('A', 'monthly', 0.9)];
+    const c = view(bars, 'light', parsePanel({ version: 1, id: 'x', rows }));
+    const fills = Array.from(c.querySelectorAll('[data-fill]')).map(f =>
+      f.getAttribute('data-segment')
     );
+    expect(fills).toEqual(['monthly', '5-hour', 'weekly']);
+    const ticks = Array.from(c.querySelectorAll('[data-tick]')) as HTMLElement[];
+    expect(ticks.map(t => t.getAttribute('data-tick'))).toEqual(['monthly', '5-hour', 'weekly']);
+    // The two ticks at 50 % share the height, so neither hides the other.
+    const [, t5, tw] = ticks.map(t => getComputedStyle(t));
+    expect(t5.top).not.toBe(tw.top);
+    expect(t5.height).toBe(tw.height);
+    expect(t5.left).toBe(tw.left);
+  });
+
+  it('puts a tick in the limit colour at the end of each fraction', () => {
+    const c = view();
+    const tick = c.querySelector(
+      '[data-bar-group="Anthropic / personal"] [data-tick="weekly"]'
+    ) as HTMLElement;
+    const fill = c.querySelector(
+      '[data-bar-group="Anthropic / personal"] [data-segment="weekly"]'
+    ) as HTMLElement;
+    expect(getComputedStyle(tick).backgroundColor).toBe(getComputedStyle(fill).backgroundColor);
+    expect(getComputedStyle(tick).left).toBe('calc(81% - 2px)');
+  });
+
+  it('lists every limit with its value and status in the tooltip and the accessible name', () => {
+    const c = view();
+    const bar = c.querySelector(
+      '[data-bar-group="Anthropic / personal"] [data-bar]'
+    ) as HTMLElement;
+    const text = bar.getAttribute('aria-label') ?? '';
+    expect(text).toContain('Anthropic / personal, 5-hour: 42%, 42 percent. OK');
+    expect(text).toContain('Anthropic / personal, weekly: 81%, 81 percent. Warning');
+    expect(text).toContain('Anthropic / personal, monthly: 20%, 20 percent. OK');
+  });
+
+  it('shows the tooltip list with a line for every limit on hover', async () => {
+    const c = view();
+    const bar = c.querySelector('[data-bar-group="Anthropic / work"] [data-bar]') as HTMLElement;
+    fireEvent.mouseOver(bar);
+    const tip = await screen.findByRole('tooltip');
+    const lines = Array.from(tip.querySelectorAll('[data-tooltip-limit]')).map(l => l.textContent);
+    expect(lines).toEqual(['5-hour: 95%, 95 percent. Critical', 'weekly: 50%, 50 percent. OK']);
+  });
+
+  it('shows one status mark per group: the worst status of its limits', () => {
+    const c = view({ ...bars, showSummary: false, showStats: false });
+    const marks = (g: string) =>
+      Array.from(c.querySelectorAll(`[data-bar-group="${g}"] svg[data-status]`)).map(s =>
+        s.getAttribute('data-status')
+      );
+    expect(marks('Anthropic / personal')).toEqual(['warn']);
+    expect(marks('Anthropic / work')).toEqual(['crit']);
+    expect(marks('Other / solo')).toEqual(['ok']);
+    expect(c.querySelectorAll('[data-bar] svg[data-status]')).toHaveLength(0);
+    // No summary and no stat tiles: the three row marks are the only marks.
+    expect(c.querySelectorAll('svg[data-status]')).toHaveLength(3);
+    expect(c.querySelector('[data-panel-summary]')).toBeNull();
+    expect(c.querySelector('[data-stat]')).toBeNull();
   });
 
   it('gives each limit name its own colour, the same in every group, matched by the legend', () => {
@@ -145,7 +222,7 @@ describe('grouped bars', () => {
     // The same name has the same swatch in each group.
     const colourOf = (group: string, name: string) => {
       const seg = c.querySelector(`[data-bar-group="${group}"] [data-segment="${name}"]`);
-      return getComputedStyle(seg?.querySelector('[data-fill]') as Element).backgroundColor;
+      return getComputedStyle(seg as Element).backgroundColor;
     };
     expect(colourOf('Anthropic / personal', '5-hour')).toBe(colourOf('Anthropic / work', '5-hour'));
     expect(colourOf('Anthropic / personal', '5-hour')).not.toBe(
@@ -153,15 +230,8 @@ describe('grouped bars', () => {
     );
   });
 
-  it('keeps a status marker with its own shape on every segment', () => {
+  it('never uses a status colour as a limit colour', () => {
     const c = view();
-    const marks = Array.from(c.querySelectorAll('[data-bar] svg[data-status]')).map(s =>
-      s.getAttribute('data-status')
-    );
-    expect(marks).toHaveLength(LIMITS.rows.length);
-    expect(marks).toContain('warn');
-    expect(marks).toContain('crit');
-    // The limit colours are never a status colour.
     const status = createTheme().palette;
     const reserved = [status.success.main, status.warning.main, status.error.main];
     for (const sw of Array.from(c.querySelectorAll('[data-swatch]'))) {
@@ -180,6 +250,7 @@ describe('grouped bars', () => {
   it('shows every group and limit past eight limits, reusing hues at lower opacity', () => {
     const rows = Array.from({ length: 10 }, (_v, i) => row('Account', `limit-${i}`, 0.3));
     const c = view(bars, 'light', parsePanel({ version: 1, id: 'x', rows }));
+    expect(c.querySelectorAll('[data-bar]')).toHaveLength(1);
     expect(c.querySelectorAll('[data-segment]')).toHaveLength(10);
     expect(c.querySelectorAll('[data-legend-item]')).toHaveLength(10);
     expect(limitColour(8, 'light')).toEqual({
@@ -190,15 +261,16 @@ describe('grouped bars', () => {
     expect(c.textContent).not.toMatch(/other/i);
   });
 
-  it('draws a segment with no fraction as an empty track and keeps the value in its text', () => {
+  it('draws a group with no fraction as an empty track and keeps the value in its text', () => {
     const c = view(
       bars,
       'light',
       parsePanel({ version: 1, id: 'x', rows: [row('Account', 'daily', undefined)] })
     );
-    expect(c.querySelectorAll('[data-segment]')).toHaveLength(1);
+    expect(c.querySelectorAll('[data-bar]')).toHaveLength(1);
     expect(c.querySelector('[data-fill]')).toBeNull();
-    expect(c.querySelector('[data-segment]')?.getAttribute('aria-label')).toContain('n/a');
+    expect(c.querySelector('[data-tick]')).toBeNull();
+    expect(c.querySelector('[data-bar]')?.getAttribute('aria-label')).toContain('n/a');
   });
 
   it('turns the group link off while editing', () => {
@@ -245,8 +317,8 @@ describe('limit order', () => {
     ).toEqual(['5-hour', 'Daily', 'Weekly', 'Weekly (Fable)', 'Monthly', 'Tokens', 'Burst']);
   });
 
-  it('uses one list for the legend and one slot per limit in every group', () => {
-    const { groups, limits, slots } = groupRows(LIMIT_ROWS.rows);
+  it('uses one list for the legend and the colours of every group', () => {
+    const { limits } = groupRows(LIMIT_ROWS.rows);
     expect(limits).toEqual([
       '5-hour',
       'Daily',
@@ -256,64 +328,43 @@ describe('limit order', () => {
       'Burst',
       'Tokens',
     ]);
-    expect(slots.map(s => s.name)).toEqual(limits);
-    for (const g of groups) {
-      expect(g.cells).toHaveLength(slots.length);
-      g.cells.forEach((cell, i) => {
-        if (cell) expect(cell.name).toBe(slots[i].name);
-      });
-    }
-    // The group that saw Weekly (Fable) first still has Weekly in the Weekly slot.
-    const myriad = groups.find(g => g.label === 'Anthropic / myriad')!;
-    expect(myriad.cells.map(c => c?.name ?? null)).toEqual([
-      null,
-      null,
-      'Weekly',
-      'Weekly (Fable)',
-      null,
-      null,
-      null,
-    ]);
-  });
-
-  it('gives a name that repeats inside one group its own extra slot, so no row is lost', () => {
-    const rows = [
-      row('A', 'Weekly', 0.1),
-      row('A', 'Weekly', 0.2),
-      row('B', 'Weekly', 0.3),
-      row('B', '5-hour', 0.4),
-    ];
-    const { groups, slots } = groupRows(rows.map(r => ({ ...r, status: 'ok' as const })));
-    expect(slots.map(s => `${s.name}#${s.repeat}`)).toEqual(['5-hour#0', 'Weekly#0', 'Weekly#1']);
-    expect(groups[0].cells.filter(Boolean)).toHaveLength(2);
-    expect(groups[1].cells.map(c => c?.row.value ?? null)).toEqual(['40%', '30%', null]);
-  });
-
-  it('draws the same column for a limit in every bar, with a faint empty slot where a group has none', () => {
     const c = view(bars, 'light', LIMIT_ROWS);
     const legend = Array.from(c.querySelectorAll('[data-legend-item]')).map(i =>
       i.getAttribute('data-legend-item')
     );
-    const bar = (g: string) => c.querySelector(`[data-bar-group="${g}"] [data-bar]`) as HTMLElement;
-    for (const label of Array.from(c.querySelectorAll('[data-bar-group]')).map(g =>
-      g.getAttribute('data-bar-group')
-    )) {
-      const cols = Array.from(bar(label!).children);
-      expect(cols).toHaveLength(legend.length);
-      cols.forEach((col, i) => {
-        const name = col.getAttribute('data-segment') ?? col.getAttribute('data-segment-empty');
-        expect(name).toBe(legend[i]);
-      });
-    }
-    // Weekly is the third column in every bar that has it, and an empty slot has no fill.
-    const weeklyAt = (g: string) =>
-      Array.from(bar(g).children).findIndex(col => col.getAttribute('data-segment') === 'Weekly');
-    expect(weeklyAt('Anthropic / personal')).toBe(2);
-    expect(weeklyAt('Anthropic / myriad')).toBe(2);
-    expect(weeklyAt('Anthropic / phoenix-court-group')).toBe(2);
-    const kimi = bar('Kimi / team-a');
-    expect(kimi.querySelectorAll('[data-segment-empty]')).toHaveLength(legend.length - 1);
-    expect(kimi.querySelectorAll('[data-fill]')).toHaveLength(1);
+    expect(legend).toEqual(limits);
+    // The same name has the same colour in every group, whatever order the group saw it in.
+    const colourOf = (g: string, n: string) =>
+      getComputedStyle(c.querySelector(`[data-bar-group="${g}"] [data-segment="${n}"]`) as Element)
+        .backgroundColor;
+    expect(colourOf('Anthropic / personal', 'Weekly (Fable)')).toBe(
+      colourOf('Anthropic / myriad', 'Weekly (Fable)')
+    );
+    expect(colourOf('Anthropic / personal', 'Weekly')).toBe(
+      colourOf('Anthropic / myriad', 'Weekly')
+    );
+  });
+
+  it('keeps every row of a name that repeats inside one group on the same track', () => {
+    const rows = [row('A', 'Weekly', 0.1), row('A', 'Weekly', 0.2), row('B', 'Weekly', 0.3)];
+    const c = view(bars, 'light', parsePanel({ version: 1, id: 'x', rows }));
+    const a = c.querySelector('[data-bar-group="A"]') as HTMLElement;
+    expect(a.querySelectorAll('[data-bar]')).toHaveLength(1);
+    expect(a.querySelectorAll('[data-fill]')).toHaveLength(2);
+  });
+});
+
+describe('worst status', () => {
+  it('ranks critical over warning over unknown over OK', () => {
+    const seg = (status: string) => ({
+      name: 'x',
+      row: { label: 'a', detail: '', value: '', status } as never,
+    });
+    expect(worstStatus([seg('ok'), seg('warn'), seg('crit')])).toBe('crit');
+    expect(worstStatus([seg('ok'), seg('warn')])).toBe('warn');
+    expect(worstStatus([seg('ok'), seg('unknown')])).toBe('unknown');
+    expect(worstStatus([seg('ok')])).toBe('ok');
+    expect(worstStatus([])).toBe('unknown');
   });
 });
 
@@ -321,7 +372,7 @@ describe('group labels', () => {
   it('sizes the label column to the longest label, up to 35 % of the widget, and clips only beyond', () => {
     const c = view(bars, 'light', LIMIT_ROWS);
     const grid = c.querySelector('[data-bar-grid]') as HTMLElement;
-    expect(getComputedStyle(grid).gridTemplateColumns).toBe('fit-content(35%) minmax(0, 1fr)');
+    expect(getComputedStyle(grid).gridTemplateColumns).toBe('fit-content(35%) minmax(0, 1fr) auto');
     const label = c.querySelector('[data-bar-label]') as HTMLElement;
     const style = getComputedStyle(label);
     expect(style.whiteSpace).toBe('nowrap');

@@ -27,10 +27,12 @@ export interface WidgetFrameProps {
   config: Record<string, unknown>;
   selfScroll: boolean | undefined;
   actions: FrameActions;
+  /** Draw in the one row header of the title bar: no card, no title, and the widget gets `compact`. */
+  inline?: boolean;
 }
 
 function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
-  const { sectionId, id, type, title, config, selfScroll, actions } = props;
+  const { sectionId, id, type, title, config, selfScroll, actions, inline } = props;
   const { filters, refreshSignal, editing, kiosk, reportRefreshed } = useDashboardContext();
   const def = useWidgetDefinition(type);
   const merged = React.useMemo(
@@ -54,6 +56,7 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
         reportRefreshed={reportRefreshed}
         editing={editing}
         kiosk={kiosk}
+        compact={inline ? true : undefined}
       />
     </ErrorBoundary>
   ) : (
@@ -99,6 +102,17 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
       </IconButton>
     </Box>
   );
+
+  if (inline) {
+    return (
+      <Box
+        data-widget={id}
+        sx={{ height: '100%', display: 'flex', alignItems: 'center', minWidth: 0 }}
+      >
+        {body}
+      </Box>
+    );
+  }
 
   if (!card) {
     return (

@@ -1,9 +1,12 @@
 /*
- * The "grouped bars" layout of the panel widget. One horizontal bar per group of rows (rows with
- * the same label). The bar has one segment per row. Each segment is filled to the fraction of its
- * row, in the colour of its limit name (the row detail). The value is in the segment tooltip, and
- * a legend above the bars maps the colours to the limit names. A small status marker sits under each segment, so
- * status is never colour alone and the limit colours never carry status.
+ * The "grouped bars" layout of the panel widget. One horizontal track for each group of rows (rows
+ * with the same label, for example one identity). Every row of the group is drawn on that same
+ * track, from 0 to 100 percent, in the colour of its limit name (the row detail). The largest
+ * fraction is at the back and the smaller ones are in front, so every colour stays visible. A thin
+ * tick in the limit colour marks the end of each fraction, so equal or hidden values still show.
+ * One tooltip lists every limit with its value and status. One status mark at the end of the row
+ * shows the worst status of the group, so status is never colour alone and the limit colours never
+ * carry status. A legend above the rows maps the colours to the limit names.
  */
 import Box from '@mui/material/Box';
 import { useTheme } from '@mui/material/styles';
@@ -14,7 +17,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import { INK, KIOSK_INK } from '../promql/palette';
 import { limitColours } from './limitColours';
 import type { PanelRow } from './model';
-import { groupRows, RowGroup, RowSegment } from './rowGroups';
+import { groupRows, RowGroup, RowSegment, worstStatus } from './rowGroups';
 import { STATUS_WORD, StatusMark } from './StatusMark';
 
 /** The widest the label column grows, as a share of the widget width. */
@@ -42,6 +45,149 @@ export function segmentText(group: RowGroup, seg: RowSegment): string {
   return `${group.label}, ${seg.name}: ${row.value}${pct}. ${STATUS_WORD[row.status]}`;
 }
 
+/** The height of the track and how far a tick reaches above and below it, in pixels. */
+const TRACK_HEIGHT = 16;
+const TICK_OVERHANG = 3;
+const TICK_WIDTH = 2;
+
+/** The segments that have a fraction, the largest first: the DOM order is the stacking order. */
+export function drawOrder(segments: ReadonlyArray<RowSegment>): RowSegment[] {
+  return segments
+    .filter(s => s.row.fraction !== undefined)
+    .map((s, at) => ({ s, at }))
+    .sort((a, b) => (b.s.row.fraction ?? 0) - (a.s.row.fraction ?? 0) || a.at - b.at)
+    .map(x => x.s);
+}
+
+const clamp = (f: number): number => Math.min(1, Math.max(0, f));
+
+function LimitTrack(props: {
+  group: RowGroup;
+  colours: Map<string, { colour: string; opacity: number }>;
+  track: string;
+  surface: string;
+}): JSX.Element {
+  const { group, colours, track, surface } = props;
+  const [hovered, setHovered] = React.useState<RowSegment | null>(null);
+  const drawn = drawOrder(group.segments);
+  // Ticks at the same fraction share the height, so none of them is hidden.
+  const tickSlot = new Map<RowSegment, { at: number; of: number }>();
+  for (const seg of drawn) {
+    const same = drawn.filter(o => clamp(o.row.fraction ?? 0) === clamp(seg.row.fraction ?? 0));
+    tickSlot.set(seg, { at: same.indexOf(seg), of: same.length });
+  }
+  const list = (
+    <Box data-bar-tooltip sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+      {group.segments.map((seg, i) => {
+        const c = colours.get(seg.name);
+        const pct =
+          seg.row.fraction === undefined ? '' : `, ${Math.round(seg.row.fraction * 100)} percent`;
+        return (
+          <Box
+            key={`${seg.name}-${i}`}
+            data-tooltip-limit={seg.name}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+              fontWeight: seg === hovered ? 700 : 400,
+            }}
+          >
+            <Box
+              sx={{
+                width: 10,
+                height: 10,
+                borderRadius: '2px',
+                flex: 'none',
+                bgcolor: c?.colour,
+                opacity: c?.opacity,
+              }}
+            />
+            <span>
+              {seg.name}: {seg.row.value}
+              {pct}. {STATUS_WORD[seg.row.status]}
+            </span>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+  const summary = group.segments.map(s => segmentText(group, s)).join(' ');
+  return (
+    <Tooltip title={list} arrow placement="top">
+      <Box
+        data-bar
+        role="img"
+        aria-label={summary}
+        onMouseLeave={() => setHovered(null)}
+        sx={{
+          position: 'relative',
+          height: TRACK_HEIGHT,
+          minWidth: 0,
+          alignSelf: 'center',
+        }}
+      >
+        <Box
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            bgcolor: track,
+            borderRadius: '3px',
+            overflow: 'hidden',
+          }}
+        >
+          {drawn.map((seg, i) => {
+            const c = colours.get(seg.name);
+            const fraction = clamp(seg.row.fraction ?? 0);
+            return (
+              <Box
+                key={`${seg.name}-${i}`}
+                data-segment={seg.name}
+                data-fill={seg.row.fraction}
+                onMouseEnter={() => setHovered(seg)}
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: 0,
+                  width: `${fraction * 100}%`,
+                  bgcolor: c?.colour,
+                  opacity: c?.opacity,
+                }}
+              />
+            );
+          })}
+        </Box>
+        {drawn.map((seg, i) => {
+          const c = colours.get(seg.name);
+          const fraction = clamp(seg.row.fraction ?? 0);
+          const slot = tickSlot.get(seg) ?? { at: 0, of: 1 };
+          const full = TRACK_HEIGHT + 2 * TICK_OVERHANG;
+          const part = full / slot.of;
+          return (
+            <Box
+              key={`${seg.name}-${i}`}
+              data-tick={seg.name}
+              aria-hidden
+              sx={{
+                position: 'absolute',
+                pointerEvents: 'none',
+                top: -TICK_OVERHANG + slot.at * part,
+                height: part,
+                width: TICK_WIDTH,
+                left: fraction === 0 ? 0 : `calc(${fraction * 100}% - ${TICK_WIDTH}px)`,
+                bgcolor: c?.colour,
+                opacity: c?.opacity,
+                boxShadow: `0 0 0 1px ${surface}`,
+              }}
+            />
+          );
+        })}
+      </Box>
+    </Tooltip>
+  );
+}
+
 export function PanelBars(props: {
   rows: ReadonlyArray<PanelRow>;
   kiosk: boolean;
@@ -51,7 +197,7 @@ export function PanelBars(props: {
   const theme = useTheme();
   const mode = theme.palette.mode;
   const ink = kiosk && mode === 'dark' ? KIOSK_INK : INK[mode];
-  const { groups, limits, slots } = React.useMemo(() => groupRows(rows), [rows]);
+  const { groups, limits } = React.useMemo(() => groupRows(rows), [rows]);
   const colours = React.useMemo(() => limitColours(limits, mode), [limits, mode]);
   return (
     <Box data-bars sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, minWidth: 0 }}>
@@ -92,11 +238,12 @@ export function PanelBars(props: {
         data-bar-grid
         sx={{
           display: 'grid',
-          // The label column fits the longest label, up to 35 % of the widget. The bars take the rest.
-          gridTemplateColumns: `fit-content(${LABEL_MAX}) minmax(0, 1fr)`,
+          // The label column fits the longest label, up to 35 % of the widget. The track takes the
+          // rest. The last column holds the one status mark of the row.
+          gridTemplateColumns: `fit-content(${LABEL_MAX}) minmax(0, 1fr) auto`,
           columnGap: 1.5,
           rowGap: 1.25,
-          alignItems: 'start',
+          alignItems: 'center',
           minWidth: 0,
         }}
       >
@@ -111,73 +258,14 @@ export function PanelBars(props: {
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
-                  pt: '1px',
                 }}
               >
                 <GroupLabel group={group} editing={editing} />
               </Typography>
             </Tooltip>
-            <Box
-              data-bar
-              sx={{ minWidth: 0, display: 'flex', gap: '2px' }}
-              role="group"
-              aria-label={group.label}
-            >
-              {group.cells.map((seg, i) => {
-                const slot = slots[i];
-                if (!seg) {
-                  return (
-                    <Box
-                      key={`${slot.name}-${slot.repeat}`}
-                      data-segment-empty={slot.name}
-                      aria-hidden
-                      sx={{ flex: '1 1 0', minWidth: 0 }}
-                    >
-                      <Box
-                        sx={{ height: 14, bgcolor: ink.track, borderRadius: '3px', opacity: 0.5 }}
-                      />
-                      <Box sx={{ height: 9, pt: '3px' }} />
-                    </Box>
-                  );
-                }
-                const c = colours.get(seg.name);
-                const fraction = seg.row.fraction;
-                const text = segmentText(group, seg);
-                return (
-                  <Tooltip key={`${slot.name}-${slot.repeat}`} title={text} arrow placement="top">
-                    <Box
-                      data-segment={seg.name}
-                      role="img"
-                      aria-label={text}
-                      sx={{ flex: '1 1 0', minWidth: 0 }}
-                    >
-                      <Box
-                        sx={{
-                          height: 14,
-                          bgcolor: ink.track,
-                          borderRadius: '3px',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        {fraction !== undefined && (
-                          <Box
-                            data-fill={fraction}
-                            sx={{
-                              height: '100%',
-                              width: `${Math.min(1, Math.max(0, fraction)) * 100}%`,
-                              bgcolor: c?.colour,
-                              opacity: c?.opacity,
-                            }}
-                          />
-                        )}
-                      </Box>
-                      <Box sx={{ display: 'flex', justifyContent: 'center', pt: '3px' }}>
-                        <StatusMark status={seg.row.status} size={9} />
-                      </Box>
-                    </Box>
-                  </Tooltip>
-                );
-              })}
+            <LimitTrack group={group} colours={colours} track={ink.track} surface={ink.surface} />
+            <Box data-bar-status sx={{ display: 'flex', alignItems: 'center' }}>
+              <StatusMark status={worstStatus(group.segments)} size={14} />
             </Box>
           </Box>
         ))}

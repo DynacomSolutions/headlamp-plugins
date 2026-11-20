@@ -66,6 +66,11 @@ export interface WidgetProps<C = Record<string, unknown>> {
   editing: boolean;
   /** True in kiosk (full screen) mode: touch screen, no hover, no scrollbars. */
   kiosk: boolean;
+  /**
+   * True when the widget draws inline in the one row header of the title bar: no card, no title
+   * row, and about 48 px of height. A widget that has no compact form can ignore it.
+   */
+  compact?: boolean;
 }
 
 /** What the dashboard passes to a widget's `SettingsComponent`. */

@@ -28,7 +28,8 @@ and a header or divider.
   with every tab (see [Header, footer and tab rail](#header-footer-and-tab-rail)).
 - **Kiosk**: the Full screen button shows only the dashboard over the whole screen on a
   black background, asks the browser for full screen and has the title, a refresh button and an Exit
-  control. It has no clock of its own: put a clock widget in the header.
+  control in one row, with the header widgets between them. It has no clock of its own: put a clock widget in
+  the header.
   The styles are quiet and touch friendly. The code is adapted from the Usage plugin kiosk.
 - **Refresh**: a Refresh button, an automatic interval per dashboard (off, 10 s, 30 s, 1 min,
   5 min, 15 min) and a "Refreshed 12 s ago" text that updates on its own. Its tooltip gives the
@@ -63,12 +64,17 @@ A filter key in the URL overrides the saved view, even with an empty value.
 Each dashboard has a **header** and a **footer**. Each is one section with its own 12 column grid. It is
 edited like any section: drag and resize widgets, add them from the palette (choose "Header (every tab)" or
 "Footer (every tab)" as the target section), open the widget settings, duplicate, delete or move a widget to
-another section from its menu. The header sits above the tabs and the footer below the tab content, so they
-stay when the tab changes (a clock keeps ticking, and nothing is fetched again).
+another section from its menu. The footer sits below the tab content. The header widgets draw inline in the
+title bar, in one compact row: the title (with the refreshed text and the refresh control), then the filters and
+views, then the header widgets, then the Full screen button (Exit full screen in the kiosk) at the far right. The
+row wraps only on a narrow screen. The widgets draw without a card or a card title, and a widget gets
+`compact: true` in its props (the clock then shows the time over the date, at the height of the row). Header and
+footer stay when the tab changes (a clock keeps ticking, and nothing is fetched again). In edit mode the header
+shows as an editable strip under the toolbar, so you can still add, move, configure and remove its widgets.
 
 | Option | Values | Meaning |
 | --- | --- | --- |
-| Sticky | on or off (default off) | The header stays at the top and the footer at the bottom of the scrolling view. Sticky is off while you edit. |
+| Sticky | on or off (default off) | The title bar with the header widgets stays at the top and the footer at the bottom of the scrolling view. Sticky is off while you edit. |
 | Show in | `both` (default), `normal`, `kiosk` | Where the band draws: in the normal view and the kiosk, in the normal view only, or in the kiosk only. |
 
 A band with no widgets draws nothing in view mode. In edit mode it always shows, with its two options.
@@ -341,17 +347,21 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
 - **Display options**: `showSummary` (default true) shows the status and summary line, `showStats` (default
   true) shows the stat tiles, and `rowLayout` is `list` (default, the table above) or `grouped-bars`. A saved
   widget without these keys uses the defaults.
-- **Grouped bars**: rows are grouped by `label` (for example the account), in order of first sight. A group is one
-  horizontal bar with one segment for each row. All bars share one ordered list of limit names, so a limit is in the
-  same column in every bar. Known names go first by window length (5-hour, daily, weekly, weekly with a model name,
-  monthly), then other names in order of first sight. A group without a limit shows a faint empty slot there. The
-  group label column fits the longest label, up to 35 % of the widget. Only a longer label is clipped, and a tooltip
-  gives the full label. The segment is filled to the `fraction` of the row, and its tooltip
-  gives the group, the limit (the row `detail`) and the value. Each limit name has its own colour, the same in every
-  group, from the eight validated categorical hues of the data visualisation palette (light and dark), in the order
-  of that list. A legend maps the colours to the limit names. A small status marker (shape and word) sits under each
-  segment, and the limit colours are never status colours. Every group and segment shows: there is no top-N and no
-  "Other" group. From the ninth limit name the hues repeat at lower opacity, and the legend names every one.
+- **Grouped bars**: rows are grouped by `label` (for example the account or identity), in order of first sight.
+  A group is exactly one horizontal track from 0 to 100 %. Every row of the group is drawn on that same track, in
+  the colour of its limit name (the row `detail`), at the `fraction` of the row. The fills overlap: the largest
+  fraction is at the back and the smaller ones are in front, so every colour stays visible. A thin tick in the
+  limit colour marks the end of each fraction, so equal or hidden values still show. Equal fractions share the
+  height of the tick. Known limit names go first in the legend by window length (5-hour, daily, weekly, weekly
+  with a model name, monthly), then other names in order of first sight. The tooltip of the track lists every
+  limit with its value and status. One status mark (shape and word) at the end of the row shows the worst status
+  of the group. The group label column fits the longest label, up to 35 % of the widget. Only a longer label is
+  clipped, and a tooltip gives the full label. Each limit name has its own colour, the same in every group, from
+  the eight validated categorical hues of the data visualisation palette (light and dark), in the order of the
+  legend. A legend above the rows maps the colours to the limit names. The limit colours are never status
+  colours. Every group and limit shows: there is no top-N and no "Other" group. From the ninth limit name the
+  hues repeat at lower opacity, and the legend names every one. Turn off `showSummary` and `showStats` to show
+  the tracks alone.
 - **Refresh**: the widget fetches when the dashboard refresh signal changes, and reports the time with
   `reportRefreshed`. The `refreshSeconds` of the panel is the minimum time between two fetches. The last good data
   stays on screen when a refresh fails, with a warning.
