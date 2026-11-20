@@ -78,6 +78,20 @@ layout change. The Incidents pages are unchanged.
 - Both widgets come from this one bundle, so they share a small in-memory store
   (`src/selection.ts`). The selection is not saved.
 
+## Notifications
+
+The sidebar entry **Notifications** (`/incidents/notifications`) turns push notifications on for
+this device. It is a subscription of its own, with its own service worker (`sw.js`, served at
+`/plugins/incidents/sw.js`) and its own key from the agent. It does not change the Alerting plugin.
+
+- **Diagnosis ready** sends the alert name, its severity and the likely cause. A tap opens the
+  incident. A filter limits it to Critical, Warning and Other (default: Critical and Warning).
+- **Chat answers** sends the start of the answer when you asked a question and then left the page.
+  Nothing is sent while the chat is visible (Page Visibility).
+- Each switch saves at once. **Disable on this device** deletes the subscription.
+- On iPhone and iPad, notifications work only from an app added to the Home Screen. The page says so.
+- A notification opens a path on this site, so it never leaves the site.
+
 ## Settings
 
 Set them on the plugin settings page, or deploy
