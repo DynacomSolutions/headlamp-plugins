@@ -12,6 +12,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { reason, testSource } from './data';
+import { useSettingsCluster } from './settingsCluster';
 import {
   agentSource,
   blankDraft,
@@ -33,10 +34,11 @@ type TestResult = { state: 'idle' } | { state: 'running' } | { state: 'ok'; coun
 /** The Test button and its result. `source` is null while the fields are not valid. */
 export function SourceTest({ source, problem }: { source: PanelSource | null; problem: string | null }): JSX.Element {
   const [result, setResult] = React.useState<TestResult>({ state: 'idle' });
+  const cluster = useSettingsCluster();
   const run = () => {
     if (!source) return;
     setResult({ state: 'running' });
-    testSource(source).then(
+    testSource(source, cluster).then(
       count => setResult({ state: 'ok', count }),
       e => setResult({ state: 'error', message: reason(e) })
     );

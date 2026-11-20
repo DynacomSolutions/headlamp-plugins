@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { request } = vi.hoisted(() => ({ request: vi.fn() }));
-vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ ApiProxy: { request }, ConfigStore: class {} }));
+const { request, clusterRequest } = vi.hoisted(() => ({ request: vi.fn(), clusterRequest: vi.fn() }));
+vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ ApiProxy: { request, clusterRequest }, ConfigStore: class {} }));
 
 import { clearPanelListCache, fetchPanel, fetchPanelList, shared, statusMessage, testSource } from './data';
 import { agentSource, blankDraft, draftToSource } from './sources';
@@ -118,5 +118,12 @@ describe('testSource', () => {
   it('throws the clear message on failure', async () => {
     request.mockRejectedValue(Object.assign(new Error('x'), { status: 404 }));
     await expect(testSource(agent)).rejects.toThrow(/404/);
+  });
+  it('names the cluster when the page has none (the settings page)', async () => {
+    request.mockReset();
+    clusterRequest.mockResolvedValue(LIST);
+    expect(await testSource(agent, 'main')).toBe(2);
+    expect(clusterRequest).toHaveBeenCalledWith(expect.stringContaining('/api/widgets'), { cluster: 'main' });
+    expect(request).not.toHaveBeenCalled();
   });
 });

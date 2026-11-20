@@ -4,9 +4,15 @@ import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { request, settings } = vi.hoisted(() => ({ request: vi.fn(), settings: { value: undefined as Record<string, unknown> | undefined } }));
+const { request, clusterRequest, settings, route } = vi.hoisted(() => ({
+  request: vi.fn(),
+  clusterRequest: vi.fn(),
+  settings: { value: undefined as Record<string, unknown> | undefined },
+  route: { cluster: null as string | null },
+}));
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
-  ApiProxy: { request },
+  ApiProxy: { request, clusterRequest },
+  K8s: { useClustersConf: () => ({ main: {}, other: {} }), useCluster: () => route.cluster },
   ConfigStore: class {
     useConfig() {
       return () => settings.value;

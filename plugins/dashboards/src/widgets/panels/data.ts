@@ -34,10 +34,14 @@ const statusOf = (e: unknown): number | undefined => {
   return typeof s === 'number' ? s : undefined;
 };
 
-async function requestJson(source: PanelSource, url: string): Promise<unknown> {
+/**
+ * `cluster` is only set on the settings page, whose URL has no /c/<cluster> part. There a plain request
+ * would reach Headlamp's own web page, so the request names the cluster.
+ */
+async function requestJson(source: PanelSource, url: string, cluster?: string): Promise<unknown> {
   if (source.kind === 'service') {
     try {
-      return await ApiProxy.request(url);
+      return await (cluster ? ApiProxy.clusterRequest(url, { cluster }) : ApiProxy.request(url));
     } catch (e) {
       const status = statusOf(e);
       throw new SourceError(status !== undefined && status >= 400 ? statusMessage(status, 'service') : reason(e));
@@ -108,10 +112,10 @@ export function fetchPanel(source: PanelSource, id: string, ttlSeconds: number):
 }
 
 /** The Test button: asks the source for its list without the cache, and gives the panel count. Throws a clear message. */
-export async function testSource(source: PanelSource): Promise<number> {
+export async function testSource(source: PanelSource, cluster?: string): Promise<number> {
   const url = listUrl(source);
   entries.delete(`list ${url}`);
-  return (await fetchPanelList(source)).length;
+  return parsePanelList(await requestJson(source, url, cluster)).length;
 }
 
 const missing = (id: string): string => `The source "${id}" is not configured. Choose another source in the widget settings, or add it on the Dashboards settings page.`;
