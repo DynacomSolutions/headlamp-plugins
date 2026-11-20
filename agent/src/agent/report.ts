@@ -49,6 +49,8 @@ export interface EvidenceItem {
   reason: string;
   summary: string;
   ok: boolean;
+  /** Full tool data, kept only for the tools whose data a launched agent needs (the DNS placement plan). */
+  data?: unknown;
 }
 
 export interface Diagnosis {

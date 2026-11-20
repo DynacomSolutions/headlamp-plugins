@@ -31,6 +31,9 @@ export interface DiagnoseOptions {
 }
 
 const SUBMIT = 'submit_diagnosis';
+/** Tools whose full result is kept in the evidence item, so an agent can start from it. */
+const KEEP_DATA = new Set(['dns_placement_plan']);
+const KEEP_DATA_CHARS = 30_000;
 const MAX_TURNS = 16;
 
 function urlHost(instance: string | undefined): string | undefined {
@@ -120,6 +123,8 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
       const out = await opts.tools.call(tool, args);
       item = { id, tool, reason: maskText(reason), summary: maskText(out.summary), ok: out.ok };
       content = clip(maskText(JSON.stringify(mask(out.data))));
+      const data = KEEP_DATA.has(tool) && out.ok ? mask(out.data) : undefined;
+      if (data !== undefined && JSON.stringify(data).length <= KEEP_DATA_CHARS) item.data = data;
     } catch (error) {
       const message = maskText(error instanceof Error ? error.message : String(error));
       item = { id, tool, reason: maskText(reason), summary: message, ok: false };
