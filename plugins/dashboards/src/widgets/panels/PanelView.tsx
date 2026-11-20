@@ -19,6 +19,8 @@ import {
 } from './model';
 import { PanelBars } from './PanelBars';
 import { PanelTables } from './PanelTables';
+import { RowIcon } from './RowIcon';
+import type { PanelSource } from './sources';
 import { Sparkline } from './Sparkline';
 import { STATUS_WORD, StatusMark, useStatusColours } from './StatusMark';
 
@@ -114,6 +116,8 @@ export interface PanelViewProps {
   kiosk: boolean;
   editing: boolean;
   display?: PanelDisplay;
+  /** The source of the panel. Row icons are fetched through it. Without it no icon shows. */
+  source?: PanelSource;
 }
 
 export function PanelView({
@@ -121,8 +125,11 @@ export function PanelView({
   kiosk,
   editing,
   display = DEFAULT_DISPLAY,
+  source,
 }: PanelViewProps): JSX.Element {
   const withBar = panel.rows.some(r => r.fraction !== undefined);
+  // One icon slot for every row when any row has an icon, so the labels stay aligned.
+  const withIcon = source !== undefined && panel.rows.some(r => r.icon !== undefined);
   if (isEmptyPanel(panel)) {
     return (
       <Box data-panel-empty sx={{ p: 1 }}>
@@ -220,7 +227,7 @@ export function PanelView({
         </Box>
       )}
       {panel.rows.length > 0 && display.rowLayout === 'grouped-bars' && (
-        <PanelBars rows={panel.rows} kiosk={kiosk} editing={editing} />
+        <PanelBars rows={panel.rows} kiosk={kiosk} editing={editing} source={source} />
       )}
       {panel.rows.length > 0 && display.rowLayout === 'list' && (
         <Box
@@ -239,6 +246,11 @@ export function PanelView({
                 <Box component="td" sx={{ py: 0.5, pr: 1, width: 18 }}>
                   <StatusMark status={r.status} size={10} />
                 </Box>
+                {withIcon && (
+                  <Box component="td" data-row-icon-cell sx={{ py: 0.5, pr: 1, width: 20 }}>
+                    <RowIcon source={source} icon={r.icon} />
+                  </Box>
+                )}
                 <Box component="td" sx={{ py: 0.5, pr: 1, maxWidth: 220 }}>
                   <Typography variant="body2" noWrap title={r.label}>
                     <Label row={r} editing={editing} />

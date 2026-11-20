@@ -326,3 +326,10 @@ export const panelUrl = (s: PanelSource, id: string): string =>
 
 /** A stable key for a source's location, for caches and effect dependencies. */
 export const sourceKey = (s: PanelSource): string => listUrl(s);
+
+/**
+ * The address of a row icon. `path` is relative to the source's `/api/widgets/` base and must have
+ * passed `safeIconPath`, so each segment is URL-safe and no `..` can climb out of the base.
+ */
+export const iconUrl = (s: PanelSource, path: string): string =>
+  sourceUrl(s, `/api/widgets/${path.split('/').map(enc).join('/')}`);

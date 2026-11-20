@@ -18,6 +18,8 @@ import { INK, KIOSK_INK } from '../promql/palette';
 import { limitColours } from './limitColours';
 import type { PanelRow } from './model';
 import { groupRows, RowGroup, RowSegment, worstStatus } from './rowGroups';
+import { RowIcon } from './RowIcon';
+import type { PanelSource } from './sources';
 import { STATUS_WORD, StatusMark } from './StatusMark';
 
 /** The widest the label column grows, as a share of the widget width. */
@@ -192,13 +194,17 @@ export function PanelBars(props: {
   rows: ReadonlyArray<PanelRow>;
   kiosk: boolean;
   editing: boolean;
+  /** The source of the panel, for the row icons. Without it no icon shows. */
+  source?: PanelSource;
 }): JSX.Element {
-  const { rows, kiosk, editing } = props;
+  const { rows, kiosk, editing, source } = props;
   const theme = useTheme();
   const mode = theme.palette.mode;
   const ink = kiosk && mode === 'dark' ? KIOSK_INK : INK[mode];
   const { groups, limits } = React.useMemo(() => groupRows(rows), [rows]);
   const colours = React.useMemo(() => limitColours(limits, mode), [limits, mode]);
+  // An icon column for every group when any group has an icon, so the labels stay aligned.
+  const withIcon = source !== undefined && groups.some(g => g.icon !== undefined);
   return (
     <Box data-bars sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, minWidth: 0 }}>
       <Box
@@ -239,8 +245,11 @@ export function PanelBars(props: {
         sx={{
           display: 'grid',
           // The label column fits the longest label, up to 35 % of the widget. The track takes the
-          // rest. The last column holds the one status mark of the row.
-          gridTemplateColumns: `fit-content(${LABEL_MAX}) minmax(0, 1fr) auto`,
+          // rest. The last column holds the one status mark of the row. An optional first column
+          // holds the row icon.
+          gridTemplateColumns: `${
+            withIcon ? 'auto ' : ''
+          }fit-content(${LABEL_MAX}) minmax(0, 1fr) auto`,
           columnGap: 1.5,
           rowGap: 1.25,
           alignItems: 'center',
@@ -249,6 +258,7 @@ export function PanelBars(props: {
       >
         {groups.map(group => (
           <Box key={group.label} data-bar-group={group.label} sx={{ display: 'contents' }}>
+            {withIcon && <RowIcon source={source} icon={group.icon} />}
             <Tooltip title={group.label} placement="top-start">
               <Typography
                 variant="body2"

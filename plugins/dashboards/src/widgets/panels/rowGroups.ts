@@ -6,7 +6,7 @@
  * limit names have one display order for every group (see `orderLimits`). Each group is one track,
  * so there are no fixed slots.
  */
-import type { PanelRow, PanelStatus } from './model';
+import type { PanelRow, PanelRowIcon, PanelStatus } from './model';
 
 /** The name of a segment whose row has no `detail`. */
 export const UNNAMED_LIMIT = 'Value';
@@ -23,6 +23,8 @@ export interface RowGroup {
   segments: RowSegment[];
   /** The first link of the rows in the group, if any. */
   link?: string;
+  /** The first icon of the rows in the group, if any. */
+  icon?: PanelRowIcon;
 }
 
 export interface GroupedRows {
@@ -71,6 +73,7 @@ export function groupRows(rows: ReadonlyArray<PanelRow>): GroupedRows {
       byLabel.set(row.label, group);
     }
     if (!group.link && row.link) group.link = row.link;
+    if (!group.icon && row.icon) group.icon = row.icon;
     const name = row.detail === '' ? UNNAMED_LIMIT : row.detail;
     group.segments.push({ name, row });
     if (!firstSeen.includes(name)) firstSeen.push(name);
