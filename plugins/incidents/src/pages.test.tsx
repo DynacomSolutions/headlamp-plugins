@@ -18,6 +18,8 @@ vi.mock('@kinvolk/headlamp-plugin/lib/CommonComponents', () => ({
 }));
 vi.mock('./a2ui', () => ({ A2uiRenderer: () => null }));
 vi.mock('./ChatPage', () => ({ ChatPage: () => null }));
+vi.mock('./AgentActions', () => ({ AgentActions: () => null }));
+vi.mock('./LaunchPages', () => ({ LaunchesPage: () => null }));
 vi.mock('./chat-data', () => ({ createChat: vi.fn(async () => 'chat1') }));
 vi.mock('./data', () => ({
   useSettings: () => ({}),
