@@ -10,6 +10,7 @@ import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import { isEmptyPanel, PanelModel, PanelRing, PanelRow, PanelStatus, ringToSunburst } from './model';
+import { PanelTables } from './PanelTables';
 import { Sparkline } from './Sparkline';
 
 export const STATUS_WORD: Record<PanelStatus, string> = { ok: 'OK', warn: 'Warning', crit: 'Critical', unknown: 'Unknown' };
@@ -180,6 +181,7 @@ export function PanelView({ panel, kiosk, editing }: PanelViewProps): JSX.Elemen
           </tbody>
         </Box>
       )}
+      {panel.tables.length > 0 && <PanelTables tables={panel.tables} />}
     </Box>
   );
 }

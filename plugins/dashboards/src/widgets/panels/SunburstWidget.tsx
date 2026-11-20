@@ -1,7 +1,7 @@
 /*
- * The agent sunburst widget (`agent.sunburst`): one ring of an agent panel (for example the CPU
- * ring of `usage-dashboard`) as a full card sunburst. It uses the same panel fetch as the
- * agent panel widget.
+ * The sunburst widget (`agent.sunburst`): one ring of a panel (for example the CPU ring of
+ * `usage-dashboard` on the agent) as a full card sunburst. It uses the same source and panel
+ * fetch as the panel widget.
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -11,11 +11,13 @@ import React from 'react';
 import type { WidgetDefinition, WidgetProps } from '../../contract';
 import { SettingsForm } from '../SettingsForm';
 import { SunburstChart } from '../sunburst/SunburstChart';
-import { useAgentSettings } from './agentConfig';
 import { usePanel, usePanelList } from './data';
 import { ringToSunburst } from './model';
+import { sourceOf, SourcePanelPicker } from './PanelPicker';
 import { ringFormat } from './PanelView';
 import type { PanelConfig } from './PanelWidget';
+import { AGENT_SOURCE_ID, findSource } from './sources';
+import { useSources } from './sourcesConfig';
 
 export interface RingConfig extends PanelConfig {
   /** The ring id: `cpu` or `memory`. */
@@ -23,10 +25,11 @@ export interface RingConfig extends PanelConfig {
 }
 
 function RingWidget({ config, refreshSignal, reportRefreshed, kiosk }: WidgetProps<RingConfig>): JSX.Element {
-  const agent = useAgentSettings();
-  const list = usePanelList(agent);
+  const sourceId = sourceOf(config);
+  const source = findSource(useSources(), sourceId);
+  const list = usePanelList(source, sourceId);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
-  const state = usePanel(agent, config.panel, refreshSignal, minSeconds, reportRefreshed);
+  const state = usePanel(source, config.panel, refreshSignal, minSeconds, reportRefreshed, sourceId);
   const ring = state.panel?.rings.find(r => r.id === config.ring) ?? state.panel?.rings[0];
   const data = React.useMemo(() => (ring ? ringToSunburst(ring) : null), [ring]);
   if (!config.panel) {
@@ -69,29 +72,32 @@ function RingWidget({ config, refreshSignal, reportRefreshed, kiosk }: WidgetPro
 export const sunburstPanelWidget: WidgetDefinition<RingConfig> = {
   type: 'agent.sunburst',
   title: 'Agent sunburst',
-  description: 'A ring of an agent panel as a sunburst: capacity, use, categories and their children.',
+  description: 'A ring of a panel as a sunburst: capacity, use, categories and their children.',
   icon: 'mdi:chart-donut',
   category: 'Charts',
   defaultSize: { w: 4, h: 10 },
   minSize: { w: 3, h: 6 },
-  defaultConfig: { panel: 'usage-dashboard', ring: 'cpu' },
-  SettingsComponent: ({ config, onChange }) => (
-    <SettingsForm
-      config={config}
-      onChange={onChange}
-      fields={[
-        { key: 'panel', label: 'Panel id', type: 'text', help: 'A panel that has rings, for example usage-dashboard.' },
-        {
-          key: 'ring',
-          label: 'Ring',
-          type: 'select',
-          options: [
-            { value: 'cpu', label: 'CPU' },
-            { value: 'memory', label: 'Memory' },
-          ],
-        },
-      ]}
-    />
+  defaultConfig: { source: AGENT_SOURCE_ID, panel: 'usage-dashboard', ring: 'cpu' },
+  SettingsComponent: props => (
+    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+      <SourcePanelPicker {...props} />
+      <SettingsForm
+        config={props.config}
+        onChange={props.onChange}
+        fields={[
+          {
+            key: 'ring',
+            label: 'Ring',
+            type: 'select',
+            help: 'The ring to draw, for a panel that has rings.',
+            options: [
+              { value: 'cpu', label: 'CPU' },
+              { value: 'memory', label: 'Memory' },
+            ],
+          },
+        ]}
+      />
+    </Box>
   ),
   Component: RingWidget,
 };

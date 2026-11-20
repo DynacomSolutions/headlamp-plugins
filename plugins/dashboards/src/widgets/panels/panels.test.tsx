@@ -4,12 +4,15 @@ import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { request } = vi.hoisted(() => ({ request: vi.fn() }));
+const { request, settings } = vi.hoisted(() => ({ request: vi.fn(), settings: { value: undefined as Record<string, unknown> | undefined } }));
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
   ApiProxy: { request },
   ConfigStore: class {
     useConfig() {
-      return () => undefined;
+      return () => settings.value;
+    }
+    get() {
+      return settings.value;
     }
   },
 }));
@@ -17,6 +20,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 import { SunburstChart } from '../sunburst/SunburstChart';
 import { clearPanelListCache } from './data';
 import { parsePanel } from './model';
+import { PanelTables } from './PanelTables';
 import { PanelView } from './PanelView';
 import { panelWidget } from './PanelWidget';
 import { sparklinePoints } from './Sparkline';
@@ -28,6 +32,7 @@ const wrap = (ui: React.ReactNode, mode: 'light' | 'dark' = 'light') => (
 );
 
 const PANEL = {
+  version: 1,
   id: 'usage-dashboard',
   title: 'Usage',
   status: 'warn',
@@ -42,6 +47,7 @@ const PANEL = {
 };
 
 beforeEach(() => {
+  settings.value = undefined;
   request.mockReset();
   clearPanelListCache();
 });
@@ -71,7 +77,7 @@ describe('PanelView', () => {
     expect(labels).toContain('OK');
   });
   it('shows an empty state', () => {
-    const { container } = render(wrap(<PanelView panel={parsePanel({ id: 'x' })} kiosk={false} editing={false} />));
+    const { container } = render(wrap(<PanelView panel={parsePanel({ version: 1, id: 'x' })} kiosk={false} editing={false} />));
     expect(container.querySelector('[data-panel-empty]')).not.toBeNull();
   });
 });
@@ -124,7 +130,7 @@ describe('agent panel widget', () => {
   const Component = panelWidget.Component;
   const props = (over: Partial<React.ComponentProps<typeof Component>> = {}) => ({
     instanceId: 'w1',
-    config: { panel: 'usage-dashboard' },
+    config: { source: 'agent', panel: 'usage-dashboard' },
     filters: { namespaces: [], nodes: [], labelSelector: '', range: '1h' as const },
     refreshSignal: 0,
     reportRefreshed: vi.fn(),
@@ -133,14 +139,14 @@ describe('agent panel widget', () => {
     ...over,
   });
   const answer = (url: string) => {
-    if (url.endsWith('/api/widgets')) return Promise.resolve([{ id: 'usage-dashboard', title: 'Usage', description: '', plugin: 'usage', link: '/usage', refreshSeconds: 60 }]);
+    if (url.endsWith('/api/widgets')) return Promise.resolve({ version: 1, panels: [{ id: 'usage-dashboard', title: 'Usage', description: '', plugin: 'usage', link: '/usage', refreshSeconds: 60 }] });
     if (url.includes('/api/widgets/usage-dashboard')) return Promise.resolve(PANEL);
     return Promise.reject(new Error('unexpected'));
   };
 
   it('asks for a panel when none is chosen', async () => {
     request.mockImplementation(answer);
-    render(wrap(<Component {...props({ config: { panel: '' } })} />));
+    render(wrap(<Component {...props({ config: { source: 'agent', panel: '' } })} />));
     expect(screen.getByText(/Choose a panel/)).toBeTruthy();
   });
 
@@ -196,9 +202,74 @@ describe('agent panel widget', () => {
     expect(screen.getByText(/Could not load the panel: HTTP 404/)).toBeTruthy();
   });
 
+  it('keeps a saved widget with no source setting working: it reads the agent', async () => {
+    request.mockImplementation(answer);
+    const view = render(wrap(<Component {...props({ config: { panel: 'usage-dashboard' } as never })} />));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(view.container.querySelector('[data-panel="usage-dashboard"]')).not.toBeNull();
+    expect(String(request.mock.calls[0][0])).toContain('/services/headlamp-agent:80/proxy/api/widgets');
+  });
+
+  it('reads a configured source and shows an error for a source that is not configured', async () => {
+    settings.value = { panelSources: [{ id: 'my-app', title: 'My app', kind: 'service', namespace: 'apps', service: 'my-app', port: '8080', pathPrefix: '/x' }] };
+    request.mockImplementation(answer);
+    const view = render(wrap(<Component {...props({ config: { source: 'my-app', panel: 'usage-dashboard' } })} />));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(request.mock.calls.every(c => String(c[0]).startsWith('/api/v1/namespaces/apps/services/my-app:8080/proxy/x/api/widgets'))).toBe(true);
+    view.unmount();
+    const gone = render(wrap(<Component {...props({ config: { source: 'removed', panel: 'usage-dashboard' } })} />));
+    expect(gone.container.textContent).toMatch(/The source "removed" is not configured/);
+  });
+
+  it('shows a clear error card for a wrong response shape', async () => {
+    request.mockImplementation((url: string) => (url.endsWith('/api/widgets') ? Promise.resolve({ version: 1, panels: [] }) : Promise.resolve({ id: 'usage-dashboard' })));
+    render(wrap(<Component {...props()} />));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/Could not load the panel: .*no version/)).toBeTruthy();
+  });
+
   it('is registered with a settings component and no raw id in its defaults', () => {
     expect(panelWidget.type).toBe('agent.panel');
-    expect(panelWidget.defaultConfig).toEqual({ panel: '' });
+    expect(panelWidget.defaultConfig).toEqual({ source: 'agent', panel: '' });
     expect(panelWidget.SettingsComponent).toBeDefined();
+  });
+});
+
+describe('PanelTables', () => {
+  const tables = parsePanel({
+    version: 1,
+    id: 't',
+    tables: [{ title: 'Hosts', columns: [{ key: 'name', label: 'Name' }, { key: 'load', label: 'Load', align: 'right' }], rows: [{ name: 'b', load: 10 }, { name: 'a', load: 2 }, { name: 'c', load: 33 }] }],
+  }).tables;
+  const names = (c: HTMLElement) => Array.from(c.querySelectorAll('[data-table-row] td:first-child')).map(td => td.textContent);
+
+  it('draws the title, the headings and every row in the given order', () => {
+    const { container } = render(wrap(<PanelTables tables={tables} />));
+    expect(container.querySelector('[data-table]')?.textContent).toContain('Hosts');
+    expect(Array.from(container.querySelectorAll('th')).map(th => th.textContent)).toEqual(['Name', 'Load']);
+    expect(names(container)).toEqual(['b', 'a', 'c']);
+  });
+  it('sorts by a heading, flips the direction on a second click and marks the sort for screen readers', () => {
+    const { container } = render(wrap(<PanelTables tables={tables} />));
+    const load = container.querySelector('[data-sort="load"]')!;
+    fireEvent.click(load);
+    expect(names(container)).toEqual(['a', 'b', 'c']);
+    expect(container.querySelectorAll('th')[1].getAttribute('aria-sort')).toBe('ascending');
+    fireEvent.click(load);
+    expect(names(container)).toEqual(['c', 'b', 'a']);
+    expect(container.querySelectorAll('th')[1].getAttribute('aria-sort')).toBe('descending');
+    fireEvent.click(container.querySelector('[data-sort="name"]')!);
+    expect(names(container)).toEqual(['a', 'b', 'c']);
+    expect(container.querySelectorAll('th')[1].getAttribute('aria-sort')).toBe('none');
+  });
+  it('shows the tables inside a panel', () => {
+    const { container } = render(wrap(<PanelView panel={parsePanel({ version: 1, id: 't', tables: [{ columns: [{ key: 'a', label: 'A' }], rows: [{ a: 'x' }] }] })} kiosk={false} editing={false} />));
+    expect(container.querySelectorAll('[data-table]')).toHaveLength(1);
   });
 });

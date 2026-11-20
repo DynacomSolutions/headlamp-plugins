@@ -5,7 +5,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { DEFAULT_NAMESPACE } from './storage/storage';
-import { AgentSettingsSection } from './widgets/panels/AgentSettingsSection';
+import { SourcesSettingsSection } from './widgets/panels/SourcesSettingsSection';
 import { MetricsEndpointSection } from './widgets/promql/EndpointSettings';
 
 export const CONFIG_KEY = 'dashboards';
@@ -47,7 +47,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
         onChange={e => onDataChange?.({ ...((data || {}) as Record<string, unknown>), namespace: e.target.value })}
         fullWidth
       />
-      <AgentSettingsSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
+      <SourcesSettingsSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
       <MetricsEndpointSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
     </Box>
   );

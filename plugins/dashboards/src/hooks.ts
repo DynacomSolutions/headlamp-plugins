@@ -6,6 +6,8 @@ import { getRegistry } from './registry';
 import { useDashboardNamespace } from './settings';
 import { createStorage, DashboardStorage, StoredDashboard } from './storage/storage';
 import { apiTransport, canWriteConfigMaps } from './transport';
+import { useSources } from './widgets/panels/sourcesConfig';
+import { useSyncSourceWidgets } from './widgets/panels/variants';
 
 export function useStorage(): DashboardStorage {
   const namespace = useDashboardNamespace();
@@ -76,6 +78,8 @@ export function useWidgetDefinition(type: string): WidgetDefinition | undefined 
 
 /** All registered widget types, for the palette. */
 export function useWidgetDefinitions(): WidgetDefinition[] {
+  // One palette entry per panel source.
+  useSyncSourceWidgets(useSources());
   const store = getRegistry();
   return React.useSyncExternalStore(store.subscribe, () => store.list());
 }

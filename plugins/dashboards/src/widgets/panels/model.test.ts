@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentUrl, DEFAULT_AGENT, isEmptyPanel, mayFetch, parsePanel, parsePanelList, resolveAgent, ringToSunburst, safeLink } from './model';
+import { isEmptyPanel, mayFetch, parsePanel, parsePanelList, ringToSunburst, safeLink, sortTableRows } from './model';
 
 const full = {
   version: 1,
@@ -48,26 +48,86 @@ describe('parsePanel', () => {
     expect(p.rings[0].segments[0].children?.map(c => c.key)).toEqual(['k8s/ns:shop']);
   });
   it('fills defaults for a minimal panel', () => {
-    const p = parsePanel({ id: 'x' });
-    expect(p).toMatchObject({ title: 'x', status: 'unknown', summary: '', stats: [], rows: [], series: [], rings: [] });
+    const p = parsePanel({ version: 1, id: 'x' });
+    expect(p).toMatchObject({ title: 'x', status: 'unknown', summary: '', stats: [], rows: [], series: [], rings: [], tables: [] });
     expect(isEmptyPanel(p)).toBe(true);
   });
   it('rejects an answer that is not a panel', () => {
     expect(() => parsePanel(null)).toThrow(/not a panel/);
     expect(() => parsePanel([])).toThrow();
-    expect(() => parsePanel({ title: 'x' })).toThrow(/no id/);
+    expect(() => parsePanel({ version: 1, title: 'x' })).toThrow(/no id/);
   });
   it('is not empty with a summary, a row or a ring', () => {
-    expect(isEmptyPanel(parsePanel({ id: 'x', summary: 'hi' }))).toBe(false);
+    expect(isEmptyPanel(parsePanel({ version: 1, id: 'x', summary: 'hi' }))).toBe(false);
     expect(isEmptyPanel(parsePanel(full))).toBe(false);
+  });
+});
+
+describe('response shape (version 1)', () => {
+  it('rejects a panel with no version or another version', () => {
+    expect(() => parsePanel({ id: 'x' })).toThrow(/no version/);
+    expect(() => parsePanel({ version: 2, id: 'x' })).toThrow(/version 2/);
+    expect(() => parsePanel('<html></html>')).toThrow(/not a panel/);
+  });
+  it('ignores unknown extra fields', () => {
+    const p = parsePanel({ version: 1, id: 'x', extra: { a: 1 }, stats: [{ label: 'a', value: 'b', status: 'ok', more: true }] });
+    expect(p.stats).toEqual([{ label: 'a', value: 'b', status: 'ok' }]);
+    expect(p).not.toHaveProperty('extra');
   });
 });
 
 describe('parsePanelList', () => {
   it('keeps valid entries and drops the rest', () => {
-    const list = parsePanelList([{ id: 'a', title: 'A', description: 'd', plugin: 'p', link: '/a', refreshSeconds: 30 }, { title: 'no id' }, 5]);
+    const list = parsePanelList({
+      version: 1,
+      extra: true,
+      panels: [{ id: 'a', title: 'A', description: 'd', plugin: 'p', link: '/a', refreshSeconds: 30, more: 1 }, { title: 'no id' }, 5],
+    });
     expect(list).toEqual([{ id: 'a', title: 'A', description: 'd', plugin: 'p', link: '/a', refreshSeconds: 30 }]);
-    expect(parsePanelList({})).toEqual([]);
+  });
+  it('rejects a wrong shape', () => {
+    expect(() => parsePanelList([])).toThrow(/not a panel list/);
+    expect(() => parsePanelList({ panels: [] })).toThrow(/no version/);
+    expect(() => parsePanelList({ version: 3, panels: [] })).toThrow(/version 3/);
+    expect(() => parsePanelList({ version: 1 })).toThrow(/no panels/);
+  });
+});
+
+describe('tables (optional v1 extension)', () => {
+  const raw = {
+    version: 1,
+    id: 't',
+    tables: [
+      {
+        title: 'Hosts',
+        columns: [{ key: 'name', label: 'Name' }, { key: 'load', label: 'Load', align: 'right' }, { key: '', label: 'dropped' }],
+        rows: [{ name: 'b', load: 10, extra: 'x' }, { name: 'a', load: 2 }, 'bad'],
+      },
+      { title: 'No columns', columns: [], rows: [] },
+      5,
+    ],
+  };
+  it('parses columns, aligns and rows, and drops what is not a table', () => {
+    const p = parsePanel(raw);
+    expect(p.tables).toHaveLength(1);
+    expect(p.tables[0].columns).toEqual([
+      { key: 'name', label: 'Name', align: 'left' },
+      { key: 'load', label: 'Load', align: 'right' },
+    ]);
+    expect(p.tables[0].rows).toEqual([{ name: 'b', load: 10 }, { name: 'a', load: 2 }]);
+    expect(isEmptyPanel(p)).toBe(false);
+  });
+  it('is absent on a panel without tables', () => {
+    expect(parsePanel({ version: 1, id: 'x' }).tables).toEqual([]);
+  });
+  it('sorts numbers as numbers and text naturally, in both directions, without changing the input', () => {
+    const rows = [{ n: 'host10', v: 10 }, { n: 'host2', v: 2 }, { n: 'host1', v: 33 }];
+    expect(sortTableRows(rows, 'v', 'asc').map(r => r.v)).toEqual([2, 10, 33]);
+    expect(sortTableRows(rows, 'v', 'desc').map(r => r.v)).toEqual([33, 10, 2]);
+    expect(sortTableRows(rows, 'n', 'asc').map(r => r.n)).toEqual(['host1', 'host2', 'host10']);
+    expect(rows.map(r => r.n)).toEqual(['host10', 'host2', 'host1']);
+    const ties = [{ k: 1, o: 'a' }, { k: 1, o: 'b' }];
+    expect(sortTableRows(ties, 'k', 'desc').map(r => r.o)).toEqual(['a', 'b']);
   });
 });
 
@@ -87,17 +147,6 @@ describe('ringToSunburst', () => {
     expect(data.capacity).toBe(8);
     expect(data.categories.map(c => c.key)).toEqual(['k8s', 'sys']);
     expect(data.categories[0].children).toEqual([{ key: 'k8s/ns:shop', label: 'shop', value: 2 }]);
-  });
-});
-
-describe('agent location', () => {
-  it('uses defaults for blank settings and trims values', () => {
-    expect(resolveAgent(undefined)).toEqual(DEFAULT_AGENT);
-    expect(resolveAgent({ agentNamespace: ' ops ', agentService: '', agentPort: 8080 })).toEqual({ namespace: 'ops', serviceName: DEFAULT_AGENT.serviceName, servicePort: DEFAULT_AGENT.servicePort });
-  });
-  it('builds the service-proxy path', () => {
-    expect(agentUrl(DEFAULT_AGENT, '/api/widgets')).toBe('/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets');
-    expect(agentUrl({ namespace: 'a b', serviceName: 's', servicePort: '' }, 'x')).toBe('/api/v1/namespaces/a%20b/services/s/proxy/x');
   });
 });
 

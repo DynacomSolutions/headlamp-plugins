@@ -1,8 +1,9 @@
 /*
- * The panel model that the agent layer serves on `GET /api/widgets/<id>`, and the settings that
- * say where the agent is. The parsers are strict about shape and forgiving about extra fields:
- * a bad value is dropped or replaced by a default, and the widget never throws on bad data.
- * The types match `agent/src/widgets.ts`.
+ * The panel model (version 1) that a panel source serves on `GET /api/widgets/<id>`. The agent
+ * layer is one source, and external apps may serve the same API. The parsers are strict about the
+ * shape (a wrong shape or version is an error) and forgiving about extra fields: unknown fields
+ * are ignored, a bad value is dropped or replaced by a default, and the widget never throws on
+ * bad data. The types match `agent/src/widgets.ts`, plus the optional `tables` field.
  */
 import type { SunburstCategory, SunburstData } from '../sunburst/geometry';
 
@@ -45,6 +46,19 @@ export interface PanelRing {
   segments: RingSegment[];
 }
 
+export interface PanelTableColumn {
+  key: string;
+  label: string;
+  align: 'left' | 'right';
+}
+
+/** An optional v1 extension: a titled table with its own columns. */
+export interface PanelTable {
+  title: string;
+  columns: PanelTableColumn[];
+  rows: Array<Record<string, string | number>>;
+}
+
 export interface PanelModel {
   id: string;
   title: string;
@@ -56,6 +70,7 @@ export interface PanelModel {
   rows: PanelRow[];
   series: PanelSeries[];
   rings: PanelRing[];
+  tables: PanelTable[];
 }
 
 export interface PanelInfo {
@@ -114,11 +129,41 @@ function parseRing(raw: unknown): PanelRing | null {
   };
 }
 
-/** A panel from the JSON the agent served. Throws an error with a short message when it is not a panel. */
+function parseTable(raw: unknown): PanelTable | null {
+  if (!isObject(raw)) return null;
+  const columns = array(raw.columns)
+    .filter(isObject)
+    .map(c => ({ key: str(c.key), label: str(c.label, str(c.key)), align: c.align === 'right' ? ('right' as const) : ('left' as const) }))
+    .filter(c => c.key !== '');
+  if (columns.length === 0) return null;
+  const rows = array(raw.rows)
+    .filter(isObject)
+    .map(r => {
+      const row: Record<string, string | number> = {};
+      for (const c of columns) {
+        const v = r[c.key];
+        row[c.key] = typeof v === 'number' && Number.isFinite(v) ? v : str(v);
+      }
+      return row;
+    });
+  return { title: str(raw.title), columns, rows };
+}
+
+/**
+ * The version check of a response. Only version 1 is known. Throws a short message for anything else,
+ * so the widget shows a clear error card for an app that does not serve the panel API.
+ */
+function checkVersion(json: Record<string, unknown>, what: string): void {
+  if (json.version === undefined) throw new Error(`The source sent ${what} with no version. Expected version 1.`);
+  if (json.version !== 1) throw new Error(`The source sent ${what} with version ${str(json.version, '?')}. Only version 1 is supported.`);
+}
+
+/** A panel from the JSON a source served. Throws an error with a short message when it is not a panel. */
 export function parsePanel(json: unknown): PanelModel {
-  if (!isObject(json)) throw new Error('The agent sent an answer that is not a panel.');
+  if (!isObject(json)) throw new Error('The source sent an answer that is not a panel.');
+  checkVersion(json, 'a panel');
   const id = str(json.id);
-  if (id === '') throw new Error('The agent sent a panel with no id.');
+  if (id === '') throw new Error('The source sent a panel with no id.');
   return {
     id,
     title: str(json.title, id),
@@ -151,11 +196,18 @@ export function parsePanel(json: unknown): PanelModel {
     rings: array(json.rings)
       .map(parseRing)
       .filter((r): r is PanelRing => r !== null),
+    tables: array(json.tables)
+      .map(parseTable)
+      .filter((t): t is PanelTable => t !== null),
   };
 }
 
+/** The panel list from `GET /api/widgets`: `{ version: 1, panels: [...] }`. Throws a short message for any other shape. */
 export function parsePanelList(json: unknown): PanelInfo[] {
-  return array(json)
+  if (!isObject(json)) throw new Error('The source sent an answer that is not a panel list.');
+  checkVersion(json, 'a panel list');
+  if (!Array.isArray(json.panels)) throw new Error('The source sent a panel list with no panels field.');
+  return json.panels
     .filter(isObject)
     .map(p => ({
       id: str(p.id),
@@ -170,7 +222,7 @@ export function parsePanelList(json: unknown): PanelInfo[] {
 
 /** A panel is empty when it shows nothing at all. */
 export const isEmptyPanel = (p: PanelModel): boolean =>
-  p.stats.length === 0 && p.rows.length === 0 && p.series.every(s => s.points.length === 0) && p.rings.every(r => r.segments.length === 0) && p.summary === '';
+  p.stats.length === 0 && p.rows.length === 0 && p.series.every(s => s.points.length === 0) && p.rings.every(r => r.segments.length === 0) && p.tables.every(t => t.rows.length === 0) && p.summary === '';
 
 /** A ring as sunburst data. Every segment stays its own arc: nothing is merged or cut. */
 export function ringToSunburst(ring: PanelRing): SunburstData {
@@ -183,40 +235,6 @@ export function ringToSunburst(ring: PanelRing): SunburstData {
   return { capacity: ring.capacity, categories };
 }
 
-// ---------- settings: where the agent is ----------
-
-export interface AgentSettings {
-  namespace: string;
-  serviceName: string;
-  servicePort: string;
-}
-
-export const DEFAULT_AGENT: AgentSettings = {
-  namespace: 'headlamp-agent',
-  serviceName: 'headlamp-agent',
-  servicePort: '80',
-};
-
-/** The agent location from the stored plugin settings. A blank field uses the default. */
-export function resolveAgent(stored: Record<string, unknown> | undefined): AgentSettings {
-  const pick = (key: string, fallback: string): string => {
-    const v = typeof stored?.[key] === 'string' ? (stored[key] as string).trim() : '';
-    return v === '' ? fallback : v;
-  };
-  return {
-    namespace: pick('agentNamespace', DEFAULT_AGENT.namespace),
-    serviceName: pick('agentService', DEFAULT_AGENT.serviceName),
-    servicePort: pick('agentPort', DEFAULT_AGENT.servicePort),
-  };
-}
-
-/** The Kubernetes service-proxy path of a path on the agent service (the same way the Incidents plugin finds it). */
-export function agentUrl(s: AgentSettings, path: string): string {
-  const e = encodeURIComponent;
-  const svc = s.servicePort ? `${e(s.serviceName)}:${e(s.servicePort)}` : e(s.serviceName);
-  return `/api/v1/namespaces/${e(s.namespace)}/services/${svc}/proxy${path.startsWith('/') ? path : `/${path}`}`;
-}
-
 /**
  * Whether a refresh signal may fetch now. The panel's own `refreshSeconds` is the smallest
  * time between two fetches, so a short dashboard interval never polls a panel faster than
@@ -225,4 +243,22 @@ export function agentUrl(s: AgentSettings, path: string): string {
 export function mayFetch(lastFetchAt: number | null, now: number, minSeconds: number): boolean {
   if (lastFetchAt === null) return true;
   return now - lastFetchAt >= Math.max(0, minSeconds) * 1000;
+}
+
+export type SortDir = 'asc' | 'desc';
+
+/** The rows of a table sorted by one column. Numbers sort as numbers and text sorts naturally. The input is not changed. */
+export function sortTableRows(rows: PanelTable['rows'], key: string, dir: SortDir): PanelTable['rows'] {
+  const sign = dir === 'asc' ? 1 : -1;
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const x = a.row[key];
+      const y = b.row[key];
+      const c = typeof x === 'number' && typeof y === 'number' ? x - y : collator.compare(String(x ?? ''), String(y ?? ''));
+      // The original order breaks ties, so the sort is stable in both directions.
+      return c === 0 ? a.index - b.index : sign * c;
+    })
+    .map(e => e.row);
 }
