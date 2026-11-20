@@ -83,6 +83,8 @@ export interface DashboardSpec {
   tabPosition: TabPosition;
   /** Automatic refresh in seconds, 0 for off. */
   refreshSeconds: number;
+  /** Show the filter bar in kiosk mode. Off by default: a wall screen needs no filters. */
+  kioskShowFilters: boolean;
   /** The filter values of a plain open (no saved view, no URL filters). */
   filters: DashboardFilters;
   tabs: Tab[];
@@ -171,6 +173,7 @@ export function emptySpec(title: string): DashboardSpec {
     description: '',
     tabPosition: 'top',
     refreshSeconds: 0,
+    kioskShowFilters: false,
     filters: defaultFilters(),
     tabs: [emptyTab()],
     views: [],
@@ -344,6 +347,7 @@ export function migrateSpec(input: unknown): { spec: DashboardSpec; migrated: bo
     refreshSeconds: REFRESH_OPTIONS.some(o => o.seconds === raw.refreshSeconds)
       ? raw.refreshSeconds
       : 0,
+    kioskShowFilters: raw.kioskShowFilters === true,
     filters: normaliseFilters(raw.filters),
     tabs: tabs.length > 0 ? tabs : [emptyTab()],
     views,

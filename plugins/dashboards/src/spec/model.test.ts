@@ -40,6 +40,14 @@ describe('migrateSpec', () => {
     expect(spec.tabPosition).toBe('top');
     expect(spec.refreshSeconds).toBe(0);
     expect(spec.filters).toEqual(defaultFilters());
+    expect(spec.kioskShowFilters).toBe(false);
+  });
+
+  it('keeps the kiosk filter option only when it is true', () => {
+    expect(migrateSpec({ title: 'Ops', kioskShowFilters: true }).spec.kioskShowFilters).toBe(true);
+    expect(migrateSpec({ title: 'Ops', kioskShowFilters: 'yes' }).spec.kioskShowFilters).toBe(
+      false
+    );
   });
 
   it('treats a missing version as version 1 and keeps valid content', () => {

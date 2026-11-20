@@ -27,6 +27,23 @@ describe('palette entries per source', () => {
       defaultConfig: { source: 'my-app', panel: '' },
     });
   });
+  it('uses a bundled icon such as mdi:run-fast and falls back for an unknown one', () => {
+    const fast = draftToSource({
+      ...blankDraft('fast'),
+      icon: 'mdi:run-fast',
+      kind: 'url',
+      baseUrl: 'https://a.example.com',
+    });
+    const odd = draftToSource({
+      ...blankDraft('odd'),
+      icon: 'mdi:no-such-icon-here',
+      kind: 'url',
+      baseUrl: 'https://b.example.com',
+    });
+    const defs = variantWidgets([fast, odd]);
+    expect(defs[0].icon).toBe('mdi:run-fast');
+    expect(defs[2].icon).toBe('mdi:view-dashboard-outline');
+  });
   it('registers valid widget types and does not register an unchanged entry twice', () => {
     const store = createWidgetStore();
     const spy = vi.spyOn(store, 'registerWidget');
