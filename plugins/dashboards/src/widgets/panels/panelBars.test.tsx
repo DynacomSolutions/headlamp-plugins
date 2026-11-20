@@ -7,7 +7,7 @@ import { CATEGORICAL } from '../promql/palette';
 import { limitColour, REUSED_OPACITY } from './limitColours';
 import { parsePanel } from './model';
 import { DEFAULT_DISPLAY, displayOf, PanelDisplay, PanelView } from './PanelView';
-import { groupRows, UNNAMED_LIMIT } from './rowGroups';
+import { groupRows, limitRank, orderLimits, UNNAMED_LIMIT } from './rowGroups';
 
 afterEach(cleanup);
 
@@ -206,5 +206,138 @@ describe('grouped bars', () => {
       wrap(<PanelView panel={LIMITS} kiosk={false} editing display={bars} />)
     ).container;
     expect(c.querySelector('a')).toBeNull();
+  });
+});
+
+const LIMIT_ROWS = parsePanel({
+  version: 1,
+  id: 'limits',
+  title: 'Limits',
+  rows: [
+    // Weekly (Fable) is seen before Weekly in the second group, and 5-hour comes last.
+    row('Anthropic / personal', 'Weekly', 0.9),
+    row('Anthropic / personal', 'Weekly (Fable)', 0.8),
+    row('Anthropic / myriad', 'Weekly (Fable)', 0.7),
+    row('Anthropic / myriad', 'Weekly', 0.6),
+    row('OpenAI / team-a', 'Monthly', 1),
+    row('Anthropic / phoenix-court-group', 'Weekly', 0.3),
+    row('Anthropic / phoenix-court-group', '5-hour', 0.1),
+    row('Z.ai / team-a', 'Burst', 0.2),
+    row('Z.ai / team-a', 'Daily', 0.4),
+    row('Kimi / team-a', 'Tokens', 0.5),
+  ],
+});
+
+describe('limit order', () => {
+  it('ranks known names by window length', () => {
+    expect(['5-hour', 'Daily', 'Weekly', 'Weekly (Fable)', 'Monthly'].map(limitRank)).toEqual([
+      0, 1, 2, 3, 4,
+    ]);
+    expect(limitRank('5 hour')).toBe(0);
+    expect(limitRank('weekly (Opus)')).toBe(3);
+    expect(limitRank('Burst')).toBeNull();
+    expect(limitRank(UNNAMED_LIMIT)).toBeNull();
+  });
+
+  it('puts known names first by window length, then the others in first-seen order', () => {
+    expect(
+      orderLimits(['Tokens', 'Monthly', 'Weekly (Fable)', 'Burst', 'Weekly', 'Daily', '5-hour'])
+    ).toEqual(['5-hour', 'Daily', 'Weekly', 'Weekly (Fable)', 'Monthly', 'Tokens', 'Burst']);
+  });
+
+  it('uses one list for the legend and one slot per limit in every group', () => {
+    const { groups, limits, slots } = groupRows(LIMIT_ROWS.rows);
+    expect(limits).toEqual([
+      '5-hour',
+      'Daily',
+      'Weekly',
+      'Weekly (Fable)',
+      'Monthly',
+      'Burst',
+      'Tokens',
+    ]);
+    expect(slots.map(s => s.name)).toEqual(limits);
+    for (const g of groups) {
+      expect(g.cells).toHaveLength(slots.length);
+      g.cells.forEach((cell, i) => {
+        if (cell) expect(cell.name).toBe(slots[i].name);
+      });
+    }
+    // The group that saw Weekly (Fable) first still has Weekly in the Weekly slot.
+    const myriad = groups.find(g => g.label === 'Anthropic / myriad')!;
+    expect(myriad.cells.map(c => c?.name ?? null)).toEqual([
+      null,
+      null,
+      'Weekly',
+      'Weekly (Fable)',
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it('gives a name that repeats inside one group its own extra slot, so no row is lost', () => {
+    const rows = [
+      row('A', 'Weekly', 0.1),
+      row('A', 'Weekly', 0.2),
+      row('B', 'Weekly', 0.3),
+      row('B', '5-hour', 0.4),
+    ];
+    const { groups, slots } = groupRows(rows.map(r => ({ ...r, status: 'ok' as const })));
+    expect(slots.map(s => `${s.name}#${s.repeat}`)).toEqual(['5-hour#0', 'Weekly#0', 'Weekly#1']);
+    expect(groups[0].cells.filter(Boolean)).toHaveLength(2);
+    expect(groups[1].cells.map(c => c?.row.value ?? null)).toEqual(['40%', '30%', null]);
+  });
+
+  it('draws the same column for a limit in every bar, with a faint empty slot where a group has none', () => {
+    const c = view(bars, 'light', LIMIT_ROWS);
+    const legend = Array.from(c.querySelectorAll('[data-legend-item]')).map(i =>
+      i.getAttribute('data-legend-item')
+    );
+    const bar = (g: string) => c.querySelector(`[data-bar-group="${g}"] [data-bar]`) as HTMLElement;
+    for (const label of Array.from(c.querySelectorAll('[data-bar-group]')).map(g =>
+      g.getAttribute('data-bar-group')
+    )) {
+      const cols = Array.from(bar(label!).children);
+      expect(cols).toHaveLength(legend.length);
+      cols.forEach((col, i) => {
+        const name = col.getAttribute('data-segment') ?? col.getAttribute('data-segment-empty');
+        expect(name).toBe(legend[i]);
+      });
+    }
+    // Weekly is the third column in every bar that has it, and an empty slot has no fill.
+    const weeklyAt = (g: string) =>
+      Array.from(bar(g).children).findIndex(col => col.getAttribute('data-segment') === 'Weekly');
+    expect(weeklyAt('Anthropic / personal')).toBe(2);
+    expect(weeklyAt('Anthropic / myriad')).toBe(2);
+    expect(weeklyAt('Anthropic / phoenix-court-group')).toBe(2);
+    const kimi = bar('Kimi / team-a');
+    expect(kimi.querySelectorAll('[data-segment-empty]')).toHaveLength(legend.length - 1);
+    expect(kimi.querySelectorAll('[data-fill]')).toHaveLength(1);
+  });
+});
+
+describe('group labels', () => {
+  it('sizes the label column to the longest label, up to 35 % of the widget, and clips only beyond', () => {
+    const c = view(bars, 'light', LIMIT_ROWS);
+    const grid = c.querySelector('[data-bar-grid]') as HTMLElement;
+    expect(getComputedStyle(grid).gridTemplateColumns).toBe('fit-content(35%) minmax(0, 1fr)');
+    const label = c.querySelector('[data-bar-label]') as HTMLElement;
+    const style = getComputedStyle(label);
+    expect(style.whiteSpace).toBe('nowrap');
+    expect(style.overflow).toBe('hidden');
+    expect(style.textOverflow).toBe('ellipsis');
+    // No fixed width cuts a short label.
+    expect(style.width).not.toMatch(/^\d+px$/);
+  });
+
+  it('keeps the full label in the text and in a tooltip', () => {
+    const c = view(bars, 'light', LIMIT_ROWS);
+    for (const l of Array.from(c.querySelectorAll('[data-bar-label]'))) {
+      const group = l.parentElement!.getAttribute('data-bar-group');
+      expect(l.textContent).toBe(group);
+      expect(l.getAttribute('aria-label')).toBe(group);
+    }
+    expect(c.textContent).toContain('Anthropic / phoenix-court-group');
   });
 });
