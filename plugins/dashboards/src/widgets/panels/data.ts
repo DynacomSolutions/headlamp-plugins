@@ -36,14 +36,47 @@ const statusOf = (e: unknown): number | undefined => {
   return typeof s === 'number' ? s : undefined;
 };
 
+/** How long a request may run before it fails with a clear message. */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Runs a request with a timeout. The signal aborts the request, and the race makes sure the
+ * answer ends on time even when the call does not honour the signal.
+ */
+export function withTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  ms: number = REQUEST_TIMEOUT_MS
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new SourceError(`The source did not answer within ${Math.round(ms / 1000)} s.`));
+    }, ms);
+  });
+  return Promise.race([run(controller.signal), timeout]).finally(() => clearTimeout(timer));
+}
+
 /**
  * `cluster` is only set on the settings page, whose URL has no /c/<cluster> part. There a plain request
  * would reach Headlamp's own web page, so the request names the cluster.
  */
 async function requestJson(source: PanelSource, url: string, cluster?: string): Promise<unknown> {
+  return withTimeout(signal => requestJsonOnce(source, url, signal, cluster));
+}
+
+async function requestJsonOnce(
+  source: PanelSource,
+  url: string,
+  signal: AbortSignal,
+  cluster?: string
+): Promise<unknown> {
   if (source.kind === 'service') {
     try {
-      return await (cluster ? ApiProxy.clusterRequest(url, { cluster }) : ApiProxy.request(url));
+      return await (cluster
+        ? ApiProxy.clusterRequest(url, { cluster, signal })
+        : ApiProxy.request(url, { signal }));
     } catch (e) {
       const status = statusOf(e);
       throw new SourceError(
@@ -53,7 +86,11 @@ async function requestJson(source: PanelSource, url: string, cluster?: string): 
   }
   let res: Response;
   try {
-    res = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
+    res = await fetch(url, {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      signal,
+    });
   } catch {
     // The browser hides the real cause. A blocked cross-origin call is the usual one.
     throw new SourceError(
@@ -79,9 +116,13 @@ interface Entry {
 }
 const entries = new Map<string, Entry>();
 
+/** A request that is still pending after this long is not shared any more: the next call starts a new one. */
+export const PENDING_MAX_AGE_MS = 2 * REQUEST_TIMEOUT_MS;
+
 /**
- * One request per key. A request that is still running is shared. A finished answer is reused while it is
- * younger than `ttlMs`. A failed request is not kept, so the next call tries again.
+ * One request per key. A request that is still running is shared, for at most `PENDING_MAX_AGE_MS`.
+ * A finished answer is reused while it is younger than `ttlMs`. A failed request is not kept, so the
+ * next call tries again.
  */
 export function shared<T>(
   key: string,
@@ -90,7 +131,8 @@ export function shared<T>(
   now: () => number = Date.now
 ): Promise<T> {
   const hit = entries.get(key);
-  if (hit && (hit.pending || now() - hit.at < ttlMs)) return hit.promise as Promise<T>;
+  if (hit && now() - hit.at < (hit.pending ? PENDING_MAX_AGE_MS : ttlMs))
+    return hit.promise as Promise<T>;
   const entry: Entry = {
     at: now(),
     pending: true,

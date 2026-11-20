@@ -13,6 +13,8 @@ import {
   clearPanelListCache,
   fetchPanel,
   fetchPanelList,
+  PENDING_MAX_AGE_MS,
+  REQUEST_TIMEOUT_MS,
   shared,
   statusMessage,
   testSource,
@@ -160,9 +162,63 @@ describe('testSource', () => {
     request.mockReset();
     clusterRequest.mockResolvedValue(LIST);
     expect(await testSource(agent, 'main')).toBe(2);
-    expect(clusterRequest).toHaveBeenCalledWith(expect.stringContaining('/api/widgets'), {
-      cluster: 'main',
-    });
+    expect(clusterRequest).toHaveBeenCalledWith(
+      expect.stringContaining('/api/widgets'),
+      expect.objectContaining({ cluster: 'main' })
+    );
     expect(request).not.toHaveBeenCalled();
+  });
+});
+
+describe('timeouts', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('fails a service request that does not answer, and aborts it', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    request.mockImplementation((_path: string, params?: { signal?: AbortSignal }) => {
+      signal = params?.signal;
+      return new Promise(() => undefined);
+    });
+    const result = fetchPanelList(agent).catch(e => e);
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1);
+    expect(await result).toMatchObject({
+      message: expect.stringMatching(/did not answer within 15 s/),
+    });
+    expect(signal?.aborted).toBe(true);
+  });
+  it('fails a URL request that does not answer, and aborts it', async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return new Promise(() => undefined);
+      })
+    );
+    const result = fetchPanelList(url).catch(e => e);
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1);
+    expect(await result).toMatchObject({ message: expect.stringMatching(/did not answer/) });
+    expect(signal?.aborted).toBe(true);
+  });
+  it('does not keep a timed out request, so the next call asks again', async () => {
+    vi.useFakeTimers();
+    request.mockImplementationOnce(() => new Promise(() => undefined));
+    const first = fetchPanelList(agent).catch(e => e);
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS + 1);
+    await first;
+    request.mockResolvedValueOnce(LIST);
+    expect(await fetchPanelList(agent)).toHaveLength(2);
+  });
+  it('stops sharing a pending request that is older than the maximum age', async () => {
+    let now = 1000;
+    const hang = vi.fn(() => new Promise<number>(() => undefined));
+    void shared('k', 60_000, hang, () => now);
+    void shared('k', 60_000, hang, () => now);
+    expect(hang).toHaveBeenCalledTimes(1);
+    now += PENDING_MAX_AGE_MS + 1;
+    void shared('k', 60_000, hang, () => now);
+    expect(hang).toHaveBeenCalledTimes(2);
   });
 });
