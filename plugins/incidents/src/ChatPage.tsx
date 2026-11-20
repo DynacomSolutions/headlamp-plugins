@@ -199,7 +199,7 @@ export function MessageView({ m }: { m: ChatMessage }) {
 }
 
 /** Scrolls to the bottom when `signal` changes, unless the user scrolled up. */
-function useStickToBottom(signal: unknown) {
+export function useStickToBottom(signal: unknown) {
   const ref = React.useRef<HTMLDivElement | null>(null);
   const stick = React.useRef(true);
   const onScroll = () => {
@@ -215,7 +215,7 @@ function useStickToBottom(signal: unknown) {
 
 /* ---------- Composer ---------- */
 
-function Composer(props: {
+export function Composer(props: {
   running: boolean;
   disabled?: boolean;
   onSend: (text: string) => void;

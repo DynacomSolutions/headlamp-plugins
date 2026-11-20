@@ -3,6 +3,7 @@
  * from its A2UI surface.
  */
 import './registerIcons';
+import './dashboardWidgets';
 import {
   registerPluginSettings,
   registerRoute,
