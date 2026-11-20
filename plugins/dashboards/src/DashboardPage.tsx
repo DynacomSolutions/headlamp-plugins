@@ -382,7 +382,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   const dialogs = (
     <>
-      <Prompt when={dirty} message="You have unsaved changes to this dashboard. Leave without saving?" />
+      {/* Only leaving this dashboard asks. A query change, a tab change and the exit from edit mode after Save stay on it. */}
+      <Prompt
+        when={dirty}
+        message={next => (parsePath(next.pathname).name === name ? true : 'You have unsaved changes to this dashboard. Leave without saving?')}
+      />
       <PaletteDrawer
         open={editing && paletteOpen}
         onClose={() => setPaletteOpen(false)}

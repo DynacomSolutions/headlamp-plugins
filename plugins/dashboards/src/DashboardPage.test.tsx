@@ -45,9 +45,9 @@ const Where = () => {
   return <div data-testid="where">{l.pathname + l.search}</div>;
 };
 
-function mount(url: string) {
+function mount(url: string, getUserConfirmation?: (message: string, callback: (ok: boolean) => void) => void) {
   return render(
-    <MemoryRouter initialEntries={[url]}>
+    <MemoryRouter initialEntries={[url]} getUserConfirmation={getUserConfirmation}>
       <Route path="/dashboards/:name/:tab?" component={DashboardPage} />
       <Where />
     </MemoryRouter>
@@ -117,6 +117,18 @@ describe('dashboard page', () => {
     await waitFor(() => expect(version).toBe(2));
     expect(spec.tabs[0].sections).toHaveLength(2);
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
+  });
+
+  it('asks nothing when Save leaves edit mode or a change stays inside the dashboard', async () => {
+    const confirm = vi.fn((_message: string, callback: (ok: boolean) => void) => callback(false));
+    mount('/dashboards/ops?edit=1', confirm);
+    fireEvent.click(await screen.findByRole('button', { name: /Add section/ }));
+    // A tab change is a move inside the dashboard.
+    fireEvent.click(screen.getByRole('tab', { name: /Nodes/ }));
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes?edit=1'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes'));
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it('is read-only when the user may not write', async () => {
