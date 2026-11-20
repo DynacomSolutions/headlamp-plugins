@@ -10,7 +10,7 @@
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import { createTheme, ThemeProvider, useTheme } from '@mui/material/styles';
+import { createTheme, Theme, ThemeProvider, useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 
@@ -125,6 +125,24 @@ export function Clock(): JSX.Element {
 /** Pure black, so an OLED screen switches its pixels off. */
 export const KIOSK_BLACK = '#000';
 
+/**
+ * The kiosk theme: in a dark theme everything inside paints black where it used the grey surfaces:
+ * the overlay, the centre discs and the arc gaps of the charts. A light theme stays as it is.
+ * No ripple: a tap changes the fill, with a short transition.
+ */
+export function useKioskTheme(): Theme {
+  const outer = useTheme();
+  const dark = outer.palette.mode === 'dark';
+  return React.useMemo(
+    () =>
+      createTheme(outer, {
+        components: { MuiButtonBase: { defaultProps: { disableRipple: true } } },
+        ...(dark ? { palette: { background: { default: KIOSK_BLACK, paper: KIOSK_BLACK } } } : {}),
+      }),
+    [dark, outer]
+  );
+}
+
 export function KioskOverlay(props: {
   onExit: () => void;
   /** The filters bar, left of the Exit control. Leave it out to place the Exit control yourself. */
@@ -133,19 +151,7 @@ export function KioskOverlay(props: {
   children: React.ReactNode | ((exit: React.ReactNode) => React.ReactNode);
 }): JSX.Element {
   const { onExit, bar, children } = props;
-  const outer = useTheme();
-  const dark = outer.palette.mode === 'dark';
-  // In a dark theme everything inside paints black where it used the grey surfaces: the overlay,
-  // the centre discs and the arc gaps of the charts. A light theme stays as it is.
-  const theme = React.useMemo(
-    () =>
-      createTheme(outer, {
-        // No ripple: a tap changes the fill, with a short transition.
-        components: { MuiButtonBase: { defaultProps: { disableRipple: true } } },
-        ...(dark ? { palette: { background: { default: KIOSK_BLACK, paper: KIOSK_BLACK } } } : {}),
-      }),
-    [dark, outer]
-  );
+  const theme = useKioskTheme();
   const exit = React.useRef(onExit);
   exit.current = onExit;
 
