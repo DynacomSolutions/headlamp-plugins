@@ -550,9 +550,10 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <DashboardSettingsDialog
           title={spec.title}
           description={spec.description}
+          kioskShowFilters={spec.kioskShowFilters}
           onCancel={() => setSettingsOpen(false)}
-          onApply={(title, description) => {
-            edit(s => ({ ...s, title, description }));
+          onApply={(title, description, kioskShowFilters) => {
+            edit(s => ({ ...s, title, description, kioskShowFilters }));
             setSettingsOpen(false);
           }}
         />
@@ -614,7 +615,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             <IconButton aria-label="Refresh now" onClick={() => refresh.trigger()}>
               <Icon icon="mdi:refresh" width={26} height={26} />
             </IconButton>
-            {filterBar}
+            {spec.kioskShowFilters && filterBar}
           </Box>
         }
       >

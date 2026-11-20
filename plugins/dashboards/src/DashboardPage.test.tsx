@@ -175,6 +175,77 @@ describe('dashboard page', () => {
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
   });
 
+  it('hides the filter bar in kiosk mode by default and keeps it outside kiosk', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Hello header');
+    expect(screen.getByRole('search', { name: 'Dashboard filters' })).toBeTruthy();
+    cleanup();
+    mount('/dashboards/ops?kiosk=1');
+    await screen.findByText('Hello header');
+    expect(screen.queryByRole('search', { name: 'Dashboard filters' })).toBeNull();
+  });
+
+  it('still applies URL filters and saved views in kiosk mode when the bar is hidden', async () => {
+    getRegistry().registerWidget({
+      type: 'test.filters',
+      title: 'Filters echo',
+      icon: 'mdi:server',
+      category: 'Monitoring',
+      defaultSize: { w: 4, h: 2 },
+      defaultConfig: {},
+      Component: (p: {
+        filters: { namespaces: string[]; labelSelector: string; range: string };
+      }) => (
+        <span data-testid="echo">
+          {p.filters.namespaces.join(',')}|{p.filters.labelSelector}|{p.filters.range}
+        </span>
+      ),
+    });
+    const base = addWidget(
+      spec,
+      spec.tabs[0].id,
+      spec.tabs[0].sections[0].id,
+      'test.filters',
+      { w: 4, h: 2 },
+      {}
+    ).spec;
+    spec = {
+      ...base,
+      views: [
+        {
+          id: 'wall',
+          name: 'Wall',
+          filters: { namespaces: ['prod'], nodes: [], labelSelector: 'tier=web', range: '6h' },
+        },
+      ],
+    };
+    mount('/dashboards/ops?kiosk=1&ns=a,b&sel=x%3Dy');
+    expect((await screen.findByTestId('echo')).textContent).toBe('a,b|x=y|1h');
+    expect(screen.queryByRole('search', { name: 'Dashboard filters' })).toBeNull();
+    cleanup();
+    mount('/dashboards/ops?kiosk=1&view=wall');
+    await waitFor(() => expect(screen.getByTestId('echo').textContent).toBe('prod|tier=web|6h'));
+    expect(screen.queryByRole('search', { name: 'Dashboard filters' })).toBeNull();
+  });
+
+  it('shows the filter bar in kiosk mode when the dashboard turns it on', async () => {
+    spec = { ...spec, kioskShowFilters: true };
+    mount('/dashboards/ops?kiosk=1');
+    await screen.findByText('Hello header');
+    expect(screen.getByRole('search', { name: 'Dashboard filters' })).toBeTruthy();
+  });
+
+  it('turns the kiosk filter option on in Dashboard settings and saves it', async () => {
+    mount('/dashboards/ops?edit=1');
+    fireEvent.click(await screen.findByRole('button', { name: /Dashboard settings/ }));
+    const toggle = await screen.findByRole('checkbox', { name: 'Show filters in kiosk' });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(toggle);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Save/ }));
+    await waitFor(() => expect(spec.kioskShowFilters).toBe(true));
+  });
+
   it('puts the refresh interval in the URL in view mode, and shows the last refreshed text', async () => {
     mount('/dashboards/ops');
     await screen.findByText('Hello header');
