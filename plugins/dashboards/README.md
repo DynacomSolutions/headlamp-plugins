@@ -199,3 +199,46 @@ npm run tsc && npm run lint && npm run test && npm run build
 picker and the built-in widgets are bundled (`node scripts/gen-icons.mjs` rewrites
 `src/icons/bundledIcons.generated.ts`). Any other `mdi:` icon name still works where the browser can reach the
 Iconify service.
+
+## Agent panels and sunburst
+
+### Agent panel (`agent.panel`)
+
+Shows one panel of the agent layer. The agent serves its panels on `GET /api/widgets` (the list) and
+`GET /api/widgets/<id>` (one panel model). The widget settings list the panels, and the user picks one.
+
+- **Where the agent is**: the Dashboards settings page has three fields (agent namespace, service and port).
+  Blank fields use `headlamp-agent`, `headlamp-agent` and `80`. The requests go through the Kubernetes API
+  service proxy, the same way as the Incidents plugin.
+- **What it draws**: the status and summary, the stats as tiles, the rows as a table (a fraction bar and a link
+  when the row has them), the series as sparklines and the rings as sunbursts. A status is a shape and a word,
+  never colour alone. A link must be a web or path link: other schemes are dropped. Links are off in edit mode.
+- **Refresh**: the widget fetches when the dashboard refresh signal changes, and reports the time with
+  `reportRefreshed`. The `refreshSeconds` of the panel is the minimum time between two fetches, so a short
+  dashboard interval never polls a panel faster than the panel allows. The last good data stays on screen when
+  a refresh fails, with a warning.
+- **States**: a spinner while the first load runs, an error with a short reason, a hint when no panel is
+  chosen and a hint when the panel has nothing to show.
+
+### Agent sunburst (`agent.sunburst`)
+
+Draws one ring (`cpu` or `memory`) of a panel that has rings, by default `usage-dashboard`.
+
+### The sunburst component
+
+`src/widgets/sunburst/SunburstChart.tsx` is a reusable two-level sunburst: the inner ring has one arc per
+category and the outer ring has one arc per child. The full circle is the capacity and the filled part is the
+used part, so the unused part stays empty. The geometry (`geometry.ts`) has the same proportions as the Usage
+plugin rings (a centre hole of 24 % of the radius), and the colours are the Usage palette (Okabe-Ito, with
+lighter hues for dark mode and the kiosk). Rules:
+
+- Every group is its own arc at its real size. There is no "Other" arc and no top-N cut.
+- A mouse hover shows the label and the value in the centre. A tap selects an arc, and a second tap clears it.
+  In kiosk mode hover is off and a tap selects, because the kiosk is a touch screen.
+- The legend lists every category, and the SVG has a text summary, so colour is never the only encoding.
+- The Usage plugin has its own copy (separate bundles cannot share code).
+
+### Kiosk
+
+The widgets use theme colours only, so they follow the black kiosk background. The kiosk has no scrollbars,
+no focus rings and no hover. The legend and the donut do not scroll in the kiosk.
