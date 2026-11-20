@@ -71,6 +71,16 @@ function Row({
     else if (!disableNavigation) history.push(diagnosisUrl(d.id));
   };
   const clickable = !!onSelect || !disableNavigation;
+  const rerunButton =
+    onRerun && d.status === 'failed' ? (
+      <RerunButton
+        key={d.status}
+        touch={touch}
+        alertName={d.alertName || d.id}
+        compact={compact}
+        onRerun={() => onRerun(d)}
+      />
+    ) : null;
   return (
     <TableRow
       hover={clickable}
@@ -94,6 +104,8 @@ function Row({
       </TableCell>
       <TableCell>
         <Chip size="small" variant="outlined" label={d.status} color={STATUS_COLOUR[d.status]} />
+        {/* A narrow widget has no room for a column: the button sits under the status. */}
+        {compact && rerunButton && <Box sx={{ mt: 0.5 }}>{rerunButton}</Box>}
       </TableCell>
       {compact ? (
         // A narrow widget: the cause takes the rest of the row and wraps to three lines at most.
@@ -117,18 +129,7 @@ function Row({
       {!compact && <TableCell>{d.confidence}</TableCell>}
       {!compact && <TableCell>{d.source}</TableCell>}
       {!compact && <TableCell>{d.resolved ? 'yes' : 'no'}</TableCell>}
-      {onRerun && (
-        <TableCell>
-          {d.status === 'failed' && (
-            <RerunButton
-              key={d.status}
-              touch={touch}
-              alertName={d.alertName || d.id}
-              onRerun={() => onRerun(d)}
-            />
-          )}
-        </TableCell>
-      )}
+      {onRerun && !compact && <TableCell>{rerunButton}</TableCell>}
     </TableRow>
   );
 }
@@ -138,7 +139,7 @@ export function DiagnosesTable(props: DiagnosesTableProps) {
   const compact = !!props.compact;
   const headers = ['Time', 'Alert', 'Severity', 'Status', 'Likely cause']
     .concat(compact ? [] : ['Confidence', 'Source', 'Resolved'])
-    .concat(props.onRerun ? ['Actions'] : []);
+    .concat(props.onRerun && !compact ? ['Actions'] : []);
   return (
     <Table size={props.touch ? 'medium' : 'small'} stickyHeader={props.stickyHeader}>
       <TableHead>

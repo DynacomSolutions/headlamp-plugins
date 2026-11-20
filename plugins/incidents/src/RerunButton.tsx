@@ -17,10 +17,13 @@ export function RerunButton({
   onRerun,
   touch,
   alertName,
+  compact,
 }: {
   onRerun: () => Promise<void>;
   touch?: boolean;
   alertName?: string;
+  /** A narrow place: the error text wraps in a smaller width. */
+  compact?: boolean;
 }) {
   const [phase, setPhase] = React.useState<Phase>('idle');
   const [error, setError] = React.useState<string | null>(null);
@@ -59,7 +62,7 @@ export function RerunButton({
           role="alert"
           variant="caption"
           color="error"
-          sx={{ maxWidth: 240, overflowWrap: 'anywhere' }}
+          sx={{ maxWidth: compact ? 140 : 240, overflowWrap: 'anywhere' }}
         >
           {error}
         </Typography>
