@@ -24,6 +24,7 @@ import { Link as RouterLink, Prompt, useHistory, useLocation } from 'react-route
 import { BandActions, BandView } from './components/BandView';
 import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
 import { FilterBar } from './components/FilterBar';
+import { HeaderStrip } from './components/HeaderStrip';
 import { PaletteDrawer } from './components/PaletteDrawer';
 import { LastRefreshed, RefreshControls } from './components/RefreshStatus';
 import { SectionActions, SectionView } from './components/SectionView';
@@ -594,7 +595,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           minHeight: query.kiosk ? '100%' : undefined,
         }}
       >
-        {bandView('header')}
+        {/* View mode draws the header widgets inline in the title bar. */}
+        {editing && bandView('header')}
         <Box
           sx={{
             display: 'flex',
@@ -608,6 +610,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         </Box>
         {bandView('footer')}
       </Box>
+    </DashboardContext.Provider>
+  );
+
+  // The header widgets, inline in the title bar. Edit mode keeps the header band under the toolbar.
+  const headerStrip = !editing && (
+    <DashboardContext.Provider value={ctx}>
+      <HeaderStrip band={spec.header} kiosk={query.kiosk} frameActions={frameActions} />
     </DashboardContext.Provider>
   );
 
@@ -716,7 +725,10 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       <KioskOverlay
         onExit={() => replaceQuery({ kiosk: false })}
         bar={
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1.5 }}>
+          <Box
+            data-title-bar
+            sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1.5 }}
+          >
             <Typography variant="h6" component="h1" sx={{ mr: 1 }}>
               {spec.title}
             </Typography>
@@ -725,6 +737,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
               <Icon icon="mdi:refresh" width={26} height={26} />
             </IconButton>
             {spec.kioskShowFilters && filterBar}
+            <Box sx={{ flex: 1 }} />
+            {headerStrip}
           </Box>
         }
       >
@@ -747,29 +761,38 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   return (
     <Box sx={{ p: 2 }}>
       {dialogs}
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1 }}>
-        <Box sx={{ flex: 1, minWidth: 200 }}>
-          <Typography variant="h5" component="h1">
+      <Box
+        data-title-bar
+        data-title-bar-sticky={!editing && spec.header.sticky ? '' : undefined}
+        sx={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 1,
+          mb: 1,
+          ...(!editing && spec.header.sticky
+            ? { position: 'sticky', top: 0, zIndex: 4, bgcolor: 'background.default' }
+            : {}),
+        }}
+      >
+        <Box sx={{ minWidth: 100, maxWidth: 240, flex: '0 1 auto' }}>
+          <Typography variant="h5" component="h1" noWrap>
             {spec.title}
           </Typography>
           {spec.description && (
-            <Typography variant="body2" color="text.secondary">
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              noWrap
+              title={spec.description}
+              data-dashboard-description
+            >
               {spec.description}
             </Typography>
           )}
         </Box>
         <RefreshControls store={refresh} seconds={seconds} onSecondsChange={onSecondsChange} />
-        <Tooltip title="Full screen">
-          <IconButton
-            aria-label="Full screen"
-            onClick={() => {
-              enterBrowserFullscreen();
-              replaceQuery({ kiosk: true, edit: false });
-            }}
-          >
-            <Icon icon="mdi:fullscreen" width={22} height={22} />
-          </IconButton>
-        </Tooltip>
+        <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>{filterBar}</Box>
         {!editing && (
           <Tooltip
             title={
@@ -788,6 +811,18 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             </span>
           </Tooltip>
         )}
+        {headerStrip}
+        <Tooltip title="Full screen">
+          <IconButton
+            aria-label="Full screen"
+            onClick={() => {
+              enterBrowserFullscreen();
+              replaceQuery({ kiosk: true, edit: false });
+            }}
+          >
+            <Icon icon="mdi:fullscreen" width={22} height={22} />
+          </IconButton>
+        </Tooltip>
       </Box>
       {canWrite === false && (
         <Alert severity="info" sx={{ mb: 1 }}>
@@ -902,7 +937,6 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           {save.error}
         </Alert>
       )}
-      <Box sx={{ mb: 1.5 }}>{filterBar}</Box>
       {content}
     </Box>
   );

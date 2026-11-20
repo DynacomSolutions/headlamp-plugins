@@ -132,11 +132,12 @@ export function KioskOverlay(props: {
 
   const exitButton = (
     <Button
-      variant="contained"
+      variant="outlined"
+      color="inherit"
       onClick={leave}
       aria-label="Exit full screen"
       startIcon={<Icon icon="mdi:fullscreen-exit" width={24} height={24} />}
-      sx={{ minHeight: 56, minWidth: 48, fontSize: 16, flex: 'none' }}
+      sx={{ minHeight: 48, minWidth: 48, fontSize: 16, flex: 'none' }}
     >
       Exit full screen
     </Button>
@@ -164,7 +165,7 @@ export function KioskOverlay(props: {
         })}
       >
         {!inline && (
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2, mb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
             <Box sx={{ flex: '1 1 0', minWidth: 0 }}>{bar}</Box>
             {exitButton}
           </Box>

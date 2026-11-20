@@ -129,6 +129,8 @@ afterEach(cleanup);
 const band = (key: 'header' | 'footer') =>
   document.querySelector(`[data-band="${key}"]`) as HTMLElement | null;
 
+const titleBar = () => document.querySelector('[data-title-bar]') as HTMLElement;
+
 describe('header and footer', () => {
   it('show on every tab, above and below the tab content, and stay when the tab changes', async () => {
     mount('/dashboards/ops');
@@ -193,14 +195,14 @@ describe('header and footer', () => {
   it('sticks to the top and the bottom only when the option is on', async () => {
     mount('/dashboards/ops');
     await screen.findByText('Overview body');
-    expect(getComputedStyle(band('header')!).position).not.toBe('sticky');
+    expect(getComputedStyle(titleBar()).position).not.toBe('sticky');
     cleanup();
 
     const s = build();
     spec = { ...s, header: { ...s.header, sticky: true }, footer: { ...s.footer, sticky: true } };
     mount('/dashboards/ops');
     await screen.findByText('Overview body');
-    const header = getComputedStyle(band('header')!);
+    const header = getComputedStyle(titleBar());
     const footer = getComputedStyle(band('footer')!);
     expect([header.position, header.top]).toEqual(['sticky', '0px']);
     expect([footer.position, footer.bottom]).toEqual(['sticky', '0px']);
@@ -230,6 +232,95 @@ describe('header and footer', () => {
     const settings = within(header).getByLabelText(/^Settings for /);
     fireEvent.click(settings);
     expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+});
+
+describe('one row header', () => {
+  const order = (...els: Array<Element | null>) => {
+    els.forEach(e => expect(e).not.toBeNull());
+    for (let i = 0; i < els.length - 1; i++) {
+      expect(els[i]!.compareDocumentPosition(els[i + 1]!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    }
+  };
+
+  it('draws the header widgets inline in the title bar, before the full screen button', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Overview body');
+    const bar = titleBar();
+    const header = band('header')!;
+    // The header is inside the title bar, not a band of its own above the tabs.
+    expect(bar.contains(header)).toBe(true);
+    expect(document.querySelectorAll('[data-band="header"]')).toHaveLength(1);
+    order(
+      within(bar).getByRole('heading', { name: 'Ops' }),
+      bar.querySelector('[data-last-refreshed]'),
+      within(bar).getByRole('search'),
+      header.querySelector('[data-clock-widget]'),
+      within(bar).getByRole('button', { name: 'Full screen' })
+    );
+    // The row sits above the tabs and the content.
+    order(bar, screen.getByText('Overview body'));
+  });
+
+  it('does the same in the kiosk: title, filters, clock, then Exit full screen', async () => {
+    const { container } = mount('/dashboards/ops?kiosk=1');
+    await screen.findByText('Overview body');
+    const overlay = container.ownerDocument.querySelector('[data-kiosk-overlay]') as HTMLElement;
+    const header = band('header')!;
+    order(
+      within(overlay).getByRole('heading', { name: 'Ops' }),
+      overlay.querySelector('[data-last-refreshed]'),
+      header.querySelector('[data-clock-widget]'),
+      within(overlay).getByRole('button', { name: 'Exit full screen' })
+    );
+    // The bar and the exit button share one flex row, and the header is in that row.
+    const row = within(overlay).getByRole('button', { name: 'Exit full screen' }).parentElement!;
+    expect(row.contains(header)).toBe(true);
+    expect(row.contains(within(overlay).getByRole('heading', { name: 'Ops' }))).toBe(true);
+  });
+
+  it('keeps the row compact: no card, no card title and a stacked time and date', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Overview body');
+    const header = band('header')!;
+    const clock = header.querySelector('[data-clock-widget]') as HTMLElement;
+    expect(clock.hasAttribute('data-clock-compact')).toBe(true);
+    expect(header.querySelector('.MuiPaper-root')).toBeNull();
+    expect(within(header).queryByText('Clock')).toBeNull();
+    expect(getComputedStyle(clock).flexDirection).toBe('column');
+    const time = clock.querySelector('[data-clock-time]') as HTMLElement;
+    const date = clock.querySelector('[data-clock-date]') as HTMLElement;
+    expect(time.compareDocumentPosition(date) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Time (1.5 rem) plus date (0.75 rem) fit the 48 px row.
+    expect(parseFloat(getComputedStyle(time).fontSize) * 1.1 + 12 * 1.2).toBeLessThanOrEqual(48);
+    expect(getComputedStyle(header).display).toBe('flex');
+  });
+
+  it('wraps the title bar only through flex wrap', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Overview body');
+    expect(getComputedStyle(titleBar()).flexWrap).toBe('wrap');
+  });
+
+  it('keeps header widgets editable in edit mode', async () => {
+    mount('/dashboards/ops?edit=1');
+    await screen.findByRole('toolbar', { name: 'Edit tools' });
+    expect(within(band('header')!).getByLabelText(/^Settings for /)).toBeTruthy();
+    expect(within(band('header')!).getByLabelText(/^More actions for /)).toBeTruthy();
+  });
+
+  it('draws the full screen buttons in the page style, never as a solid contained button', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Overview body');
+    expect(screen.getByRole('button', { name: 'Full screen' }).className).not.toMatch(/contained/);
+    cleanup();
+    mount('/dashboards/ops?kiosk=1');
+    await screen.findByText('Overview body');
+    const exit = screen.getByRole('button', { name: 'Exit full screen' });
+    expect(exit.className).toMatch(/MuiButton-outlined/);
+    expect(exit.className).not.toMatch(/MuiButton-contained/);
   });
 });
 
