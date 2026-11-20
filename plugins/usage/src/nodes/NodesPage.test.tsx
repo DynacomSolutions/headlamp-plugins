@@ -184,6 +184,19 @@ describe('NodesPage', () => {
     }
   });
 
+  it('keeps the zoom on the normal page after the idle time', () => {
+    vi.useFakeTimers();
+    try {
+      mount('/usage/dashboard/k8s?nodes=worker-1&sel=k8s%2Fns%3Ans');
+      act(() => {
+        vi.advanceTimersByTime(600_000);
+      });
+      expect(url()).toBe('/usage/dashboard/k8s?nodes=worker-1&sel=k8s%2Fns%3Ans');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('pushes a zoom, and Back goes up one level, redrawing from the URL', () => {
     const { container } = mount('/usage/dashboard?nodes=worker-1');
     selectArc(container, 'k8s');
