@@ -7,7 +7,7 @@
 import type { DashboardFilters, TimeRange } from '../contract';
 import { isBundledIcon } from '../icons/iconNames';
 
-export const SPEC_VERSION = 1;
+export const SPEC_VERSION = 2;
 
 export const TIME_RANGES: ReadonlyArray<TimeRange> = ['5m', '15m', '1h', '6h', '24h', '7d', '30d'];
 export const DEFAULT_RANGE: TimeRange = '1h';
@@ -18,6 +18,23 @@ export const MIN_SECTION_HEIGHT = 120;
 export const MAX_SECTION_HEIGHT = 4000;
 
 export type TabPosition = 'top' | 'left';
+/** How the tabs look when they sit on the left: a narrow rail of icons with labels, or wide tabs. */
+export type TabRail = 'compact' | 'wide';
+export const TAB_RAILS: ReadonlyArray<TabRail> = ['compact', 'wide'];
+/** Where a header or footer shows: in the normal view, in the kiosk, or in both. */
+export type BandShow = 'both' | 'normal' | 'kiosk';
+export const BAND_SHOWS: ReadonlyArray<BandShow> = ['both', 'normal', 'kiosk'];
+/**
+ * The header and the footer are not tabs, but the edit operations treat each as a tab with one
+ * section. Their ids start with `@`, which a generated id never does.
+ */
+export const HEADER_ID = '@header';
+export const FOOTER_ID = '@footer';
+export type BandKey = 'header' | 'footer';
+export const isBandId = (id: string): id is typeof HEADER_ID | typeof FOOTER_ID =>
+  id === HEADER_ID || id === FOOTER_ID;
+export const bandKeyOf = (id: string): BandKey | null =>
+  id === HEADER_ID ? 'header' : id === FOOTER_ID ? 'footer' : null;
 export type SectionMode = 'flow' | 'sticky-top' | 'sticky-bottom' | 'self-scroll';
 export const SECTION_MODES: ReadonlyArray<SectionMode> = [
   'flow',
@@ -62,6 +79,15 @@ export interface Section {
   widgets: WidgetInstance[];
 }
 
+/** The dashboard header or footer: one section of widgets shown with every tab. */
+export interface Band {
+  /** The header sticks to the top and the footer to the bottom of the view. */
+  sticky: boolean;
+  show: BandShow;
+  /** Its id is `@header` or `@footer`. It has its own grid of widgets, like any section. */
+  section: Section;
+}
+
 export interface Tab {
   id: string;
   label: string;
@@ -81,6 +107,12 @@ export interface DashboardSpec {
   title: string;
   description: string;
   tabPosition: TabPosition;
+  /** The look of the tabs on the left. Top tabs ignore it. */
+  tabRail: TabRail;
+  /** Shown above the tab content on every tab. Empty (no widgets) draws nothing. */
+  header: Band;
+  /** Shown below the tab content on every tab. */
+  footer: Band;
   /** Automatic refresh in seconds, 0 for off. */
   refreshSeconds: number;
   /** Show the filter bar in kiosk mode. Off by default: a wall screen needs no filters. */
@@ -155,6 +187,21 @@ export function emptySection(title = 'Section'): Section {
   };
 }
 
+export function emptyBand(key: BandKey): Band {
+  return {
+    sticky: false,
+    show: 'both',
+    section: {
+      id: key === 'header' ? HEADER_ID : FOOTER_ID,
+      title: key === 'header' ? 'Header' : 'Footer',
+      showTitle: false,
+      mode: 'flow',
+      height: DEFAULT_SECTION_HEIGHT,
+      widgets: [],
+    },
+  };
+}
+
 export const DEFAULT_TAB_ICON = 'mdi:view-dashboard-outline';
 
 export function emptyTab(label = 'Overview', icon = DEFAULT_TAB_ICON, taken: string[] = []): Tab {
@@ -172,6 +219,9 @@ export function emptySpec(title: string): DashboardSpec {
     title,
     description: '',
     tabPosition: 'top',
+    tabRail: 'compact',
+    header: emptyBand('header'),
+    footer: emptyBand('footer'),
     refreshSeconds: 0,
     kioskShowFilters: false,
     filters: defaultFilters(),
@@ -185,11 +235,19 @@ export function emptySpec(title: string): DashboardSpec {
 type Raw = Record<string, any>;
 
 /**
- * One step per version: `MIGRATIONS[n]` turns a version `n` spec into version `n + 1`.
- * There is no step yet because version 1 is the first. Add the step here and raise
- * SPEC_VERSION when the shape changes.
+ * One step per version: `MIGRATIONS[n]` turns a version `n` spec into version `n + 1`. Add the
+ * step here and raise SPEC_VERSION when the shape changes.
+ * - 1 to 2: adds an empty `header` and `footer` and `tabRail: 'compact'`. Nothing else changes,
+ *   so an old dashboard looks the same, except that its left tab bar becomes the compact rail.
  */
-export const MIGRATIONS: Record<number, (raw: Raw) => Raw> = {};
+export const MIGRATIONS: Record<number, (raw: Raw) => Raw> = {
+  1: raw => ({
+    ...raw,
+    header: emptyBand('header'),
+    footer: emptyBand('footer'),
+    tabRail: 'compact',
+  }),
+};
 
 const isObject = (v: unknown): v is Raw => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback);
@@ -267,7 +325,8 @@ function normaliseSection(raw: unknown): Section | null {
     'w'
   );
   return {
-    id: str(raw.id) || newId('sec'),
+    // An id that starts with `@` is reserved for the header and the footer.
+    id: (str(raw.id).startsWith('@') ? '' : str(raw.id)) || newId('sec'),
     title: str(raw.title, 'Section'),
     showTitle: raw.showTitle === true,
     mode: (SECTION_MODES as ReadonlyArray<string>).includes(raw.mode) ? raw.mode : 'flow',
@@ -276,11 +335,29 @@ function normaliseSection(raw: unknown): Section | null {
   };
 }
 
+function normaliseBand(raw: unknown, key: BandKey): Band {
+  const empty = emptyBand(key);
+  if (!isObject(raw)) return empty;
+  const section = normaliseSection({ ...(isObject(raw.section) ? raw.section : {}) });
+  return {
+    sticky: raw.sticky === true,
+    show: (BAND_SHOWS as ReadonlyArray<string>).includes(raw.show) ? raw.show : 'both',
+    // The band is one flow section with a fixed id, so the edit operations find it.
+    section: {
+      ...(section ?? empty.section),
+      id: empty.section.id,
+      title: empty.section.title,
+      showTitle: false,
+      mode: 'flow',
+    },
+  };
+}
+
 function normaliseTab(raw: unknown, taken: string[]): Tab | null {
   if (!isObject(raw)) return null;
   const sections = uniqueIds(
     (Array.isArray(raw.sections) ? raw.sections : [])
-      .map(normaliseSection)
+      .map(x => normaliseSection(x))
       .filter((s): s is Section => s !== null),
     'sec'
   );
@@ -330,13 +407,11 @@ export function migrateSpec(input: unknown): { spec: DashboardSpec; migrated: bo
     }
   }
   const views = uniqueIds(
-    (Array.isArray(raw.views) ? raw.views : [])
-      .filter(isObject)
-      .map(v => ({
-        id: str(v.id) || newId('view'),
-        name: str(v.name, 'View'),
-        filters: normaliseFilters(v.filters),
-      })),
+    (Array.isArray(raw.views) ? raw.views : []).filter(isObject).map(v => ({
+      id: str(v.id) || newId('view'),
+      name: str(v.name, 'View'),
+      filters: normaliseFilters(v.filters),
+    })),
     'view'
   );
   const spec: DashboardSpec = {
@@ -344,6 +419,9 @@ export function migrateSpec(input: unknown): { spec: DashboardSpec; migrated: bo
     title: str(raw.title, 'Dashboard'),
     description: str(raw.description),
     tabPosition: raw.tabPosition === 'left' ? 'left' : 'top',
+    tabRail: raw.tabRail === 'wide' ? 'wide' : 'compact',
+    header: normaliseBand(raw.header, 'header'),
+    footer: normaliseBand(raw.footer, 'footer'),
     refreshSeconds: REFRESH_OPTIONS.some(o => o.seconds === raw.refreshSeconds)
       ? raw.refreshSeconds
       : 0,
@@ -371,5 +449,9 @@ export function serialiseSpec(spec: DashboardSpec): string {
 }
 
 export function countWidgets(spec: DashboardSpec): number {
-  return spec.tabs.reduce((n, t) => n + t.sections.reduce((m, s) => m + s.widgets.length, 0), 0);
+  return (
+    spec.tabs.reduce((n, t) => n + t.sections.reduce((m, s) => m + s.widgets.length, 0), 0) +
+    spec.header.section.widgets.length +
+    spec.footer.section.widgets.length
+  );
 }

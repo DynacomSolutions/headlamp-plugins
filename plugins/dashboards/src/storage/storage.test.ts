@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { emptySpec } from '../spec/model';
+import { emptySpec, SPEC_VERSION } from '../spec/model';
 import {
   AccessError,
   ConflictError,
@@ -35,7 +35,7 @@ describe('config map conversion', () => {
       labels: { [DASHBOARD_LABEL]: 'true' },
     });
     const spec = JSON.parse(cm.data[DATA_KEY]);
-    expect(spec.version).toBe(1);
+    expect(spec.version).toBe(SPEC_VERSION);
     expect(spec.modifiedAt).toBeTruthy();
     expect(toConfigMap('ops', 'dash', emptySpec('Ops')).metadata.resourceVersion).toBeUndefined();
   });

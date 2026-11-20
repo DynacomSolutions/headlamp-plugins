@@ -33,7 +33,8 @@ describe('slugify and uniqueSlug', () => {
 describe('migrateSpec', () => {
   it('fills defaults for a minimal spec', () => {
     const { spec, migrated } = migrateSpec({ title: 'Ops' });
-    expect(migrated).toBe(false);
+    // A spec with no version counts as version 1.
+    expect(migrated).toBe(true);
     expect(spec.version).toBe(SPEC_VERSION);
     expect(spec.tabs).toHaveLength(1);
     expect(spec.tabs[0].sections).toHaveLength(1);
@@ -216,5 +217,82 @@ describe('tab icons', () => {
     expect(tab('https://example.com/x.svg')).toBe('mdi:view-dashboard-outline');
     expect(tab(5)).toBe('mdi:view-dashboard-outline');
     expect(tab(undefined)).toBe('mdi:view-dashboard-outline');
+  });
+});
+
+describe('header, footer and tab rail (spec version 2)', () => {
+  it('gives an older spec an empty header and footer and the compact rail', () => {
+    const { spec, migrated } = migrateSpec({
+      version: 1,
+      title: 'Old',
+      tabPosition: 'left',
+      tabs: [{ id: 'a', label: 'A', sections: [{ id: 's', widgets: [{ id: 'w', type: 'x' }] }] }],
+    });
+    expect(migrated).toBe(true);
+    expect(spec.version).toBe(2);
+    expect(spec.header).toEqual({
+      sticky: false,
+      show: 'both',
+      section: {
+        id: '@header',
+        title: 'Header',
+        showTitle: false,
+        mode: 'flow',
+        height: 400,
+        widgets: [],
+      },
+    });
+    expect(spec.footer.section.id).toBe('@footer');
+    expect(spec.footer.section.widgets).toEqual([]);
+    expect(spec.tabRail).toBe('compact');
+    // The tabs are untouched, and no clock or other widget is added anywhere.
+    expect(spec.tabs[0].sections[0].widgets).toHaveLength(1);
+    expect(countWidgets(spec)).toBe(1);
+  });
+
+  it('does not migrate a spec that is already version 2', () => {
+    const fresh = emptySpec('New');
+    const { spec, migrated } = migrateSpec(JSON.parse(serialiseSpec(fresh)));
+    expect(migrated).toBe(false);
+    expect(spec.header).toEqual(fresh.header);
+    expect(spec.tabRail).toBe('compact');
+  });
+
+  it('keeps a saved header and footer, and repairs bad values', () => {
+    const { spec } = migrateSpec({
+      version: 2,
+      title: 'D',
+      tabRail: 'wide',
+      header: {
+        sticky: true,
+        show: 'kiosk',
+        section: {
+          id: 'anything',
+          mode: 'self-scroll',
+          title: 'Mine',
+          widgets: [{ id: 'c', type: 'core.clock', x: 0, y: 0, w: 4, h: 2 }],
+        },
+      },
+      footer: { sticky: 'yes', show: 'sometimes', section: 'nope' },
+    });
+    expect(spec.tabRail).toBe('wide');
+    expect(spec.header.sticky).toBe(true);
+    expect(spec.header.show).toBe('kiosk');
+    // The band section always has its fixed id and the flow mode.
+    expect(spec.header.section).toMatchObject({ id: '@header', mode: 'flow', title: 'Header' });
+    expect(spec.header.section.widgets.map(w => w.id)).toEqual(['c']);
+    expect(spec.footer.sticky).toBe(false);
+    expect(spec.footer.show).toBe('both');
+    expect(spec.footer.section.widgets).toEqual([]);
+    expect(countWidgets(spec)).toBe(1);
+  });
+
+  it('does not let a tab section take a reserved id', () => {
+    const { spec } = migrateSpec({
+      version: 2,
+      title: 'D',
+      tabs: [{ id: 't', label: 'T', sections: [{ id: '@header', widgets: [] }] }],
+    });
+    expect(spec.tabs[0].sections[0].id).not.toBe('@header');
   });
 });

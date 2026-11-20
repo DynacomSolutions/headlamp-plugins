@@ -16,9 +16,11 @@ import {
   reorderSections,
   reorderTabs,
   saveView,
+  sectionsOf,
+  updateBand,
   updateWidget,
 } from './edit';
-import { defaultFilters, emptySpec } from './model';
+import { defaultFilters, emptySpec, FOOTER_ID, HEADER_ID } from './model';
 
 const base = () => {
   let spec = emptySpec('Ops');
@@ -148,5 +150,74 @@ describe('views and clone', () => {
     expect(c.tabs[0].sections[0].widgets[0].config).toEqual(
       spec.tabs[0].sections[0].widgets[0].config
     );
+  });
+});
+
+describe('header and footer', () => {
+  it('adds, updates, moves and deletes widgets in the header and the footer', () => {
+    const { spec, tabId, s1, w1 } = base();
+    const added = addWidget(
+      spec,
+      HEADER_ID,
+      HEADER_ID,
+      'core.clock',
+      { w: 3, h: 2 },
+      { size: 'large' }
+    );
+    expect(added.spec.header.section.widgets).toHaveLength(1);
+    expect(added.spec.header.section.widgets[0]).toMatchObject({ type: 'core.clock', y: 0 });
+    // Other parts keep their identity.
+    expect(added.spec.tabs).toBe(spec.tabs);
+    expect(added.spec.footer).toBe(spec.footer);
+
+    const renamed = updateWidget(added.spec, HEADER_ID, HEADER_ID, added.widgetId, {
+      title: 'Clock',
+    });
+    expect(renamed.header.section.widgets[0].title).toBe('Clock');
+
+    const moved = moveWidgetToTabSection(
+      renamed,
+      { tabId: HEADER_ID, sectionId: HEADER_ID },
+      { tabId, sectionId: s1 },
+      added.widgetId
+    );
+    expect(moved.header.section.widgets).toHaveLength(0);
+    expect(sectionsOf(moved, tabId)[0].widgets.map(w => w.id)).toContain(added.widgetId);
+
+    const toFooter = moveWidgetToTabSection(
+      moved,
+      { tabId, sectionId: s1 },
+      { tabId: FOOTER_ID, sectionId: FOOTER_ID },
+      w1
+    );
+    expect(toFooter.footer.section.widgets.map(w => w.id)).toEqual([w1]);
+    expect(deleteWidget(toFooter, FOOTER_ID, FOOTER_ID, w1).footer.section.widgets).toHaveLength(0);
+  });
+
+  it('applies grid positions and duplicates in the header', () => {
+    const a = addWidget(emptySpec('Ops'), HEADER_ID, HEADER_ID, 'core.clock', { w: 3, h: 2 }, {});
+    const id = a.spec.header.section.widgets[0].id;
+    const placed = applyPositions(a.spec, HEADER_ID, HEADER_ID, [
+      { i: id, x: 5, y: 0, w: 4, h: 3 },
+    ]);
+    expect(placed.header.section.widgets[0]).toMatchObject({ x: 5, w: 4, h: 3 });
+    const copy = duplicateWidget(placed, HEADER_ID, HEADER_ID, id);
+    expect(copy.spec.header.section.widgets).toHaveLength(2);
+  });
+
+  it('updates the options and keeps identity when nothing changes', () => {
+    const spec = emptySpec('Ops');
+    const sticky = updateBand(spec, 'header', { sticky: true });
+    expect(sticky.header.sticky).toBe(true);
+    expect(sticky.footer).toBe(spec.footer);
+    expect(updateBand(sticky, 'header', { sticky: true })).toBe(sticky);
+    expect(updateBand(spec, 'footer', { show: 'kiosk' }).footer.show).toBe('kiosk');
+  });
+
+  it('copies the header and footer with the spec', () => {
+    const a = addWidget(emptySpec('Ops'), FOOTER_ID, FOOTER_ID, 'core.note', { w: 3, h: 2 }, {});
+    const copy = cloneSpec(a.spec, 'Copy');
+    expect(copy.footer.section.widgets).toHaveLength(1);
+    expect(copy.footer).not.toBe(a.spec.footer);
   });
 });
