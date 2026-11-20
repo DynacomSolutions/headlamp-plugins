@@ -14,6 +14,8 @@ export interface Config {
   vmalertUrl: string;
   /** The agent-resource state endpoint, for the agent-resource panel. */
   agentResourceUrl: string;
+  /** The old state endpoint, tried when agentResourceUrl fails. Empty when the URL was set by an environment variable. */
+  agentResourceFallbackUrl: string;
   /** The registry catalogue backend (`/api/repositories`), for the registry and VM images panels. */
   registryCatalogueUrl: string;
   /** JSON file with per-provider settings (`{"<provider>": {...}}`). */
@@ -261,6 +263,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     metricsUrl: (env.METRICS_URL ?? '').replace(/\/+$/, ''),
     vmalertUrl: (env.VMALERT_URL ?? '').replace(/\/+$/, ''),
     // AGENT_MEMORY_URL is the old name, still read until every deployment has moved.
+    agentResourceFallbackUrl: env.AGENT_RESOURCE_URL ?? env.AGENT_MEMORY_URL ? '' : 'http://agent-memory.agent-memory.svc/api/state',
     agentResourceUrl: (env.AGENT_RESOURCE_URL ?? env.AGENT_MEMORY_URL ?? 'http://agent-resource.agent-resource.svc/api/state').replace(/\/+$/, ''),
     registryCatalogueUrl: (env.REGISTRY_CATALOGUE_URL ?? 'http://registry-catalog.registry.svc/api/repositories').replace(/\/+$/, ''),
     providerConfigFile: env.PROVIDER_CONFIG_FILE ?? '',

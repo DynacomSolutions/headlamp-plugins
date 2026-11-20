@@ -535,7 +535,7 @@ turns launching off with a reason. It does not stop the service.
 | `METRICS_URL` | – | Prometheus-compatible endpoint (VictoriaMetrics) |
 | `VMALERT_URL` | – | vmalert, for rules and alerts |
 | `PROVIDER_CONFIG_FILE` | – | JSON with each provider's settings, `{"<provider>": {...}}` |
-| `AGENT_RESOURCE_URL` | `http://agent-resource.agent-resource.svc/api/state` | State endpoint for the agent-resource panel. The old name `AGENT_MEMORY_URL` is still read when this one is not set |
+| `AGENT_RESOURCE_URL` | `http://agent-resource.agent-resource.svc/api/state` | State endpoint for the agent-resource panel. The old name `AGENT_MEMORY_URL` is still read when this one is not set. With neither set, the panel falls back to `http://agent-memory.agent-memory.svc/api/state` when the default URL fails |
 | `REGISTRY_CATALOGUE_URL` | `http://registry-catalog.registry.svc/api/repositories` | Registry catalogue backend, for the registry and VM images panels. Set the namespace of your catalogue Service. |
 | `DATA_DIR` | memory only | Where the diagnoses, chats and launches are kept, one file each in `diagnoses/`, `chats/` and `launches/` |
 | `MAX_DIAGNOSES` | `200` | Diagnoses kept |

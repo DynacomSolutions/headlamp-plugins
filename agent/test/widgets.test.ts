@@ -352,8 +352,29 @@ describe('panel mappings', () => {
 
   it('reads AGENT_RESOURCE_URL, then the old AGENT_MEMORY_URL, then the default', () => {
     expect(loadConfig({} as NodeJS.ProcessEnv).agentResourceUrl).toBe('http://agent-resource.agent-resource.svc/api/state');
+    expect(loadConfig({} as NodeJS.ProcessEnv).agentResourceFallbackUrl).toBe('http://agent-memory.agent-memory.svc/api/state');
+    expect(loadConfig({ AGENT_RESOURCE_URL: 'http://new.example.svc/s' } as NodeJS.ProcessEnv).agentResourceFallbackUrl).toBe('');
     expect(loadConfig({ AGENT_MEMORY_URL: 'http://old.example.svc/s/' } as NodeJS.ProcessEnv).agentResourceUrl).toBe('http://old.example.svc/s');
     expect(loadConfig({ AGENT_MEMORY_URL: 'http://old.example.svc/s', AGENT_RESOURCE_URL: 'http://new.example.svc/s' } as NodeJS.ProcessEnv).agentResourceUrl).toBe('http://new.example.svc/s');
+  });
+
+  it('agent-resource falls back to the old state endpoint, and fails when both fail', async () => {
+    const asked: string[] = [];
+    const ok = { error: '', host: { total: 100, available: 50 }, orchestrators: [], units: [] };
+    const m = await buildPanel('agent-resource', deps({}, {
+      agentResourceFallbackUrl: 'http://agent-memory.example.svc/api/state',
+      serviceGet: async url => { asked.push(url); if (url.includes('agent-memory')) return ok; throw new Error('down'); },
+    }));
+    expect(asked).toEqual(['http://agent-resource.example.svc/api/state', 'http://agent-memory.example.svc/api/state']);
+    expect(m!.stats[1].value).toBe('50.0%');
+    await expect(buildPanel('agent-resource', deps({}, {
+      agentResourceFallbackUrl: 'http://agent-memory.example.svc/api/state',
+      serviceGet: async () => { throw new Error('down'); },
+    }))).rejects.toThrow('agent-resource is not reachable');
+    // No fallback when none is set (an explicit URL).
+    const none: string[] = [];
+    await expect(buildPanel('agent-resource', deps({}, { serviceGet: async url => { none.push(url); throw new Error('down'); } }))).rejects.toThrow();
+    expect(none).toHaveLength(1);
   });
 
   it('agent-resource reads the state endpoint', async () => {

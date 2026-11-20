@@ -435,6 +435,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
             serviceGet,
             kubeList: (kind, options) => runtime.kube.listAll(kind, options),
             agentResourceUrl: config.agentResourceUrl,
+            agentResourceFallbackUrl: config.agentResourceFallbackUrl,
             registryCatalogueUrl: config.registryCatalogueUrl,
             query: url.searchParams,
             now: new Date(),

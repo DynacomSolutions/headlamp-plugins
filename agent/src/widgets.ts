@@ -84,6 +84,8 @@ export interface PanelDeps {
   /** Lists Kubernetes objects of a kind (read-only client). Rejects when the type is not served. */
   kubeList(kind: string, options?: { namespace?: string }): Promise<Array<Record<string, any>>>;
   agentResourceUrl: string;
+  /** The old endpoint (the namespace agent-memory), tried when agentResourceUrl fails. Optional. */
+  agentResourceFallbackUrl?: string;
   registryCatalogueUrl: string;
   query: URLSearchParams;
   now: Date;
@@ -458,7 +460,14 @@ async function agentResource(d: PanelDeps): Promise<PanelBody> {
   try {
     state = (await d.serviceGet(d.agentResourceUrl)) as Obj;
   } catch {
-    throw new PanelError('agent-resource is not reachable');
+    // The backend moved from the namespace agent-memory: try the old place before giving up, so the panel
+    // works before and after the backend rollout.
+    try {
+      if (!d.agentResourceFallbackUrl) throw new Error('no fallback');
+      state = (await d.serviceGet(d.agentResourceFallbackUrl)) as Obj;
+    } catch {
+      throw new PanelError('agent-resource is not reachable');
+    }
   }
   if (typeof state.error === 'string' && state.error) throw new PanelError(`agent-resource reports: ${state.error.slice(0, 120)}`);
   const GIB = 2 ** 30;
