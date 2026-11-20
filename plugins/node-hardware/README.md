@@ -2,7 +2,7 @@
 
 A [Headlamp](https://headlamp.dev/) plugin built with the official
 `@kinvolk/headlamp-plugin` tooling (TypeScript + React). It shows server
-temperatures and power draw:
+temperatures, power draw and a full hardware profile:
 
 - **Temp** and **Power (est.)** columns on the Nodes list
   (`/c/<cluster>/nodes`), after the built-in CPU and Memory columns (and the
@@ -16,8 +16,25 @@ temperatures and power draw:
   breakdown (CPU package, DRAM if present, GPU). Loading, error and no-data
   states are handled explicitly. Missing values render as "-".
 
+- **RAM** and **GPUs** columns on the Nodes list, after Temp and Power. RAM is
+  installed / maximum capacity (for example "128 / 512 GiB"), with slots used
+  of total in the tooltip. GPUs is the count, with the models in the tooltip.
+  Both sort by value.
+- A "Hardware profile" section on every Node's details page, with sub-tables:
+  Motherboard (vendor, model, version, BIOS), CPU (sockets populated of total,
+  model, cores, threads, speeds), Memory (summary like "128 GiB of 512 GiB max,
+  4 of 8 slots used", ECC, EDAC error counts and a per-slot table with size,
+  type, rated and configured speed, manufacturer, part number), Expansion
+  slots (PCIe and M.2: total and in use, lanes, generation, the device in each
+  slot), PCI devices, GPUs (with VRAM) and NVMe drives (capacity, link). A
+  link below its maximum width shows in amber. A lower link speed shows neutrally, because it drops at idle. When firmware lists fewer M.2 slots than there are NVMe drives, the summary says so. When the inventory
+  collector is not reporting, the section says so and shows what the existing
+  series give.
+
 One shared poll serves the whole Nodes table and the details page, refreshing
-every 60 seconds (`src/hardwareStore.ts`).
+every 60 seconds (`src/hardwareStore.ts`). The hardware profile has its own
+shared poll that refreshes every 5 minutes (`src/inventoryStore.ts`), because
+hardware rarely changes.
 
 ## Where the data comes from
 
@@ -47,6 +64,41 @@ queries, joined in code:
   current, and the 0/1 flags external connected, charging, permanent failure).
 - Mac thermal pressure: `node_mac_thermal_pressure_level` (macOS's own throttling
   signal: 0 nominal, 1 moderate, 2 heavy, 3 trapping, 4 sleeping).
+
+### Hardware profile series
+
+The profile joins series from a node inventory collector (SMBIOS and sysfs data
+written to the node-exporter textfile directory) with series that already
+exist. Every query is optional: a missing series shows "-" and never fails the
+profile. All series carry a `node` label. The queries are in `src/inventory.ts`.
+
+- Collector health: `node_hw_inventory_up`,
+  `node_hw_inventory_last_run_timestamp_seconds`. When `node_hw_inventory_up`
+  is absent, the page shows a "collector not reporting yet" note.
+- Motherboard and BIOS: `node_dmi_info` (`board_vendor`, `board_name`,
+  `board_version`, `bios_vendor`, `bios_version`, `bios_date`).
+- CPU: `node_hw_cpu_info` (`socket`, `model`, `populated`), `node_hw_cpu_cores`,
+  `node_hw_cpu_threads`, `node_hw_cpu_max_speed_hertz`,
+  `node_hw_cpu_current_speed_hertz`, `node_hw_cpu_sockets{state}`.
+- Memory: `node_hw_memory_max_capacity_bytes`, `node_hw_memory_slots{state}`,
+  `node_hw_memory_ecc_info`, `node_hw_memory_module_info`,
+  `node_hw_memory_module_size_bytes`, `node_hw_memory_module_speed_mts`,
+  `node_hw_memory_module_configured_speed_mts`. Installed memory is the sum of
+  the module sizes, with `node_memory_MemTotal_bytes` as a fallback. Error
+  counts come from `node_edac_correctable_errors_total` and
+  `node_edac_uncorrectable_errors_total`.
+- Slots: `node_hw_slot_info` (`designation`, `kind`, `slot_type`,
+  `bus_address`, `usage`), `node_hw_slot_lanes`, `node_hw_slot_generation`. A
+  device sits in a slot when `node_hw_pci_device_info` names the slot or the
+  bus address matches.
+- PCI devices: `node_hw_pci_device_info`, `node_hw_pci_device_link_width`,
+  `node_hw_pci_device_max_link_width`, `node_hw_pci_device_link_speed_gts`,
+  `node_hw_pci_device_max_link_speed_gts`.
+- GPUs: `node_hw_gpu_info`, `node_hw_gpu_memory_bytes`, and the DCGM series
+  `DCGM_FI_DEV_FB_CAPACITY_BYTES` (`pci_bus_id`, `modelName`). The two
+  sources are joined by PCI address.
+- NVMe: `node_hw_nvme_info`, `node_hw_nvme_capacity_bytes` and the existing
+  `node_nvme_info` as a fallback for model and firmware.
 
 The RAPL series may not exist in your cluster yet (they need the node-exporter
 `rapl` collector and readable energy counters); the plugin then shows "-".
