@@ -82,7 +82,10 @@ export function ReportBody(props: ReportBodyProps): JSX.Element {
     [objects, config, now, scope, sortField, sortDir]
   );
   const onSort = React.useCallback(
-    (id: string) => setSort(s => (s && s.id === id ? { id, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { id, dir: 'asc' })),
+    (id: string) =>
+      setSort(s =>
+        s && s.id === id ? { id, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { id, dir: 'asc' }
+      ),
     []
   );
   const toggle = React.useCallback(
@@ -96,17 +99,45 @@ export function ReportBody(props: ReportBodyProps): JSX.Element {
     []
   );
 
-  const count = report.type === 'tabular' ? report.rows.length : report.type === 'summary' ? report.total.count : report.grandTotal;
+  const count =
+    report.type === 'tabular'
+      ? report.rows.length
+      : report.type === 'summary'
+      ? report.total.count
+      : report.grandTotal;
   const rowHeight = kiosk ? 40 : 32;
   const hasChart = report.type === 'summary' && config.chart !== 'none' && report.groups.length > 0;
   const data = React.useMemo(
-    () => (report.type === 'summary' && config.chart !== 'none' ? chartData(report, config.chart, config.chartMeasure) : null),
+    () =>
+      report.type === 'summary' && config.chart !== 'none'
+        ? chartData(report, config.chart, config.chartMeasure)
+        : null,
     [report, config.chart, config.chartMeasure]
   );
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, color: colors.text, bgcolor: kiosk ? colors.surface : undefined }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 1.25, py: 0.5, color: colors.muted, fontSize: '0.75rem', minHeight: 28 }}>
+    <Box
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        color: colors.text,
+        bgcolor: kiosk ? colors.surface : undefined,
+      }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          px: 1.25,
+          py: 0.5,
+          color: colors.muted,
+          fontSize: '0.75rem',
+          minHeight: 28,
+        }}
+      >
         <span>
           {config.source.kind}
           {report.type === 'matrix' ? '' : `: ${count ?? 0} ${count === 1 ? 'row' : 'rows'}`}
@@ -140,19 +171,45 @@ export function ReportBody(props: ReportBodyProps): JSX.Element {
         </Box>
       )}
       {report.type === 'tabular' && (
-        <TabularTable report={report} config={config} sort={sort ?? (config.sortField ? { id: config.sortField, dir: config.sortDir } : null)} onSort={onSort} rowHeight={rowHeight} kiosk={kiosk} editing={editing} />
+        <TabularTable
+          report={report}
+          config={config}
+          sort={sort ?? (config.sortField ? { id: config.sortField, dir: config.sortDir } : null)}
+          onSort={onSort}
+          rowHeight={rowHeight}
+          kiosk={kiosk}
+          editing={editing}
+        />
       )}
       {report.type === 'summary' && (
-        <SummaryTable report={report} config={config} toggled={toggled} onToggle={toggle} sort={sort} onSort={onSort} rowHeight={rowHeight} kiosk={kiosk} editing={editing} />
+        <SummaryTable
+          report={report}
+          config={config}
+          toggled={toggled}
+          onToggle={toggle}
+          sort={sort}
+          onSort={onSort}
+          rowHeight={rowHeight}
+          kiosk={kiosk}
+          editing={editing}
+        />
       )}
-      {report.type === 'matrix' && <MatrixTable report={report} config={config} rowHeight={rowHeight} kiosk={kiosk} />}
+      {report.type === 'matrix' && (
+        <MatrixTable report={report} config={config} rowHeight={rowHeight} kiosk={kiosk} />
+      )}
     </Box>
   );
 }
 
 /* ----------------------------------- cells ----------------------------------- */
 
-function CellLink(props: { row: RowView; config: ReportConfig; children: React.ReactNode; editing: boolean; color: string }): JSX.Element {
+function CellLink(props: {
+  row: RowView;
+  config: ReportConfig;
+  children: React.ReactNode;
+  editing: boolean;
+  color: string;
+}): JSX.Element {
   const { row, config, children, editing, color } = props;
   const to = editing ? null : resourceLink(row.obj, config.source);
   if (!to) return <>{children}</>;
@@ -163,8 +220,17 @@ function CellLink(props: { row: RowView; config: ReportConfig; children: React.R
   );
 }
 
-function rowCells(row: RowView, report: { columns: Array<{ field: string }> }, config: ReportConfig, editing: boolean, color: string): React.ReactNode[] {
-  const linkColumn = Math.max(0, report.columns.findIndex(c => c.field === 'name'));
+function rowCells(
+  row: RowView,
+  report: { columns: Array<{ field: string }> },
+  config: ReportConfig,
+  editing: boolean,
+  color: string
+): React.ReactNode[] {
+  const linkColumn = Math.max(
+    0,
+    report.columns.findIndex(c => c.field === 'name')
+  );
   return row.cells.map((cell, i) => {
     const text = <span title={cell.text}>{cell.text}</span>;
     return i === linkColumn ? (
@@ -206,17 +272,35 @@ function TabularTable(props: {
   const getLine = React.useCallback(
     (i: number): GridLine => {
       const row = report.rows[i];
-      return { key: row.key, kind: 'row', cells: rowCells(row, report, config, editing, colors.link) };
+      return {
+        key: row.key,
+        kind: 'row',
+        cells: rowCells(row, report, config, editing, colors.link),
+      };
     },
     [report, config, editing, colors.link]
   );
-  return <GridTable columns={columns} count={report.rows.length} getLine={getLine} sort={sort} onSort={onSort} rowHeight={rowHeight} colors={colors} kiosk={kiosk} label={`${config.source.kind} report`} />;
+  return (
+    <GridTable
+      columns={columns}
+      count={report.rows.length}
+      getLine={getLine}
+      sort={sort}
+      onSort={onSort}
+      rowHeight={rowHeight}
+      colors={colors}
+      kiosk={kiosk}
+      label={`${config.source.kind} report`}
+    />
+  );
 }
 
 /* ----------------------------------- summary ----------------------------------- */
 
 function aggText(report: SummaryReport, aggs: Array<number | null>): string {
-  return report.aggregates.map((a, i) => `${a.header}: ${formatNumber(aggs[i]) || '-'}`).join('   ');
+  return report.aggregates
+    .map((a, i) => `${a.header}: ${formatNumber(aggs[i]) || '-'}`)
+    .join('   ');
 }
 
 function SummaryTable(props: {
@@ -232,25 +316,43 @@ function SummaryTable(props: {
 }): JSX.Element {
   const { report, config, toggled, onToggle, sort, onSort, rowHeight, kiosk, editing } = props;
   const colors = useReportColors(kiosk);
-  const items = React.useMemo(() => flattenSummary(report, toggled, config.expandGroups, config.showRows), [report, toggled, config.expandGroups, config.showRows]);
+  const items = React.useMemo(
+    () => flattenSummary(report, toggled, config.expandGroups, config.showRows),
+    [report, toggled, config.expandGroups, config.showRows]
+  );
   const withRows = config.showRows;
   const groupHeader = report.groupFields.map(f => fieldHeader(config, f)).join(' / ');
 
   const columns: GridColumn[] = withRows
-    ? report.columns.map(c => ({ id: c.field, header: c.header, sortable: true, grow: c.field === 'name' ? 2 : 1, min: c.field === 'name' ? 160 : 100 }))
+    ? report.columns.map(c => ({
+        id: c.field,
+        header: c.header,
+        sortable: true,
+        grow: c.field === 'name' ? 2 : 1,
+        min: c.field === 'name' ? 160 : 100,
+      }))
     : [
         { id: '#group', header: groupHeader, grow: 3, min: 180 },
         { id: '#rows', header: 'Rows', numeric: true, min: 70 },
-        ...report.aggregates.map((a, i) => ({ id: `#agg${i}`, header: a.header, numeric: true, min: 120 })),
+        ...report.aggregates.map((a, i) => ({
+          id: `#agg${i}`,
+          header: a.header,
+          numeric: true,
+          min: 120,
+        })),
       ];
 
   const chevron = (open: boolean, hasBody: boolean) => (
-    <Icon icon={open ? 'mdi:chevron-down' : 'mdi:chevron-right'} width={18} style={{ verticalAlign: 'middle', opacity: hasBody ? 1 : 0.25 }} aria-hidden />
+    <Icon
+      icon={open ? 'mdi:chevron-down' : 'mdi:chevron-right'}
+      width={18}
+      style={{ verticalAlign: 'middle', opacity: hasBody ? 1 : 0.25 }}
+      aria-hidden
+    />
   );
   const groupLabel = (g: Group, open: boolean, hasBody: boolean) => (
     <span style={{ paddingLeft: g.depth * 18 }}>
-      {chevron(open, hasBody)}{' '}
-      {withRows ? `${fieldHeader(config, g.field)}: ` : ''}
+      {chevron(open, hasBody)} {withRows ? `${fieldHeader(config, g.field)}: ` : ''}
       {g.label === NONE_LABEL ? <em>{g.label}</em> : g.label}
     </span>
   );
@@ -259,12 +361,33 @@ function SummaryTable(props: {
     (i: number): GridLine => {
       const item = items[i];
       if (item.kind === 'row') {
-        return { key: `r:${item.row.key}`, kind: 'row', cells: rowCells(item.row, report, config, editing, colors.link) };
+        return {
+          key: `r:${item.row.key}`,
+          kind: 'row',
+          cells: rowCells(item.row, report, config, editing, colors.link),
+        };
       }
       if (item.kind === 'total') {
         return withRows
-          ? { key: 'total', kind: 'total', band: <Box sx={{ px: 1.25 }}>{`Grand total: ${item.total.count} rows   ${aggText(report, item.total.aggs)}`}</Box> }
-          : { key: 'total', kind: 'total', cells: ['Grand total', String(item.total.count), ...item.total.aggs.map(formatNumber)] };
+          ? {
+              key: 'total',
+              kind: 'total',
+              band: (
+                <Box sx={{ px: 1.25 }}>{`Grand total: ${item.total.count} rows   ${aggText(
+                  report,
+                  item.total.aggs
+                )}`}</Box>
+              ),
+            }
+          : {
+              key: 'total',
+              kind: 'total',
+              cells: [
+                'Grand total',
+                String(item.total.count),
+                ...item.total.aggs.map(formatNumber),
+              ],
+            };
       }
       const g = item.group;
       const toggle = item.hasBody ? () => onToggle(g.id) : undefined;
@@ -275,9 +398,18 @@ function SummaryTable(props: {
             expanded: item.hasBody ? item.open : undefined,
             onClick: toggle,
             band: (
-              <Box sx={{ px: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <Box
+                sx={{
+                  px: 1.25,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {groupLabel(g, item.open, item.hasBody)}
-                <span style={{ color: colors.muted, fontWeight: 400 }}>{`   ${g.count} rows   ${aggText(report, g.aggs)}`}</span>
+                <span style={{ color: colors.muted, fontWeight: 400 }}>{`   ${
+                  g.count
+                } rows   ${aggText(report, g.aggs)}`}</span>
               </Box>
             ),
           }
@@ -286,30 +418,68 @@ function SummaryTable(props: {
             kind: 'group',
             expanded: item.hasBody ? item.open : undefined,
             onClick: toggle,
-            cells: [groupLabel(g, item.open, item.hasBody), String(g.count), ...g.aggs.map(formatNumber)],
+            cells: [
+              groupLabel(g, item.open, item.hasBody),
+              String(g.count),
+              ...g.aggs.map(formatNumber),
+            ],
           };
     },
     [items, withRows, report, config, editing, colors.link, colors.muted, onToggle]
   );
-  return <GridTable columns={columns} count={items.length} getLine={getLine} sort={withRows ? sort : null} onSort={withRows ? onSort : undefined} rowHeight={rowHeight} colors={colors} kiosk={kiosk} label={`${config.source.kind} summary report`} />;
+  return (
+    <GridTable
+      columns={columns}
+      count={items.length}
+      getLine={getLine}
+      sort={withRows ? sort : null}
+      onSort={withRows ? onSort : undefined}
+      rowHeight={rowHeight}
+      colors={colors}
+      kiosk={kiosk}
+      label={`${config.source.kind} summary report`}
+    />
+  );
 }
 
 /* ----------------------------------- matrix ----------------------------------- */
 
-function MatrixTable(props: { report: MatrixReport; config: ReportConfig; rowHeight: number; kiosk: boolean }): JSX.Element {
+function MatrixTable(props: {
+  report: MatrixReport;
+  config: ReportConfig;
+  rowHeight: number;
+  kiosk: boolean;
+}): JSX.Element {
   const { report, config, rowHeight, kiosk } = props;
   const colors = useReportColors(kiosk);
   const columns: GridColumn[] = [
-    { id: '#row', header: `${fieldHeader(config, report.rowField)} / ${fieldHeader(config, report.colField)}`, grow: 2, min: 160 },
+    {
+      id: '#row',
+      header: `${fieldHeader(config, report.rowField)} / ${fieldHeader(config, report.colField)}`,
+      grow: 2,
+      min: 160,
+    },
     ...report.colLabels.map((c, i) => ({ id: `c${i}`, header: c, numeric: true, min: 90 })),
     { id: '#total', header: 'Total', numeric: true, min: 90 },
   ];
   const getLine = React.useCallback(
     (i: number): GridLine => {
       if (i === report.rowLabels.length) {
-        return { key: 'total', kind: 'matrix-total', cells: ['Total', ...report.colTotals.map(formatNumber), formatNumber(report.grandTotal)] };
+        return {
+          key: 'total',
+          kind: 'matrix-total',
+          cells: ['Total', ...report.colTotals.map(formatNumber), formatNumber(report.grandTotal)],
+        };
       }
-      return { key: `r:${report.rowLabels[i]}`, kind: 'row', cells: [report.rowLabels[i], ...report.cells[i].map(formatNumber), formatNumber(report.rowTotals[i])] };
+      return {
+        key: `r:${report.rowLabels[i]}`,
+        kind: 'row',
+        cells: [
+          report.rowLabels[i],
+          ...report.cells[i].map(formatNumber),
+          formatNumber(report.rowTotals[i]),
+        ],
+      };
     },
     [report]
   );

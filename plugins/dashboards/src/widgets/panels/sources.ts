@@ -44,7 +44,8 @@ export const DEFAULT_AGENT = {
 };
 
 const trimmed = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** A source id: lower case letters, digits, dashes and underscores. It goes into widget types, so keep it simple. */
 export const isSourceId = (s: string): boolean => /^[a-z0-9][a-z0-9_-]{0,39}$/.test(s);
@@ -118,13 +119,17 @@ export function readDrafts(stored: Record<string, unknown> | undefined): SourceD
 /** The short reason a draft cannot be used, or null when it is valid. `taken` holds the ids of the other sources. */
 export function draftProblem(d: SourceDraft, taken: ReadonlyArray<string> = []): string | null {
   const id = d.id.trim();
-  if (!isSourceId(id)) return 'The id must use lower case letters, digits, dashes or underscores, and start with a letter or digit.';
-  if (id === AGENT_SOURCE_ID || taken.includes(id)) return 'This id is already used by another source.';
-  if (d.icon.trim() !== '' && !isIconName(d.icon.trim())) return 'The icon must be an mdi: name, for example mdi:server.';
+  if (!isSourceId(id))
+    return 'The id must use lower case letters, digits, dashes or underscores, and start with a letter or digit.';
+  if (id === AGENT_SOURCE_ID || taken.includes(id))
+    return 'This id is already used by another source.';
+  if (d.icon.trim() !== '' && !isIconName(d.icon.trim()))
+    return 'The icon must be an mdi: name, for example mdi:server.';
   if (d.kind === 'url') {
     try {
       const u = new URL(d.baseUrl.trim());
-      if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'The URL must start with https:// or http://.';
+      if (u.protocol !== 'https:' && u.protocol !== 'http:')
+        return 'The URL must start with https:// or http://.';
     } catch {
       return 'Enter a full URL, for example https://my-app.example.com.';
     }
@@ -141,7 +146,8 @@ export function draftToSource(d: SourceDraft): PanelSource {
   const id = d.id.trim();
   const title = d.title.trim() === '' ? id : d.title.trim();
   const icon = d.icon.trim() === '' ? undefined : d.icon.trim();
-  if (d.kind === 'url') return { id, title, icon, kind: 'url', baseUrl: d.baseUrl.trim().replace(/\/+$/, '') };
+  if (d.kind === 'url')
+    return { id, title, icon, kind: 'url', baseUrl: d.baseUrl.trim().replace(/\/+$/, '') };
   return {
     id,
     title,
@@ -167,7 +173,10 @@ export function resolveSources(stored: Record<string, unknown> | undefined): Pan
   return out;
 }
 
-export const findSource = (sources: ReadonlyArray<PanelSource>, id: string): PanelSource | undefined => sources.find(s => s.id === id);
+export const findSource = (
+  sources: ReadonlyArray<PanelSource>,
+  id: string
+): PanelSource | undefined => sources.find(s => s.id === id);
 
 const enc = encodeURIComponent;
 
@@ -176,11 +185,14 @@ export function sourceUrl(source: PanelSource, path: string): string {
   const tail = path.startsWith('/') ? path : `/${path}`;
   if (source.kind === 'url') return `${source.baseUrl.replace(/\/+$/, '')}${tail}`;
   const svc = source.port ? `${enc(source.service)}:${enc(source.port)}` : enc(source.service);
-  return `/api/v1/namespaces/${enc(source.namespace)}/services/${svc}/proxy${normalisePrefix(source.pathPrefix)}${tail}`;
+  return `/api/v1/namespaces/${enc(source.namespace)}/services/${svc}/proxy${normalisePrefix(
+    source.pathPrefix
+  )}${tail}`;
 }
 
 export const listUrl = (s: PanelSource): string => sourceUrl(s, '/api/widgets');
-export const panelUrl = (s: PanelSource, id: string): string => sourceUrl(s, `/api/widgets/${enc(id)}`);
+export const panelUrl = (s: PanelSource, id: string): string =>
+  sourceUrl(s, `/api/widgets/${enc(id)}`);
 
 /** A stable key for a source's location, for caches and effect dependencies. */
 export const sourceKey = (s: PanelSource): string => listUrl(s);

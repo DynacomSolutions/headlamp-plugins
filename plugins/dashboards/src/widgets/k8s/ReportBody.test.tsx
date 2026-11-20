@@ -7,7 +7,10 @@ vi.mock('@iconify/react', () => ({ Icon: (p: { icon: string }) => <i data-icon={
 vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
   ApiProxy: { request: vi.fn(), streamResults: vi.fn() },
   K8s: { ResourceClasses: {} },
-  Router: { createRouteURL: (name: string, p: Record<string, string>) => `/${name}/${p.namespace}/${p.crName}` },
+  Router: {
+    createRouteURL: (name: string, p: Record<string, string>) =>
+      `/${name}/${p.namespace}/${p.crName}`,
+  },
 }));
 
 import { DEFAULT_REPORT, ReportConfig } from './config';
@@ -20,20 +23,39 @@ const pod = (name: string, ns: string, phase: string, restarts: number) => ({
   metadata: { name, namespace: ns, uid: name },
   status: { phase, containerStatuses: [{ ready: true, restartCount: restarts }] },
 });
-const OBJECTS = [pod('a', 'prod', 'Running', 1), pod('b', 'prod', 'Pending', 2), pod('c', 'dev', 'Running', 3)];
+const OBJECTS = [
+  pod('a', 'prod', 'Running', 1),
+  pod('b', 'prod', 'Pending', 2),
+  pod('c', 'dev', 'Running', 3),
+];
 const scope = { namespaces: [], nodes: [] };
 const show = (patch: Partial<ReportConfig>, objects = OBJECTS, kiosk = false) =>
   render(
     <MemoryRouter>
-      <ReportBody objects={objects} config={{ ...DEFAULT_REPORT, ...patch }} scope={scope} kiosk={kiosk} editing={false} />
+      <ReportBody
+        objects={objects}
+        config={{ ...DEFAULT_REPORT, ...patch }}
+        scope={scope}
+        kiosk={kiosk}
+        editing={false}
+      />
     </MemoryRouter>
   );
 
 describe('ReportBody', () => {
   it('shows a table with a header and sorts when a header is clicked', () => {
-    show({ columns: [{ field: 'name', header: 'Pod' }, { field: 'restarts', header: '' }] });
+    show({
+      columns: [
+        { field: 'name', header: 'Pod' },
+        { field: 'restarts', header: '' },
+      ],
+    });
     expect(screen.getByRole('columnheader', { name: /Pod/ })).toBeTruthy();
-    const names = () => screen.getAllByRole('cell').filter((_, i) => i % 2 === 0).map(c => c.textContent);
+    const names = () =>
+      screen
+        .getAllByRole('cell')
+        .filter((_, i) => i % 2 === 0)
+        .map(c => c.textContent);
     expect(names()).toEqual(['a', 'b', 'c']);
     fireEvent.click(screen.getByRole('button', { name: /Restarts/ }));
     fireEvent.click(screen.getByRole('button', { name: /Restarts/ }));
@@ -47,7 +69,12 @@ describe('ReportBody', () => {
     expect(screen.getByText(/5000 rows/)).toBeTruthy();
   });
   it('shows summary groups with a grand total and collapses a group', () => {
-    show({ reportType: 'summary', groupBy: ['namespace', 'status'], aggregates: [{ field: 'restarts', fn: 'sum' }], showRows: false });
+    show({
+      reportType: 'summary',
+      groupBy: ['namespace', 'status'],
+      aggregates: [{ field: 'restarts', fn: 'sum' }],
+      showRows: false,
+    });
     expect(screen.getByText('prod')).toBeTruthy();
     expect(screen.getByText('Grand total')).toBeTruthy();
     expect(screen.getAllByText('Pending')).toHaveLength(1);
@@ -58,13 +85,19 @@ describe('ReportBody', () => {
   });
   it('draws one chart bar for every group', () => {
     const many = Array.from({ length: 30 }, (_, i) => pod(`p-${i}`, `ns-${i}`, 'Running', 0));
-    const { container } = show({ reportType: 'summary', groupBy: ['namespace'], chart: 'bar' }, many);
+    const { container } = show(
+      { reportType: 'summary', groupBy: ['namespace'], chart: 'bar' },
+      many
+    );
     expect(container.querySelectorAll('svg[role="img"] g > path')).toHaveLength(30);
     expect(container.textContent?.toLowerCase()).not.toContain('other');
   });
   it('draws every donut slice', () => {
     const many = Array.from({ length: 12 }, (_, i) => pod(`p-${i}`, `ns-${i}`, 'Running', 0));
-    const { container } = show({ reportType: 'summary', groupBy: ['namespace'], chart: 'donut' }, many);
+    const { container } = show(
+      { reportType: 'summary', groupBy: ['namespace'], chart: 'donut' },
+      many
+    );
     expect(container.querySelectorAll('svg[role="img"] path')).toHaveLength(12);
     expect(container.querySelectorAll('ul[aria-label="Legend"] li')).toHaveLength(12);
   });

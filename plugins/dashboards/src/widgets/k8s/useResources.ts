@@ -24,7 +24,11 @@ export function useResources(
   refreshSignal: number,
   reportRefreshed: (at?: number) => void
 ): ResourceState {
-  const [state, setState] = React.useState<ResourceState>({ items: [], loading: true, error: null });
+  const [state, setState] = React.useState<ResourceState>({
+    items: [],
+    loading: true,
+    error: null,
+  });
   // Primitive keys keep the effect from running again when only an object identity changes.
   const nsKey = filters.namespaces.join('\u0000');
   const selector = filters.labelSelector;
@@ -82,7 +86,9 @@ export function useResources(
                 ? `You may not list ${plural}${ns ? ` in ${ns}` : ''}.`
                 : err?.status === 404
                 ? `The API for ${plural} was not found.`
-                : `Could not load ${plural}${ns ? ` in ${ns}` : ''}: ${err?.message ?? 'unknown error'}`;
+                : `Could not load ${plural}${ns ? ` in ${ns}` : ''}: ${
+                    err?.message ?? 'unknown error'
+                  }`;
             errors.set(ns, message);
             if (!lists.has(ns)) lists.set(ns, []);
             schedule(true);

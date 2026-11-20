@@ -29,12 +29,31 @@ const COMPONENTS: Components = {
       <span>{children}</span>
     );
   },
-  h1: ({ children }) => <Typography variant="h5" component="h2" gutterBottom>{children}</Typography>,
-  h2: ({ children }) => <Typography variant="h6" component="h3" gutterBottom>{children}</Typography>,
-  h3: ({ children }) => <Typography variant="subtitle1" component="h4" gutterBottom sx={{ fontWeight: 600 }}>{children}</Typography>,
-  p: ({ children }) => <Typography variant="body2" component="p" sx={{ my: 0.5 }}>{children}</Typography>,
+  h1: ({ children }) => (
+    <Typography variant="h5" component="h2" gutterBottom>
+      {children}
+    </Typography>
+  ),
+  h2: ({ children }) => (
+    <Typography variant="h6" component="h3" gutterBottom>
+      {children}
+    </Typography>
+  ),
+  h3: ({ children }) => (
+    <Typography variant="subtitle1" component="h4" gutterBottom sx={{ fontWeight: 600 }}>
+      {children}
+    </Typography>
+  ),
+  p: ({ children }) => (
+    <Typography variant="body2" component="p" sx={{ my: 0.5 }}>
+      {children}
+    </Typography>
+  ),
   code: ({ children }) => (
-    <Box component="code" sx={{ fontFamily: 'monospace', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5 }}>
+    <Box
+      component="code"
+      sx={{ fontFamily: 'monospace', bgcolor: 'action.hover', px: 0.5, borderRadius: 0.5 }}
+    >
       {children}
     </Box>
   ),
@@ -70,7 +89,12 @@ function NoteSettings({ config, onChange }: WidgetSettingsProps<NoteConfig>): JS
       config={config}
       onChange={onChange}
       fields={[
-        { key: 'markdown', label: 'Text (Markdown)', type: 'multiline', help: 'Headings, lists, bold, italic, code and links. HTML and images are not shown.' },
+        {
+          key: 'markdown',
+          label: 'Text (Markdown)',
+          type: 'multiline',
+          help: 'Headings, lists, bold, italic, code and links. HTML and images are not shown.',
+        },
         {
           key: 'align',
           label: 'Alignment',

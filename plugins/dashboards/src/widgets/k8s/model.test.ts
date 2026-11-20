@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_REPORT, normaliseConfig, ReportConfig } from './config';
-import { compareCells, formatAge, getCell, getPathValues, getValues, parseFieldPath, toNumber } from './fields';
+import {
+  compareCells,
+  formatAge,
+  getCell,
+  getPathValues,
+  getValues,
+  parseFieldPath,
+  toNumber,
+} from './fields';
 import { compileFilters, evaluateLogic, parseFilterLogic, testFilter } from './filters';
 import {
   aggregate,
@@ -16,7 +24,14 @@ import {
 
 const NOW = Date.parse('2026-11-20T12:00:00Z');
 
-function pod(name: string, ns: string, phase: string, node: string, restarts: number, extra: Record<string, unknown> = {}) {
+function pod(
+  name: string,
+  ns: string,
+  phase: string,
+  node: string,
+  restarts: number,
+  extra: Record<string, unknown> = {}
+) {
   return {
     kind: 'Pod',
     metadata: {
@@ -27,7 +42,13 @@ function pod(name: string, ns: string, phase: string, node: string, restarts: nu
       labels: { app: name.split('-')[0], 'app.kubernetes.io/name': 'x' },
       ownerReferences: [{ kind: 'ReplicaSet', name: `${name}-rs` }],
     },
-    spec: { nodeName: node, containers: [{ name: 'a', image: 'img:1' }, { name: 'b', image: 'img:2' }] },
+    spec: {
+      nodeName: node,
+      containers: [
+        { name: 'a', image: 'img:1' },
+        { name: 'b', image: 'img:2' },
+      ],
+    },
     status: {
       phase,
       containerStatuses: [
@@ -55,10 +76,23 @@ describe('field paths', () => {
     expect(parseFieldPath('.spec.replicas')).toEqual(['spec', 'replicas']);
     expect(parseFieldPath('spec.replicas')).toEqual(['spec', 'replicas']);
     expect(parseFieldPath('{.spec.replicas}')).toEqual(['spec', 'replicas']);
-    expect(parseFieldPath('.metadata.labels["app.kubernetes.io/name"]')).toEqual(['metadata', 'labels', 'app.kubernetes.io/name']);
-    expect(parseFieldPath('.metadata.labels.app\\.kubernetes\\.io/name')).toEqual(['metadata', 'labels', 'app.kubernetes.io/name']);
+    expect(parseFieldPath('.metadata.labels["app.kubernetes.io/name"]')).toEqual([
+      'metadata',
+      'labels',
+      'app.kubernetes.io/name',
+    ]);
+    expect(parseFieldPath('.metadata.labels.app\\.kubernetes\\.io/name')).toEqual([
+      'metadata',
+      'labels',
+      'app.kubernetes.io/name',
+    ]);
     expect(parseFieldPath('.spec.containers[0].image')).toEqual(['spec', 'containers', 0, 'image']);
-    expect(parseFieldPath('.spec.containers[*].image')).toEqual(['spec', 'containers', '*', 'image']);
+    expect(parseFieldPath('.spec.containers[*].image')).toEqual([
+      'spec',
+      'containers',
+      '*',
+      'image',
+    ]);
   });
   it('rejects malformed paths', () => {
     expect(parseFieldPath('')).toBeNull();
@@ -93,7 +127,12 @@ describe('field paths', () => {
     expect(getCell(p, 'status', NOW).text).toBe('CrashLoopBackOff');
   });
   it('shows replica readiness for workloads', () => {
-    const d = { kind: 'Deployment', metadata: { name: 'd' }, spec: { replicas: 3 }, status: { readyReplicas: 2 } };
+    const d = {
+      kind: 'Deployment',
+      metadata: { name: 'd' },
+      spec: { replicas: 3 },
+      status: { readyReplicas: 2 },
+    };
     expect(getCell(d, 'ready', NOW).text).toBe('2/3');
     const n = { kind: 'Node', metadata: { name: 'n1' } };
     expect(getCell(n, 'node', NOW).text).toBe('n1');
@@ -111,7 +150,9 @@ describe('field paths', () => {
   });
   it('compares numbers numerically, text naturally and empty values last', () => {
     expect(compareCells({ value: 9, text: '9' }, { value: 10, text: '10' })).toBeLessThan(0);
-    expect(compareCells({ value: 'a2', text: 'a2' }, { value: 'a10', text: 'a10' })).toBeLessThan(0);
+    expect(compareCells({ value: 'a2', text: 'a2' }, { value: 'a10', text: 'a10' })).toBeLessThan(
+      0
+    );
     expect(compareCells({ value: null, text: '' }, { value: 'a', text: 'a' })).toBeGreaterThan(0);
   });
 });
@@ -173,12 +214,18 @@ describe('filter logic', () => {
   it('reports errors', () => {
     expect(parseFilterLogic('', 2).ok).toBe(false);
     expect(parseFilterLogic('1 AND', 2)).toMatchObject({ ok: false });
-    expect(parseFilterLogic('1 AND 3', 2)).toMatchObject({ ok: false, error: expect.stringContaining('Filter 3') });
+    expect(parseFilterLogic('1 AND 3', 2)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('Filter 3'),
+    });
     expect(parseFilterLogic('1 AND (2', 2)).toMatchObject({ ok: false });
     expect(parseFilterLogic('1 XOR 2', 2)).toMatchObject({ ok: false });
     expect(parseFilterLogic('1 2', 2)).toMatchObject({ ok: false });
     expect(parseFilterLogic('1 & 2', 2)).toMatchObject({ ok: false });
-    expect(parseFilterLogic('1', 2)).toMatchObject({ ok: false, error: expect.stringContaining('Filter 2') });
+    expect(parseFilterLogic('1', 2)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('Filter 2'),
+    });
   });
   it('compiles filters with AND by default and with custom logic', () => {
     const filters = [
@@ -227,10 +274,18 @@ describe('tabular report', () => {
         { field: '.metadata.labels.app', header: '' },
       ],
     });
-    const r = buildReport(PODS, cfg, { ...opts, sortField: 'restarts', sortDir: 'desc' }) as TabularReport;
+    const r = buildReport(PODS, cfg, {
+      ...opts,
+      sortField: 'restarts',
+      sortDir: 'desc',
+    }) as TabularReport;
     expect(r.columns.map(c => c.header)).toEqual(['Pod', 'Restarts', 'app']);
     expect(r.rows.map(x => x.cells[0].text)).toEqual(['web-3', 'db-1', 'web-1', 'web-2', 'job-1']);
-    const asc = buildReport(PODS, cfg, { ...opts, sortField: 'name', sortDir: 'asc' }) as TabularReport;
+    const asc = buildReport(PODS, cfg, {
+      ...opts,
+      sortField: 'name',
+      sortDir: 'asc',
+    }) as TabularReport;
     expect(asc.rows[0].cells[0].text).toBe('db-1');
   });
   it('uses the name column when none is set', () => {
@@ -250,7 +305,13 @@ describe('summary report', () => {
     expect(aggregate([null], 'sum')).toBeNull();
   });
   it('groups by one field with counts and aggregates', () => {
-    const r = summary({ groupBy: ['status'], aggregates: [{ field: 'restarts', fn: 'sum' }, { field: 'restarts', fn: 'max' }] });
+    const r = summary({
+      groupBy: ['status'],
+      aggregates: [
+        { field: 'restarts', fn: 'sum' },
+        { field: 'restarts', fn: 'max' },
+      ],
+    });
     expect(r.groups.map(g => [g.label, g.count])).toEqual([
       ['Pending', 1],
       ['Running', 3],
@@ -262,7 +323,10 @@ describe('summary report', () => {
     expect(r.total.aggs[0]).toBe(3 + 1 + 6 + 1 + 11);
   });
   it('groups by two fields with subtotals', () => {
-    const r = summary({ groupBy: ['namespace', 'status'], aggregates: [{ field: 'restarts', fn: 'avg' }] });
+    const r = summary({
+      groupBy: ['namespace', 'status'],
+      aggregates: [{ field: 'restarts', fn: 'avg' }],
+    });
     const prod = r.groups.find(g => g.label === 'prod')!;
     expect(prod.count).toBe(3);
     expect(prod.children.map(c => [c.label, c.count])).toEqual([
@@ -277,12 +341,20 @@ describe('summary report', () => {
     const r = summary({ groupBy: ['namespace', 'status', 'node'] as any });
     expect(r.groupFields).toHaveLength(2);
     const many = Array.from({ length: 40 }, (_, i) => pod(`p-${i}`, `ns-${i}`, 'Running', 'n1', 0));
-    const big = buildReport(many, config({ reportType: 'summary', groupBy: ['namespace'] }), opts) as SummaryReport;
+    const big = buildReport(
+      many,
+      config({ reportType: 'summary', groupBy: ['namespace'] }),
+      opts
+    ) as SummaryReport;
     expect(big.groups).toHaveLength(40);
   });
   it('sorts groups by count and puts empty groups last', () => {
     const objs = [...PODS, { kind: 'Pod', metadata: { name: 'z', namespace: 'prod' } }];
-    const r = buildReport(objs, config({ reportType: 'summary', groupBy: ['status'], groupSort: 'count' }), opts) as SummaryReport;
+    const r = buildReport(
+      objs,
+      config({ reportType: 'summary', groupBy: ['status'], groupSort: 'count' }),
+      opts
+    ) as SummaryReport;
     expect(r.groups.map(g => g.label)).toEqual(['Running', 'Pending', 'Succeeded', '(none)']);
   });
   it('flattens with collapse state and rows', () => {
@@ -297,7 +369,9 @@ describe('summary report', () => {
     expect(withRows.filter(i => i.kind === 'row')).toHaveLength(5);
     const closedByDefault = flattenSummary(r, new Set(), false, true);
     expect(closedByDefault.filter(i => i.kind === 'group')).toHaveLength(2);
-    expect(closedByDefault.filter(i => i.kind === 'group').every(i => i.kind === 'group' && i.hasBody)).toBe(true);
+    expect(
+      closedByDefault.filter(i => i.kind === 'group').every(i => i.kind === 'group' && i.hasBody)
+    ).toBe(true);
   });
   it('falls back to a table when there is no group field', () => {
     expect(summary({ groupBy: [] }).type).toBe('tabular');
@@ -306,7 +380,11 @@ describe('summary report', () => {
 
 describe('matrix report', () => {
   const matrix = (patch: Partial<ReportConfig>) =>
-    buildReport(PODS, config({ reportType: 'matrix', matrixRow: 'namespace', matrixCol: 'status', ...patch }), opts) as MatrixReport;
+    buildReport(
+      PODS,
+      config({ reportType: 'matrix', matrixRow: 'namespace', matrixCol: 'status', ...patch }),
+      opts
+    ) as MatrixReport;
   it('counts rows by one field and columns by another', () => {
     const m = matrix({});
     expect(m.rowLabels).toEqual(['dev', 'prod']);
@@ -355,12 +433,21 @@ describe('CSV', () => {
     expect(csvField(-3, true)).toBe('-3');
   });
   it('exports a table', () => {
-    const cfg = config({ columns: [{ field: 'name', header: '' }, { field: 'status', header: 'Phase' }] });
+    const cfg = config({
+      columns: [
+        { field: 'name', header: '' },
+        { field: 'status', header: 'Phase' },
+      ],
+    });
     const r = buildReport(PODS.slice(0, 2), cfg, opts);
     expect(reportToCsv(r, cfg)).toBe('Name,Phase\r\nweb-1,Running\r\nweb-2,Running');
   });
   it('exports a summary with a grand total', () => {
-    const cfg = config({ reportType: 'summary', groupBy: ['namespace', 'status'], aggregates: [{ field: 'restarts', fn: 'sum' }] });
+    const cfg = config({
+      reportType: 'summary',
+      groupBy: ['namespace', 'status'],
+      aggregates: [{ field: 'restarts', fn: 'sum' }],
+    });
     const csv = reportToCsv(buildReport(PODS, cfg, opts), cfg).split('\r\n');
     expect(csv[0]).toBe('Namespace,Status,Rows,sum of Restarts');
     expect(csv[1]).toBe('dev,,2,12');
@@ -379,7 +466,13 @@ describe('CSV', () => {
 describe('config normaliser', () => {
   it('returns defaults for junk and clamps values', () => {
     expect(normaliseConfig(null).source.plural).toBe('pods');
-    const c = normaliseConfig({ groupBy: ['a', 'b', 'c'], reportType: 'nope', chart: 'donut', filters: [{ field: 'x', op: 'zzz', value: 3 }], columns: 'x' });
+    const c = normaliseConfig({
+      groupBy: ['a', 'b', 'c'],
+      reportType: 'nope',
+      chart: 'donut',
+      filters: [{ field: 'x', op: 'zzz', value: 3 }],
+      columns: 'x',
+    });
     expect(c.groupBy).toEqual(['a', 'b']);
     expect(c.reportType).toBe('tabular');
     expect(c.chart).toBe('donut');

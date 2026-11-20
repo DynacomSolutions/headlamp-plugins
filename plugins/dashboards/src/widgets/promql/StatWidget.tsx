@@ -4,7 +4,16 @@ import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../c
 import { SettingsForm } from '../SettingsForm';
 import { kioskBox, Notice, useInk } from './common';
 import { LevelBadge } from './LevelBadge';
-import { mergeTimes, parseMatrix, parseVector, Reduce, REDUCE_OPTIONS, reduceSamples, Series, valueAt } from './mapping';
+import {
+  mergeTimes,
+  parseMatrix,
+  parseVector,
+  Reduce,
+  REDUCE_OPTIONS,
+  reduceSamples,
+  Series,
+  valueAt,
+} from './mapping';
 import { QueryEditor } from './QueryEditor';
 import { Sparkline } from './Sparkline';
 import { LEVEL_COLOUR, parseThresholds, thresholdLevel } from './thresholds';
@@ -40,7 +49,13 @@ export function reduceSeries(series: Series[], how: Reduce): Series {
     key: 'reduced',
     labels: {},
     name: '',
-    points: times.map(t => ({ t, v: reduceSamples(series.map(s => valueAt(s, t)), how) })),
+    points: times.map(t => ({
+      t,
+      v: reduceSamples(
+        series.map(s => valueAt(s, t)),
+        how
+      ),
+    })),
   };
 }
 
@@ -61,10 +76,22 @@ export function statValue(
     return { value: last, spark };
   }
   const samples = parseVector(r.result, undefined, r.resultType);
-  return { value: reduceSamples(samples.map(s => s.value), config.reduce), spark: [] };
+  return {
+    value: reduceSamples(
+      samples.map(s => s.value),
+      config.reduce
+    ),
+    spark: [],
+  };
 }
 
-function StatWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }: WidgetProps<StatConfig>): JSX.Element {
+function StatWidget({
+  config,
+  filters,
+  refreshSignal,
+  reportRefreshed,
+  kiosk,
+}: WidgetProps<StatConfig>): JSX.Element {
   const { ref, sizeRef, measured } = useElementSize<HTMLDivElement>();
   const { ink, mode } = useInk(kiosk);
   const queries = React.useMemo(() => [config.query.trim()], [config.query]);
@@ -79,30 +106,67 @@ function StatWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }: 
   });
   const data = React.useMemo(() => statValue(state.results, config), [state.results, config]);
   const steps = React.useMemo(() => parseThresholds(config.thresholds), [config.thresholds]);
-  const level = data && data.value !== null ? thresholdLevel(data.value, steps, config.invert) : undefined;
+  const level =
+    data && data.value !== null ? thresholdLevel(data.value, steps, config.invert) : undefined;
   const accent = level ? LEVEL_COLOUR[level] : mode === 'dark' ? '#3987e5' : '#2a78d6';
   const unit = UNIT_OPTIONS.some(o => o.value === config.unit) ? config.unit : 'plain';
 
   let body: React.ReactNode;
   if (state.error) body = <Notice kind="error">{state.error}</Notice>;
-  else if (queries[0] === '') body = <Notice kind="empty">Set a query in the widget settings.</Notice>;
+  else if (queries[0] === '')
+    body = <Notice kind="empty">Set a query in the widget settings.</Notice>;
   else if (!data) body = <Notice kind="wait">Loading...</Notice>;
   else if (data.value === null) body = <Notice kind="empty">The query returned no value.</Notice>;
   else {
     body = (
-      <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 0 }}>
+      <Box
+        sx={{
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: 0,
+        }}
+      >
         {config.label && (
-          <Box sx={{ color: ink.secondary, fontSize: 'clamp(0.75rem, 6cqmin, 1.2rem)', textAlign: 'center', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <Box
+            sx={{
+              color: ink.secondary,
+              fontSize: 'clamp(0.75rem, 6cqmin, 1.2rem)',
+              textAlign: 'center',
+              maxWidth: '100%',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
             {config.label}
           </Box>
         )}
-        <Box data-stat-value sx={{ fontSize: 'clamp(1.6rem, 24cqmin, 6rem)', fontWeight: 600, lineHeight: 1.1, color: ink.primary, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <Box
+          data-stat-value
+          sx={{
+            fontSize: 'clamp(1.6rem, 24cqmin, 6rem)',
+            fontWeight: 600,
+            lineHeight: 1.1,
+            color: ink.primary,
+            maxWidth: '100%',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
           {formatValue(data.value, unit)}
         </Box>
         {level && <LevelBadge level={level} color={ink.secondary} />}
         {config.sparkline && data.spark.length > 1 && (
           <Box sx={{ width: '100%', flex: '0 1 30%', minHeight: 24, maxHeight: 80, mt: 1 }}>
-            <Sparkline values={data.spark} colour={accent} label={`${config.label || 'Value'} over the time range`} />
+            <Sparkline
+              values={data.spark}
+              colour={accent}
+              label={`${config.label || 'Value'} over the time range`}
+            />
           </Box>
         )}
       </Box>
@@ -112,7 +176,14 @@ function StatWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }: 
   return (
     <Box
       ref={ref}
-      sx={{ height: '100%', containerType: 'size', opacity: state.loading ? 0.6 : 1, transition: 'opacity 150ms', color: ink.primary, ...kioskBox(kiosk) }}
+      sx={{
+        height: '100%',
+        containerType: 'size',
+        opacity: state.loading ? 0.6 : 1,
+        transition: 'opacity 150ms',
+        color: ink.primary,
+        ...kioskBox(kiosk),
+      }}
     >
       {body}
     </Box>
@@ -134,8 +205,17 @@ function StatSettings({ config, onChange }: WidgetSettingsProps<StatConfig>): JS
         fields={[
           { key: 'label', label: 'Label', type: 'text' },
           { key: 'unit', label: 'Unit', type: 'select', options: UNIT_OPTIONS },
-          { key: 'reduce', label: 'When the query returns several series', type: 'select', options: REDUCE_OPTIONS },
-          { key: 'sparkline', label: 'Show a sparkline (uses the dashboard time range)', type: 'boolean' },
+          {
+            key: 'reduce',
+            label: 'When the query returns several series',
+            type: 'select',
+            options: REDUCE_OPTIONS,
+          },
+          {
+            key: 'sparkline',
+            label: 'Show a sparkline (uses the dashboard time range)',
+            type: 'boolean',
+          },
           {
             key: 'thresholds',
             label: 'Thresholds',
@@ -143,7 +223,11 @@ function StatSettings({ config, onChange }: WidgetSettingsProps<StatConfig>): JS
             placeholder: '70:warning, 90:critical',
             help: 'From a value up, the status changes: good, warning, serious or critical. Below the first one the status is good.',
           },
-          { key: 'invert', label: 'A lower value is worse (thresholds read as "or less")', type: 'boolean' },
+          {
+            key: 'invert',
+            label: 'A lower value is worse (thresholds read as "or less")',
+            type: 'boolean',
+          },
         ]}
       />
     </Box>

@@ -18,7 +18,12 @@ export const MAX_SECTION_HEIGHT = 4000;
 
 export type TabPosition = 'top' | 'left';
 export type SectionMode = 'flow' | 'sticky-top' | 'sticky-bottom' | 'self-scroll';
-export const SECTION_MODES: ReadonlyArray<SectionMode> = ['flow', 'sticky-top', 'sticky-bottom', 'self-scroll'];
+export const SECTION_MODES: ReadonlyArray<SectionMode> = [
+  'flow',
+  'sticky-top',
+  'sticky-bottom',
+  'self-scroll',
+];
 
 /** Automatic refresh intervals in seconds. 0 is off. */
 export const REFRESH_OPTIONS: ReadonlyArray<{ seconds: number; label: string }> = [
@@ -137,11 +142,27 @@ export function uniqueSlug(base: string, taken: Iterable<string>): string {
 }
 
 export function emptySection(title = 'Section'): Section {
-  return { id: newId('sec'), title, showTitle: false, mode: 'flow', height: DEFAULT_SECTION_HEIGHT, widgets: [] };
+  return {
+    id: newId('sec'),
+    title,
+    showTitle: false,
+    mode: 'flow',
+    height: DEFAULT_SECTION_HEIGHT,
+    widgets: [],
+  };
 }
 
-export function emptyTab(label = 'Overview', icon = 'mdi:view-dashboard-outline', taken: string[] = []): Tab {
-  return { id: uniqueSlug(slugify(label, 'tab'), taken), label, icon, sections: [emptySection('Main')] };
+export function emptyTab(
+  label = 'Overview',
+  icon = 'mdi:view-dashboard-outline',
+  taken: string[] = []
+): Tab {
+  return {
+    id: uniqueSlug(slugify(label, 'tab'), taken),
+    label,
+    icon,
+    sections: [emptySection('Main')],
+  };
 }
 
 export function emptySpec(title: string): DashboardSpec {
@@ -173,7 +194,9 @@ const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : 
 const strList = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && x !== '') : [];
 const num = (v: unknown, fallback: number, min: number, max: number): number =>
-  typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, Math.round(v))) : fallback;
+  typeof v === 'number' && Number.isFinite(v)
+    ? Math.min(max, Math.max(min, Math.round(v)))
+    : fallback;
 
 export function normaliseFilters(raw: unknown): DashboardFilters {
   const r = isObject(raw) ? raw : {};
@@ -181,7 +204,9 @@ export function normaliseFilters(raw: unknown): DashboardFilters {
     namespaces: strList(r.namespaces),
     nodes: strList(r.nodes),
     labelSelector: str(r.labelSelector),
-    range: (TIME_RANGES as ReadonlyArray<string>).includes(r.range) ? (r.range as TimeRange) : DEFAULT_RANGE,
+    range: (TIME_RANGES as ReadonlyArray<string>).includes(r.range)
+      ? (r.range as TimeRange)
+      : DEFAULT_RANGE,
   };
 }
 
@@ -215,7 +240,9 @@ function normaliseWidget(raw: unknown): WidgetInstance | null {
 function normaliseSection(raw: unknown): Section | null {
   if (!isObject(raw)) return null;
   const widgets = uniqueIds(
-    (Array.isArray(raw.widgets) ? raw.widgets : []).map(normaliseWidget).filter((w): w is WidgetInstance => w !== null),
+    (Array.isArray(raw.widgets) ? raw.widgets : [])
+      .map(normaliseWidget)
+      .filter((w): w is WidgetInstance => w !== null),
     'w'
   );
   return {
@@ -231,7 +258,9 @@ function normaliseSection(raw: unknown): Section | null {
 function normaliseTab(raw: unknown, taken: string[]): Tab | null {
   if (!isObject(raw)) return null;
   const sections = uniqueIds(
-    (Array.isArray(raw.sections) ? raw.sections : []).map(normaliseSection).filter((s): s is Section => s !== null),
+    (Array.isArray(raw.sections) ? raw.sections : [])
+      .map(normaliseSection)
+      .filter((s): s is Section => s !== null),
     'sec'
   );
   const label = str(raw.label, 'Tab');
@@ -263,17 +292,29 @@ export function migrateSpec(input: unknown): { spec: DashboardSpec; migrated: bo
   }
   const tabs: Tab[] = [];
   for (const t of Array.isArray(raw.tabs) ? raw.tabs : []) {
-    const tab = normaliseTab(t, tabs.map(x => x.id));
+    const tab = normaliseTab(
+      t,
+      tabs.map(x => x.id)
+    );
     if (tab) {
       // Tab ids appear in URLs, so a duplicate gets a new one.
-      const id = tabs.some(x => x.id === tab.id) ? uniqueSlug(tab.id, tabs.map(x => x.id)) : tab.id;
+      const id = tabs.some(x => x.id === tab.id)
+        ? uniqueSlug(
+            tab.id,
+            tabs.map(x => x.id)
+          )
+        : tab.id;
       tabs.push(id === tab.id ? tab : { ...tab, id });
     }
   }
   const views = uniqueIds(
     (Array.isArray(raw.views) ? raw.views : [])
       .filter(isObject)
-      .map(v => ({ id: str(v.id) || newId('view'), name: str(v.name, 'View'), filters: normaliseFilters(v.filters) })),
+      .map(v => ({
+        id: str(v.id) || newId('view'),
+        name: str(v.name, 'View'),
+        filters: normaliseFilters(v.filters),
+      })),
     'view'
   );
   const spec: DashboardSpec = {
@@ -281,7 +322,9 @@ export function migrateSpec(input: unknown): { spec: DashboardSpec; migrated: bo
     title: str(raw.title, 'Dashboard'),
     description: str(raw.description),
     tabPosition: raw.tabPosition === 'left' ? 'left' : 'top',
-    refreshSeconds: REFRESH_OPTIONS.some(o => o.seconds === raw.refreshSeconds) ? raw.refreshSeconds : 0,
+    refreshSeconds: REFRESH_OPTIONS.some(o => o.seconds === raw.refreshSeconds)
+      ? raw.refreshSeconds
+      : 0,
     filters: normaliseFilters(raw.filters),
     tabs: tabs.length > 0 ? tabs : [emptyTab()],
     views,

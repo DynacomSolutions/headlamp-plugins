@@ -24,8 +24,10 @@ export function statusMessage(status: number, kind: PanelSource['kind']): string
       ? 'Access denied (403). Your Kubernetes permissions do not allow the service proxy for this service.'
       : 'Access denied (403). The app refused the request. Sign in to the app in this browser, then try again.';
   }
-  if (status === 401) return 'Not signed in (401). Sign in to the app in this browser, then try again.';
-  if (status === 404) return 'Not found (404). The source does not serve the panel API at this address. Check the source settings.';
+  if (status === 401)
+    return 'Not signed in (401). Sign in to the app in this browser, then try again.';
+  if (status === 404)
+    return 'Not found (404). The source does not serve the panel API at this address. Check the source settings.';
   return `The source answered with HTTP ${status}.`;
 }
 
@@ -44,7 +46,9 @@ async function requestJson(source: PanelSource, url: string, cluster?: string): 
       return await (cluster ? ApiProxy.clusterRequest(url, { cluster }) : ApiProxy.request(url));
     } catch (e) {
       const status = statusOf(e);
-      throw new SourceError(status !== undefined && status >= 400 ? statusMessage(status, 'service') : reason(e));
+      throw new SourceError(
+        status !== undefined && status >= 400 ? statusMessage(status, 'service') : reason(e)
+      );
     }
   }
   let res: Response;
@@ -52,13 +56,17 @@ async function requestJson(source: PanelSource, url: string, cluster?: string): 
     res = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
   } catch {
     // The browser hides the real cause. A blocked cross-origin call is the usual one.
-    throw new SourceError('The browser could not reach the source. The app must allow this origin with credentials (CORS), and the address must be correct.');
+    throw new SourceError(
+      'The browser could not reach the source. The app must allow this origin with credentials (CORS), and the address must be correct.'
+    );
   }
   if (!res.ok) throw new SourceError(statusMessage(res.status, 'url'));
   try {
     return await res.json();
   } catch {
-    throw new SourceError('The source did not send JSON. Check that the address serves the panel API.');
+    throw new SourceError(
+      'The source did not send JSON. Check that the address serves the panel API.'
+    );
   }
 }
 
@@ -75,10 +83,19 @@ const entries = new Map<string, Entry>();
  * One request per key. A request that is still running is shared. A finished answer is reused while it is
  * younger than `ttlMs`. A failed request is not kept, so the next call tries again.
  */
-export function shared<T>(key: string, ttlMs: number, load: () => Promise<T>, now: () => number = Date.now): Promise<T> {
+export function shared<T>(
+  key: string,
+  ttlMs: number,
+  load: () => Promise<T>,
+  now: () => number = Date.now
+): Promise<T> {
   const hit = entries.get(key);
   if (hit && (hit.pending || now() - hit.at < ttlMs)) return hit.promise as Promise<T>;
-  const entry: Entry = { at: now(), pending: true, promise: undefined as unknown as Promise<unknown> };
+  const entry: Entry = {
+    at: now(),
+    pending: true,
+    promise: undefined as unknown as Promise<unknown>,
+  };
   entry.promise = load().then(
     v => {
       entry.pending = false;
@@ -102,13 +119,21 @@ const LIST_TTL_MS = 60_000;
 
 /** The panel list. One request per minute per source, shared by every widget and the settings form. */
 export function fetchPanelList(source: PanelSource): Promise<PanelInfo[]> {
-  return shared(`list ${listUrl(source)}`, LIST_TTL_MS, async () => parsePanelList(await requestJson(source, listUrl(source))));
+  return shared(`list ${listUrl(source)}`, LIST_TTL_MS, async () =>
+    parsePanelList(await requestJson(source, listUrl(source)))
+  );
 }
 
 /** One panel. A request is shared while it runs, and an answer is reused for `ttlSeconds` (the panel's `refreshSeconds`). */
-export function fetchPanel(source: PanelSource, id: string, ttlSeconds: number): Promise<PanelModel> {
+export function fetchPanel(
+  source: PanelSource,
+  id: string,
+  ttlSeconds: number
+): Promise<PanelModel> {
   const url = panelUrl(source, id);
-  return shared(`panel ${url}`, Math.max(0, ttlSeconds) * 1000, async () => parsePanel(await requestJson(source, url)));
+  return shared(`panel ${url}`, Math.max(0, ttlSeconds) * 1000, async () =>
+    parsePanel(await requestJson(source, url))
+  );
 }
 
 /** The Test button: asks the source for its list without the cache, and gives the panel count. Throws a clear message. */
@@ -118,7 +143,8 @@ export async function testSource(source: PanelSource, cluster?: string): Promise
   return parsePanelList(await requestJson(source, url, cluster)).length;
 }
 
-const missing = (id: string): string => `The source "${id}" is not configured. Choose another source in the widget settings, or add it on the Dashboards settings page.`;
+const missing = (id: string): string =>
+  `The source "${id}" is not configured. Choose another source in the widget settings, or add it on the Dashboards settings page.`;
 
 export interface PanelListState {
   loading: boolean;
@@ -127,7 +153,11 @@ export interface PanelListState {
 }
 
 export function usePanelList(source: PanelSource | undefined, sourceId = ''): PanelListState {
-  const [state, setState] = React.useState<{ key: string; error: string | null; panels: PanelInfo[] } | null>(null);
+  const [state, setState] = React.useState<{
+    key: string;
+    error: string | null;
+    panels: PanelInfo[];
+  } | null>(null);
   const key = source ? sourceKey(source) : '';
   React.useEffect(() => {
     if (!source) return undefined;
@@ -144,7 +174,11 @@ export function usePanelList(source: PanelSource | undefined, sourceId = ''): Pa
   }, [key]);
   if (!source) return { loading: false, error: missing(sourceId), panels: [] };
   const current = state?.key === key ? state : null;
-  return { loading: current === null, error: current?.error ?? null, panels: current?.panels ?? [] };
+  return {
+    loading: current === null,
+    error: current?.error ?? null,
+    panels: current?.panels ?? [],
+  };
 }
 
 export interface PanelState {
@@ -167,7 +201,11 @@ export function usePanel(
   sourceId = ''
 ): PanelState {
   const url = source && id ? panelUrl(source, id) : '';
-  const [state, setState] = React.useState<{ url: string; panel: PanelModel | null; error: string | null } | null>(null);
+  const [state, setState] = React.useState<{
+    url: string;
+    panel: PanelModel | null;
+    error: string | null;
+  } | null>(null);
   const last = React.useRef<{ url: string; at: number } | null>(null);
   const minRef = React.useRef(minSeconds);
   minRef.current = minSeconds;
@@ -175,7 +213,8 @@ export function usePanel(
     if (!url || !source) return undefined;
     const now = Date.now();
     const sameUrl = last.current?.url === url;
-    if (sameUrl && !mayFetch(last.current ? last.current.at : null, now, minRef.current)) return undefined;
+    if (sameUrl && !mayFetch(last.current ? last.current.at : null, now, minRef.current))
+      return undefined;
     let live = true;
     fetchPanel(source, id, minRef.current).then(
       panel => {
@@ -185,7 +224,9 @@ export function usePanel(
         last.current = { url, at: Date.now() };
         reportRefreshed(Date.now());
       },
-      e => live && setState(prev => ({ url, panel: prev?.url === url ? prev.panel : null, error: reason(e) }))
+      e =>
+        live &&
+        setState(prev => ({ url, panel: prev?.url === url ? prev.panel : null, error: reason(e) }))
     );
     return () => {
       live = false;
@@ -195,5 +236,9 @@ export function usePanel(
   }, [url, refreshSignal, reportRefreshed]);
   if (!source && id) return { loading: false, error: missing(sourceId), panel: null };
   const current = state?.url === url ? state : null;
-  return { loading: url !== '' && current === null, error: current?.error ?? null, panel: current?.panel ?? null };
+  return {
+    loading: url !== '' && current === null,
+    error: current?.error ?? null,
+    panel: current?.panel ?? null,
+  };
 }

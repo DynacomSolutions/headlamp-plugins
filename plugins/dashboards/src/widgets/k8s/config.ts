@@ -57,7 +57,13 @@ export interface ReportConfig {
   sortDir: SortDir;
 }
 
-export const DEFAULT_SOURCE: SourceRef = { group: '', version: 'v1', plural: 'pods', kind: 'Pod', namespaced: true };
+export const DEFAULT_SOURCE: SourceRef = {
+  group: '',
+  version: 'v1',
+  plural: 'pods',
+  kind: 'Pod',
+  namespaced: true,
+};
 
 export const DEFAULT_REPORT: ReportConfig = {
   source: DEFAULT_SOURCE,
@@ -100,7 +106,10 @@ export function normaliseConfig(raw: unknown): ReportConfig {
   const d = DEFAULT_REPORT;
   const s = c.source && typeof c.source === 'object' ? c.source : {};
   const source: SourceRef =
-    typeof s.plural === 'string' && s.plural !== '' && typeof s.version === 'string' && s.version !== ''
+    typeof s.plural === 'string' &&
+    s.plural !== '' &&
+    typeof s.version === 'string' &&
+    s.version !== ''
       ? {
           group: str(s.group),
           version: s.version,
@@ -117,7 +126,11 @@ export function normaliseConfig(raw: unknown): ReportConfig {
   const filters: ReportFilter[] = Array.isArray(c.filters)
     ? c.filters
         .filter((x: any) => x && typeof x === 'object')
-        .map((x: any) => ({ field: str(x.field), op: oneOf(x.op, FILTER_OPS, 'eq'), value: str(x.value) }))
+        .map((x: any) => ({
+          field: str(x.field),
+          op: oneOf(x.op, FILTER_OPS, 'eq'),
+          value: str(x.value),
+        }))
     : d.filters;
   const aggregates: AggregateSpec[] = Array.isArray(c.aggregates)
     ? c.aggregates

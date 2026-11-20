@@ -112,7 +112,14 @@ export function GridTable(props: {
             <Box
               key={c.id}
               role="cell"
-              sx={{ px: 1.25, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: c.numeric ? 'right' : 'left', fontVariantNumeric: c.numeric ? 'tabular-nums' : undefined }}
+              sx={{
+                px: 1.25,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                textAlign: c.numeric ? 'right' : 'left',
+                fontVariantNumeric: c.numeric ? 'tabular-nums' : undefined,
+              }}
             >
               {line.cells?.[ci]}
             </Box>
@@ -160,7 +167,13 @@ export function GridTable(props: {
             const content = (
               <>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.header}</span>
-                {active && <Icon icon={sort?.dir === 'asc' ? 'mdi:arrow-up' : 'mdi:arrow-down'} width={14} aria-hidden />}
+                {active && (
+                  <Icon
+                    icon={sort?.dir === 'asc' ? 'mdi:arrow-up' : 'mdi:arrow-down'}
+                    width={14}
+                    aria-hidden
+                  />
+                )}
               </>
             );
             return (
@@ -168,7 +181,12 @@ export function GridTable(props: {
                 key={c.id}
                 role="columnheader"
                 aria-sort={active ? (sort?.dir === 'asc' ? 'ascending' : 'descending') : undefined}
-                sx={{ px: 1.25, overflow: 'hidden', whiteSpace: 'nowrap', textAlign: c.numeric ? 'right' : 'left' }}
+                sx={{
+                  px: 1.25,
+                  overflow: 'hidden',
+                  whiteSpace: 'nowrap',
+                  textAlign: c.numeric ? 'right' : 'left',
+                }}
               >
                 {c.sortable && onSort ? (
                   <Box
@@ -189,7 +207,9 @@ export function GridTable(props: {
                     {content}
                   </Box>
                 ) : (
-                  <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>{content}</span>
+                  <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                    {content}
+                  </span>
                 )}
               </Box>
             );
@@ -199,7 +219,9 @@ export function GridTable(props: {
           {lines}
         </Box>
         {count === 0 && (
-          <Box sx={{ p: 2, color: colors.muted, textAlign: 'center' }}>{props.empty ?? 'No rows match this report.'}</Box>
+          <Box sx={{ p: 2, color: colors.muted, textAlign: 'center' }}>
+            {props.empty ?? 'No rows match this report.'}
+          </Box>
         )}
       </Box>
     </Box>

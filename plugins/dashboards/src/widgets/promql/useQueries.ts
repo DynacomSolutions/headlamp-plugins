@@ -36,7 +36,14 @@ export interface UseQueriesArgs {
   widthRef: React.MutableRefObject<{ width: number; height: number }>;
 }
 
-const EMPTY: QueriesState = { results: undefined, error: undefined, loading: false, step: undefined, start: undefined, end: undefined };
+const EMPTY: QueriesState = {
+  results: undefined,
+  error: undefined,
+  loading: false,
+  step: undefined,
+  start: undefined,
+  end: undefined,
+};
 
 export function useQueries(args: UseQueriesArgs): QueriesState {
   const { mode, queries, filters, enabled = true, refreshSignal, reportRefreshed, widthRef } = args;

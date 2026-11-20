@@ -25,14 +25,22 @@ export interface Loaded<T> {
 
 /** Runs `load` on mount and whenever its deps change. A stale answer is ignored. */
 function useLoaded<T>(load: () => Promise<T>, deps: React.DependencyList): Loaded<T> {
-  const [state, setState] = React.useState<{ data?: T; error?: Error; loading: boolean }>({ loading: true });
+  const [state, setState] = React.useState<{ data?: T; error?: Error; loading: boolean }>({
+    loading: true,
+  });
   const [tick, setTick] = React.useState(0);
   React.useEffect(() => {
     let live = true;
     setState(s => ({ ...s, loading: true }));
     load().then(
       data => live && setState({ data, loading: false }),
-      error => live && setState(s => ({ data: s.data, error: error instanceof Error ? error : new Error(String(error)), loading: false }))
+      error =>
+        live &&
+        setState(s => ({
+          data: s.data,
+          error: error instanceof Error ? error : new Error(String(error)),
+          loading: false,
+        }))
     );
     return () => {
       live = false;

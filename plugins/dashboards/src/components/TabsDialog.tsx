@@ -24,7 +24,11 @@ export interface TabsActions {
   setPosition(p: TabPosition): void;
 }
 
-export function TabsDialog(props: { spec: DashboardSpec; actions: TabsActions; onClose: () => void }): JSX.Element {
+export function TabsDialog(props: {
+  spec: DashboardSpec;
+  actions: TabsActions;
+  onClose: () => void;
+}): JSX.Element {
   const { spec, actions, onClose } = props;
   const [pickFor, setPickFor] = React.useState<string | null>(null);
   const picking = spec.tabs.find(t => t.id === pickFor);
@@ -47,22 +51,47 @@ export function TabsDialog(props: { spec: DashboardSpec; actions: TabsActions; o
         </Box>
         {spec.tabs.map((t, i) => (
           <Box key={t.id} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, py: 0.5 }}>
-            <IconButton aria-label={`Change the icon of ${t.label}`} onClick={() => setPickFor(t.id)}>
+            <IconButton
+              aria-label={`Change the icon of ${t.label}`}
+              onClick={() => setPickFor(t.id)}
+            >
               <Icon icon={t.icon} width={22} height={22} />
             </IconButton>
-            <TextField size="small" label="Label" value={t.label} onChange={e => actions.rename(t.id, e.target.value)} sx={{ flex: 1 }} />
-            <IconButton aria-label={`Move ${t.label} earlier`} disabled={i === 0} onClick={() => actions.move(i, i - 1)}>
+            <TextField
+              size="small"
+              label="Label"
+              value={t.label}
+              onChange={e => actions.rename(t.id, e.target.value)}
+              sx={{ flex: 1 }}
+            />
+            <IconButton
+              aria-label={`Move ${t.label} earlier`}
+              disabled={i === 0}
+              onClick={() => actions.move(i, i - 1)}
+            >
               <Icon icon="mdi:arrow-up" width={18} height={18} />
             </IconButton>
-            <IconButton aria-label={`Move ${t.label} later`} disabled={i === spec.tabs.length - 1} onClick={() => actions.move(i, i + 1)}>
+            <IconButton
+              aria-label={`Move ${t.label} later`}
+              disabled={i === spec.tabs.length - 1}
+              onClick={() => actions.move(i, i + 1)}
+            >
               <Icon icon="mdi:arrow-down" width={18} height={18} />
             </IconButton>
-            <IconButton aria-label={`Delete ${t.label}`} disabled={spec.tabs.length <= 1} onClick={() => actions.remove(t.id)}>
+            <IconButton
+              aria-label={`Delete ${t.label}`}
+              disabled={spec.tabs.length <= 1}
+              onClick={() => actions.remove(t.id)}
+            >
               <Icon icon="mdi:delete-outline" width={18} height={18} />
             </IconButton>
           </Box>
         ))}
-        <Button startIcon={<Icon icon="mdi:plus" width={18} height={18} />} onClick={actions.add} sx={{ mt: 1 }}>
+        <Button
+          startIcon={<Icon icon="mdi:plus" width={18} height={18} />}
+          onClick={actions.add}
+          sx={{ mt: 1 }}
+        >
           Add tab
         </Button>
       </DialogContent>

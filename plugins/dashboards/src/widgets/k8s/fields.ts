@@ -103,7 +103,8 @@ function walk(node: unknown, segments: Segment[], index: number, out: unknown[])
   const seg = segments[index];
   if (seg === '*') {
     if (Array.isArray(node)) node.forEach(n => walk(n, segments, index + 1, out));
-    else if (typeof node === 'object') Object.values(node as object).forEach(n => walk(n, segments, index + 1, out));
+    else if (typeof node === 'object')
+      Object.values(node as object).forEach(n => walk(n, segments, index + 1, out));
     return;
   }
   if (typeof seg === 'number') {
@@ -187,7 +188,10 @@ export function formatAge(seconds: number): string {
 type Obj = Record<string, any>;
 
 function podStatus(o: Obj): string | null {
-  const statuses: Obj[] = [...(o.status?.initContainerStatuses ?? []), ...(o.status?.containerStatuses ?? [])];
+  const statuses: Obj[] = [
+    ...(o.status?.initContainerStatuses ?? []),
+    ...(o.status?.containerStatuses ?? []),
+  ];
   for (const cs of statuses) {
     const reason = cs?.state?.waiting?.reason ?? cs?.state?.terminated?.reason;
     if (reason && reason !== 'Completed') return reason;
@@ -232,7 +236,9 @@ function restarts(o: Obj): number | null {
 }
 
 function ownerText(o: Obj): string | null {
-  const ref = Array.isArray(o.metadata?.ownerReferences) ? o.metadata.ownerReferences[0] : undefined;
+  const ref = Array.isArray(o.metadata?.ownerReferences)
+    ? o.metadata.ownerReferences[0]
+    : undefined;
   return ref ? `${ref.kind}/${ref.name}` : null;
 }
 
@@ -265,7 +271,12 @@ export function getValues(obj: unknown, field: string, now: number): Scalar[] {
       case 'owner':
         return [ownerText(o)];
       case 'node':
-        return [o.spec?.nodeName ?? o.status?.nodeName ?? (o.kind === 'Node' ? o.metadata?.name : null) ?? null];
+        return [
+          o.spec?.nodeName ??
+            o.status?.nodeName ??
+            (o.kind === 'Node' ? o.metadata?.name : null) ??
+            null,
+        ];
       case 'restarts':
         return [restarts(o)];
       case 'ready':
@@ -279,7 +290,8 @@ export function getValues(obj: unknown, field: string, now: number): Scalar[] {
 export function getCell(obj: unknown, field: string, now: number): Cell {
   const values = getValues(obj, field, now).filter(v => v !== null);
   if (values.length === 0) return { value: null, text: '' };
-  if (field === 'age' && typeof values[0] === 'number') return { value: values[0], text: formatAge(values[0]) };
+  if (field === 'age' && typeof values[0] === 'number')
+    return { value: values[0], text: formatAge(values[0]) };
   if (values.length === 1) {
     const v = values[0];
     return { value: v, text: String(v) };
@@ -304,6 +316,10 @@ export function compareCells(a: Cell, b: Cell): number {
   if (aEmpty || bEmpty) return aEmpty === bEmpty ? 0 : aEmpty ? 1 : -1;
   const an = toNumber(a.value);
   const bn = toNumber(b.value);
-  if (an !== null && bn !== null && typeof a.value !== 'boolean' && typeof b.value !== 'boolean') return an - bn;
-  return String(a.value).localeCompare(String(b.value), undefined, { numeric: true, sensitivity: 'base' });
+  if (an !== null && bn !== null && typeof a.value !== 'boolean' && typeof b.value !== 'boolean')
+    return an - bn;
+  return String(a.value).localeCompare(String(b.value), undefined, {
+    numeric: true,
+    sensitivity: 'base',
+  });
 }

@@ -36,7 +36,12 @@ const mapTab = (spec: DashboardSpec, tabId: string, fn: (t: Tab) => Tab): Dashbo
   return changed ? { ...spec, tabs } : spec;
 };
 
-const mapSection = (spec: DashboardSpec, tabId: string, sectionId: string, fn: (s: Section) => Section): DashboardSpec =>
+const mapSection = (
+  spec: DashboardSpec,
+  tabId: string,
+  sectionId: string,
+  fn: (s: Section) => Section
+): DashboardSpec =>
   mapTab(spec, tabId, t => {
     let changed = false;
     const sections = t.sections.map(s => {
@@ -50,12 +55,24 @@ const mapSection = (spec: DashboardSpec, tabId: string, sectionId: string, fn: (
 
 // ---- tabs ----
 
-export function addTab(spec: DashboardSpec, label = 'New tab', icon = 'mdi:view-dashboard-outline'): { spec: DashboardSpec; tabId: string } {
-  const tab = emptyTab(label, icon, spec.tabs.map(t => t.id));
+export function addTab(
+  spec: DashboardSpec,
+  label = 'New tab',
+  icon = 'mdi:view-dashboard-outline'
+): { spec: DashboardSpec; tabId: string } {
+  const tab = emptyTab(
+    label,
+    icon,
+    spec.tabs.map(t => t.id)
+  );
   return { spec: { ...spec, tabs: [...spec.tabs, tab] }, tabId: tab.id };
 }
 
-export function updateTab(spec: DashboardSpec, tabId: string, patch: Partial<Pick<Tab, 'label' | 'icon'>>): DashboardSpec {
+export function updateTab(
+  spec: DashboardSpec,
+  tabId: string,
+  patch: Partial<Pick<Tab, 'label' | 'icon'>>
+): DashboardSpec {
   return mapTab(spec, tabId, t => ({ ...t, ...patch }));
 }
 
@@ -86,11 +103,22 @@ export function updateSection(
 }
 
 /** A tab keeps at least one section. */
-export function deleteSection(spec: DashboardSpec, tabId: string, sectionId: string): DashboardSpec {
-  return mapTab(spec, tabId, t => (t.sections.length <= 1 ? t : { ...t, sections: t.sections.filter(s => s.id !== sectionId) }));
+export function deleteSection(
+  spec: DashboardSpec,
+  tabId: string,
+  sectionId: string
+): DashboardSpec {
+  return mapTab(spec, tabId, t =>
+    t.sections.length <= 1 ? t : { ...t, sections: t.sections.filter(s => s.id !== sectionId) }
+  );
 }
 
-export function reorderSections(spec: DashboardSpec, tabId: string, from: number, to: number): DashboardSpec {
+export function reorderSections(
+  spec: DashboardSpec,
+  tabId: string,
+  from: number,
+  to: number
+): DashboardSpec {
   return mapTab(spec, tabId, t => {
     const sections = moveItem(t.sections, from, to);
     return sections === t.sections ? t : { ...t, sections };
@@ -111,7 +139,16 @@ export function newWidget(
   at: { x: number; y: number }
 ): WidgetInstance {
   const w = Math.min(Math.max(1, size.w), GRID_COLUMNS);
-  return { id: newId('w'), type, title: '', config, x: Math.min(at.x, GRID_COLUMNS - w), y: at.y, w, h: Math.max(1, size.h) };
+  return {
+    id: newId('w'),
+    type,
+    title: '',
+    config,
+    x: Math.min(at.x, GRID_COLUMNS - w),
+    y: at.y,
+    w,
+    h: Math.max(1, size.h),
+  };
 }
 
 export function addWidget(
@@ -144,8 +181,16 @@ export function updateWidget(
   }));
 }
 
-export function deleteWidget(spec: DashboardSpec, tabId: string, sectionId: string, widgetId: string): DashboardSpec {
-  return mapSection(spec, tabId, sectionId, s => ({ ...s, widgets: s.widgets.filter(w => w.id !== widgetId) }));
+export function deleteWidget(
+  spec: DashboardSpec,
+  tabId: string,
+  sectionId: string,
+  widgetId: string
+): DashboardSpec {
+  return mapSection(spec, tabId, sectionId, s => ({
+    ...s,
+    widgets: s.widgets.filter(w => w.id !== widgetId),
+  }));
 }
 
 /** The copy goes right under the original, with the same size. */
@@ -184,13 +229,16 @@ export function moveWidgetToSection(
 ): DashboardSpec {
   if (fromSectionId === toSectionId) return spec;
   const tab = spec.tabs.find(t => t.id === tabId);
-  const widget = tab?.sections.find(s => s.id === fromSectionId)?.widgets.find(w => w.id === widgetId);
+  const widget = tab?.sections
+    .find(s => s.id === fromSectionId)
+    ?.widgets.find(w => w.id === widgetId);
   const target = tab?.sections.find(s => s.id === toSectionId);
   if (!tab || !widget || !target) return spec;
   return mapTab(spec, tabId, t => ({
     ...t,
     sections: t.sections.map(s => {
-      if (s.id === fromSectionId) return { ...s, widgets: s.widgets.filter(w => w.id !== widgetId) };
+      if (s.id === fromSectionId)
+        return { ...s, widgets: s.widgets.filter(w => w.id !== widgetId) };
       if (s.id === toSectionId) {
         return { ...s, widgets: [...s.widgets, { ...widget, x: 0, y: nextRow(s.widgets) }] };
       }
@@ -206,7 +254,8 @@ export function moveWidgetToTabSection(
   to: { tabId: string; sectionId: string },
   widgetId: string
 ): DashboardSpec {
-  if (from.tabId === to.tabId) return moveWidgetToSection(spec, from.tabId, from.sectionId, to.sectionId, widgetId);
+  if (from.tabId === to.tabId)
+    return moveWidgetToSection(spec, from.tabId, from.sectionId, to.sectionId, widgetId);
   const widget = spec.tabs
     .find(t => t.id === from.tabId)
     ?.sections.find(s => s.id === from.sectionId)
@@ -241,12 +290,19 @@ export function applyPositions(
 
 // ---- saved views ----
 
-export function saveView(spec: DashboardSpec, name: string, filters: DashboardSpec['filters']): DashboardSpec {
+export function saveView(
+  spec: DashboardSpec,
+  name: string,
+  filters: DashboardSpec['filters']
+): DashboardSpec {
   const existing = spec.views.find(v => v.name === name);
   if (existing) {
     return { ...spec, views: spec.views.map(v => (v === existing ? { ...v, filters } : v)) };
   }
-  const id = uniqueSlug(slugify(name, 'view'), spec.views.map(v => v.id));
+  const id = uniqueSlug(
+    slugify(name, 'view'),
+    spec.views.map(v => v.id)
+  );
   return { ...spec, views: [...spec.views, { id, name, filters }] };
 }
 

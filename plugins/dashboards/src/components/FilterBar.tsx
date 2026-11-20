@@ -61,14 +61,29 @@ function LabelSelectorField(props: { value: string; onCommit: (v: string) => voi
 }
 
 export function FilterBar(props: FilterBarProps): JSX.Element {
-  const { filters, onChange, namespaceOptions, nodeOptions, views, activeView, onSelectView, onSaveView, onDeleteView, onReset } = props;
+  const {
+    filters,
+    onChange,
+    namespaceOptions,
+    nodeOptions,
+    views,
+    activeView,
+    onSelectView,
+    onSaveView,
+    onDeleteView,
+    onReset,
+  } = props;
   const [menu, setMenu] = React.useState<HTMLElement | null>(null);
   const [naming, setNaming] = React.useState(false);
   const [name, setName] = React.useState('');
   const current = views.find(v => v.id === activeView);
 
   return (
-    <Box role="search" aria-label="Dashboard filters" sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}>
+    <Box
+      role="search"
+      aria-label="Dashboard filters"
+      sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}
+    >
       <Autocomplete
         multiple
         freeSolo
@@ -76,7 +91,13 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
         options={namespaceOptions}
         value={filters.namespaces}
         onChange={(_e, v) => onChange({ ...filters, namespaces: v as string[] })}
-        renderInput={p => <TextField {...p} label="Namespaces" placeholder={filters.namespaces.length ? '' : 'All'} />}
+        renderInput={p => (
+          <TextField
+            {...p}
+            label="Namespaces"
+            placeholder={filters.namespaces.length ? '' : 'All'}
+          />
+        )}
         sx={{ minWidth: 200, maxWidth: 360, flex: '1 1 200px' }}
       />
       <Autocomplete
@@ -86,10 +107,16 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
         options={nodeOptions}
         value={filters.nodes}
         onChange={(_e, v) => onChange({ ...filters, nodes: v as string[] })}
-        renderInput={p => <TextField {...p} label="Nodes" placeholder={filters.nodes.length ? '' : 'All'} />}
+        renderInput={p => (
+          <TextField {...p} label="Nodes" placeholder={filters.nodes.length ? '' : 'All'} />
+        )}
         sx={{ minWidth: 200, maxWidth: 360, flex: '1 1 200px' }}
       />
-      <LabelSelectorField key={filters.labelSelector} value={filters.labelSelector} onCommit={v => onChange({ ...filters, labelSelector: v })} />
+      <LabelSelectorField
+        key={filters.labelSelector}
+        value={filters.labelSelector}
+        onCommit={v => onChange({ ...filters, labelSelector: v })}
+      />
       <TextField
         select
         size="small"

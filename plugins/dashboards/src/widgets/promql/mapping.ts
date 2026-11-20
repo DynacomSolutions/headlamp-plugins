@@ -39,11 +39,19 @@ export function parseValue(raw: unknown): number | null {
 }
 
 export function labelKey(labels: Labels): string {
-  return JSON.stringify(Object.keys(labels).sort().map(k => [k, labels[k]]));
+  return JSON.stringify(
+    Object.keys(labels)
+      .sort()
+      .map(k => [k, labels[k]])
+  );
 }
 
 /** `{{label}}` placeholders in a legend template. An empty template gives the default name. */
-export function legendName(template: string | undefined, labels: Labels, fallback = 'value'): string {
+export function legendName(
+  template: string | undefined,
+  labels: Labels,
+  fallback = 'value'
+): string {
   if (template && template.trim() !== '') {
     return template.replace(/\{\{\s*([\w.:-]+)\s*\}\}/g, (_, key: string) => labels[key] ?? '');
   }
@@ -69,7 +77,8 @@ function asArray(v: unknown): any[] {
 export function parseMatrix(result: unknown, template?: string): Series[] {
   const out: Series[] = [];
   for (const entry of asArray(result)) {
-    const labels: Labels = entry && typeof entry.metric === 'object' && entry.metric ? entry.metric : {};
+    const labels: Labels =
+      entry && typeof entry.metric === 'object' && entry.metric ? entry.metric : {};
     const points: Point[] = [];
     for (const pair of asArray(entry?.values)) {
       if (!Array.isArray(pair) || typeof pair[0] !== 'number') continue;
@@ -84,20 +93,29 @@ export function parseMatrix(result: unknown, template?: string): Series[] {
 export function parseVector(result: unknown, template?: string, resultType = 'vector'): Sample[] {
   if (resultType === 'scalar' || resultType === 'string') {
     const pair = Array.isArray(result) ? result : [];
-    return [{ key: labelKey({}), labels: {}, name: legendName(template, {}), value: parseValue(pair[1]) }];
+    return [
+      { key: labelKey({}), labels: {}, name: legendName(template, {}), value: parseValue(pair[1]) },
+    ];
   }
   const out: Sample[] = [];
   for (const entry of asArray(result)) {
-    const labels: Labels = entry && typeof entry.metric === 'object' && entry.metric ? entry.metric : {};
+    const labels: Labels =
+      entry && typeof entry.metric === 'object' && entry.metric ? entry.metric : {};
     const pair = Array.isArray(entry?.value) ? entry.value : [];
-    out.push({ key: labelKey(labels), labels, name: legendName(template, labels), value: parseValue(pair[1]) });
+    out.push({
+      key: labelKey(labels),
+      labels,
+      name: legendName(template, labels),
+      value: parseValue(pair[1]),
+    });
   }
   return out;
 }
 
 /** Throws a readable error when the envelope is not a success. */
 export function assertSuccess(body: PromEnvelope | undefined | null): asserts body is PromEnvelope {
-  if (!body || typeof body !== 'object') throw new Error('The metrics service sent an unreadable answer.');
+  if (!body || typeof body !== 'object')
+    throw new Error('The metrics service sent an unreadable answer.');
   if (body.status !== 'success') {
     throw new Error(body.error ? `Query failed: ${body.error}` : 'The metrics query failed.');
   }
@@ -160,11 +178,16 @@ export function seriesStats(s: Series): SeriesStats {
     sum += p.v;
     n += 1;
   }
-  return n === 0 ? { last: null, min: null, max: null, avg: null } : { last, min, max, avg: sum / n };
+  return n === 0
+    ? { last: null, min: null, max: null, avg: null }
+    : { last, min, max, avg: sum / n };
 }
 
 /** The running totals for a stacked chart: `tops[i][j]` is the top of series i at time j. Gaps count as 0. */
-export function stackSeries(series: Series[], times: number[]): { bases: number[][]; tops: number[][] } {
+export function stackSeries(
+  series: Series[],
+  times: number[]
+): { bases: number[][]; tops: number[][] } {
   const bases: number[][] = [];
   const tops: number[][] = [];
   const running = times.map(() => 0);

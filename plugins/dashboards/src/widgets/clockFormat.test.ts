@@ -17,7 +17,15 @@ const utc = zonedParts(T, 'UTC');
 
 describe('zonedParts', () => {
   it('reads the parts in a zone', () => {
-    expect(utc).toEqual({ year: 2026, month: 11, day: 19, weekday: 4, hour: 14, minute: 5, second: 9 });
+    expect(utc).toEqual({
+      year: 2026,
+      month: 11,
+      day: 19,
+      weekday: 4,
+      hour: 14,
+      minute: 5,
+      second: 9,
+    });
     expect(zonedParts(T, 'Asia/Bangkok')).toMatchObject({ day: 19, hour: 21, minute: 5 });
     expect(zonedParts(T, 'Pacific/Auckland')).toMatchObject({ day: 20, hour: 3, weekday: 5 });
   });
@@ -54,17 +62,35 @@ describe('formatPattern', () => {
 
 describe('clock config', () => {
   it('builds the time pattern from the show options', () => {
-    expect(timePattern({ showHours: true, showMinutes: true, showSeconds: false, hourFormat: '24' })).toBe('HH:mm');
-    expect(timePattern({ showHours: true, showMinutes: true, showSeconds: true, hourFormat: '12' })).toBe('h:mm:ss a');
-    expect(timePattern({ showHours: false, showMinutes: true, showSeconds: true, hourFormat: '12' })).toBe('mm:ss');
-    expect(timePattern({ showHours: false, showMinutes: false, showSeconds: false, hourFormat: '24' })).toBe('');
+    expect(
+      timePattern({ showHours: true, showMinutes: true, showSeconds: false, hourFormat: '24' })
+    ).toBe('HH:mm');
+    expect(
+      timePattern({ showHours: true, showMinutes: true, showSeconds: true, hourFormat: '12' })
+    ).toBe('h:mm:ss a');
+    expect(
+      timePattern({ showHours: false, showMinutes: true, showSeconds: true, hourFormat: '12' })
+    ).toBe('mm:ss');
+    expect(
+      timePattern({ showHours: false, showMinutes: false, showSeconds: false, hourFormat: '24' })
+    ).toBe('');
   });
 
   it('formats time and date, hiding what is off', () => {
     const c = { ...DEFAULT_CLOCK, timeZone: 'UTC' };
     expect(formatClockParts(T, c)).toEqual({ time: '14:05', date: 'Thu 19 Nov 2026' });
-    expect(formatClockParts(T, { ...c, showSeconds: true, showDate: false })).toEqual({ time: '14:05:09', date: '' });
-    expect(formatClockParts(T, { ...c, hourFormat: '12', dateFormat: CUSTOM_FORMAT, customDateFormat: "yyyy 'W' d" })).toEqual({ time: '2:05 PM', date: '2026 W 19' });
+    expect(formatClockParts(T, { ...c, showSeconds: true, showDate: false })).toEqual({
+      time: '14:05:09',
+      date: '',
+    });
+    expect(
+      formatClockParts(T, {
+        ...c,
+        hourFormat: '12',
+        dateFormat: CUSTOM_FORMAT,
+        customDateFormat: "yyyy 'W' d",
+      })
+    ).toEqual({ time: '2:05 PM', date: '2026 W 19' });
     expect(formatClockParts(T, { ...c, showHours: false, showMinutes: false }).time).toBe('');
   });
 

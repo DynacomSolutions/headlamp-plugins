@@ -5,7 +5,8 @@ import { PanelSource, resolveSources, SOURCES_KEY } from './sources';
 
 let store: ConfigStore<Record<string, unknown>> | undefined;
 /** Created on first use, so importing a widget does not need the Headlamp store. */
-export const getSettingsStore = (): ConfigStore<Record<string, unknown>> => (store ??= new ConfigStore<Record<string, unknown>>('dashboards'));
+export const getSettingsStore = (): ConfigStore<Record<string, unknown>> =>
+  (store ??= new ConfigStore<Record<string, unknown>>('dashboards'));
 
 const INPUT_KEYS = ['agentNamespace', 'agentService', 'agentPort', SOURCES_KEY];
 

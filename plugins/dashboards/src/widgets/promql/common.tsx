@@ -24,12 +24,29 @@ export function useColourBook(): ColourBook {
 }
 
 /** A centred message in the card: an error, a wait or "no data". */
-export function Notice(props: { kind: 'error' | 'empty' | 'wait'; children: React.ReactNode }): JSX.Element {
-  const icon = props.kind === 'error' ? 'mdi:alert-circle-outline' : props.kind === 'wait' ? 'mdi:timer-sand' : 'mdi:chart-line';
+export function Notice(props: {
+  kind: 'error' | 'empty' | 'wait';
+  children: React.ReactNode;
+}): JSX.Element {
+  const icon =
+    props.kind === 'error'
+      ? 'mdi:alert-circle-outline'
+      : props.kind === 'wait'
+      ? 'mdi:timer-sand'
+      : 'mdi:chart-line';
   return (
     <Box
       role={props.kind === 'error' ? 'alert' : 'status'}
-      sx={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, textAlign: 'center', p: 1, color: 'text.secondary' }}
+      sx={{
+        height: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 1,
+        textAlign: 'center',
+        p: 1,
+        color: 'text.secondary',
+      }}
     >
       <Icon icon={icon} width={20} height={20} />
       <Typography variant="body2" component="span" sx={{ overflowWrap: 'anywhere' }}>

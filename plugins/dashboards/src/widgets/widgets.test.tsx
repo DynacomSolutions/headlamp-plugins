@@ -31,13 +31,20 @@ afterEach(() => {
 describe('clock widget', () => {
   const now = new Date(Date.UTC(2026, 10, 19, 14, 5, 9));
   it('shows the time and the date in the chosen zone', () => {
-    const { container } = render(<ClockView now={now} config={{ ...DEFAULT_CLOCK, timeZone: 'UTC', showSeconds: true }} />);
+    const { container } = render(
+      <ClockView now={now} config={{ ...DEFAULT_CLOCK, timeZone: 'UTC', showSeconds: true }} />
+    );
     expect(container.querySelector('[data-clock-time]')?.textContent).toBe('14:05:09');
     expect(container.querySelector('[data-clock-date]')?.textContent).toBe('Thu 19 Nov 2026');
     expect(container.querySelector('[data-clock-zone]')).toBeNull();
   });
   it('hides the date and shows the zone name when asked', () => {
-    const { container } = render(<ClockView now={now} config={{ ...DEFAULT_CLOCK, timeZone: 'Asia/Bangkok', showDate: false, showZone: true }} />);
+    const { container } = render(
+      <ClockView
+        now={now}
+        config={{ ...DEFAULT_CLOCK, timeZone: 'Asia/Bangkok', showDate: false, showZone: true }}
+      />
+    );
     expect(container.querySelector('[data-clock-date]')).toBeNull();
     expect(container.querySelector('[data-clock-time]')?.textContent).toBe('21:05');
     expect(container.querySelector('[data-clock-zone]')?.textContent).toBe('Asia/Bangkok');
@@ -60,7 +67,15 @@ describe('clock widget', () => {
 
 describe('note widget', () => {
   it('renders Markdown and does not run HTML', () => {
-    const { container } = render(<NoteView config={{ markdown: '# Title\n\n**bold** <script>x</script> [ok](https://example.com) [bad](javascript:alert(1))', align: 'left' }} />);
+    const { container } = render(
+      <NoteView
+        config={{
+          markdown:
+            '# Title\n\n**bold** <script>x</script> [ok](https://example.com) [bad](javascript:alert(1))',
+          align: 'left',
+        }}
+      />
+    );
     expect(container.querySelector('h2')?.textContent).toBe('Title');
     expect(container.querySelector('strong')?.textContent).toBe('bold');
     expect(container.querySelector('script')).toBeNull();
@@ -82,7 +97,13 @@ describe('note widget', () => {
 });
 
 describe('header widget', () => {
-  const cfg = { text: 'Heading', subtitle: 'Sub', style: 'both', size: 'medium', align: 'left' } as const;
+  const cfg = {
+    text: 'Heading',
+    subtitle: 'Sub',
+    style: 'both',
+    size: 'medium',
+    align: 'left',
+  } as const;
   it('shows text and a line, or only one of them', () => {
     const both = render(<HeaderView config={cfg} />);
     expect(both.container.textContent).toContain('Heading');
@@ -120,7 +141,15 @@ describe('widget frame', () => {
   it('renders a placeholder for an unregistered type', () => {
     const { container } = render(
       <DashboardContext.Provider value={ctxValue()}>
-        <WidgetFrame sectionId="s" id="w1" type="nobody.registered" title="" config={{}} selfScroll={undefined} actions={actions} />
+        <WidgetFrame
+          sectionId="s"
+          id="w1"
+          type="nobody.registered"
+          title=""
+          config={{}}
+          selfScroll={undefined}
+          actions={actions}
+        />
       </DashboardContext.Provider>
     );
     expect(container.querySelector('[data-widget-placeholder]')).not.toBeNull();
@@ -144,12 +173,26 @@ describe('widget frame', () => {
     const report = vi.fn();
     const { container, rerender } = render(
       <DashboardContext.Provider value={ctxValue({ reportRefreshed: report, refreshSignal: 3 })}>
-        <WidgetFrame sectionId="s" id="w1" type="test.probe" title="" config={{ b: 9 }} selfScroll={undefined} actions={actions} />
+        <WidgetFrame
+          sectionId="s"
+          id="w1"
+          type="test.probe"
+          title=""
+          config={{ b: 9 }}
+          selfScroll={undefined}
+          actions={actions}
+        />
       </DashboardContext.Provider>
     );
     expect(container.textContent).toContain('Probe');
     const props = seen[seen.length - 1];
-    expect(props).toMatchObject({ instanceId: 'w1', config: { a: 1, b: 9 }, refreshSignal: 3, editing: false, kiosk: false });
+    expect(props).toMatchObject({
+      instanceId: 'w1',
+      config: { a: 1, b: 9 },
+      refreshSignal: 3,
+      editing: false,
+      kiosk: false,
+    });
     props.reportRefreshed(5);
     expect(report).toHaveBeenCalledWith(5);
     rerender(<span />);
@@ -173,7 +216,15 @@ describe('widget frame', () => {
     const config = {};
     const tree = (title: string) => (
       <DashboardContext.Provider value={value}>
-        <WidgetFrame sectionId="s" id="w1" type="test.count" title={title} config={config} selfScroll={undefined} actions={actions} />
+        <WidgetFrame
+          sectionId="s"
+          id="w1"
+          type="test.count"
+          title={title}
+          config={config}
+          selfScroll={undefined}
+          actions={actions}
+        />
       </DashboardContext.Provider>
     );
     const { rerender } = render(tree(''));
@@ -186,7 +237,15 @@ describe('widget frame', () => {
     const next = ctxValue({ refreshSignal: 1 });
     rerender(
       <DashboardContext.Provider value={next}>
-        <WidgetFrame sectionId="s" id="w1" type="test.count" title="" config={config} selfScroll={undefined} actions={actions} />
+        <WidgetFrame
+          sectionId="s"
+          id="w1"
+          type="test.count"
+          title=""
+          config={config}
+          selfScroll={undefined}
+          actions={actions}
+        />
       </DashboardContext.Provider>
     );
     expect(renders).toBeGreaterThan(first);
@@ -196,14 +255,30 @@ describe('widget frame', () => {
     const a = { menu: vi.fn(), settings: vi.fn() };
     const view = render(
       <DashboardContext.Provider value={ctxValue()}>
-        <WidgetFrame sectionId="s" id="w1" type="test.count" title="T" config={{}} selfScroll={undefined} actions={a} />
+        <WidgetFrame
+          sectionId="s"
+          id="w1"
+          type="test.count"
+          title="T"
+          config={{}}
+          selfScroll={undefined}
+          actions={a}
+        />
       </DashboardContext.Provider>
     );
     expect(view.queryByLabelText('Settings for T')).toBeNull();
     view.unmount();
     const edit = render(
       <DashboardContext.Provider value={ctxValue({ editing: true })}>
-        <WidgetFrame sectionId="s" id="w1" type="test.count" title="T" config={{}} selfScroll={undefined} actions={a} />
+        <WidgetFrame
+          sectionId="s"
+          id="w1"
+          type="test.count"
+          title="T"
+          config={{}}
+          selfScroll={undefined}
+          actions={a}
+        />
       </DashboardContext.Provider>
     );
     fireEvent.click(edit.getByLabelText('Settings for T'));

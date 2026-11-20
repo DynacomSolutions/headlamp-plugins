@@ -84,6 +84,9 @@ describe('the global registry and its queue', () => {
   it('lets two copies of the helper share one queue', () => {
     registerDashboardWidget(def('p1.w'));
     registerDashboardWidget(def('p2.w'));
-    expect((window.headlampDashboards as any).queue.map((w: WidgetDefinition) => w.type)).toEqual(['p1.w', 'p2.w']);
+    expect((window.headlampDashboards as any).queue.map((w: WidgetDefinition) => w.type)).toEqual([
+      'p1.w',
+      'p2.w',
+    ]);
   });
 });

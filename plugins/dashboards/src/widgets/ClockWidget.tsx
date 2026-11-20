@@ -58,17 +58,36 @@ export function ClockView(props: { config: ClockConfig; now: Date }): JSX.Elemen
       }}
     >
       {time && (
-        <Typography component="div" data-clock-time sx={{ fontSize: size.time, fontWeight: 600, lineHeight: 1.05, fontVariantNumeric: 'tabular-nums' }}>
+        <Typography
+          component="div"
+          data-clock-time
+          sx={{
+            fontSize: size.time,
+            fontWeight: 600,
+            lineHeight: 1.05,
+            fontVariantNumeric: 'tabular-nums',
+          }}
+        >
           {time}
         </Typography>
       )}
       {date && (
-        <Typography component="div" data-clock-date color="text.secondary" sx={{ fontSize: size.date }}>
+        <Typography
+          component="div"
+          data-clock-date
+          color="text.secondary"
+          sx={{ fontSize: size.date }}
+        >
           {date}
         </Typography>
       )}
       {config.showZone && (
-        <Typography component="div" data-clock-zone color="text.secondary" sx={{ fontSize: size.date, opacity: 0.8 }}>
+        <Typography
+          component="div"
+          data-clock-zone
+          color="text.secondary"
+          sx={{ fontSize: size.date, opacity: 0.8 }}
+        >
           {config.timeZone === LOCAL_ZONE ? 'Local time' : config.timeZone}
         </Typography>
       )}
@@ -123,7 +142,9 @@ function ClockSettings({ config, onChange }: WidgetSettingsProps<ClockConfig>): 
           key: 'timeZone',
           label: 'Time zone',
           type: 'select',
-          help: zoneInvalid ? 'This time zone is not known here, so local time is shown.' : undefined,
+          help: zoneInvalid
+            ? 'This time zone is not known here, so local time is shown.'
+            : undefined,
           options: [
             { value: LOCAL_ZONE, label: 'Browser local time' },
             ...(zoneInvalid ? [{ value: config.timeZone, label: config.timeZone }] : []),

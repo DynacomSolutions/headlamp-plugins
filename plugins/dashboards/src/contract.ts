@@ -79,7 +79,15 @@ export interface WidgetSettingsProps<C = Record<string, unknown>> {
 /** One field of a generated settings form (use it instead of writing a `SettingsComponent`). */
 export type ConfigField =
   | { key: string; label: string; type: 'text' | 'multiline'; help?: string; placeholder?: string }
-  | { key: string; label: string; type: 'number'; help?: string; min?: number; max?: number; step?: number }
+  | {
+      key: string;
+      label: string;
+      type: 'number';
+      help?: string;
+      min?: number;
+      max?: number;
+      step?: number;
+    }
   | { key: string; label: string; type: 'boolean'; help?: string }
   | {
       key: string;
@@ -160,7 +168,9 @@ declare global {
  * Register a widget type. Safe to call at any time, in any plugin load order. Returns false
  * when there is no `window` (a server-side run) so a caller can ignore it.
  */
-export function registerDashboardWidget<C extends Record<string, any>>(def: WidgetDefinition<C>): boolean {
+export function registerDashboardWidget<C extends Record<string, any>>(
+  def: WidgetDefinition<C>
+): boolean {
   if (typeof window === 'undefined') return false;
   const existing = window.headlampDashboards;
   if (existing && typeof existing.registerWidget === 'function') {

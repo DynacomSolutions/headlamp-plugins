@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { isEmptyPanel, mayFetch, parsePanel, parsePanelList, ringToSunburst, safeLink, sortTableRows } from './model';
+import {
+  isEmptyPanel,
+  mayFetch,
+  parsePanel,
+  parsePanelList,
+  ringToSunburst,
+  safeLink,
+  sortTableRows,
+} from './model';
 
 const full = {
   version: 1,
@@ -9,10 +17,27 @@ const full = {
   link: '/uptime',
   status: 'warn',
   summary: '1 check degraded',
-  stats: [{ label: 'Up', value: '9', status: 'ok' }, { label: 'Down', value: 1, status: 'bogus' }],
+  stats: [
+    { label: 'Up', value: '9', status: 'ok' },
+    { label: 'Down', value: 1, status: 'bogus' },
+  ],
   rows: [
-    { label: 'Site', detail: 'slow', value: '2.1 s', fraction: 1.7, status: 'warn', link: '/sites/a' },
-    { label: 'Bad', detail: '', value: '-', fraction: 'x', status: 'crit', link: 'javascript:alert(1)' },
+    {
+      label: 'Site',
+      detail: 'slow',
+      value: '2.1 s',
+      fraction: 1.7,
+      status: 'warn',
+      link: '/sites/a',
+    },
+    {
+      label: 'Bad',
+      detail: '',
+      value: '-',
+      fraction: 'x',
+      status: 'crit',
+      link: 'javascript:alert(1)',
+    },
   ],
   series: [{ label: 'Latency', points: [1, 2, NaN, 3, 'x'] }],
   rings: [
@@ -23,7 +48,15 @@ const full = {
       capacity: 8,
       used: 5,
       segments: [
-        { key: 'k8s', label: 'Kubernetes', value: 4, children: [{ key: 'k8s/ns:shop', label: 'shop', value: 2 }, { key: 'zero', label: 'zero', value: 0 }] },
+        {
+          key: 'k8s',
+          label: 'Kubernetes',
+          value: 4,
+          children: [
+            { key: 'k8s/ns:shop', label: 'shop', value: 2 },
+            { key: 'zero', label: 'zero', value: 0 },
+          ],
+        },
         { key: 'sys', label: 'System', value: 1 },
         { key: '', label: 'no key', value: 3 },
       ],
@@ -49,7 +82,16 @@ describe('parsePanel', () => {
   });
   it('fills defaults for a minimal panel', () => {
     const p = parsePanel({ version: 1, id: 'x' });
-    expect(p).toMatchObject({ title: 'x', status: 'unknown', summary: '', stats: [], rows: [], series: [], rings: [], tables: [] });
+    expect(p).toMatchObject({
+      title: 'x',
+      status: 'unknown',
+      summary: '',
+      stats: [],
+      rows: [],
+      series: [],
+      rings: [],
+      tables: [],
+    });
     expect(isEmptyPanel(p)).toBe(true);
   });
   it('rejects an answer that is not a panel', () => {
@@ -70,7 +112,12 @@ describe('response shape (version 1)', () => {
     expect(() => parsePanel('<html></html>')).toThrow(/not a panel/);
   });
   it('ignores unknown extra fields', () => {
-    const p = parsePanel({ version: 1, id: 'x', extra: { a: 1 }, stats: [{ label: 'a', value: 'b', status: 'ok', more: true }] });
+    const p = parsePanel({
+      version: 1,
+      id: 'x',
+      extra: { a: 1 },
+      stats: [{ label: 'a', value: 'b', status: 'ok', more: true }],
+    });
     expect(p.stats).toEqual([{ label: 'a', value: 'b', status: 'ok' }]);
     expect(p).not.toHaveProperty('extra');
   });
@@ -81,9 +128,23 @@ describe('parsePanelList', () => {
     const list = parsePanelList({
       version: 1,
       extra: true,
-      panels: [{ id: 'a', title: 'A', description: 'd', plugin: 'p', link: '/a', refreshSeconds: 30, more: 1 }, { title: 'no id' }, 5],
+      panels: [
+        {
+          id: 'a',
+          title: 'A',
+          description: 'd',
+          plugin: 'p',
+          link: '/a',
+          refreshSeconds: 30,
+          more: 1,
+        },
+        { title: 'no id' },
+        5,
+      ],
     });
-    expect(list).toEqual([{ id: 'a', title: 'A', description: 'd', plugin: 'p', link: '/a', refreshSeconds: 30 }]);
+    expect(list).toEqual([
+      { id: 'a', title: 'A', description: 'd', plugin: 'p', link: '/a', refreshSeconds: 30 },
+    ]);
   });
   it('rejects a wrong shape', () => {
     expect(() => parsePanelList([])).toThrow(/not a panel list/);
@@ -100,7 +161,11 @@ describe('tables (optional v1 extension)', () => {
     tables: [
       {
         title: 'Hosts',
-        columns: [{ key: 'name', label: 'Name' }, { key: 'load', label: 'Load', align: 'right' }, { key: '', label: 'dropped' }],
+        columns: [
+          { key: 'name', label: 'Name' },
+          { key: 'load', label: 'Load', align: 'right' },
+          { key: '', label: 'dropped' },
+        ],
         rows: [{ name: 'b', load: 10, extra: 'x' }, { name: 'a', load: 2 }, 'bad'],
       },
       { title: 'No columns', columns: [], rows: [] },
@@ -114,19 +179,29 @@ describe('tables (optional v1 extension)', () => {
       { key: 'name', label: 'Name', align: 'left' },
       { key: 'load', label: 'Load', align: 'right' },
     ]);
-    expect(p.tables[0].rows).toEqual([{ name: 'b', load: 10 }, { name: 'a', load: 2 }]);
+    expect(p.tables[0].rows).toEqual([
+      { name: 'b', load: 10 },
+      { name: 'a', load: 2 },
+    ]);
     expect(isEmptyPanel(p)).toBe(false);
   });
   it('is absent on a panel without tables', () => {
     expect(parsePanel({ version: 1, id: 'x' }).tables).toEqual([]);
   });
   it('sorts numbers as numbers and text naturally, in both directions, without changing the input', () => {
-    const rows = [{ n: 'host10', v: 10 }, { n: 'host2', v: 2 }, { n: 'host1', v: 33 }];
+    const rows = [
+      { n: 'host10', v: 10 },
+      { n: 'host2', v: 2 },
+      { n: 'host1', v: 33 },
+    ];
     expect(sortTableRows(rows, 'v', 'asc').map(r => r.v)).toEqual([2, 10, 33]);
     expect(sortTableRows(rows, 'v', 'desc').map(r => r.v)).toEqual([33, 10, 2]);
     expect(sortTableRows(rows, 'n', 'asc').map(r => r.n)).toEqual(['host1', 'host2', 'host10']);
     expect(rows.map(r => r.n)).toEqual(['host10', 'host2', 'host1']);
-    const ties = [{ k: 1, o: 'a' }, { k: 1, o: 'b' }];
+    const ties = [
+      { k: 1, o: 'a' },
+      { k: 1, o: 'b' },
+    ];
     expect(sortTableRows(ties, 'k', 'desc').map(r => r.o)).toEqual(['a', 'b']);
   });
 });

@@ -37,9 +37,16 @@ export interface SunburstChartProps {
   hideLegend?: boolean;
 }
 
-const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string => `${a.level}\u0000${a.categoryKey}\u0000${a.key}`;
+const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string =>
+  `${a.level}\u0000${a.categoryKey}\u0000${a.key}`;
 
-export function SunburstChart({ data, format, title, kiosk = false, hideLegend = false }: SunburstChartProps): JSX.Element {
+export function SunburstChart({
+  data,
+  format,
+  title,
+  kiosk = false,
+  hideLegend = false,
+}: SunburstChartProps): JSX.Element {
   const theme = useTheme();
   const mode = theme.palette.mode === 'dark' ? 'dark' : 'light';
   const [active, setActive] = React.useState<string | null>(null);
@@ -53,7 +60,10 @@ export function SunburstChart({ data, format, title, kiosk = false, hideLegend =
   }, [data.categories]);
   const baseColour = (key: string): string => colourAt(colourIndex.get(key) ?? 0, mode);
 
-  const scale = Math.max(data.capacity, data.categories.reduce((s, c) => s + Math.max(0, c.value), 0));
+  const scale = Math.max(
+    data.capacity,
+    data.categories.reduce((s, c) => s + Math.max(0, c.value), 0)
+  );
   const used = data.categories.reduce((s, c) => s + Math.max(0, c.value), 0);
   const shown = active ?? picked;
   const shownArc = shown ? arcs.find(a => arcId(a) === shown) : undefined;
@@ -78,7 +88,9 @@ export function SunburstChart({ data, format, title, kiosk = false, hideLegend =
       : `${title}: ${format(used)} of ${format(data.capacity)} used. ${data.categories
           .slice(0, 5)
           .map(c => `${c.label} ${percent(scale > 0 ? c.value / scale : 0)}`)
-          .join(', ')}${data.categories.length > 5 ? `, and ${data.categories.length - 5} more` : ''}`;
+          .join(', ')}${
+          data.categories.length > 5 ? `, and ${data.categories.length - 5} more` : ''
+        }`;
 
   const track = theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
   const surface = theme.palette.background.paper;
@@ -109,17 +121,34 @@ export function SunburstChart({ data, format, title, kiosk = false, hideLegend =
         containerType: 'size',
       }}
     >
-      <Box sx={{ flex: '1 1 0', minHeight: 0, width: '100%', display: 'flex', justifyContent: 'center' }}>
+      <Box
+        sx={{
+          flex: '1 1 0',
+          minHeight: 0,
+          width: '100%',
+          display: 'flex',
+          justifyContent: 'center',
+        }}
+      >
         <svg
           role="img"
           aria-label={summary}
           viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
-          style={{ height: '100%', maxWidth: '100%', aspectRatio: '1 / 1', display: 'block', touchAction: 'manipulation' }}
+          style={{
+            height: '100%',
+            maxWidth: '100%',
+            aspectRatio: '1 / 1',
+            display: 'block',
+            touchAction: 'manipulation',
+          }}
         >
           <path d={trackPath(RADIUS)} fill={track} fillRule="evenodd" data-sunburst-track />
           {arcs.map(a => {
             const id = arcId(a);
-            const dim = shown !== null && shown !== id && !(shownArc && a.categoryKey === shownArc.categoryKey);
+            const dim =
+              shown !== null &&
+              shown !== id &&
+              !(shownArc && a.categoryKey === shownArc.categoryKey);
             const d = arcPath(a.inner, a.outer, a.start, a.end);
             if (!d) return null;
             const common = {
@@ -159,11 +188,21 @@ export function SunburstChart({ data, format, title, kiosk = false, hideLegend =
               </path>
             );
           })}
-          <g data-sunburst-centre style={{ pointerEvents: 'none' }} textAnchor="middle" fill={theme.palette.text.primary}>
+          <g
+            data-sunburst-centre
+            style={{ pointerEvents: 'none' }}
+            textAnchor="middle"
+            fill={theme.palette.text.primary}
+          >
             <text y={-6} fontSize={9} fill={theme.palette.text.secondary}>
               {centreLabel}
             </text>
-            <text y={9} fontSize={13} fontWeight={600} style={{ fontVariantNumeric: 'tabular-nums' }}>
+            <text
+              y={9}
+              fontSize={13}
+              fontWeight={600}
+              style={{ fontVariantNumeric: 'tabular-nums' }}
+            >
               {centreValue}
             </text>
             <text y={21} fontSize={7.5} fill={theme.palette.text.secondary}>
@@ -203,13 +242,35 @@ export function SunburstChart({ data, format, title, kiosk = false, hideLegend =
                     title={`${c.label}: ${format(c.value)}`}
                     focusRipple={false}
                     disableRipple={kiosk}
-                    sx={{ display: 'flex', alignItems: 'center', gap: 0.75, py: 0.25, px: 0.5, borderRadius: 0.5, outline: 'none', '&.Mui-focusVisible': { outline: kiosk ? 'none' : undefined } }}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.75,
+                      py: 0.25,
+                      px: 0.5,
+                      borderRadius: 0.5,
+                      outline: 'none',
+                      '&.Mui-focusVisible': { outline: kiosk ? 'none' : undefined },
+                    }}
                   >
-                    <Box component="span" sx={{ width: 10, height: 10, borderRadius: '2px', flex: 'none', bgcolor: baseColour(c.key) }} />
+                    <Box
+                      component="span"
+                      sx={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '2px',
+                        flex: 'none',
+                        bgcolor: baseColour(c.key),
+                      }}
+                    />
                     <Typography variant="caption" noWrap sx={{ maxWidth: 140 }}>
                       {c.label}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap' }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ whiteSpace: 'nowrap' }}
+                    >
                       {percent(scale > 0 ? c.value / scale : 0)}
                     </Typography>
                   </ButtonBase>

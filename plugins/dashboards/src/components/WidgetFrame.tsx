@@ -33,7 +33,10 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
   const { sectionId, id, type, title, config, selfScroll, actions } = props;
   const { filters, refreshSignal, editing, kiosk, reportRefreshed } = useDashboardContext();
   const def = useWidgetDefinition(type);
-  const merged = React.useMemo(() => (def ? { ...def.defaultConfig, ...config } : config), [def, config]);
+  const merged = React.useMemo(
+    () => (def ? { ...def.defaultConfig, ...config } : config),
+    [def, config]
+  );
 
   const shownTitle = title || def?.title || type;
   const card = def ? def.card !== false : true;
@@ -61,7 +64,14 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
         className="widget-drag-handle"
         role="img"
         aria-label={`Drag ${shownTitle}`}
-        sx={{ cursor: 'grab', display: 'flex', alignItems: 'center', color: 'text.secondary', mr: 0.5, touchAction: 'none' }}
+        sx={{
+          cursor: 'grab',
+          display: 'flex',
+          alignItems: 'center',
+          color: 'text.secondary',
+          mr: 0.5,
+          touchAction: 'none',
+        }}
       >
         <Icon icon="mdi:drag" width={20} height={20} />
       </Box>
@@ -70,7 +80,11 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
 
   const menu = editing && (
     <Box sx={{ display: 'flex', flex: 'none' }}>
-      <IconButton size="small" aria-label={`Settings for ${shownTitle}`} onClick={() => actions.settings(sectionId, id)}>
+      <IconButton
+        size="small"
+        aria-label={`Settings for ${shownTitle}`}
+        onClick={() => actions.settings(sectionId, id)}
+      >
         <Icon icon="mdi:cog-outline" width={18} height={18} />
       </IconButton>
       <IconButton
@@ -86,9 +100,30 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
 
   if (!card) {
     return (
-      <Box data-widget={id} sx={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative', outline: editing ? '1px dashed' : 'none', outlineColor: 'divider' }}>
+      <Box
+        data-widget={id}
+        sx={{
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative',
+          outline: editing ? '1px dashed' : 'none',
+          outlineColor: 'divider',
+        }}
+      >
         {editing && (
-          <Box sx={{ display: 'flex', alignItems: 'center', position: 'absolute', top: 0, right: 0, zIndex: 1, bgcolor: 'background.paper', borderRadius: 1 }}>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              position: 'absolute',
+              top: 0,
+              right: 0,
+              zIndex: 1,
+              bgcolor: 'background.paper',
+              borderRadius: 1,
+            }}
+          >
             {handle}
             {menu}
           </Box>
@@ -99,15 +134,30 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
   }
 
   return (
-    <Paper data-widget={id} variant="outlined" sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', px: 1, py: editing ? 0.25 : 0.5, minHeight: 28, flex: 'none' }}>
+    <Paper
+      data-widget={id}
+      variant="outlined"
+      sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+    >
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          px: 1,
+          py: editing ? 0.25 : 0.5,
+          minHeight: 28,
+          flex: 'none',
+        }}
+      >
         {handle}
         <Typography variant="subtitle2" noWrap sx={{ flex: 1, minWidth: 0 }}>
           {shownTitle}
         </Typography>
         {menu}
       </Box>
-      <Box sx={{ flex: 1, minHeight: 0, overflow: scroll ? 'auto' : 'hidden', px: 1, pb: 1 }}>{body}</Box>
+      <Box sx={{ flex: 1, minHeight: 0, overflow: scroll ? 'auto' : 'hidden', px: 1, pb: 1 }}>
+        {body}
+      </Box>
     </Paper>
   );
 }

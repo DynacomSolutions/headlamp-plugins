@@ -42,7 +42,9 @@ const registered = new Map<string, string>();
 /** Registers the entries of the sources. An entry that did not change is not registered again. */
 export function syncSourceWidgets(store: WidgetStore, sources: ReadonlyArray<PanelSource>): void {
   for (const def of variantWidgets(sources)) {
-    const signature = `${def.title}|${def.icon}|${(def.defaultConfig as { source: string }).source}`;
+    const signature = `${def.title}|${def.icon}|${
+      (def.defaultConfig as { source: string }).source
+    }`;
     if (registered.get(def.type) === signature && store.get(def.type)) continue;
     registered.set(def.type, signature);
     store.registerWidget(def);

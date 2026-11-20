@@ -71,7 +71,8 @@ export function buildPath(p: DashboardPath, base = ''): string {
   return `${base}${BASE_PATH}/${encodeURIComponent(p.name)}${tab}`;
 }
 
-const sameList = (a: string[], b: string[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
+const sameList = (a: string[], b: string[]): boolean =>
+  a.length === b.length && a.every((v, i) => v === b[i]);
 const list = (v: string): string[] => (v ? v.split(',').filter(Boolean).map(safeDecode) : []);
 const enc = (xs: string[]): string => xs.map(encodeURIComponent).join(',');
 
@@ -82,14 +83,27 @@ export function parseQuery(search: string): DashboardQuery {
   if (p.has('node')) filters.nodes = list(p.get('node') ?? '');
   if (p.has('sel')) filters.labelSelector = p.get('sel') ?? '';
   const range = p.get('range');
-  if (range && (TIME_RANGES as ReadonlyArray<string>).includes(range)) filters.range = range as DashboardFilters['range'];
+  if (range && (TIME_RANGES as ReadonlyArray<string>).includes(range))
+    filters.range = range as DashboardFilters['range'];
   const r = p.get('refresh');
-  const refresh = r !== null && /^\d+$/.test(r) && REFRESH_OPTIONS.some(o => o.seconds === Number(r)) ? Number(r) : undefined;
-  return { edit: p.get('edit') === '1', kiosk: p.get('kiosk') === '1', view: p.get('view') ?? '', refresh, filters };
+  const refresh =
+    r !== null && /^\d+$/.test(r) && REFRESH_OPTIONS.some(o => o.seconds === Number(r))
+      ? Number(r)
+      : undefined;
+  return {
+    edit: p.get('edit') === '1',
+    kiosk: p.get('kiosk') === '1',
+    view: p.get('view') ?? '',
+    refresh,
+    filters,
+  };
 }
 
 /** The filter values a query gives, on top of a base (the saved view or the spec default). */
-export function resolveFilters(base: DashboardFilters, given: Partial<DashboardFilters>): DashboardFilters {
+export function resolveFilters(
+  base: DashboardFilters,
+  given: Partial<DashboardFilters>
+): DashboardFilters {
   return {
     namespaces: given.namespaces ?? base.namespaces,
     nodes: given.nodes ?? base.nodes,

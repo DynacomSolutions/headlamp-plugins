@@ -11,7 +11,9 @@ export const RANGE_SECONDS: Record<TimeRange, number> = {
   '30d': 2592000,
 };
 
-export const NICE_STEPS = [15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
+export const NICE_STEPS = [
+  15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400,
+];
 
 /** The most points a series gets, whatever the width. */
 export const MAX_POINTS = 300;

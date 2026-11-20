@@ -7,7 +7,10 @@ export function resourceLink(obj: any, source: SourceRef): string | null {
   if (typeof name !== 'string') return null;
   const namespace = obj?.metadata?.namespace;
   try {
-    const Cls = source.group === '' || !isCustomGroup(source.group) ? (K8s.ResourceClasses as Record<string, any>)[source.kind] : undefined;
+    const Cls =
+      source.group === '' || !isCustomGroup(source.group)
+        ? (K8s.ResourceClasses as Record<string, any>)[source.kind]
+        : undefined;
     if (Cls) return new Cls(obj).getDetailsLink();
     if (isCustomGroup(source.group)) {
       return Router.createRouteURL('customresource', {
@@ -23,5 +26,9 @@ export function resourceLink(obj: any, source: SourceRef): string | null {
 }
 
 function isCustomGroup(group: string): boolean {
-  return group !== '' && !/^(apps|batch|policy|autoscaling|extensions)$/.test(group) && !/(^|\.)k8s\.io$/.test(group);
+  return (
+    group !== '' &&
+    !/^(apps|batch|policy|autoscaling|extensions)$/.test(group) &&
+    !/(^|\.)k8s\.io$/.test(group)
+  );
 }

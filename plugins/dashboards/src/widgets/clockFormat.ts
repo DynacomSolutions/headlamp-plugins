@@ -18,8 +18,18 @@ export interface ZonedParts {
 }
 
 const MONTHS = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ];
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -118,7 +128,14 @@ export function formatPattern(parts: ZonedParts, pattern: string): string {
         out += n === 2 ? two(parts.year % 100) : String(parts.year).padStart(n, '0');
         break;
       case 'M':
-        out += n >= 4 ? MONTHS[parts.month - 1] : n === 3 ? MONTHS[parts.month - 1].slice(0, 3) : n === 2 ? two(parts.month) : String(parts.month);
+        out +=
+          n >= 4
+            ? MONTHS[parts.month - 1]
+            : n === 3
+            ? MONTHS[parts.month - 1].slice(0, 3)
+            : n === 2
+            ? two(parts.month)
+            : String(parts.month);
         break;
       case 'E':
         out += n >= 4 ? WEEKDAYS[parts.weekday] : WEEKDAYS[parts.weekday].slice(0, 3);
@@ -190,7 +207,9 @@ export const DEFAULT_CLOCK: ClockConfig = {
 };
 
 /** The time pattern for the config, or '' when no part is shown. Seconds alone are allowed. */
-export function timePattern(c: Pick<ClockConfig, 'showHours' | 'showMinutes' | 'showSeconds' | 'hourFormat'>): string {
+export function timePattern(
+  c: Pick<ClockConfig, 'showHours' | 'showMinutes' | 'showSeconds' | 'hourFormat'>
+): string {
   const bits: string[] = [];
   if (c.showHours) bits.push(c.hourFormat === '12' ? 'h' : 'HH');
   if (c.showMinutes) bits.push('mm');
@@ -233,5 +252,14 @@ export function commonZones(): string[] {
       // Fall through to the short list.
     }
   }
-  return ['UTC', 'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'Asia/Bangkok', 'Asia/Tokyo', 'Australia/Sydney'];
+  return [
+    'UTC',
+    'Europe/London',
+    'Europe/Paris',
+    'America/New_York',
+    'America/Los_Angeles',
+    'Asia/Bangkok',
+    'Asia/Tokyo',
+    'Australia/Sydney',
+  ];
 }

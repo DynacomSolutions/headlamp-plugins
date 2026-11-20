@@ -37,7 +37,10 @@ let version = 1;
 let spec = emptySpec('Ops');
 
 function configMap() {
-  return { metadata: { name: 'ops', namespace: 'headlamp-dashboards', resourceVersion: String(version) }, data: { [DATA_KEY]: JSON.stringify(spec) } };
+  return {
+    metadata: { name: 'ops', namespace: 'headlamp-dashboards', resourceVersion: String(version) },
+    data: { [DATA_KEY]: JSON.stringify(spec) },
+  };
 }
 
 const Where = () => {
@@ -45,7 +48,10 @@ const Where = () => {
   return <div data-testid="where">{l.pathname + l.search}</div>;
 };
 
-function mount(url: string, getUserConfirmation?: (message: string, callback: (ok: boolean) => void) => void) {
+function mount(
+  url: string,
+  getUserConfirmation?: (message: string, callback: (ok: boolean) => void) => void
+) {
   return render(
     <MemoryRouter initialEntries={[url]} getUserConfirmation={getUserConfirmation}>
       <Route path="/dashboards/:name/:tab?" component={DashboardPage} />
@@ -59,14 +65,22 @@ beforeEach(() => {
   version = 1;
   const a = addTab(emptySpec('Ops'), 'Nodes', 'mdi:server');
   const tabId = a.spec.tabs[0].id;
-  spec = addWidget(a.spec, tabId, a.spec.tabs[0].sections[0].id, 'core.header', { w: 12, h: 2 }, { text: 'Hello header', subtitle: '', style: 'both', size: 'medium', align: 'left' }).spec;
+  spec = addWidget(
+    a.spec,
+    tabId,
+    a.spec.tabs[0].sections[0].id,
+    'core.header',
+    { w: 12, h: 2 },
+    { text: 'Hello header', subtitle: '', style: 'both', size: 'medium', align: 'left' }
+  ).spec;
   request.mockReset();
   request.mockImplementation(async (path: string, params?: any) => {
     if (path.startsWith('/apis/authorization')) return { status: { allowed: true } };
     if (path.startsWith('/api/v1/namespaces/headlamp-dashboards/configmaps/ops')) {
       if (params?.method === 'PUT') {
         const body = JSON.parse(params.body);
-        if (body.metadata.resourceVersion !== String(version)) throw Object.assign(new Error('conflict'), { status: 409 });
+        if (body.metadata.resourceVersion !== String(version))
+          throw Object.assign(new Error('conflict'), { status: 409 });
         version += 1;
         spec = JSON.parse(body.data[DATA_KEY]);
         return configMap();
@@ -85,7 +99,9 @@ describe('dashboard page', () => {
     expect(await screen.findByText('Hello header')).toBeTruthy();
     expect(screen.getByRole('tab', { name: /Overview/ })).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: /Nodes/ }));
-    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes'));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes')
+    );
     expect(screen.queryByText('Hello header')).toBeNull();
   });
 
@@ -98,7 +114,9 @@ describe('dashboard page', () => {
   it('writes edit mode into the URL when Edit is pressed', async () => {
     mount('/dashboards/ops');
     fireEvent.click(await screen.findByRole('button', { name: /Edit/ }));
-    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?edit=1'));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?edit=1')
+    );
   });
 
   it('saves with the resourceVersion and shows a conflict message when someone else saved', async () => {
@@ -125,9 +143,13 @@ describe('dashboard page', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Add section/ }));
     // A tab change is a move inside the dashboard.
     fireEvent.click(screen.getByRole('tab', { name: /Nodes/ }));
-    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes?edit=1'));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes?edit=1')
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes'));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes')
+    );
     expect(confirm).not.toHaveBeenCalled();
   });
 
@@ -155,7 +177,9 @@ describe('dashboard page', () => {
     expect(document.querySelector('[data-last-refreshed]')?.textContent).toMatch(/^Refreshed /);
     fireEvent.mouseDown(screen.getByLabelText('Auto refresh'));
     fireEvent.click(await screen.findByRole('option', { name: '30 s' }));
-    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?refresh=30'));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?refresh=30')
+    );
   });
 
   it('shows an error for a missing dashboard', async () => {

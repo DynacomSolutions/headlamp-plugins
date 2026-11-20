@@ -59,7 +59,13 @@ export function useMetricsEndpoint(): MetricsEndpoint {
   const port = stored?.metricsPort;
   const prefix = stored?.metricsPathPrefix;
   return React.useMemo(
-    () => resolveEndpoint({ metricsNamespace: ns, metricsService: service, metricsPort: port, metricsPathPrefix: prefix }),
+    () =>
+      resolveEndpoint({
+        metricsNamespace: ns,
+        metricsService: service,
+        metricsPort: port,
+        metricsPathPrefix: prefix,
+      }),
     [ns, service, port, prefix]
   );
 }

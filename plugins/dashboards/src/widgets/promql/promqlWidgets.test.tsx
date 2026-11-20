@@ -16,7 +16,13 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 
 import type { WidgetProps } from '../../contract';
 import { defaultFilters } from '../../spec/model';
-import { BreakdownConfig, breakdownWidget, DEFAULT_BREAKDOWN, formatShare, sliceAngles } from './BreakdownWidget';
+import {
+  BreakdownConfig,
+  breakdownWidget,
+  DEFAULT_BREAKDOWN,
+  formatShare,
+  sliceAngles,
+} from './BreakdownWidget';
 import { DEFAULT_GAUGE, gaugeFraction, gaugeWidget } from './GaugeWidget';
 import { PROMQL_WIDGETS } from './index';
 import { parseMatrix } from './mapping';
@@ -26,16 +32,35 @@ import { barPath } from './TimeSeriesView';
 import { DEFAULT_TIMESERIES, timeSeriesWidget } from './TimeSeriesWidget';
 
 function reply(resultType: string, result: unknown) {
-  return { ok: true, status: 200, json: async () => ({ status: 'success', data: { resultType, result } }) };
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ status: 'success', data: { resultType, result } }),
+  };
 }
 
 const matrix = (n = 5) => [
-  { metric: { namespace: 'a' }, values: Array.from({ length: n }, (_, i) => [1_700_000_000 + i * 60, String(i + 1)]) },
-  { metric: { namespace: 'b' }, values: Array.from({ length: n }, (_, i) => [1_700_000_000 + i * 60, String(10 - i)]) },
+  {
+    metric: { namespace: 'a' },
+    values: Array.from({ length: n }, (_, i) => [1_700_000_000 + i * 60, String(i + 1)]),
+  },
+  {
+    metric: { namespace: 'b' },
+    values: Array.from({ length: n }, (_, i) => [1_700_000_000 + i * 60, String(10 - i)]),
+  },
 ];
 
 function props<C>(config: C, over: Partial<WidgetProps<C>> = {}): WidgetProps<C> {
-  return { instanceId: 'w1', config, filters: defaultFilters(), refreshSignal: 0, reportRefreshed: vi.fn(), editing: false, kiosk: false, ...over };
+  return {
+    instanceId: 'w1',
+    config,
+    filters: defaultFilters(),
+    refreshSignal: 0,
+    reportRefreshed: vi.fn(),
+    editing: false,
+    kiosk: false,
+    ...over,
+  };
 }
 
 beforeEach(() => {
@@ -47,7 +72,13 @@ afterEach(cleanup);
 
 describe('registration', () => {
   it('has five widgets with unique types, a settings component and sensible sizes', () => {
-    expect(PROMQL_WIDGETS.map(w => w.type)).toEqual(['promql.timeseries', 'promql.stat', 'promql.gauge', 'promql.table', 'promql.breakdown']);
+    expect(PROMQL_WIDGETS.map(w => w.type)).toEqual([
+      'promql.timeseries',
+      'promql.stat',
+      'promql.gauge',
+      'promql.table',
+      'promql.breakdown',
+    ]);
     for (const w of PROMQL_WIDGETS) {
       expect(w.SettingsComponent).toBeTruthy();
       expect(w.minSize!.w).toBeLessThanOrEqual(w.defaultSize.w);
@@ -62,14 +93,20 @@ describe('time series widget', () => {
     const reportRefreshed = vi.fn();
     const filters = { ...defaultFilters(), namespaces: ['a', 'b'], range: '6h' as const };
     const C = timeSeriesWidget.Component;
-    const { container } = render(<C {...props({ ...DEFAULT_TIMESERIES, kind: 'line' }, { filters, reportRefreshed })} />);
-    await waitFor(() => expect(container.querySelectorAll('svg path[stroke]').length).toBeGreaterThanOrEqual(2));
+    const { container } = render(
+      <C {...props({ ...DEFAULT_TIMESERIES, kind: 'line' }, { filters, reportRefreshed })} />
+    );
+    await waitFor(() =>
+      expect(container.querySelectorAll('svg path[stroke]').length).toBeGreaterThanOrEqual(2)
+    );
     expect(request).toHaveBeenCalledTimes(1);
     const url = decodeURIComponent(request.mock.calls[0][0] as string);
     expect(url).toContain('/proxy/api/v1/query_range?');
     expect(url).toContain('namespace=~"a|b"');
     const q = new URL(`http://x${request.mock.calls[0][0]}`).searchParams;
-    expect((Number(q.get('end')) - Number(q.get('start'))) / Number(q.get('step'))).toBeLessThanOrEqual(300);
+    expect(
+      (Number(q.get('end')) - Number(q.get('start'))) / Number(q.get('step'))
+    ).toBeLessThanOrEqual(300);
     expect(reportRefreshed).toHaveBeenCalled();
     // The legend names both series.
     expect(container.textContent).toContain('namespace="a"');
@@ -78,7 +115,9 @@ describe('time series widget', () => {
   it('shows one tooltip with every series at the pointer', async () => {
     request.mockResolvedValue(reply('matrix', matrix()));
     const C = timeSeriesWidget.Component;
-    const { container } = render(<C {...props({ ...DEFAULT_TIMESERIES, unit: 'plain', queries: '# {{namespace}}\nup' })} />);
+    const { container } = render(
+      <C {...props({ ...DEFAULT_TIMESERIES, unit: 'plain', queries: '# {{namespace}}\nup' })} />
+    );
     const svg = await waitFor(() => {
       const el = container.querySelector('svg[role="img"][tabindex="0"]');
       expect(el).toBeTruthy();
@@ -148,10 +187,16 @@ describe('time series widget', () => {
   });
 
   it('shows a readable error', async () => {
-    request.mockResolvedValue({ ok: false, status: 422, json: async () => ({ status: 'error', error: 'bad query' }) });
+    request.mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: async () => ({ status: 'error', error: 'bad query' }),
+    });
     const C = timeSeriesWidget.Component;
     const { container } = render(<C {...props(DEFAULT_TIMESERIES)} />);
-    await waitFor(() => expect(container.querySelector('[role="alert"]')?.textContent).toContain('bad query'));
+    await waitFor(() =>
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain('bad query')
+    );
   });
 
   it('asks for a query when there is none, without a request', async () => {
@@ -166,10 +211,14 @@ describe('time series widget', () => {
     const C = timeSeriesWidget.Component;
     const bars = render(<C {...props({ ...DEFAULT_TIMESERIES, kind: 'bar' })} />);
     // Two series and five times: bars stack, so there are two segments for each time.
-    await waitFor(() => expect(bars.container.querySelectorAll('svg path[fill^="#"][stroke]').length).toBe(10));
+    await waitFor(() =>
+      expect(bars.container.querySelectorAll('svg path[fill^="#"][stroke]').length).toBe(10)
+    );
     cleanup();
     const area = render(<C {...props({ ...DEFAULT_TIMESERIES, kind: 'stacked' })} />);
-    await waitFor(() => expect(area.container.querySelectorAll('svg path[fill-opacity]').length).toBe(2));
+    await waitFor(() =>
+      expect(area.container.querySelectorAll('svg path[fill-opacity]').length).toBe(2)
+    );
   });
 
   it('builds a rounded bar that stands on the baseline', () => {
@@ -183,28 +232,62 @@ describe('stat tile', () => {
   it('shows the value from an instant query, with the status of the threshold', async () => {
     request.mockResolvedValue(reply('vector', [{ metric: {}, value: [1, '95'] }]));
     const C = statWidget.Component;
-    const { container } = render(<C {...props({ ...DEFAULT_STAT, sparkline: false, unit: 'percent', thresholds: '70:warning, 90:critical' })} />);
-    await waitFor(() => expect(container.querySelector('[data-stat-value]')?.textContent).toBe('95%'));
+    const { container } = render(
+      <C
+        {...props({
+          ...DEFAULT_STAT,
+          sparkline: false,
+          unit: 'percent',
+          thresholds: '70:warning, 90:critical',
+        })}
+      />
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-stat-value]')?.textContent).toBe('95%')
+    );
     expect(container.querySelector('[data-level="critical"]')?.textContent).toBe('Critical');
     expect(decodeURIComponent(request.mock.calls[0][0] as string)).toContain('/api/v1/query?');
   });
 
   it('draws a sparkline from a range query and takes the last value', async () => {
-    request.mockResolvedValue(reply('matrix', [{ metric: {}, values: [[1, '1'], [2, '2'], [3, '7']] }]));
+    request.mockResolvedValue(
+      reply('matrix', [
+        {
+          metric: {},
+          values: [
+            [1, '1'],
+            [2, '2'],
+            [3, '7'],
+          ],
+        },
+      ])
+    );
     const C = statWidget.Component;
     const { container } = render(<C {...props({ ...DEFAULT_STAT, sparkline: true })} />);
-    await waitFor(() => expect(container.querySelector('[data-stat-value]')?.textContent).toBe('7'));
+    await waitFor(() =>
+      expect(container.querySelector('[data-stat-value]')?.textContent).toBe('7')
+    );
     expect(container.querySelector('svg path[stroke]')).toBeTruthy();
     expect(container.querySelector('[data-level]')).toBeNull();
   });
 
   it('reduces several series', () => {
-    const results = [{ resultType: 'vector', result: [{ metric: { a: '1' }, value: [1, '2'] }, { metric: { a: '2' }, value: [1, '3'] }] }];
+    const results = [
+      {
+        resultType: 'vector',
+        result: [
+          { metric: { a: '1' }, value: [1, '2'] },
+          { metric: { a: '2' }, value: [1, '3'] },
+        ],
+      },
+    ];
     expect(statValue(results, { sparkline: false, reduce: 'sum' })?.value).toBe(5);
     expect(statValue(results, { sparkline: false, reduce: 'max' })?.value).toBe(3);
     const s = parseMatrix(matrix(3));
     expect(reduceSeries(s, 'sum').points.map(p => p.v)).toEqual([11, 11, 11]);
-    expect(statValue([{ resultType: 'matrix', result: [] }], { sparkline: true, reduce: 'first' })).toEqual({ value: null, spark: [] });
+    expect(
+      statValue([{ resultType: 'matrix', result: [] }], { sparkline: true, reduce: 'first' })
+    ).toEqual({ value: null, spark: [] });
   });
 });
 
@@ -234,9 +317,12 @@ describe('query table', () => {
   it('shows a row per series, sorted by the first value column, and sorts on a header click', async () => {
     request.mockResolvedValue(reply('vector', samples));
     const C = tableWidget.Component;
-    const { container, getByText } = render(<C {...props({ ...DEFAULT_TABLE, queries: '# Memory | bytes\nup', labels: 'pod' })} />);
+    const { container, getByText } = render(
+      <C {...props({ ...DEFAULT_TABLE, queries: '# Memory | bytes\nup', labels: 'pod' })} />
+    );
     await waitFor(() => expect(container.querySelectorAll('tbody tr')).toHaveLength(3));
-    const firstCells = () => [...container.querySelectorAll('tbody tr')].map(r => r.querySelector('td')?.textContent);
+    const firstCells = () =>
+      [...container.querySelectorAll('tbody tr')].map(r => r.querySelector('td')?.textContent);
     expect(firstCells()).toEqual(['p2', 'p1', 'p3']);
     expect(container.querySelector('tbody tr td:last-child')?.textContent).toBe('100 B');
     fireEvent.click(getByText('Memory'));
@@ -256,8 +342,16 @@ describe('query table', () => {
 });
 
 describe('breakdown', () => {
-  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ metric: { namespace: `ns${i}` }, value: [1, String(i + 1)] }));
-  const cfg = (over: Partial<BreakdownConfig> = {}): BreakdownConfig => ({ ...DEFAULT_BREAKDOWN, unit: 'plain', ...over });
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      metric: { namespace: `ns${i}` },
+      value: [1, String(i + 1)],
+    }));
+  const cfg = (over: Partial<BreakdownConfig> = {}): BreakdownConfig => ({
+    ...DEFAULT_BREAKDOWN,
+    unit: 'plain',
+    ...over,
+  });
 
   it('shows every group as its own slice, with no Other and no top-N', async () => {
     request.mockResolvedValue(reply('vector', many(30)));
@@ -272,7 +366,9 @@ describe('breakdown', () => {
     const C = breakdownWidget.Component;
     const { container } = render(<C {...props(cfg({ view: 'bar' }))} />);
     await waitFor(() => expect(container.querySelectorAll('[data-bar]')).toHaveLength(30));
-    const widths = [...container.querySelectorAll('[data-bar]')].map(b => (b as HTMLElement).style.width || getComputedStyle(b).width);
+    const widths = [...container.querySelectorAll('[data-bar]')].map(
+      b => (b as HTMLElement).style.width || getComputedStyle(b).width
+    );
     expect(widths.length).toBe(30);
   });
   it('draws slices at their real size', () => {

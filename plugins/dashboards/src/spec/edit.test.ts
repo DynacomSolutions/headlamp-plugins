@@ -87,7 +87,12 @@ describe('sections and widgets', () => {
 
     const two = addTab(spec, 'Other');
     const target = two.spec.tabs[1].sections[0].id;
-    const across = moveWidgetToTabSection(two.spec, { tabId, sectionId: s1 }, { tabId: two.tabId, sectionId: target }, w1);
+    const across = moveWidgetToTabSection(
+      two.spec,
+      { tabId, sectionId: s1 },
+      { tabId: two.tabId, sectionId: target },
+      w1
+    );
     expect(across.tabs[1].sections[0].widgets.map(w => w.id)).toEqual([w1]);
     expect(across.tabs[0].sections[0].widgets.some(w => w.id === w1)).toBe(false);
   });
@@ -140,6 +145,8 @@ describe('views and clone', () => {
     expect(c.title).toBe('Copy');
     expect(c.modifiedAt).toBeUndefined();
     expect(c.tabs).not.toBe(spec.tabs);
-    expect(c.tabs[0].sections[0].widgets[0].config).toEqual(spec.tabs[0].sections[0].widgets[0].config);
+    expect(c.tabs[0].sections[0].widgets[0].config).toEqual(
+      spec.tabs[0].sections[0].widgets[0].config
+    );
   });
 });

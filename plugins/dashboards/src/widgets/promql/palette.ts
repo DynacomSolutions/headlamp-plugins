@@ -49,7 +49,13 @@ export const INK: Record<Mode, Ink> = {
 };
 
 /** The kiosk is black, so ink and fills are tuned for that background. */
-export const KIOSK_INK: Ink = { ...INK.dark, surface: '#000000', ring: '#000000', grid: '#262625', track: '#262625' };
+export const KIOSK_INK: Ink = {
+  ...INK.dark,
+  surface: '#000000',
+  ring: '#000000',
+  grid: '#262625',
+  track: '#262625',
+};
 
 const GOLDEN_ANGLE = 137.508;
 

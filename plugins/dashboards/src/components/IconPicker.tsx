@@ -12,7 +12,11 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { isIconName, searchIcons } from '../icons/iconNames';
 
-export function IconPickerDialog(props: { value: string; onCancel: () => void; onPick: (icon: string) => void }): JSX.Element {
+export function IconPickerDialog(props: {
+  value: string;
+  onCancel: () => void;
+  onPick: (icon: string) => void;
+}): JSX.Element {
   const { value, onCancel, onPick } = props;
   const [query, setQuery] = React.useState('');
   const results = React.useMemo(() => searchIcons(query), [query]);
@@ -31,7 +35,10 @@ export function IconPickerDialog(props: { value: string; onCancel: () => void; o
           sx={{ my: 1 }}
         />
         {typed && isIconName(typed) && !results.includes(typed) && (
-          <Button startIcon={<Icon icon={typed} width={20} height={20} />} onClick={() => onPick(typed)}>
+          <Button
+            startIcon={<Icon icon={typed} width={20} height={20} />}
+            onClick={() => onPick(typed)}
+          >
             Use {typed}
           </Button>
         )}
@@ -40,7 +47,16 @@ export function IconPickerDialog(props: { value: string; onCancel: () => void; o
             No icon matches.
           </Typography>
         )}
-        <Box role="listbox" aria-label="Icons" sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(64px, 1fr))', gap: 0.5, mt: 1 }}>
+        <Box
+          role="listbox"
+          aria-label="Icons"
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(64px, 1fr))',
+            gap: 0.5,
+            mt: 1,
+          }}
+        >
           {results.map(name => (
             <ButtonBase
               key={name}

@@ -75,7 +75,13 @@ export function computeDomain(input: DomainInput): Domain {
 }
 
 /** Round the domain out to the ticks, except for limits the user set. */
-export function niceDomain(d: Domain, count: number, unit: Unit | string | undefined, fixedMin: boolean, fixedMax: boolean): Domain {
+export function niceDomain(
+  d: Domain,
+  count: number,
+  unit: Unit | string | undefined,
+  fixedMin: boolean,
+  fixedMax: boolean
+): Domain {
   const ticks = niceTicks(d.min, d.max, count, unit);
   if (ticks.length < 2) return d;
   const step = ticks[1] - ticks[0];
@@ -91,13 +97,20 @@ export function linear(domain: Domain, r0: number, r1: number): (v: number) => n
 
 // ---- time ticks ----
 
-const TIME_STEPS = [60, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800];
+const TIME_STEPS = [
+  60, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400, 172800, 604800,
+];
 
 /**
  * Ticks for a time axis (epoch seconds), at round local times. `tzOffsetSeconds` is the local
  * offset east of UTC (the negative of `getTimezoneOffset() * 60`).
  */
-export function timeTicks(start: number, end: number, count: number, tzOffsetSeconds: number): number[] {
+export function timeTicks(
+  start: number,
+  end: number,
+  count: number,
+  tzOffsetSeconds: number
+): number[] {
   const span = end - start;
   if (!(span > 0) || count < 1) return [];
   const raw = span / count;
@@ -122,7 +135,9 @@ export function formatTick(t: number, rangeSpanSeconds: number, tzOffsetSeconds:
 
 export function formatTooltipTime(t: number, tzOffsetSeconds: number): string {
   const d = new Date((t + tzOffsetSeconds) * 1000);
-  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${pad2(d.getUTCHours())}:${pad2(
+    d.getUTCMinutes()
+  )}:${pad2(d.getUTCSeconds())}`;
 }
 
 // ---- paths ----
@@ -165,11 +180,19 @@ export function areaPath(xs: number[], tops: Array<number | null>, bases: number
 }
 
 /** A pie or donut slice as a path. A full circle is two half arcs, because one arc cannot close. */
-export function slicePath(cx: number, cy: number, rOuter: number, rInner: number, a0: number, a1: number): string {
+export function slicePath(
+  cx: number,
+  cy: number,
+  rOuter: number,
+  rInner: number,
+  a0: number,
+  a1: number
+): string {
   const sweep = a1 - a0;
   const pt = (r: number, a: number) => `${f(cx + r * Math.sin(a))},${f(cy - r * Math.cos(a))}`;
   if (sweep >= Math.PI * 2 - 1e-6) {
-    const ring = (r: number, dir: 0 | 1) => `M${pt(r, 0)}A${r},${r} 0 1 ${dir} ${pt(r, Math.PI)}A${r},${r} 0 1 ${dir} ${pt(r, 0)}`;
+    const ring = (r: number, dir: 0 | 1) =>
+      `M${pt(r, 0)}A${r},${r} 0 1 ${dir} ${pt(r, Math.PI)}A${r},${r} 0 1 ${dir} ${pt(r, 0)}`;
     return rInner > 0 ? `${ring(rOuter, 1)}${ring(rInner, 0)}Z` : `${ring(rOuter, 1)}Z`;
   }
   const large = sweep > Math.PI ? 1 : 0;

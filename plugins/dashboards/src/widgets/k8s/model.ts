@@ -109,7 +109,12 @@ export function formatNumber(n: number | null): string {
  * Apply the dashboard filters that can be checked on the object itself. The label selector is
  * sent to the API server, so it is not checked here.
  */
-export function scopeObjects(objects: any[], scope: ScopeFilters, namespaced: boolean, now: number): any[] {
+export function scopeObjects(
+  objects: any[],
+  scope: ScopeFilters,
+  namespaced: boolean,
+  now: number
+): any[] {
   const ns = scope.namespaces.length > 0 && namespaced ? new Set(scope.namespaces) : null;
   const nodes = scope.nodes.length > 0 ? new Set(scope.nodes) : null;
   if (!ns && !nodes) return objects;
@@ -138,7 +143,10 @@ function numberOf(obj: any, field: string, now: number): number | null {
 
 function columnViews(config: ReportConfig): ColumnView[] {
   const cols = config.columns.length > 0 ? config.columns : [{ field: 'name', header: '' }];
-  return cols.map(c => ({ field: c.field, header: c.header.trim() !== '' ? c.header : defaultHeader(c.field) }));
+  return cols.map(c => ({
+    field: c.field,
+    header: c.header.trim() !== '' ? c.header : defaultHeader(c.field),
+  }));
 }
 
 /** The header of a field, preferring a column header the user edited. */
@@ -155,7 +163,11 @@ export interface BuildOptions {
   sortDir?: 'asc' | 'desc';
 }
 
-export function buildRows(objects: any[], config: ReportConfig, options: BuildOptions): {
+export function buildRows(
+  objects: any[],
+  config: ReportConfig,
+  options: BuildOptions
+): {
   rows: RowView[];
   columns: ColumnView[];
   logicError: string | null;
@@ -205,7 +217,14 @@ function groupLabel(cell: Cell): string {
   return cell.text === '' ? NONE_LABEL : cell.text;
 }
 
-function buildGroups(rows: RowView[], fields: string[], depth: number, parentId: string, config: ReportConfig, now: number): Group[] {
+function buildGroups(
+  rows: RowView[],
+  fields: string[],
+  depth: number,
+  parentId: string,
+  config: ReportConfig,
+  now: number
+): Group[] {
   const field = fields[depth];
   const buckets = new Map<string, { cell: Cell; rows: RowView[] }>();
   for (const row of rows) {
@@ -243,7 +262,12 @@ function buildGroups(rows: RowView[], fields: string[], depth: number, parentId:
 function totalsOf(rows: RowView[], aggregates: AggregateSpec[]): Totals {
   return {
     count: rows.length,
-    aggs: aggregates.map((a, i) => aggregate(rows.map(r => r.nums[i] ?? null), a.fn)),
+    aggs: aggregates.map((a, i) =>
+      aggregate(
+        rows.map(r => r.nums[i] ?? null),
+        a.fn
+      )
+    ),
   };
 }
 
@@ -298,7 +322,9 @@ function buildMatrix(objects: any[], config: ReportConfig, options: BuildOptions
     rowField: config.matrixRow,
     colField: config.matrixCol,
     measure:
-      fn === 'count' || measureField === '' ? 'Count' : `${fn} of ${fieldHeader(config, measureField)}`,
+      fn === 'count' || measureField === ''
+        ? 'Count'
+        : `${fn} of ${fieldHeader(config, measureField)}`,
     rowLabels,
     colLabels,
     cells: rowLabels.map(r => colLabels.map(c => reduce(cellValues.get(`${r}\u0000${c}`)))),
@@ -368,10 +394,15 @@ export function csvField(value: string | number | null, isNumber = false): strin
 }
 
 export function toCsv(table: Array<Array<string | number | null>>): string {
-  return table.map(line => line.map(v => csvField(v, typeof v === 'number')).join(',')).join('\r\n');
+  return table
+    .map(line => line.map(v => csvField(v, typeof v === 'number')).join(','))
+    .join('\r\n');
 }
 
-export function reportToTable(report: Report, config: ReportConfig): Array<Array<string | number | null>> {
+export function reportToTable(
+  report: Report,
+  config: ReportConfig
+): Array<Array<string | number | null>> {
   if (report.type === 'tabular') {
     return [report.columns.map(c => c.header), ...report.rows.map(r => r.cells.map(c => c.text))];
   }
@@ -385,10 +416,18 @@ export function reportToTable(report: Report, config: ReportConfig): Array<Array
       g.children.forEach(visit);
     };
     report.groups.forEach(visit);
-    lines.push([...levels.map((_, i) => (i === 0 ? 'Grand total' : null)), report.total.count, ...report.total.aggs]);
+    lines.push([
+      ...levels.map((_, i) => (i === 0 ? 'Grand total' : null)),
+      report.total.count,
+      ...report.total.aggs,
+    ]);
     return lines;
   }
-  const head: Array<string | number | null> = [`${fieldHeader(config, report.rowField)} / ${fieldHeader(config, report.colField)}`, ...report.colLabels, 'Total'];
+  const head: Array<string | number | null> = [
+    `${fieldHeader(config, report.rowField)} / ${fieldHeader(config, report.colField)}`,
+    ...report.colLabels,
+    'Total',
+  ];
   const lines: Array<Array<string | number | null>> = [head];
   report.rowLabels.forEach((r, i) => lines.push([r, ...report.cells[i], report.rowTotals[i]]));
   lines.push(['Total', ...report.colTotals, report.grandTotal]);

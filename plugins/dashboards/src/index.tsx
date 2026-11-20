@@ -8,7 +8,11 @@
  * (see README.md and src/contract.ts).
  */
 import './icons/registerIcons';
-import { registerPluginSettings, registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
+import {
+  registerPluginSettings,
+  registerRoute,
+  registerSidebarEntry,
+} from '@kinvolk/headlamp-plugin/lib';
 import { DashboardPage } from './DashboardPage';
 import { DashboardsListPage } from './DashboardsListPage';
 import { getRegistry } from './registry';

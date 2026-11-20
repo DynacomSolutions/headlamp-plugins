@@ -8,8 +8,17 @@ const mk = (ns: string, phase: string, restarts = 0) => ({
   metadata: { name: `${ns}-${phase}-${Math.random()}`, namespace: ns },
   status: { phase, containerStatuses: [{ ready: true, restartCount: restarts }] },
 });
-const objs = [mk('a', 'Running', 1), mk('a', 'Running', 2), mk('a', 'Pending', 4), mk('b', 'Running', 8)];
-const cfg = (patch: Partial<ReportConfig>): ReportConfig => ({ ...DEFAULT_REPORT, reportType: 'summary', ...patch });
+const objs = [
+  mk('a', 'Running', 1),
+  mk('a', 'Running', 2),
+  mk('a', 'Pending', 4),
+  mk('b', 'Running', 8),
+];
+const cfg = (patch: Partial<ReportConfig>): ReportConfig => ({
+  ...DEFAULT_REPORT,
+  reportType: 'summary',
+  ...patch,
+});
 const run = (patch: Partial<ReportConfig>) =>
   buildReport(objs, cfg(patch), { now: 0, scope: { namespaces: [], nodes: [] } }) as SummaryReport;
 
@@ -23,7 +32,11 @@ describe('chart data', () => {
     expect(d.measureLabel).toBe('Rows');
   });
   it('charts an aggregate', () => {
-    const d = chartData(run({ groupBy: ['namespace'], aggregates: [{ field: 'restarts', fn: 'sum' }] }), 'hbar', 0);
+    const d = chartData(
+      run({ groupBy: ['namespace'], aggregates: [{ field: 'restarts', fn: 'sum' }] }),
+      'hbar',
+      0
+    );
     expect(d.categories.map(c => c.total)).toEqual([7, 8]);
     expect(d.measureLabel).toBe('sum of Restarts');
   });
@@ -37,7 +50,10 @@ describe('chart data', () => {
   });
   it('never merges groups into an Other bucket, however many there are', () => {
     const many = Array.from({ length: 60 }, (_, i) => mk(`ns-${i}`, 'Running'));
-    const r = buildReport(many, cfg({ groupBy: ['namespace'] }), { now: 0, scope: { namespaces: [], nodes: [] } }) as SummaryReport;
+    const r = buildReport(many, cfg({ groupBy: ['namespace'] }), {
+      now: 0,
+      scope: { namespaces: [], nodes: [] },
+    }) as SummaryReport;
     const d = chartData(r, 'donut', -1);
     expect(d.categories).toHaveLength(60);
     expect(d.categories.some(c => /other/i.test(c.label))).toBe(false);

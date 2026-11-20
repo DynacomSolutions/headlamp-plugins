@@ -18,17 +18,35 @@ import {
 } from './mapping';
 import { colourAt, ColourBook } from './palette';
 import { queryUrl } from './prom';
-import { areaPath, computeDomain, formatTick, linePath, niceTicks, slicePath, timeTicks } from './scale';
+import {
+  areaPath,
+  computeDomain,
+  formatTick,
+  linePath,
+  niceTicks,
+  slicePath,
+  timeTicks,
+} from './scale';
 import { chooseStep, NICE_STEPS, rangeSeconds } from './step';
 import { alternation, buildVars, formatDuration, selectorToMatchers, substitute } from './template';
 import { parseThresholds, thresholdLevel } from './thresholds';
 import { formatBytes, formatSeconds, formatValue, parseOptionalNumber, sig } from './units';
 
 describe('template substitution', () => {
-  const vars = buildVars({ ...defaultFilters(), namespaces: ['web', 'api'], nodes: ['worker-1.example.com'], range: '6h' }, 60);
+  const vars = buildVars(
+    {
+      ...defaultFilters(),
+      namespaces: ['web', 'api'],
+      nodes: ['worker-1.example.com'],
+      range: '6h',
+    },
+    60
+  );
   it('joins namespaces into a regex alternation and escapes regex characters', () => {
     expect(substitute('up{namespace=~"$namespace"}', vars)).toBe('up{namespace=~"web|api"}');
-    expect(substitute('up{node=~"${node}"}', vars)).toBe('up{node=~"worker-1\\\\.example\\\\.com"}');
+    expect(substitute('up{node=~"${node}"}', vars)).toBe(
+      'up{node=~"worker-1\\\\.example\\\\.com"}'
+    );
   });
   it('uses .* when nothing is chosen, so series without the label still match', () => {
     expect(alternation([])).toBe('.*');
@@ -56,7 +74,9 @@ describe('template substitution', () => {
     expect(selectorToMatchers('app=web,tier!=db')).toBe('app="web",tier!="db"');
     expect(selectorToMatchers('env in (a,b),!legacy,team')).toBe('env=~"a|b",legacy="",team=~".+"');
     expect(selectorToMatchers('')).toBe('');
-    expect(substitute('up{$selector}', buildVars({ ...defaultFilters(), labelSelector: 'app=web' }, 60))).toBe('up{app="web"}');
+    expect(
+      substitute('up{$selector}', buildVars({ ...defaultFilters(), labelSelector: 'app=web' }, 60))
+    ).toBe('up{app="web"}');
   });
 });
 
@@ -71,8 +91,12 @@ describe('step choice', () => {
     }
   });
   it('gives a larger step for a longer range and a smaller step for a wider chart', () => {
-    expect(chooseStep(rangeSeconds('7d'), 600)).toBeGreaterThan(chooseStep(rangeSeconds('1h'), 600));
-    expect(chooseStep(rangeSeconds('24h'), 1200)).toBeLessThanOrEqual(chooseStep(rangeSeconds('24h'), 300));
+    expect(chooseStep(rangeSeconds('7d'), 600)).toBeGreaterThan(
+      chooseStep(rangeSeconds('1h'), 600)
+    );
+    expect(chooseStep(rangeSeconds('24h'), 1200)).toBeLessThanOrEqual(
+      chooseStep(rangeSeconds('24h'), 300)
+    );
   });
   it('keeps the same step for a small change in width', () => {
     expect(chooseStep(3600, 640)).toBe(chooseStep(3600, 660));
@@ -146,8 +170,22 @@ describe('thresholds', () => {
 
 describe('response mapping', () => {
   const matrix = [
-    { metric: { __name__: 'cpu', pod: 'a' }, values: [[100, '1'], [160, 'NaN'], [220, '3']] },
-    { metric: { pod: 'b' }, values: [[100, '2'], [160, '2'], [220, '+Inf']] },
+    {
+      metric: { __name__: 'cpu', pod: 'a' },
+      values: [
+        [100, '1'],
+        [160, 'NaN'],
+        [220, '3'],
+      ],
+    },
+    {
+      metric: { pod: 'b' },
+      values: [
+        [100, '2'],
+        [160, '2'],
+        [220, '+Inf'],
+      ],
+    },
     { nothing: true },
   ];
   it('parses a matrix, turning NaN and Inf into gaps', () => {
@@ -174,7 +212,10 @@ describe('response mapping', () => {
     expect(parseMatrix(matrix)[0].key).toBe(a.key);
   });
   it('parses vectors, scalars and bad data', () => {
-    const v = parseVector([{ metric: { ns: 'x' }, value: [1, '4.5'] }, { metric: {}, value: [1, 'NaN'] }]);
+    const v = parseVector([
+      { metric: { ns: 'x' }, value: [1, '4.5'] },
+      { metric: {}, value: [1, 'NaN'] },
+    ]);
     expect(v.map(s => s.value)).toEqual([4.5, null]);
     expect(parseVector([1, '7'], undefined, 'scalar')[0].value).toBe(7);
     expect(parseVector(undefined)).toEqual([]);
@@ -230,7 +271,9 @@ describe('table rows and breakdown groups', () => {
     expect(buildTableRows([a], ['ns'])[0].values).toEqual([15]);
   });
   it('groups by a label with every group kept: no other bucket and no top-N', () => {
-    const many = parseVector(Array.from({ length: 40 }, (_, i) => ({ metric: { ns: `n${i}` }, value: [1, String(i + 1)] })));
+    const many = parseVector(
+      Array.from({ length: 40 }, (_, i) => ({ metric: { ns: `n${i}` }, value: [1, String(i + 1)] }))
+    );
     const groups = groupSamples(many, 'ns');
     expect(groups).toHaveLength(40);
     expect(groups.map(g => g.name)).not.toContain('Other');
@@ -266,14 +309,27 @@ describe('scales and paths', () => {
   it('widens the domain to zero for filled marks and applies limits', () => {
     expect(computeDomain({ min: 5, max: 10, includeZero: true })).toEqual({ min: 0, max: 10 });
     expect(computeDomain({ min: 5, max: 10, includeZero: false })).toEqual({ min: 5, max: 10 });
-    expect(computeDomain({ min: 5, max: 10, includeZero: true, yMin: 2, yMax: 20 })).toEqual({ min: 2, max: 20 });
+    expect(computeDomain({ min: 5, max: 10, includeZero: true, yMin: 2, yMax: 20 })).toEqual({
+      min: 2,
+      max: 20,
+    });
     const flat = computeDomain({ min: 4, max: 4, includeZero: false });
     expect(flat.min).toBeLessThan(4);
     expect(flat.max).toBeGreaterThan(4);
-    expect(computeDomain({ min: Infinity, max: -Infinity, includeZero: false })).toEqual({ min: 0, max: 1 });
+    expect(computeDomain({ min: Infinity, max: -Infinity, includeZero: false })).toEqual({
+      min: 0,
+      max: 1,
+    });
   });
   it('breaks a line at a gap instead of drawing zero', () => {
-    expect(linePath([[0, 5], [10, null], [20, 7], [30, 8]])).toBe('M0,5M20,7L30,8');
+    expect(
+      linePath([
+        [0, 5],
+        [10, null],
+        [20, 7],
+        [30, 8],
+      ])
+    ).toBe('M0,5M20,7L30,8');
   });
   it('closes an area between a top and a base', () => {
     expect(areaPath([0, 10], [5, 6], [20, 20])).toBe('M0,5L10,6L10,20L0,20Z');
@@ -313,9 +369,21 @@ describe('endpoint', () => {
   it('uses defaults for blank or bad fields and builds the proxy URL', () => {
     const d = resolveEndpoint(undefined);
     expect(resolveEndpoint({ metricsNamespace: 'Bad Name', metricsPort: '!!' })).toEqual(d);
-    const e = resolveEndpoint({ metricsNamespace: 'obs', metricsService: 'prom', metricsPort: 'http', metricsPathPrefix: '/prometheus/' });
-    expect(e).toEqual({ namespace: 'obs', service: 'prom', port: 'http', pathPrefix: '/prometheus' });
-    expect(queryUrl(e, 'query', { query: 'up' })).toBe('/api/v1/namespaces/obs/services/prom:http/proxy/prometheus/api/v1/query?query=up');
+    const e = resolveEndpoint({
+      metricsNamespace: 'obs',
+      metricsService: 'prom',
+      metricsPort: 'http',
+      metricsPathPrefix: '/prometheus/',
+    });
+    expect(e).toEqual({
+      namespace: 'obs',
+      service: 'prom',
+      port: 'http',
+      pathPrefix: '/prometheus',
+    });
+    expect(queryUrl(e, 'query', { query: 'up' })).toBe(
+      '/api/v1/namespaces/obs/services/prom:http/proxy/prometheus/api/v1/query?query=up'
+    );
     expect(resolveEndpoint({ metricsPathPrefix: 'no-slash' }).pathPrefix).toBe('');
   });
 });

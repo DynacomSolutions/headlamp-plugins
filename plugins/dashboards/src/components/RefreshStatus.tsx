@@ -17,7 +17,12 @@ export function LastRefreshed({ store }: { store: RefreshStore }): JSX.Element {
   const at = lastRefreshedAt(state);
   return (
     <Tooltip title={`Last refreshed ${clockTime(at)}`}>
-      <Typography variant="caption" color="text.secondary" data-last-refreshed sx={{ whiteSpace: 'nowrap' }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        data-last-refreshed
+        sx={{ whiteSpace: 'nowrap' }}
+      >
         Refreshed {relativeTime(at, now)}
       </Typography>
     </Tooltip>

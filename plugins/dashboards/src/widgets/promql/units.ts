@@ -68,7 +68,11 @@ export function formatSeconds(s: number): string {
  * Format a value for a unit. With `compact` the unit word is left out where an axis tick
  * would repeat it (cores).
  */
-export function formatValue(v: number, unit: Unit | string | undefined, opts: { compact?: boolean } = {}): string {
+export function formatValue(
+  v: number,
+  unit: Unit | string | undefined,
+  opts: { compact?: boolean } = {}
+): string {
   if (typeof v !== 'number' || !Number.isFinite(v)) return '-';
   switch (unit) {
     case 'bytes':

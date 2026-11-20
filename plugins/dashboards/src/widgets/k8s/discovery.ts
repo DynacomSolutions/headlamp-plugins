@@ -49,7 +49,13 @@ export function isBuiltinGroup(group: string): boolean {
 function entriesOf(group: string, version: string, list: any): KindEntry[] {
   const resources: any[] = Array.isArray(list?.resources) ? list.resources : [];
   return resources
-    .filter(r => typeof r?.name === 'string' && !r.name.includes('/') && Array.isArray(r.verbs) && r.verbs.includes('list'))
+    .filter(
+      r =>
+        typeof r?.name === 'string' &&
+        !r.name.includes('/') &&
+        Array.isArray(r.verbs) &&
+        r.verbs.includes('list')
+    )
     .map(r => ({
       group,
       version,
@@ -103,6 +109,9 @@ export async function fetchKinds(request: Request): Promise<KindEntry[]> {
 
 /** The API path of a kind, for one namespace or for the whole cluster. */
 export function listPath(source: SourceRef, namespace?: string): string {
-  const base = source.group === '' ? `/api/${source.version}` : `/apis/${source.group}/${source.version}`;
-  return namespace && source.namespaced ? `${base}/namespaces/${encodeURIComponent(namespace)}/${source.plural}` : `${base}/${source.plural}`;
+  const base =
+    source.group === '' ? `/api/${source.version}` : `/apis/${source.group}/${source.version}`;
+  return namespace && source.namespaced
+    ? `${base}/namespaces/${encodeURIComponent(namespace)}/${source.plural}`
+    : `${base}/${source.plural}`;
 }

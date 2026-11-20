@@ -8,7 +8,17 @@ import Box from '@mui/material/Box';
 import React from 'react';
 import { mergeTimes, nearestIndex, Series, stackSeries, valueAt } from './mapping';
 import type { Ink } from './palette';
-import { areaPath, computeDomain, formatTick, formatTooltipTime, linear, linePath, niceDomain, niceTicks, timeTicks } from './scale';
+import {
+  areaPath,
+  computeDomain,
+  formatTick,
+  formatTooltipTime,
+  linear,
+  linePath,
+  niceDomain,
+  niceTicks,
+  timeTicks,
+} from './scale';
 import { formatValue, Unit } from './units';
 
 export type ChartKind = 'line' | 'area' | 'stacked' | 'bar';
@@ -46,17 +56,25 @@ export function barPath(x: number, base: number, w: number, top: number, r: numb
   const r1 = (n: number) => Math.round(n * 100) / 100;
   if (rr <= 0) return `M${r1(x)},${r1(base)}V${r1(top)}H${r1(x1)}V${r1(base)}Z`;
   return up
-    ? `M${r1(x)},${r1(base)}V${r1(top + rr)}A${rr},${rr} 0 0 1 ${r1(x + rr)},${r1(top)}H${r1(x1 - rr)}A${rr},${rr} 0 0 1 ${r1(x1)},${r1(top + rr)}V${r1(base)}Z`
-    : `M${r1(x)},${r1(base)}V${r1(top - rr)}A${rr},${rr} 0 0 0 ${r1(x + rr)},${r1(top)}H${r1(x1 - rr)}A${rr},${rr} 0 0 0 ${r1(x1)},${r1(top - rr)}V${r1(base)}Z`;
+    ? `M${r1(x)},${r1(base)}V${r1(top + rr)}A${rr},${rr} 0 0 1 ${r1(x + rr)},${r1(top)}H${r1(
+        x1 - rr
+      )}A${rr},${rr} 0 0 1 ${r1(x1)},${r1(top + rr)}V${r1(base)}Z`
+    : `M${r1(x)},${r1(base)}V${r1(top - rr)}A${rr},${rr} 0 0 0 ${r1(x + rr)},${r1(top)}H${r1(
+        x1 - rr
+      )}A${rr},${rr} 0 0 0 ${r1(x1)},${r1(top - rr)}V${r1(base)}Z`;
 }
 
 export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
-  const { series, kind, unit, start, end, width, height, colourFor, ink, kiosk, tzOffsetSeconds } = props;
+  const { series, kind, unit, start, end, width, height, colourFor, ink, kiosk, tzOffsetSeconds } =
+    props;
   const [hover, setHover] = React.useState<number | null>(null);
 
   const model = React.useMemo(() => {
     const times = mergeTimes(series);
-    const stacked = kind === 'stacked' || (kind === 'bar' && series.length > 1) ? stackSeries(series, times) : undefined;
+    const stacked =
+      kind === 'stacked' || (kind === 'bar' && series.length > 1)
+        ? stackSeries(series, times)
+        : undefined;
     let min = Infinity;
     let max = -Infinity;
     if (stacked) {
@@ -80,10 +98,21 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
 
   const plotH = Math.max(10, height - TOP - BOTTOM);
   const count = Math.max(2, Math.floor(plotH / 38));
-  const domain = niceDomain(model.raw, count, unit, props.yMin !== undefined, props.yMax !== undefined);
-  const ticks = niceTicks(domain.min, domain.max, count, unit).filter(t => t >= domain.min - 1e-9 && t <= domain.max + 1e-9);
+  const domain = niceDomain(
+    model.raw,
+    count,
+    unit,
+    props.yMin !== undefined,
+    props.yMax !== undefined
+  );
+  const ticks = niceTicks(domain.min, domain.max, count, unit).filter(
+    t => t >= domain.min - 1e-9 && t <= domain.max + 1e-9
+  );
   const tickLabels = ticks.map(t => formatValue(t, unit, { compact: true }));
-  const left = Math.min(110, Math.max(34, Math.max(0, ...tickLabels.map(l => l.length)) * 6.4 + 12));
+  const left = Math.min(
+    110,
+    Math.max(34, Math.max(0, ...tickLabels.map(l => l.length)) * 6.4 + 12)
+  );
   const plotW = Math.max(10, width - left - RIGHT);
   const x = linear({ min: start, max: end }, left, left + plotW);
   const y = linear(domain, TOP + plotH, TOP);
@@ -122,7 +151,20 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
     });
     // The scales are derived from these inputs, so listing them is enough.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, kind, stacked, times, width, height, domain.min, domain.max, start, end, colourFor, left]);
+  }, [
+    series,
+    kind,
+    stacked,
+    times,
+    width,
+    height,
+    domain.min,
+    domain.max,
+    start,
+    end,
+    colourFor,
+    left,
+  ]);
 
   const bars = React.useMemo(() => {
     if (kind !== 'bar') return [];
@@ -135,7 +177,12 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
       const s = series[0];
       for (const p of s.points) {
         if (p.v === null) continue;
-        out.push({ key: `${s.key}@${p.t}`, d: barPath(x(p.t) - w / 2, base, w, clampY(p.v), Math.min(4, w / 2)), colour: colourFor(s.key), gap: false });
+        out.push({
+          key: `${s.key}@${p.t}`,
+          d: barPath(x(p.t) - w / 2, base, w, clampY(p.v), Math.min(4, w / 2)),
+          colour: colourFor(s.key),
+          gap: false,
+        });
       }
       return out;
     }
@@ -147,7 +194,12 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
         const x0 = x(t) - w / 2;
         const top = clampY(st.tops[i][j]);
         const bottom = clampY(st.bases[i][j]);
-        out.push({ key: `${s.key}@${t}`, d: `M${x0},${bottom}V${top}H${x0 + w}V${bottom}Z`, colour: colourFor(s.key), gap: true });
+        out.push({
+          key: `${s.key}@${t}`,
+          d: `M${x0},${bottom}V${top}H${x0 + w}V${bottom}Z`,
+          colour: colourFor(s.key),
+          gap: true,
+        });
       });
     });
     return out;
@@ -204,20 +256,57 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
       >
         {ticks.map((t, i) => (
           <g key={t}>
-            <line x1={left} x2={left + plotW} y1={y(t)} y2={y(t)} stroke={ink.grid} strokeWidth={1} />
-            <text x={left - 6} y={y(t)} dy="0.32em" textAnchor="end" fontSize={FONT} fill={ink.muted} style={{ fontVariantNumeric: 'tabular-nums' }}>
+            <line
+              x1={left}
+              x2={left + plotW}
+              y1={y(t)}
+              y2={y(t)}
+              stroke={ink.grid}
+              strokeWidth={1}
+            />
+            <text
+              x={left - 6}
+              y={y(t)}
+              dy="0.32em"
+              textAnchor="end"
+              fontSize={FONT}
+              fill={ink.muted}
+              style={{ fontVariantNumeric: 'tabular-nums' }}
+            >
               {tickLabels[i]}
             </text>
           </g>
         ))}
-        <line x1={left} x2={left + plotW} y1={TOP + plotH} y2={TOP + plotH} stroke={ink.axis} strokeWidth={1} />
+        <line
+          x1={left}
+          x2={left + plotW}
+          y1={TOP + plotH}
+          y2={TOP + plotH}
+          stroke={ink.axis}
+          strokeWidth={1}
+        />
         {xTicks.map(t => (
-          <text key={t} x={x(t)} y={height - 5} textAnchor="middle" fontSize={FONT} fill={ink.muted}>
+          <text
+            key={t}
+            x={x(t)}
+            y={height - 5}
+            textAnchor="middle"
+            fontSize={FONT}
+            fill={ink.muted}
+          >
             {formatTick(t, span, tzOffsetSeconds)}
           </text>
         ))}
         {kind === 'bar'
-          ? bars.map(b => <path key={b.key} d={b.d} fill={b.colour} stroke={b.gap ? ink.surface : 'none'} strokeWidth={b.gap ? GAP : 0} />)
+          ? bars.map(b => (
+              <path
+                key={b.key}
+                d={b.d}
+                fill={b.colour}
+                stroke={b.gap ? ink.surface : 'none'}
+                strokeWidth={b.gap ? GAP : 0}
+              />
+            ))
           : shapes.map(s => (
               <g key={s.key}>
                 {s.d && (
@@ -231,17 +320,44 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
                   />
                 )}
                 {kind !== 'stacked' && (s as { line?: string }).line && (
-                  <path d={(s as { line: string }).line} fill="none" stroke={s.colour} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                  <path
+                    d={(s as { line: string }).line}
+                    fill="none"
+                    stroke={s.colour}
+                    strokeWidth={2}
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                  />
                 )}
               </g>
             ))}
         {hoverT !== undefined && (
           <g pointerEvents="none">
-            <line x1={hoverX} x2={hoverX} y1={TOP} y2={TOP + plotH} stroke={ink.muted} strokeWidth={1} strokeDasharray="3 3" />
+            <line
+              x1={hoverX}
+              x2={hoverX}
+              y1={TOP}
+              y2={TOP + plotH}
+              stroke={ink.muted}
+              strokeWidth={1}
+              strokeDasharray="3 3"
+            />
             {rows.map((r, i) => {
               const v = stacked ? r.top : r.value;
-              if (kind === 'bar' || typeof v !== 'number' || (r.value === null && !stacked)) return null;
-              return <circle key={r.key} cx={hoverX} cy={clampY(v)} r={4} fill={r.colour} stroke={ink.ring} strokeWidth={2} data-hover-dot={i} />;
+              if (kind === 'bar' || typeof v !== 'number' || (r.value === null && !stacked))
+                return null;
+              return (
+                <circle
+                  key={r.key}
+                  cx={hoverX}
+                  cy={clampY(v)}
+                  r={4}
+                  fill={r.colour}
+                  stroke={ink.ring}
+                  strokeWidth={2}
+                  data-hover-dot={i}
+                />
+              );
             })}
           </g>
         )}
@@ -268,15 +384,32 @@ export function TimeSeriesView(props: TimeSeriesViewProps): JSX.Element {
             zIndex: 2,
           }}
         >
-          <Box sx={{ color: ink.secondary, mb: 0.25 }}>{formatTooltipTime(hoverT, tzOffsetSeconds)}</Box>
+          <Box sx={{ color: ink.secondary, mb: 0.25 }}>
+            {formatTooltipTime(hoverT, tzOffsetSeconds)}
+          </Box>
           <Box sx={{ columnCount: columns, columnGap: 1.5 }}>
             {rows.map(r => (
-              <Box key={r.key} sx={{ display: 'flex', alignItems: 'center', gap: 0.75, breakInside: 'avoid', whiteSpace: 'nowrap' }}>
-                <Box component="span" sx={{ width: 10, height: 2, flex: 'none', bgcolor: r.colour }} />
+              <Box
+                key={r.key}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.75,
+                  breakInside: 'avoid',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Box
+                  component="span"
+                  sx={{ width: 10, height: 2, flex: 'none', bgcolor: r.colour }}
+                />
                 <Box component="span" sx={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
                   {r.value === null ? '-' : formatValue(r.value, unit)}
                 </Box>
-                <Box component="span" sx={{ color: ink.secondary, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <Box
+                  component="span"
+                  sx={{ color: ink.secondary, overflow: 'hidden', textOverflow: 'ellipsis' }}
+                >
                   {r.name}
                 </Box>
               </Box>

@@ -24,14 +24,21 @@ import { Link as RouterLink, Prompt, useHistory, useLocation } from 'react-route
 import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
 import { FilterBar } from './components/FilterBar';
 import { PaletteDrawer } from './components/PaletteDrawer';
-import { LastRefreshed,RefreshControls } from './components/RefreshStatus';
+import { LastRefreshed, RefreshControls } from './components/RefreshStatus';
 import { SectionActions, SectionView } from './components/SectionView';
 import { TabsActions, TabsDialog } from './components/TabsDialog';
 import { FrameActions } from './components/WidgetFrame';
 import { WidgetSettingsDialog, WidgetSettingsResult } from './components/WidgetSettingsDialog';
 import { DashboardContext, DashboardContextValue } from './context';
 import type { DashboardFilters, WidgetDefinition } from './contract';
-import { useCanWrite, useClusterNames, useDashboard, useStorage, useWidgetDefinition, useWidgetDefinitions } from './hooks';
+import {
+  useCanWrite,
+  useClusterNames,
+  useDashboard,
+  useStorage,
+  useWidgetDefinition,
+  useWidgetDefinitions,
+} from './hooks';
 import { enterBrowserFullscreen, KioskOverlay } from './kiosk/Kiosk';
 import { createRefreshStore } from './refreshStore';
 import {
@@ -54,7 +61,15 @@ import {
 } from './spec/edit';
 import { DashboardSpec, sameFilters } from './spec/model';
 import { ConflictError, StoredDashboard } from './storage/storage';
-import { baseFilters, buildPath, parsePath, parseQuery, pathBase, resolveFilters, serialiseQuery } from './urlState';
+import {
+  baseFilters,
+  buildPath,
+  parsePath,
+  parseQuery,
+  pathBase,
+  resolveFilters,
+  serialiseQuery,
+} from './urlState';
 
 type SaveState = { saving: boolean; error?: string; conflict: boolean };
 
@@ -81,8 +96,15 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const [paletteSection, setPaletteSection] = React.useState('');
   const [tabsOpen, setTabsOpen] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [widgetSettings, setWidgetSettings] = React.useState<{ sectionId: string; widgetId: string } | null>(null);
-  const [menu, setMenu] = React.useState<{ anchor: HTMLElement; sectionId: string; widgetId: string } | null>(null);
+  const [widgetSettings, setWidgetSettings] = React.useState<{
+    sectionId: string;
+    widgetId: string;
+  } | null>(null);
+  const [menu, setMenu] = React.useState<{
+    anchor: HTMLElement;
+    sectionId: string;
+    widgetId: string;
+  } | null>(null);
 
   const refresh = React.useMemo(() => createRefreshStore(), []);
   const signal = React.useSyncExternalStore(refresh.subscribe, () => refresh.getState().signal);
@@ -114,15 +136,32 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const specFilters = spec?.filters;
   const specViews = spec?.views;
   const urlFilters = React.useMemo(
-    () => resolveFilters(baseFilters(specFilters && specViews ? { filters: specFilters, views: specViews } as DashboardSpec : undefined, query.view), query.filters),
+    () =>
+      resolveFilters(
+        baseFilters(
+          specFilters && specViews
+            ? ({ filters: specFilters, views: specViews } as DashboardSpec)
+            : undefined,
+          query.view
+        ),
+        query.filters
+      ),
     [query.view, query.filters, specFilters, specViews]
   );
   const stableFilters = React.useRef(urlFilters);
   // Keep the previous object when the values are equal, so widgets do not see a new filters prop.
-  const filters: DashboardFilters = sameFilters(stableFilters.current, urlFilters) ? stableFilters.current : urlFilters;
+  const filters: DashboardFilters = sameFilters(stableFilters.current, urlFilters)
+    ? stableFilters.current
+    : urlFilters;
   stableFilters.current = filters;
 
-  const replaceQuery = (next: { edit?: boolean; kiosk?: boolean; view?: string; refresh?: number; filters?: DashboardFilters }) => {
+  const replaceQuery = (next: {
+    edit?: boolean;
+    kiosk?: boolean;
+    view?: string;
+    refresh?: number;
+    filters?: DashboardFilters;
+  }) => {
     const merged = {
       edit: next.edit ?? query.edit,
       kiosk: next.kiosk ?? query.kiosk,
@@ -136,7 +175,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   const base = pathBase(location.pathname);
   const listPath = buildPath({ name: '', tab: '' }, base);
-  const goTab = (id: string) => history.push({ pathname: buildPath({ name, tab: id }, base), search: location.search });
+  const goTab = (id: string) =>
+    history.push({ pathname: buildPath({ name, tab: id }, base), search: location.search });
 
   // ---- refresh ----
 
@@ -171,7 +211,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       setSave({ saving: false, conflict: false });
       return true;
     } catch (e) {
-      setSave({ saving: false, conflict: e instanceof ConflictError, error: e instanceof Error ? e.message : String(e) });
+      setSave({
+        saving: false,
+        conflict: e instanceof ConflictError,
+        error: e instanceof Error ? e.message : String(e),
+      });
       return false;
     }
   };
@@ -190,7 +234,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       const latest = await storage.get(name);
       await persist(draft, latest);
     } catch (e) {
-      setSave({ saving: false, conflict: false, error: e instanceof Error ? e.message : String(e) });
+      setSave({
+        saving: false,
+        conflict: false,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
   };
 
@@ -228,7 +276,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     () => ({
       rename: (id, title) => edit(s => updateSection(s, activeTabId, id, { title })),
       setMode: (id, mode) => edit(s => updateSection(s, activeTabId, id, { mode })),
-      setHeight: (id, height) => edit(s => updateSection(s, activeTabId, id, { height: Math.max(120, Math.min(4000, Math.round(height) || 400)) })),
+      setHeight: (id, height) =>
+        edit(s =>
+          updateSection(s, activeTabId, id, {
+            height: Math.max(120, Math.min(4000, Math.round(height) || 400)),
+          })
+        ),
       setShowTitle: (id, showTitle) => edit(s => updateSection(s, activeTabId, id, { showTitle })),
       move: (id, dir) =>
         edit(s => {
@@ -239,7 +292,14 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       remove: id => edit(s => deleteSection(s, activeTabId, id)),
       positions: (id, positions) => edit(s => applyPositions(s, activeTabId, id, positions)),
       moveWidget: (from, to, widgetId) =>
-        edit(s => moveWidgetToTabSection(s, { tabId: activeTabId, sectionId: from }, { tabId: activeTabId, sectionId: to }, widgetId)),
+        edit(s =>
+          moveWidgetToTabSection(
+            s,
+            { tabId: activeTabId, sectionId: from },
+            { tabId: activeTabId, sectionId: to },
+            widgetId
+          )
+        ),
     }),
     [edit, activeTabId]
   );
@@ -257,7 +317,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   );
 
   const ctx = React.useMemo<DashboardContextValue>(
-    () => ({ filters, refreshSignal: signal, editing, kiosk: query.kiosk, reportRefreshed: refresh.report }),
+    () => ({
+      filters,
+      refreshSignal: signal,
+      editing,
+      kiosk: query.kiosk,
+      reportRefreshed: refresh.report,
+    }),
     [filters, signal, editing, query.kiosk, refresh]
   );
 
@@ -267,7 +333,14 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   if (!stored || !spec || !activeTab) {
     return (
       <Box sx={{ p: 2 }}>
-        <Alert severity="error" action={<Button color="inherit" component={RouterLink} to={listPath}>All dashboards</Button>}>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" component={RouterLink} to={listPath}>
+              All dashboards
+            </Button>
+          }
+        >
           {loaded.error?.message ?? 'The dashboard could not be loaded.'}
         </Alert>
       </Box>
@@ -276,7 +349,14 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   if (stored.error) {
     return (
       <Box sx={{ p: 2 }}>
-        <Alert severity="error" action={<Button color="inherit" component={RouterLink} to={listPath}>All dashboards</Button>}>
+        <Alert
+          severity="error"
+          action={
+            <Button color="inherit" component={RouterLink} to={listPath}>
+              All dashboards
+            </Button>
+          }
+        >
           This dashboard cannot be shown. {stored.error}
         </Alert>
       </Box>
@@ -284,12 +364,24 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   }
 
   const sectionsOfTab = activeTab.sections;
-  const paletteTarget = sectionsOfTab.some(s => s.id === paletteSection) ? paletteSection : sectionsOfTab[0].id;
+  const paletteTarget = sectionsOfTab.some(s => s.id === paletteSection)
+    ? paletteSection
+    : sectionsOfTab[0].id;
   const left = spec.tabPosition === 'left';
   const showTabs = spec.tabs.length > 1 || editing;
 
   const onAddWidget = (def: WidgetDefinition, sectionId: string) =>
-    edit(s => addWidget(s, activeTabId, sectionId, def.type, def.defaultSize, JSON.parse(JSON.stringify(def.defaultConfig))).spec);
+    edit(
+      s =>
+        addWidget(
+          s,
+          activeTabId,
+          sectionId,
+          def.type,
+          def.defaultSize,
+          JSON.parse(JSON.stringify(def.defaultConfig))
+        ).spec
+    );
 
   const filterBar = (
     <FilterBar
@@ -299,20 +391,27 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       nodeOptions={nodeOptions}
       views={spec.views}
       activeView={query.view}
-      onSelectView={id => replaceQuery({ view: id, filters: spec.views.find(v => v.id === id)?.filters ?? filters })}
+      onSelectView={id =>
+        replaceQuery({ view: id, filters: spec.views.find(v => v.id === id)?.filters ?? filters })
+      }
       onSaveView={
         writable
           ? async viewName => {
               const next = saveView(spec, viewName, filters);
               const id = next.views.find(v => v.name === viewName)?.id ?? '';
-              if (await persist(next)) replaceQuery({ view: id, filters: next.views.find(v => v.id === id)?.filters ?? filters });
+              if (await persist(next))
+                replaceQuery({
+                  view: id,
+                  filters: next.views.find(v => v.id === id)?.filters ?? filters,
+                });
             }
           : undefined
       }
       onDeleteView={
         writable
           ? async id => {
-              if (await persist(deleteView(spec, id)) && query.view === id) replaceQuery({ view: '', filters });
+              if ((await persist(deleteView(spec, id))) && query.view === id)
+                replaceQuery({ view: '', filters });
             }
           : undefined
       }
@@ -347,7 +446,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             label={t.label}
             icon={<Icon icon={t.icon} width={20} height={20} />}
             iconPosition="start"
-            sx={{ minHeight: 48, textTransform: 'none', justifyContent: left ? 'flex-start' : undefined }}
+            sx={{
+              minHeight: 48,
+              textTransform: 'none',
+              justifyContent: left ? 'flex-start' : undefined,
+            }}
           />
         ))}
       </Tabs>
@@ -385,7 +488,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       {/* Only leaving this dashboard asks. A query change, a tab change and the exit from edit mode after Save stay on it. */}
       <Prompt
         when={dirty}
-        message={next => (parsePath(next.pathname).name === name ? true : 'You have unsaved changes to this dashboard. Leave without saving?')}
+        message={next =>
+          parsePath(next.pathname).name === name
+            ? true
+            : 'You have unsaved changes to this dashboard. Leave without saving?'
+        }
       />
       <PaletteDrawer
         open={editing && paletteOpen}
@@ -396,7 +503,9 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         onSectionChange={setPaletteSection}
         onAdd={onAddWidget}
       />
-      {editing && tabsOpen && <TabsDialog spec={spec} actions={tabsActions} onClose={() => setTabsOpen(false)} />}
+      {editing && tabsOpen && (
+        <TabsDialog spec={spec} actions={tabsActions} onClose={() => setTabsOpen(false)} />
+      )}
       {editing && settingsOpen && (
         <DashboardSettingsDialog
           title={spec.title}
@@ -415,7 +524,9 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           target={widgetSettings}
           onCancel={() => setWidgetSettings(null)}
           onApply={r => {
-            edit(s => updateWidget(s, activeTabId, widgetSettings.sectionId, widgetSettings.widgetId, r));
+            edit(s =>
+              updateWidget(s, activeTabId, widgetSettings.sectionId, widgetSettings.widgetId, r)
+            );
             setWidgetSettings(null);
           }}
         />
@@ -427,10 +538,20 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             tabId: activeTabId,
             target: menu,
             close: () => setMenu(null),
-            onSettings: () => setWidgetSettings({ sectionId: menu.sectionId, widgetId: menu.widgetId }),
-            onDuplicate: () => edit(s => duplicateWidget(s, activeTabId, menu.sectionId, menu.widgetId).spec),
+            onSettings: () =>
+              setWidgetSettings({ sectionId: menu.sectionId, widgetId: menu.widgetId }),
+            onDuplicate: () =>
+              edit(s => duplicateWidget(s, activeTabId, menu.sectionId, menu.widgetId).spec),
             onDelete: () => edit(s => deleteWidget(s, activeTabId, menu.sectionId, menu.widgetId)),
-            onMove: to => edit(s => moveWidgetToTabSection(s, { tabId: activeTabId, sectionId: menu.sectionId }, to, menu.widgetId)),
+            onMove: to =>
+              edit(s =>
+                moveWidgetToTabSection(
+                  s,
+                  { tabId: activeTabId, sectionId: menu.sectionId },
+                  to,
+                  menu.widgetId
+                )
+              ),
           })}
       </Menu>
     </>
@@ -455,7 +576,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       >
         <Box
           data-kiosk-scroll
-          sx={{ flex: 1, minHeight: 0, overflowY: 'auto', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            scrollbarWidth: 'none',
+            '&::-webkit-scrollbar': { display: 'none' },
+          }}
         >
           {content}
         </Box>
@@ -490,9 +617,18 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           </IconButton>
         </Tooltip>
         {!editing && (
-          <Tooltip title={writable ? 'Edit this dashboard' : 'You have read-only access to dashboards here'}>
+          <Tooltip
+            title={
+              writable ? 'Edit this dashboard' : 'You have read-only access to dashboards here'
+            }
+          >
             <span>
-              <Button variant="outlined" disabled={!writable} startIcon={<Icon icon="mdi:pencil-outline" width={18} height={18} />} onClick={() => setEdit(true)}>
+              <Button
+                variant="outlined"
+                disabled={!writable}
+                startIcon={<Icon icon="mdi:pencil-outline" width={18} height={18} />}
+                onClick={() => setEdit(true)}
+              >
                 Edit
               </Button>
             </span>
@@ -501,7 +637,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       </Box>
       {canWrite === false && (
         <Alert severity="info" sx={{ mb: 1 }}>
-          You have read-only access to dashboards in the namespace "{storage.namespace}". You can view them but not change them.
+          You have read-only access to dashboards in the namespace "{storage.namespace}". You can
+          view them but not change them.
         </Alert>
       )}
       {stored.migrated && !editing && (
@@ -513,18 +650,45 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <Box
           role="toolbar"
           aria-label="Edit tools"
-          sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 1,
+            mb: 1,
+            p: 1,
+            border: '1px solid',
+            borderColor: 'divider',
+            borderRadius: 1,
+          }}
         >
-          <Button size="small" variant="contained" startIcon={<Icon icon="mdi:plus" width={18} height={18} />} onClick={() => setPaletteOpen(true)}>
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<Icon icon="mdi:plus" width={18} height={18} />}
+            onClick={() => setPaletteOpen(true)}
+          >
             Add widget
           </Button>
-          <Button size="small" startIcon={<Icon icon="mdi:view-agenda" width={18} height={18} />} onClick={() => edit(s => addSection(s, activeTabId, 'New section'))}>
+          <Button
+            size="small"
+            startIcon={<Icon icon="mdi:view-agenda" width={18} height={18} />}
+            onClick={() => edit(s => addSection(s, activeTabId, 'New section'))}
+          >
             Add section
           </Button>
-          <Button size="small" startIcon={<Icon icon="mdi:view-grid-outline" width={18} height={18} />} onClick={() => setTabsOpen(true)}>
+          <Button
+            size="small"
+            startIcon={<Icon icon="mdi:view-grid-outline" width={18} height={18} />}
+            onClick={() => setTabsOpen(true)}
+          >
             Tabs
           </Button>
-          <Button size="small" startIcon={<Icon icon="mdi:cog-outline" width={18} height={18} />} onClick={() => setSettingsOpen(true)}>
+          <Button
+            size="small"
+            startIcon={<Icon icon="mdi:cog-outline" width={18} height={18} />}
+            onClick={() => setSettingsOpen(true)}
+          >
             Dashboard settings
           </Button>
           <Box sx={{ flex: 1 }} />
@@ -533,7 +697,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
               Unsaved changes
             </Typography>
           )}
-          <Button size="small" onClick={() => (dirty && !window.confirm('Discard your changes?') ? undefined : setEdit(false))}>
+          <Button
+            size="small"
+            onClick={() =>
+              dirty && !window.confirm('Discard your changes?') ? undefined : setEdit(false)
+            }
+          >
             {dirty ? 'Discard and close' : 'Close'}
           </Button>
           <Button size="small" disabled={!dirty || save.saving} onClick={discard}>
@@ -570,7 +739,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         </Alert>
       )}
       {save.error && !save.conflict && (
-        <Alert severity="error" sx={{ mb: 1 }} onClose={() => setSave(s => ({ ...s, error: undefined }))}>
+        <Alert
+          severity="error"
+          sx={{ mb: 1 }}
+          onClose={() => setSave(s => ({ ...s, error: undefined }))}
+        >
           {save.error}
         </Alert>
       )}
@@ -588,10 +761,21 @@ function WidgetSettingsHost(props: {
   onApply: (r: WidgetSettingsResult) => void;
 }): JSX.Element | null {
   const { spec, tabId, target } = props;
-  const widget = spec.tabs.find(t => t.id === tabId)?.sections.find(s => s.id === target.sectionId)?.widgets.find(w => w.id === target.widgetId);
+  const widget = spec.tabs
+    .find(t => t.id === tabId)
+    ?.sections.find(s => s.id === target.sectionId)
+    ?.widgets.find(w => w.id === target.widgetId);
   const def = useWidgetDefinition(widget?.type ?? '');
   if (!widget) return null;
-  return <WidgetSettingsDialog key={widget.id} widget={widget} def={def} onCancel={props.onCancel} onApply={props.onApply} />;
+  return (
+    <WidgetSettingsDialog
+      key={widget.id}
+      widget={widget}
+      def={def}
+      onCancel={props.onCancel}
+      onApply={props.onApply}
+    />
+  );
 }
 
 /** An array, not a component: a MUI Menu does not take a Fragment as a child. */
@@ -609,7 +793,12 @@ function widgetMenuItems(props: {
   const destinations = spec.tabs.flatMap(t =>
     t.sections
       .filter(s => !(t.id === tabId && s.id === target.sectionId))
-      .map(s => ({ tabId: t.id, sectionId: s.id, label: spec.tabs.length > 1 ? `${t.label} / ${s.title || 'Untitled'}` : s.title || 'Untitled' }))
+      .map(s => ({
+        tabId: t.id,
+        sectionId: s.id,
+        label:
+          spec.tabs.length > 1 ? `${t.label} / ${s.title || 'Untitled'}` : s.title || 'Untitled',
+      }))
   );
   const run = (fn: () => void) => () => {
     fn();

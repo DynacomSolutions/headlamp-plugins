@@ -1,18 +1,45 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { request, clusterRequest } = vi.hoisted(() => ({ request: vi.fn(), clusterRequest: vi.fn() }));
-vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ ApiProxy: { request, clusterRequest }, ConfigStore: class {} }));
+const { request, clusterRequest } = vi.hoisted(() => ({
+  request: vi.fn(),
+  clusterRequest: vi.fn(),
+}));
+vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
+  ApiProxy: { request, clusterRequest },
+  ConfigStore: class {},
+}));
 
-import { clearPanelListCache, fetchPanel, fetchPanelList, shared, statusMessage, testSource } from './data';
+import {
+  clearPanelListCache,
+  fetchPanel,
+  fetchPanelList,
+  shared,
+  statusMessage,
+  testSource,
+} from './data';
 import { agentSource, blankDraft, draftToSource } from './sources';
 
 const agent = agentSource(undefined);
-const url = draftToSource({ ...blankDraft('my-app'), kind: 'url', baseUrl: 'https://my-app.example.com' });
-const LIST = { version: 1, panels: [{ id: 'a', title: 'A' }, { id: 'b', title: 'B' }] };
+const url = draftToSource({
+  ...blankDraft('my-app'),
+  kind: 'url',
+  baseUrl: 'https://my-app.example.com',
+});
+const LIST = {
+  version: 1,
+  panels: [
+    { id: 'a', title: 'A' },
+    { id: 'b', title: 'B' },
+  ],
+};
 const PANEL = { version: 1, id: 'a', title: 'A' };
 
 const response = (status: number, body: unknown, json = true): Response =>
-  ({ ok: status >= 200 && status < 300, status, json: () => (json ? Promise.resolve(body) : Promise.reject(new SyntaxError('x'))) }) as unknown as Response;
+  ({
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => (json ? Promise.resolve(body) : Promise.reject(new SyntaxError('x'))),
+  } as unknown as Response);
 
 beforeEach(() => {
   request.mockReset();
@@ -45,7 +72,12 @@ describe('shared request cache', () => {
   it('keeps sources apart', async () => {
     request.mockResolvedValue(LIST);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response(200, LIST)));
-    await Promise.all([fetchPanelList(agent), fetchPanelList(agent), fetchPanelList(url), fetchPanelList(url)]);
+    await Promise.all([
+      fetchPanelList(agent),
+      fetchPanelList(agent),
+      fetchPanelList(url),
+      fetchPanelList(url),
+    ]);
     expect(request).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -68,7 +100,9 @@ describe('fetching from a service source', () => {
   });
   it('turns a 403 and a 404 into clear messages', async () => {
     request.mockRejectedValueOnce(Object.assign(new Error('Forbidden'), { status: 403 }));
-    await expect(fetchPanelList(agent)).rejects.toThrow(/Access denied \(403\).*Kubernetes permissions/);
+    await expect(fetchPanelList(agent)).rejects.toThrow(
+      /Access denied \(403\).*Kubernetes permissions/
+    );
     request.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }));
     await expect(fetchPanelList(agent)).rejects.toThrow(/Not found \(404\)/);
   });
@@ -85,7 +119,10 @@ describe('fetching from a URL source', () => {
     const f = vi.fn().mockResolvedValue(response(200, PANEL));
     vi.stubGlobal('fetch', f);
     expect((await fetchPanel(url, 'a', 0)).id).toBe('a');
-    expect(f).toHaveBeenCalledWith('https://my-app.example.com/api/widgets/a', expect.objectContaining({ credentials: 'include' }));
+    expect(f).toHaveBeenCalledWith(
+      'https://my-app.example.com/api/widgets/a',
+      expect.objectContaining({ credentials: 'include' })
+    );
     expect(request).not.toHaveBeenCalled();
   });
   it('explains a CORS or network failure', async () => {
@@ -123,7 +160,9 @@ describe('testSource', () => {
     request.mockReset();
     clusterRequest.mockResolvedValue(LIST);
     expect(await testSource(agent, 'main')).toBe(2);
-    expect(clusterRequest).toHaveBeenCalledWith(expect.stringContaining('/api/widgets'), { cluster: 'main' });
+    expect(clusterRequest).toHaveBeenCalledWith(expect.stringContaining('/api/widgets'), {
+      cluster: 'main',
+    });
     expect(request).not.toHaveBeenCalled();
   });
 });

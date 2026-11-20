@@ -39,7 +39,9 @@ export function QueryEditor(props: {
     ctrl.current?.abort();
     const c = new AbortController();
     ctrl.current = c;
-    const blocks = multi ? parseBlocks(value) : [{ title: '', unit: undefined, query: value.trim() }];
+    const blocks = multi
+      ? parseBlocks(value)
+      : [{ title: '', unit: undefined, query: value.trim() }];
     if (blocks.length === 0 || blocks.every(b => b.query === '')) {
       setError('Type a query first.');
       setPreviews(undefined);
@@ -50,12 +52,18 @@ export function QueryEditor(props: {
     const now = Date.now();
     Promise.all(
       blocks.map(async (b): Promise<Preview> => {
-        const res = await runInstant(b.query, defaultFilters(), now, { endpoint, signal: c.signal });
-        const samples = res.resultType === 'matrix' ? [] : parseVector(res.result, undefined, res.resultType);
+        const res = await runInstant(b.query, defaultFilters(), now, {
+          endpoint,
+          signal: c.signal,
+        });
+        const samples =
+          res.resultType === 'matrix' ? [] : parseVector(res.result, undefined, res.resultType);
         return {
           title: b.title,
           count: Array.isArray(res.result) ? res.result.length : samples.length,
-          rows: samples.slice(0, 8).map(s => ({ name: s.name, value: s.value === null ? 'no value' : String(s.value) })),
+          rows: samples
+            .slice(0, 8)
+            .map(s => ({ name: s.name, value: s.value === null ? 'no value' : String(s.value) })),
         };
       })
     ).then(
@@ -85,7 +93,12 @@ export function QueryEditor(props: {
         onChange={e => onChange(e.target.value)}
         helperText={help}
         spellCheck={false}
-        inputProps={{ style: { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 13 } }}
+        inputProps={{
+          style: {
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+            fontSize: 13,
+          },
+        }}
       />
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Button size="small" variant="outlined" onClick={run} disabled={busy}>
@@ -107,11 +120,20 @@ export function QueryEditor(props: {
             {p.count} {p.count === 1 ? 'series' : 'series'}
           </Typography>
           {p.rows.map((r, j) => (
-            <Box key={j} sx={{ fontFamily: 'ui-monospace, monospace', overflowWrap: 'anywhere', color: 'text.secondary' }}>
+            <Box
+              key={j}
+              sx={{
+                fontFamily: 'ui-monospace, monospace',
+                overflowWrap: 'anywhere',
+                color: 'text.secondary',
+              }}
+            >
               {r.name} = {r.value}
             </Box>
           ))}
-          {p.count > p.rows.length && <Box color="text.secondary">and {p.count - p.rows.length} more</Box>}
+          {p.count > p.rows.length && (
+            <Box color="text.secondary">and {p.count - p.rows.length} more</Box>
+          )}
         </Box>
       ))}
     </Box>

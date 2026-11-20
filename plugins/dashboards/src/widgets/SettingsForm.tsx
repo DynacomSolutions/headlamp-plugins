@@ -23,7 +23,9 @@ export function SettingsForm<C extends Record<string, any>>(props: {
             return (
               <FormControlLabel
                 key={f.key}
-                control={<Switch checked={value === true} onChange={e => set(f.key, e.target.checked)} />}
+                control={
+                  <Switch checked={value === true} onChange={e => set(f.key, e.target.checked)} />
+                }
                 label={f.label}
               />
             );

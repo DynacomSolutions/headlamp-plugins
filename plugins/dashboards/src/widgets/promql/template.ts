@@ -33,7 +33,8 @@ export function alternation(values: string[]): string {
   return items.length === 0 ? '.*' : items.map(escapeRegexForPromql).join('|');
 }
 
-const LABEL_NAME = (key: string): string => key.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^(\d)/, '_$1');
+const LABEL_NAME = (key: string): string =>
+  key.replace(/[^a-zA-Z0-9_]/g, '_').replace(/^(\d)/, '_$1');
 
 function splitSelector(selector: string): string[] {
   const parts: string[] = [];
@@ -68,8 +69,15 @@ export function selectorToMatchers(selector: string): string {
     }
     m = /^([^\s=!()]+)\s+(in|notin)\s*\((.*)\)$/.exec(part);
     if (m) {
-      const values = m[3].split(',').map(v => v.trim()).filter(Boolean);
-      out.push(`${LABEL_NAME(m[1])}${m[2] === 'in' ? '=~' : '!~'}"${values.map(escapeRegexForPromql).join('|')}"`);
+      const values = m[3]
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean);
+      out.push(
+        `${LABEL_NAME(m[1])}${m[2] === 'in' ? '=~' : '!~'}"${values
+          .map(escapeRegexForPromql)
+          .join('|')}"`
+      );
       continue;
     }
     m = /^!\s*([^\s=!()]+)$/.exec(part);
@@ -105,8 +113,11 @@ export function buildVars(filters: DashboardFilters, stepSeconds: number): Templ
 
 /** Replace `$name` and `${name}` with the variable values. */
 export function substitute(query: string, vars: TemplateVars): string {
-  return query.replace(/\$(?:\{(\w+)\}|(\w+))/g, (whole, braced: string | undefined, bare: string | undefined) => {
-    const name = braced ?? bare ?? '';
-    return Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : whole;
-  });
+  return query.replace(
+    /\$(?:\{(\w+)\}|(\w+))/g,
+    (whole, braced: string | undefined, bare: string | undefined) => {
+      const name = braced ?? bare ?? '';
+      return Object.prototype.hasOwnProperty.call(vars, name) ? vars[name] : whole;
+    }
+  );
 }

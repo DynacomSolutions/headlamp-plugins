@@ -32,7 +32,15 @@ type Dialogue =
   | { kind: 'duplicate'; item: StoredDashboard }
   | { kind: 'delete'; item: StoredDashboard };
 
-function NameDialog(props: { title: string; label: string; initial: string; action: string; busy: boolean; onCancel: () => void; onSubmit: (v: string) => void }) {
+function NameDialog(props: {
+  title: string;
+  label: string;
+  initial: string;
+  action: string;
+  busy: boolean;
+  onCancel: () => void;
+  onSubmit: (v: string) => void;
+}) {
   const [value, setValue] = React.useState(props.initial);
   const valid = value.trim() !== '';
   return (
@@ -51,7 +59,11 @@ function NameDialog(props: { title: string; label: string; initial: string; acti
       </DialogContent>
       <DialogActions>
         <Button onClick={props.onCancel}>Cancel</Button>
-        <Button variant="contained" disabled={!valid || props.busy} onClick={() => props.onSubmit(value.trim())}>
+        <Button
+          variant="contained"
+          disabled={!valid || props.busy}
+          onClick={() => props.onSubmit(value.trim())}
+        >
           {props.action}
         </Button>
       </DialogActions>
@@ -84,7 +96,11 @@ export function DashboardsListPage(): JSX.Element {
     }
   };
 
-  const freeName = (title: string) => uniqueSlug(slugify(title), items.map(i => i.name));
+  const freeName = (title: string) =>
+    uniqueSlug(
+      slugify(title),
+      items.map(i => i.name)
+    );
 
   const create = (title: string) =>
     run(async () => {
@@ -130,11 +146,20 @@ export function DashboardsListPage(): JSX.Element {
     >
       {canWrite === false && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          You have read-only access to dashboards in the namespace "{storage.namespace}". You can open them but not create or change them.
+          You have read-only access to dashboards in the namespace "{storage.namespace}". You can
+          open them but not create or change them.
         </Alert>
       )}
       {list.error && (
-        <Alert severity="error" sx={{ mb: 2 }} action={<Button color="inherit" onClick={list.reload}>Retry</Button>}>
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={
+            <Button color="inherit" onClick={list.reload}>
+              Retry
+            </Button>
+          }
+        >
           {list.error.message}
         </Alert>
       )}
@@ -169,7 +194,9 @@ export function DashboardsListPage(): JSX.Element {
             {items.map(item => (
               <TableRow key={item.name} hover>
                 <TableCell>
-                  <RouterLink to={buildPath({ name: item.name, tab: '' }, base)}>{item.spec.title}</RouterLink>
+                  <RouterLink to={buildPath({ name: item.name, tab: '' }, base)}>
+                    {item.spec.title}
+                  </RouterLink>
                   {item.error && (
                     <Typography variant="caption" color="error" component="div">
                       {item.error}
@@ -183,7 +210,9 @@ export function DashboardsListPage(): JSX.Element {
                 </TableCell>
                 <TableCell align="right">{item.spec.tabs.length}</TableCell>
                 <TableCell align="right">{countWidgets(item.spec)}</TableCell>
-                <TableCell>{item.spec.modifiedAt ? new Date(item.spec.modifiedAt).toLocaleString() : ''}</TableCell>
+                <TableCell>
+                  {item.spec.modifiedAt ? new Date(item.spec.modifiedAt).toLocaleString() : ''}
+                </TableCell>
                 <TableCell align="right">
                   <Box sx={{ display: 'inline-flex' }}>
                     {(
@@ -217,30 +246,65 @@ export function DashboardsListPage(): JSX.Element {
         </Table>
       )}
       {dialogue?.kind === 'create' && (
-        <NameDialog title="New dashboard" label="Title" initial="" action="Create" busy={busy} onCancel={() => setDialogue(null)} onSubmit={create} />
+        <NameDialog
+          title="New dashboard"
+          label="Title"
+          initial=""
+          action="Create"
+          busy={busy}
+          onCancel={() => setDialogue(null)}
+          onSubmit={create}
+        />
       )}
       {dialogue?.kind === 'rename' && (
-        <NameDialog title="Rename dashboard" label="Title" initial={dialogue.item.spec.title} action="Rename" busy={busy} onCancel={() => setDialogue(null)} onSubmit={v => rename(dialogue.item, v)} />
+        <NameDialog
+          title="Rename dashboard"
+          label="Title"
+          initial={dialogue.item.spec.title}
+          action="Rename"
+          busy={busy}
+          onCancel={() => setDialogue(null)}
+          onSubmit={v => rename(dialogue.item, v)}
+        />
       )}
       {dialogue?.kind === 'duplicate' && (
-        <NameDialog title="Duplicate dashboard" label="Title of the copy" initial={`${dialogue.item.spec.title} copy`} action="Duplicate" busy={busy} onCancel={() => setDialogue(null)} onSubmit={v => duplicate(dialogue.item, v)} />
+        <NameDialog
+          title="Duplicate dashboard"
+          label="Title of the copy"
+          initial={`${dialogue.item.spec.title} copy`}
+          action="Duplicate"
+          busy={busy}
+          onCancel={() => setDialogue(null)}
+          onSubmit={v => duplicate(dialogue.item, v)}
+        />
       )}
       {dialogue?.kind === 'delete' && (
         <Dialog open onClose={() => setDialogue(null)} aria-labelledby="delete-title">
           <DialogTitle id="delete-title">Delete dashboard</DialogTitle>
           <DialogContent>
-            <DialogContentText>Delete "{dialogue.item.spec.title}"? This removes its ConfigMap and cannot be undone.</DialogContentText>
+            <DialogContentText>
+              Delete "{dialogue.item.spec.title}"? This removes its ConfigMap and cannot be undone.
+            </DialogContentText>
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setDialogue(null)}>Cancel</Button>
-            <Button color="error" variant="contained" disabled={busy} onClick={() => remove(dialogue.item)}>
+            <Button
+              color="error"
+              variant="contained"
+              disabled={busy}
+              onClick={() => remove(dialogue.item)}
+            >
               Delete
             </Button>
           </DialogActions>
         </Dialog>
       )}
       {dialogue && error && (
-        <Alert severity="error" sx={{ position: 'fixed', bottom: 16, left: 16, zIndex: 2000 }} onClose={() => setError('')}>
+        <Alert
+          severity="error"
+          sx={{ position: 'fixed', bottom: 16, left: 16, zIndex: 2000 }}
+          onClose={() => setError('')}
+        >
           {error}
         </Alert>
       )}

@@ -12,7 +12,8 @@ export const CONFIG_KEY = 'dashboards';
 export const configStore = new ConfigStore<Record<string, unknown>>(CONFIG_KEY);
 
 /** A Kubernetes namespace name: a DNS label. */
-export const isNamespaceName = (s: string): boolean => /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(s);
+export const isNamespaceName = (s: string): boolean =>
+  /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/.test(s);
 
 /** The namespace that holds the dashboard ConfigMaps. A blank or invalid setting gives the default. */
 export function resolveNamespace(stored: Record<string, unknown> | undefined): string {
@@ -32,7 +33,8 @@ export function Settings(props: PluginSettingsDetailsProps) {
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={720}>
       <Typography variant="body2">
-        Settings for Dashboards. Each dashboard is one ConfigMap with the label headlamp.dev/dashboard=true.
+        Settings for Dashboards. Each dashboard is one ConfigMap with the label
+        headlamp.dev/dashboard=true.
       </Typography>
       <TextField
         label="Namespace"
@@ -44,11 +46,22 @@ export function Settings(props: PluginSettingsDetailsProps) {
         error={invalid}
         value={value}
         placeholder={DEFAULT_NAMESPACE}
-        onChange={e => onDataChange?.({ ...((data || {}) as Record<string, unknown>), namespace: e.target.value })}
+        onChange={e =>
+          onDataChange?.({
+            ...((data || {}) as Record<string, unknown>),
+            namespace: e.target.value,
+          })
+        }
         fullWidth
       />
-      <SourcesSettingsSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
-      <MetricsEndpointSection data={data as Record<string, unknown> | undefined} onChange={d => onDataChange?.(d)} />
+      <SourcesSettingsSection
+        data={data as Record<string, unknown> | undefined}
+        onChange={d => onDataChange?.(d)}
+      />
+      <MetricsEndpointSection
+        data={data as Record<string, unknown> | undefined}
+        onChange={d => onDataChange?.(d)}
+      />
     </Box>
   );
 }

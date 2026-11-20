@@ -16,12 +16,18 @@ export function loadKinds(): Promise<KindEntry[]> {
 }
 
 export function useKinds(): { kinds: KindEntry[]; loading: boolean; error: string | null } {
-  const [state, setState] = React.useState<{ kinds: KindEntry[]; loading: boolean; error: string | null }>({ kinds: [], loading: true, error: null });
+  const [state, setState] = React.useState<{
+    kinds: KindEntry[];
+    loading: boolean;
+    error: string | null;
+  }>({ kinds: [], loading: true, error: null });
   React.useEffect(() => {
     let live = true;
     loadKinds().then(
       kinds => live && setState({ kinds, loading: false, error: null }),
-      (e: Error) => live && setState({ kinds: [], loading: false, error: e?.message ?? 'Could not load the kinds.' })
+      (e: Error) =>
+        live &&
+        setState({ kinds: [], loading: false, error: e?.message ?? 'Could not load the kinds.' })
     );
     return () => {
       live = false;

@@ -33,7 +33,13 @@ import {
   SourceRef,
 } from './config';
 import { KindEntry } from './discovery';
-import { COMMON_FIELD_LABELS, COMMON_FIELDS, defaultHeader, isCommonField, isValidFieldPath } from './fields';
+import {
+  COMMON_FIELD_LABELS,
+  COMMON_FIELDS,
+  defaultHeader,
+  isCommonField,
+  isValidFieldPath,
+} from './fields';
 import { suggestPaths } from './fieldSuggest';
 import { FILTER_OP_LABELS, FILTER_OPS, FilterOp, parseFilterLogic, ReportFilter } from './filters';
 import { ReportBody } from './ReportBody';
@@ -88,7 +94,9 @@ function FieldPicker(props: {
 }
 
 function Row(props: { children: React.ReactNode }): JSX.Element {
-  return <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 1.5 }}>{props.children}</Box>;
+  return (
+    <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 1.5 }}>{props.children}</Box>
+  );
 }
 
 function move<T>(list: T[], from: number, to: number): T[] {
@@ -106,10 +114,17 @@ type Patch = (p: Partial<ReportConfig>) => void;
 function SourceStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
   const { cfg, patch } = props;
   const { kinds, loading, error } = useKinds();
-  const current = kinds.find(k => k.group === cfg.source.group && k.plural === cfg.source.plural) ?? null;
+  const current =
+    kinds.find(k => k.group === cfg.source.group && k.plural === cfg.source.plural) ?? null;
   const choose = (k: KindEntry | null) => {
     if (!k) return;
-    const source: SourceRef = { group: k.group, version: k.version, plural: k.plural, kind: k.kind, namespaced: k.namespaced };
+    const source: SourceRef = {
+      group: k.group,
+      version: k.version,
+      plural: k.plural,
+      kind: k.kind,
+      namespaced: k.namespaced,
+    };
     // New kind, new defaults: the old fields may not exist on it.
     patch({
       source,
@@ -147,8 +162,12 @@ function SourceStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
             label="Resource kind"
             helperText={
               current
-                ? `${current.namespaced ? 'Namespaced' : 'Cluster scoped'}. Custom resources are listed after the built-in kinds.`
-                : `Now: ${cfg.source.kind} (${cfg.source.group ? `${cfg.source.group}/` : ''}${cfg.source.version})`
+                ? `${
+                    current.namespaced ? 'Namespaced' : 'Cluster scoped'
+                  }. Custom resources are listed after the built-in kinds.`
+                : `Now: ${cfg.source.kind} (${cfg.source.group ? `${cfg.source.group}/` : ''}${
+                    cfg.source.version
+                  })`
             }
           />
         )}
@@ -159,16 +178,22 @@ function SourceStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
         </Alert>
       )}
       <Typography variant="caption" color="text.secondary" component="p" sx={{ mt: 1 }}>
-        The dashboard filters (namespaces, label selector, and nodes for Pods) narrow the report too. Add more filters in the Filters step.
+        The dashboard filters (namespaces, label selector, and nodes for Pods) narrow the report
+        too. Add more filters in the Filters step.
       </Typography>
     </Box>
   );
 }
 
-function ColumnsStep(props: { cfg: ReportConfig; patch: Patch; suggestions: string[] }): JSX.Element {
+function ColumnsStep(props: {
+  cfg: ReportConfig;
+  patch: Patch;
+  suggestions: string[];
+}): JSX.Element {
   const { cfg, patch, suggestions } = props;
   const [draft, setDraft] = React.useState('');
-  const setColumn = (i: number, c: Partial<ColumnSpec>) => patch({ columns: cfg.columns.map((x, j) => (j === i ? { ...x, ...c } : x)) });
+  const setColumn = (i: number, c: Partial<ColumnSpec>) =>
+    patch({ columns: cfg.columns.map((x, j) => (j === i ? { ...x, ...c } : x)) });
   const add = () => {
     const field = draft.trim();
     if (field === '' || (!isCommonField(field) && !isValidFieldPath(field))) return;
@@ -179,28 +204,73 @@ function ColumnsStep(props: { cfg: ReportConfig; patch: Patch; suggestions: stri
     <Box>
       {cfg.columns.map((c, i) => (
         <Row key={`${c.field}:${i}`}>
-          <FieldPicker label={`Column ${i + 1}`} value={c.field} suggestions={suggestions} onChange={v => setColumn(i, { field: v })} />
-          <TextField size="small" label="Header" placeholder={defaultHeader(c.field)} value={c.header} onChange={e => setColumn(i, { header: e.target.value })} sx={{ width: 150 }} />
-          <IconButton size="small" aria-label={`Move column ${i + 1} up`} disabled={i === 0} onClick={() => patch({ columns: move(cfg.columns, i, i - 1) })}>
+          <FieldPicker
+            label={`Column ${i + 1}`}
+            value={c.field}
+            suggestions={suggestions}
+            onChange={v => setColumn(i, { field: v })}
+          />
+          <TextField
+            size="small"
+            label="Header"
+            placeholder={defaultHeader(c.field)}
+            value={c.header}
+            onChange={e => setColumn(i, { header: e.target.value })}
+            sx={{ width: 150 }}
+          />
+          <IconButton
+            size="small"
+            aria-label={`Move column ${i + 1} up`}
+            disabled={i === 0}
+            onClick={() => patch({ columns: move(cfg.columns, i, i - 1) })}
+          >
             <Icon icon="mdi:arrow-up" width={18} />
           </IconButton>
-          <IconButton size="small" aria-label={`Move column ${i + 1} down`} disabled={i === cfg.columns.length - 1} onClick={() => patch({ columns: move(cfg.columns, i, i + 1) })}>
+          <IconButton
+            size="small"
+            aria-label={`Move column ${i + 1} down`}
+            disabled={i === cfg.columns.length - 1}
+            onClick={() => patch({ columns: move(cfg.columns, i, i + 1) })}
+          >
             <Icon icon="mdi:arrow-down" width={18} />
           </IconButton>
-          <IconButton size="small" aria-label={`Remove column ${i + 1}`} onClick={() => patch({ columns: cfg.columns.filter((_, j) => j !== i) })}>
+          <IconButton
+            size="small"
+            aria-label={`Remove column ${i + 1}`}
+            onClick={() => patch({ columns: cfg.columns.filter((_, j) => j !== i) })}
+          >
             <Icon icon="mdi:close" width={18} />
           </IconButton>
         </Row>
       ))}
       <Row>
-        <FieldPicker label="Add a column" value={draft} suggestions={suggestions} onChange={setDraft} help="A common field, or a path such as .spec.replicas" />
+        <FieldPicker
+          label="Add a column"
+          value={draft}
+          suggestions={suggestions}
+          onChange={setDraft}
+          help="A common field, or a path such as .spec.replicas"
+        />
         <Button variant="outlined" size="small" onClick={add} sx={{ mt: 0.5 }}>
           Add
         </Button>
       </Row>
       <Row>
-        <FieldPicker label="Sort by" value={cfg.sortField} suggestions={suggestions} onChange={v => patch({ sortField: v })} help="Must be one of the columns. Click a header to sort too." />
-        <TextField select size="small" label="Direction" value={cfg.sortDir} onChange={e => patch({ sortDir: e.target.value as 'asc' | 'desc' })} sx={{ width: 130 }}>
+        <FieldPicker
+          label="Sort by"
+          value={cfg.sortField}
+          suggestions={suggestions}
+          onChange={v => patch({ sortField: v })}
+          help="Must be one of the columns. Click a header to sort too."
+        />
+        <TextField
+          select
+          size="small"
+          label="Direction"
+          value={cfg.sortDir}
+          onChange={e => patch({ sortDir: e.target.value as 'asc' | 'desc' })}
+          sx={{ width: 130 }}
+        >
           <MenuItem value="asc">Ascending</MenuItem>
           <MenuItem value="desc">Descending</MenuItem>
         </TextField>
@@ -209,9 +279,14 @@ function ColumnsStep(props: { cfg: ReportConfig; patch: Patch; suggestions: stri
   );
 }
 
-function FiltersStep(props: { cfg: ReportConfig; patch: Patch; suggestions: string[] }): JSX.Element {
+function FiltersStep(props: {
+  cfg: ReportConfig;
+  patch: Patch;
+  suggestions: string[];
+}): JSX.Element {
   const { cfg, patch, suggestions } = props;
-  const setFilter = (i: number, f: Partial<ReportFilter>) => patch({ filters: cfg.filters.map((x, j) => (j === i ? { ...x, ...f } : x)) });
+  const setFilter = (i: number, f: Partial<ReportFilter>) =>
+    patch({ filters: cfg.filters.map((x, j) => (j === i ? { ...x, ...f } : x)) });
   const logicProblem = React.useMemo(() => {
     if (cfg.logic.trim() === '' || cfg.filters.length === 0) return null;
     const r = parseFilterLogic(cfg.logic, cfg.filters.length);
@@ -222,8 +297,20 @@ function FiltersStep(props: { cfg: ReportConfig; patch: Patch; suggestions: stri
       {cfg.filters.map((f, i) => (
         <Row key={i}>
           <Typography sx={{ width: 22, pt: 1, color: 'text.secondary' }}>{i + 1}</Typography>
-          <FieldPicker label="Field" value={f.field} suggestions={suggestions} onChange={v => setFilter(i, { field: v })} />
-          <TextField select size="small" label="Operator" value={f.op} onChange={e => setFilter(i, { op: e.target.value as FilterOp })} sx={{ width: 150 }}>
+          <FieldPicker
+            label="Field"
+            value={f.field}
+            suggestions={suggestions}
+            onChange={v => setFilter(i, { field: v })}
+          />
+          <TextField
+            select
+            size="small"
+            label="Operator"
+            value={f.op}
+            onChange={e => setFilter(i, { op: e.target.value as FilterOp })}
+            sx={{ width: 150 }}
+          >
             {FILTER_OPS.map(op => (
               <MenuItem key={op} value={op}>
                 {FILTER_OP_LABELS[op]}
@@ -235,15 +322,25 @@ function FiltersStep(props: { cfg: ReportConfig; patch: Patch; suggestions: stri
             label="Value"
             value={f.value}
             onChange={e => setFilter(i, { value: e.target.value })}
-            helperText={f.op === 'exists' ? 'Type false to match when it does not exist.' : undefined}
+            helperText={
+              f.op === 'exists' ? 'Type false to match when it does not exist.' : undefined
+            }
             sx={{ width: 150 }}
           />
-          <IconButton size="small" aria-label={`Remove filter ${i + 1}`} onClick={() => patch({ filters: cfg.filters.filter((_, j) => j !== i) })}>
+          <IconButton
+            size="small"
+            aria-label={`Remove filter ${i + 1}`}
+            onClick={() => patch({ filters: cfg.filters.filter((_, j) => j !== i) })}
+          >
             <Icon icon="mdi:close" width={18} />
           </IconButton>
         </Row>
       ))}
-      <Button variant="outlined" size="small" onClick={() => patch({ filters: [...cfg.filters, { field: '', op: 'eq', value: '' }] })}>
+      <Button
+        variant="outlined"
+        size="small"
+        onClick={() => patch({ filters: [...cfg.filters, { field: '', op: 'eq', value: '' }] })}
+      >
         Add filter
       </Button>
       {cfg.filters.length > 1 && (
@@ -255,7 +352,10 @@ function FiltersStep(props: { cfg: ReportConfig; patch: Patch; suggestions: stri
           placeholder={`1 AND (2 OR 3)`}
           value={cfg.logic}
           error={logicProblem !== null}
-          helperText={logicProblem ?? 'Leave empty to apply every filter with AND. Use AND, OR, NOT and brackets.'}
+          helperText={
+            logicProblem ??
+            'Leave empty to apply every filter with AND. Use AND, OR, NOT and brackets.'
+          }
           onChange={e => patch({ logic: e.target.value })}
         />
       )}
@@ -263,12 +363,18 @@ function FiltersStep(props: { cfg: ReportConfig; patch: Patch; suggestions: stri
   );
 }
 
-function GroupingStep(props: { cfg: ReportConfig; patch: Patch; suggestions: string[] }): JSX.Element {
+function GroupingStep(props: {
+  cfg: ReportConfig;
+  patch: Patch;
+  suggestions: string[];
+}): JSX.Element {
   const { cfg, patch, suggestions } = props;
-  const setAgg = (i: number, a: Partial<AggregateSpec>) => patch({ aggregates: cfg.aggregates.map((x, j) => (j === i ? { ...x, ...a } : x)) });
+  const setAgg = (i: number, a: Partial<AggregateSpec>) =>
+    patch({ aggregates: cfg.aggregates.map((x, j) => (j === i ? { ...x, ...a } : x)) });
   const group0 = cfg.groupBy[0] ?? '';
   const group1 = cfg.groupBy[1] ?? '';
-  const setGroups = (a: string, b: string) => patch({ groupBy: [a, b].filter((x, i) => (i === 0 ? true : x.trim() !== '')) });
+  const setGroups = (a: string, b: string) =>
+    patch({ groupBy: [a, b].filter((x, i) => (i === 0 ? true : x.trim() !== '')) });
   return (
     <Box>
       <ToggleButtonGroup
@@ -285,54 +391,128 @@ function GroupingStep(props: { cfg: ReportConfig; patch: Patch; suggestions: str
       </ToggleButtonGroup>
       {cfg.reportType === 'tabular' && (
         <Typography variant="body2" color="text.secondary">
-          A plain table of the columns. Choose Summary to group rows with counts and totals, or Matrix to cross two fields.
+          A plain table of the columns. Choose Summary to group rows with counts and totals, or
+          Matrix to cross two fields.
         </Typography>
       )}
       {cfg.reportType === 'summary' && (
         <>
           <Row>
-            <FieldPicker label="Group by" value={group0} suggestions={suggestions} onChange={v => setGroups(v, group1)} />
-            <FieldPicker label="Then group by (optional)" value={group1} suggestions={suggestions} onChange={v => setGroups(group0, v)} />
+            <FieldPicker
+              label="Group by"
+              value={group0}
+              suggestions={suggestions}
+              onChange={v => setGroups(v, group1)}
+            />
+            <FieldPicker
+              label="Then group by (optional)"
+              value={group1}
+              suggestions={suggestions}
+              onChange={v => setGroups(group0, v)}
+            />
           </Row>
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
             Totals for numeric fields
           </Typography>
           {cfg.aggregates.map((a, i) => (
             <Row key={i}>
-              <TextField select size="small" label="Function" value={a.fn} onChange={e => setAgg(i, { fn: e.target.value as AggFn })} sx={{ width: 110 }}>
+              <TextField
+                select
+                size="small"
+                label="Function"
+                value={a.fn}
+                onChange={e => setAgg(i, { fn: e.target.value as AggFn })}
+                sx={{ width: 110 }}
+              >
                 {AGG_FNS.map(fn => (
                   <MenuItem key={fn} value={fn}>
                     {fn}
                   </MenuItem>
                 ))}
               </TextField>
-              <FieldPicker label="Field" value={a.field} suggestions={suggestions} onChange={v => setAgg(i, { field: v })} />
-              <IconButton size="small" aria-label={`Remove total ${i + 1}`} onClick={() => patch({ aggregates: cfg.aggregates.filter((_, j) => j !== i) })}>
+              <FieldPicker
+                label="Field"
+                value={a.field}
+                suggestions={suggestions}
+                onChange={v => setAgg(i, { field: v })}
+              />
+              <IconButton
+                size="small"
+                aria-label={`Remove total ${i + 1}`}
+                onClick={() => patch({ aggregates: cfg.aggregates.filter((_, j) => j !== i) })}
+              >
                 <Icon icon="mdi:close" width={18} />
               </IconButton>
             </Row>
           ))}
-          <Button size="small" variant="outlined" onClick={() => patch({ aggregates: [...cfg.aggregates, { field: 'restarts', fn: 'sum' }] })} sx={{ mb: 1.5 }}>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() =>
+              patch({ aggregates: [...cfg.aggregates, { field: 'restarts', fn: 'sum' }] })
+            }
+            sx={{ mb: 1.5 }}
+          >
             Add a total
           </Button>
           <Box>
-            <TextField select size="small" label="Order groups by" value={cfg.groupSort} onChange={e => patch({ groupSort: e.target.value as 'key' | 'count' })} sx={{ width: 200, mr: 2 }}>
+            <TextField
+              select
+              size="small"
+              label="Order groups by"
+              value={cfg.groupSort}
+              onChange={e => patch({ groupSort: e.target.value as 'key' | 'count' })}
+              sx={{ width: 200, mr: 2 }}
+            >
               <MenuItem value="key">Value</MenuItem>
               <MenuItem value="count">Row count</MenuItem>
             </TextField>
-            <FormControlLabel control={<Switch checked={cfg.expandGroups} onChange={e => patch({ expandGroups: e.target.checked })} />} label="Groups start open" />
-            <FormControlLabel control={<Switch checked={cfg.showRows} onChange={e => patch({ showRows: e.target.checked })} />} label="Show the rows in each group" />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={cfg.expandGroups}
+                  onChange={e => patch({ expandGroups: e.target.checked })}
+                />
+              }
+              label="Groups start open"
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={cfg.showRows}
+                  onChange={e => patch({ showRows: e.target.checked })}
+                />
+              }
+              label="Show the rows in each group"
+            />
           </Box>
         </>
       )}
       {cfg.reportType === 'matrix' && (
         <>
           <Row>
-            <FieldPicker label="Rows" value={cfg.matrixRow} suggestions={suggestions} onChange={v => patch({ matrixRow: v })} />
-            <FieldPicker label="Columns" value={cfg.matrixCol} suggestions={suggestions} onChange={v => patch({ matrixCol: v })} />
+            <FieldPicker
+              label="Rows"
+              value={cfg.matrixRow}
+              suggestions={suggestions}
+              onChange={v => patch({ matrixRow: v })}
+            />
+            <FieldPicker
+              label="Columns"
+              value={cfg.matrixCol}
+              suggestions={suggestions}
+              onChange={v => patch({ matrixCol: v })}
+            />
           </Row>
           <Row>
-            <TextField select size="small" label="Cell value" value={cfg.matrixFn} onChange={e => patch({ matrixFn: e.target.value as ReportConfig['matrixFn'] })} sx={{ width: 150 }}>
+            <TextField
+              select
+              size="small"
+              label="Cell value"
+              value={cfg.matrixFn}
+              onChange={e => patch({ matrixFn: e.target.value as ReportConfig['matrixFn'] })}
+              sx={{ width: 150 }}
+            >
               <MenuItem value="count">Row count</MenuItem>
               {AGG_FNS.map(fn => (
                 <MenuItem key={fn} value={fn}>
@@ -340,7 +520,14 @@ function GroupingStep(props: { cfg: ReportConfig; patch: Patch; suggestions: str
                 </MenuItem>
               ))}
             </TextField>
-            {cfg.matrixFn !== 'count' && <FieldPicker label="Numeric field" value={cfg.matrixField} suggestions={suggestions} onChange={v => patch({ matrixField: v })} />}
+            {cfg.matrixFn !== 'count' && (
+              <FieldPicker
+                label="Numeric field"
+                value={cfg.matrixField}
+                suggestions={suggestions}
+                onChange={v => patch({ matrixField: v })}
+              />
+            )}
           </Row>
         </>
       )}
@@ -351,13 +538,24 @@ function GroupingStep(props: { cfg: ReportConfig; patch: Patch; suggestions: str
 function ChartStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
   const { cfg, patch } = props;
   if (cfg.reportType !== 'summary') {
-    return <Typography variant="body2" color="text.secondary">Charts are for Summary reports. Choose Summary in the Grouping step.</Typography>;
+    return (
+      <Typography variant="body2" color="text.secondary">
+        Charts are for Summary reports. Choose Summary in the Grouping step.
+      </Typography>
+    );
   }
   const stackedNeedsTwo = cfg.chart === 'stacked' && cfg.groupBy.length < 2;
   return (
     <Box>
       <Row>
-        <TextField select size="small" label="Chart" value={cfg.chart} onChange={e => patch({ chart: e.target.value as ChartType })} sx={{ width: 220 }}>
+        <TextField
+          select
+          size="small"
+          label="Chart"
+          value={cfg.chart}
+          onChange={e => patch({ chart: e.target.value as ChartType })}
+          sx={{ width: 220 }}
+        >
           <MenuItem value="none">No chart</MenuItem>
           <MenuItem value="bar">Bar</MenuItem>
           <MenuItem value="hbar">Horizontal bar</MenuItem>
@@ -365,7 +563,14 @@ function ChartStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
           <MenuItem value="stacked">Stacked bar</MenuItem>
         </TextField>
         {cfg.chart !== 'none' && (
-          <TextField select size="small" label="Value" value={cfg.chartMeasure} onChange={e => patch({ chartMeasure: Number(e.target.value) })} sx={{ width: 220 }}>
+          <TextField
+            select
+            size="small"
+            label="Value"
+            value={cfg.chartMeasure}
+            onChange={e => patch({ chartMeasure: Number(e.target.value) })}
+            sx={{ width: 220 }}
+          >
             <MenuItem value={-1}>Row count</MenuItem>
             {cfg.aggregates.map((a, i) => (
               <MenuItem key={i} value={i}>{`${a.fn} of ${defaultHeader(a.field)}`}</MenuItem>
@@ -373,9 +578,14 @@ function ChartStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
           </TextField>
         )}
       </Row>
-      {stackedNeedsTwo && <Alert severity="info">A stacked bar needs two group fields. With one, it shows plain bars.</Alert>}
+      {stackedNeedsTwo && (
+        <Alert severity="info">
+          A stacked bar needs two group fields. With one, it shows plain bars.
+        </Alert>
+      )}
       <Typography variant="caption" color="text.secondary" component="p">
-        Every group is its own bar or slice, at its real size. Nothing is merged into an Other group.
+        Every group is its own bar or slice, at its real size. Nothing is merged into an Other
+        group.
       </Typography>
     </Box>
   );
@@ -383,7 +593,10 @@ function ChartStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
 
 /* ----------------------------------- editor ----------------------------------- */
 
-export function ReportSettings({ config, onChange }: WidgetSettingsProps<ReportConfig>): JSX.Element {
+export function ReportSettings({
+  config,
+  onChange,
+}: WidgetSettingsProps<ReportConfig>): JSX.Element {
   const cfg = React.useMemo(() => normaliseConfig(config), [config]);
   const [step, setStep] = React.useState(0);
   const patch: Patch = React.useCallback(p => onChange({ ...cfg, ...p }), [cfg, onChange]);
@@ -410,8 +623,25 @@ export function ReportSettings({ config, onChange }: WidgetSettingsProps<ReportC
         <Typography variant="overline" color="text.secondary">
           Live preview
         </Typography>
-        <Box sx={{ height: 340, border: 1, borderColor: 'divider', borderRadius: 1, overflow: 'hidden' }}>
-          <ReportBody objects={live.items} config={cfg} scope={NO_SCOPE} kiosk={false} editing preview loading={live.loading} error={live.error} />
+        <Box
+          sx={{
+            height: 340,
+            border: 1,
+            borderColor: 'divider',
+            borderRadius: 1,
+            overflow: 'hidden',
+          }}
+        >
+          <ReportBody
+            objects={live.items}
+            config={cfg}
+            scope={NO_SCOPE}
+            kiosk={false}
+            editing
+            preview
+            loading={live.loading}
+            error={live.error}
+          />
         </Box>
         <Typography variant="caption" color="text.secondary">
           The preview ignores the dashboard filters. The dashboard applies them.

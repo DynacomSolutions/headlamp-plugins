@@ -1,12 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { breakpointFor, isEditableBreakpoint, layoutPositions, otherSectionAt, pointerOf, rowsUsed, sameLayout, toLayout } from './layout';
+import {
+  breakpointFor,
+  isEditableBreakpoint,
+  layoutPositions,
+  otherSectionAt,
+  pointerOf,
+  rowsUsed,
+  sameLayout,
+  toLayout,
+} from './layout';
 import type { WidgetInstance } from './spec/model';
 
-const w = (id: string, x: number, y: number, ww: number, h: number, type = 't'): WidgetInstance => ({ id, type, title: '', config: {}, x, y, w: ww, h });
+const w = (
+  id: string,
+  x: number,
+  y: number,
+  ww: number,
+  h: number,
+  type = 't'
+): WidgetInstance => ({ id, type, title: '', config: {}, x, y, w: ww, h });
 
 describe('layout helpers', () => {
   it('turns widgets into grid items with limits', () => {
-    const l = toLayout([w('a', 0, 0, 3, 2, 'big'), w('b', 3, 0, 2, 2)], t => (t === 'big' ? { minSize: { w: 2, h: 3 }, maxSize: { w: 8, h: 9 } } : undefined));
+    const l = toLayout([w('a', 0, 0, 3, 2, 'big'), w('b', 3, 0, 2, 2)], t =>
+      t === 'big' ? { minSize: { w: 2, h: 3 }, maxSize: { w: 8, h: 9 } } : undefined
+    );
     expect(l[0]).toMatchObject({ i: 'a', minW: 2, minH: 3, maxW: 8, maxH: 9 });
     expect(l[1]).toMatchObject({ i: 'b', minW: 1, minH: 1 });
     expect(l[1].maxW).toBeUndefined();
@@ -17,7 +35,9 @@ describe('layout helpers', () => {
     expect(sameLayout([{ i: 'a', x: 0, y: 0, w: 3, h: 2 }], ws)).toBe(true);
     expect(sameLayout([{ i: 'a', x: 1, y: 0, w: 3, h: 2 }], ws)).toBe(false);
     expect(sameLayout([], ws)).toBe(false);
-    expect(layoutPositions([{ i: 'a', x: 1, y: 2, w: 3, h: 4, minW: 2 }])).toEqual([{ i: 'a', x: 1, y: 2, w: 3, h: 4 }]);
+    expect(layoutPositions([{ i: 'a', x: 1, y: 2, w: 3, h: 4, minW: 2 }])).toEqual([
+      { i: 'a', x: 1, y: 2, w: 3, h: 4 },
+    ]);
   });
 
   it('allows editing only with the full 12 columns', () => {
@@ -42,7 +62,8 @@ describe('layout helpers', () => {
   });
 
   it('finds the other section under the pointer', () => {
-    document.body.innerHTML = '<section data-section-id="s1"><div id="in1"></div></section><section data-section-id="s2"><div id="in2"></div></section>';
+    document.body.innerHTML =
+      '<section data-section-id="s1"><div id="in1"></div></section><section data-section-id="s2"><div id="in2"></div></section>';
     const stack = (id: string) => [document.getElementById(id)!, document.body];
     const doc = { elementsFromPoint: () => stack('in2') } as unknown as Document;
     expect(otherSectionAt({ x: 0, y: 0 }, 's1', doc)).toBe('s2');

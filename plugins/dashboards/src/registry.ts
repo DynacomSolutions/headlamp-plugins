@@ -26,14 +26,16 @@ export function validateDefinition(def: WidgetDefinition<any>): string | null {
   if (typeof def.type !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/.test(def.type)) {
     return 'A widget type must be lower case letters, digits, dots, dashes or underscores.';
   }
-  if (typeof def.title !== 'string' || def.title === '') return `Widget ${def.type}: title is required.`;
+  if (typeof def.title !== 'string' || def.title === '')
+    return `Widget ${def.type}: title is required.`;
   if (typeof def.icon !== 'string') return `Widget ${def.type}: icon is required.`;
   if (typeof def.category !== 'string') return `Widget ${def.type}: category is required.`;
   if (!def.defaultSize || !(def.defaultSize.w >= 1) || !(def.defaultSize.h >= 1)) {
     return `Widget ${def.type}: defaultSize needs w and h of at least 1.`;
   }
   if (!def.Component) return `Widget ${def.type}: Component is required.`;
-  if (!def.defaultConfig || typeof def.defaultConfig !== 'object') return `Widget ${def.type}: defaultConfig is required.`;
+  if (!def.defaultConfig || typeof def.defaultConfig !== 'object')
+    return `Widget ${def.type}: defaultConfig is required.`;
   return null;
 }
 
@@ -74,8 +76,15 @@ export function createWidgetStore(): WidgetStore {
  * keeps the registrations) and draining a stub's queue.
  */
 export function installRegistry(win: Window & typeof globalThis = window): WidgetStore {
-  const existing = win.headlampDashboards as (Partial<WidgetStore> & Partial<DashboardsStub>) | undefined;
-  if (existing && !existing.stub && typeof existing.get === 'function' && typeof existing.subscribe === 'function') {
+  const existing = win.headlampDashboards as
+    | (Partial<WidgetStore> & Partial<DashboardsStub>)
+    | undefined;
+  if (
+    existing &&
+    !existing.stub &&
+    typeof existing.get === 'function' &&
+    typeof existing.subscribe === 'function'
+  ) {
     return existing as WidgetStore;
   }
   const store = createWidgetStore();

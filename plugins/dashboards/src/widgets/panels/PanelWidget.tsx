@@ -11,19 +11,32 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../contract';
 import { usePanel, usePanelList } from './data';
-import { sourceOf,SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
+import { sourceOf, SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
 import { PanelView } from './PanelView';
 import { AGENT_SOURCE_ID, findSource } from './sources';
 import { useSources } from './sourcesConfig';
 
 export type PanelConfig = SourcePanelConfig;
 
-export function PanelWidget({ config, refreshSignal, reportRefreshed, editing, kiosk }: WidgetProps<PanelConfig>): JSX.Element {
+export function PanelWidget({
+  config,
+  refreshSignal,
+  reportRefreshed,
+  editing,
+  kiosk,
+}: WidgetProps<PanelConfig>): JSX.Element {
   const sourceId = sourceOf(config);
   const source = findSource(useSources(), sourceId);
   const list = usePanelList(source, sourceId);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
-  const state = usePanel(source, config.panel, refreshSignal, minSeconds, reportRefreshed, sourceId);
+  const state = usePanel(
+    source,
+    config.panel,
+    refreshSignal,
+    minSeconds,
+    reportRefreshed,
+    sourceId
+  );
 
   if (!config.panel) {
     return (
@@ -45,7 +58,9 @@ export function PanelWidget({ config, refreshSignal, reportRefreshed, editing, k
     <Box sx={{ height: '100%', minWidth: 0 }}>
       {state.error && (
         <Alert severity={state.panel ? 'warning' : 'error'} sx={{ mb: 1 }}>
-          {state.panel ? `Refresh failed, showing the last data: ${state.error}` : `Could not load the panel: ${state.error}`}
+          {state.panel
+            ? `Refresh failed, showing the last data: ${state.error}`
+            : `Could not load the panel: ${state.error}`}
         </Alert>
       )}
       {state.panel && <PanelView panel={state.panel} kiosk={kiosk} editing={editing} />}
@@ -64,7 +79,8 @@ function PanelSettings(props: WidgetSettingsProps<PanelConfig>): JSX.Element {
 export const panelWidget: WidgetDefinition<PanelConfig> = {
   type: 'agent.panel',
   title: 'Agent panel',
-  description: 'A status panel from the agent layer or from another panel source: uptime, alerts, disks, runners and more.',
+  description:
+    'A status panel from the agent layer or from another panel source: uptime, alerts, disks, runners and more.',
   icon: 'mdi:view-dashboard-outline',
   category: 'Monitoring',
   defaultSize: { w: 4, h: 8 },

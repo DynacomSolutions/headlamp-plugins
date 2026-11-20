@@ -4,7 +4,16 @@
  */
 import { getValues, Scalar, toNumber } from './fields';
 
-export const FILTER_OPS = ['eq', 'ne', 'contains', 'startsWith', 'exists', 'gt', 'lt', 'in'] as const;
+export const FILTER_OPS = [
+  'eq',
+  'ne',
+  'contains',
+  'startsWith',
+  'exists',
+  'gt',
+  'lt',
+  'in',
+] as const;
 export type FilterOp = (typeof FILTER_OPS)[number];
 
 export const FILTER_OP_LABELS: Record<FilterOp, string> = {
@@ -118,7 +127,8 @@ function tokenise(input: string): Token[] | string {
       let j = i;
       while (j < input.length && /[A-Za-z]/.test(input[j])) j += 1;
       const word = input.slice(i, j).toUpperCase();
-      if (word === 'AND' || word === 'OR' || word === 'NOT') tokens.push({ kind: word.toLowerCase() as Token['kind'] });
+      if (word === 'AND' || word === 'OR' || word === 'NOT')
+        tokens.push({ kind: word.toLowerCase() as Token['kind'] });
       else return `Unknown word "${input.slice(i, j)}". Use AND, OR, NOT, numbers and brackets.`;
       i = j;
     } else {
@@ -174,7 +184,8 @@ export function parseFilterLogic(input: string, count: number): LogicResult {
     pos += 1;
     if (t.kind === 'num') {
       const n = t.value as number;
-      if (n < 1 || n > count) return fail(`Filter ${n} does not exist. There are ${count} filters.`);
+      if (n < 1 || n > count)
+        return fail(`Filter ${n} does not exist. There are ${count} filters.`);
       used.add(n);
       return { type: 'ref', index: n - 1 };
     }
@@ -228,7 +239,9 @@ export function compileFilters(
   }
   const test = (obj: unknown): boolean => {
     if (ast) {
-      const results = filters.map(f => (f.field.trim() === '' ? true : testFilter(getValues(obj, f.field, now), f)));
+      const results = filters.map(f =>
+        f.field.trim() === '' ? true : testFilter(getValues(obj, f.field, now), f)
+      );
       return evaluateLogic(ast, results);
     }
     return active.every(f => testFilter(getValues(obj, f.field, now), f));

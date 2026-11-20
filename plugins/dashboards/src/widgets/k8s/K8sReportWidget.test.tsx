@@ -22,13 +22,23 @@ import { k8sReportWidget } from './K8sReportWidget';
 import { ReportSettings } from './ReportSettings';
 
 const Widget = k8sReportWidget.Component;
-const pod = (name: string, ns: string) => ({ kind: 'Pod', metadata: { name, namespace: ns, uid: name }, status: { phase: 'Running' } });
+const pod = (name: string, ns: string) => ({
+  kind: 'Pod',
+  metadata: { name, namespace: ns, uid: name },
+  status: { phase: 'Running' },
+});
 
 beforeEach(() => {
   streamResults.mockReset();
   request.mockReset();
   streamResults.mockImplementation(async (url: string, cb: (items: unknown[]) => void) => {
-    cb(url.includes('/namespaces/dev/') ? [pod('d1', 'dev')] : url.includes('/namespaces/prod/') ? [pod('a', 'prod')] : [pod('a', 'prod'), pod('d1', 'dev')]);
+    cb(
+      url.includes('/namespaces/dev/')
+        ? [pod('d1', 'dev')]
+        : url.includes('/namespaces/prod/')
+        ? [pod('a', 'prod')]
+        : [pod('a', 'prod'), pod('d1', 'dev')]
+    );
     return () => undefined;
   });
 });
@@ -37,7 +47,15 @@ afterEach(cleanup);
 const renderWidget = (filters = defaultFilters(), refreshSignal = 0, reportRefreshed = vi.fn()) =>
   render(
     <MemoryRouter>
-      <Widget instanceId="w" config={DEFAULT_REPORT} filters={filters} refreshSignal={refreshSignal} reportRefreshed={reportRefreshed} editing={false} kiosk={false} />
+      <Widget
+        instanceId="w"
+        config={DEFAULT_REPORT}
+        filters={filters}
+        refreshSignal={refreshSignal}
+        reportRefreshed={reportRefreshed}
+        editing={false}
+        kiosk={false}
+      />
     </MemoryRouter>
   );
 
@@ -52,7 +70,10 @@ describe('Kubernetes report widget', () => {
   it('streams each chosen namespace and passes the label selector', async () => {
     renderWidget({ ...defaultFilters(), namespaces: ['dev', 'prod'], labelSelector: 'app=web' });
     await waitFor(() => expect(streamResults).toHaveBeenCalledTimes(2));
-    expect(streamResults.mock.calls.map(c => c[0])).toEqual(['/api/v1/namespaces/dev/pods', '/api/v1/namespaces/prod/pods']);
+    expect(streamResults.mock.calls.map(c => c[0])).toEqual([
+      '/api/v1/namespaces/dev/pods',
+      '/api/v1/namespaces/prod/pods',
+    ]);
     expect(streamResults.mock.calls[0][3]).toEqual({ labelSelector: 'app=web' });
   });
   it('starts again when the refresh signal changes, and only then', async () => {
@@ -60,7 +81,15 @@ describe('Kubernetes report widget', () => {
     const filters = defaultFilters();
     const view = (signal: number) => (
       <MemoryRouter>
-        <Widget instanceId="w" config={DEFAULT_REPORT} filters={filters} refreshSignal={signal} reportRefreshed={reportRefreshed} editing={false} kiosk={false} />
+        <Widget
+          instanceId="w"
+          config={DEFAULT_REPORT}
+          filters={filters}
+          refreshSignal={signal}
+          reportRefreshed={reportRefreshed}
+          editing={false}
+          kiosk={false}
+        />
       </MemoryRouter>
     );
     const { rerender } = render(view(0));
@@ -80,10 +109,12 @@ describe('Kubernetes report widget', () => {
     expect(screen.queryByText('a')).toBeNull();
   });
   it('shows an error when the list is refused', async () => {
-    streamResults.mockImplementation(async (_u: string, _cb: unknown, errCb: (e: unknown) => void) => {
-      errCb(Object.assign(new Error('no'), { status: 403 }));
-      return () => undefined;
-    });
+    streamResults.mockImplementation(
+      async (_u: string, _cb: unknown, errCb: (e: unknown) => void) => {
+        errCb(Object.assign(new Error('no'), { status: 403 }));
+        return () => undefined;
+      }
+    );
     renderWidget();
     await waitFor(() => expect(screen.getByText(/may not list pods/)).toBeTruthy());
   });
@@ -103,10 +134,33 @@ describe('Kubernetes report widget', () => {
 describe('kind discovery', () => {
   it('lists built-in kinds first and custom kinds after', async () => {
     request.mockImplementation(async (path: string) => {
-      if (path === '/api/v1') return { resources: [{ name: 'pods', kind: 'Pod', namespaced: true, verbs: ['list'] }, { name: 'pods/log', kind: 'Pod', verbs: ['get'] }] };
-      if (path === '/apis') return { groups: [{ name: 'apps', preferredVersion: { version: 'v1' } }, { name: 'cert-manager.io', preferredVersion: { version: 'v1' } }, { name: 'broken.io', preferredVersion: { version: 'v1' } }] };
-      if (path === '/apis/apps/v1') return { resources: [{ name: 'deployments', kind: 'Deployment', namespaced: true, verbs: ['list'] }] };
-      if (path === '/apis/cert-manager.io/v1') return { resources: [{ name: 'certificates', kind: 'Certificate', namespaced: true, verbs: ['list'] }] };
+      if (path === '/api/v1')
+        return {
+          resources: [
+            { name: 'pods', kind: 'Pod', namespaced: true, verbs: ['list'] },
+            { name: 'pods/log', kind: 'Pod', verbs: ['get'] },
+          ],
+        };
+      if (path === '/apis')
+        return {
+          groups: [
+            { name: 'apps', preferredVersion: { version: 'v1' } },
+            { name: 'cert-manager.io', preferredVersion: { version: 'v1' } },
+            { name: 'broken.io', preferredVersion: { version: 'v1' } },
+          ],
+        };
+      if (path === '/apis/apps/v1')
+        return {
+          resources: [
+            { name: 'deployments', kind: 'Deployment', namespaced: true, verbs: ['list'] },
+          ],
+        };
+      if (path === '/apis/cert-manager.io/v1')
+        return {
+          resources: [
+            { name: 'certificates', kind: 'Certificate', namespaced: true, verbs: ['list'] },
+          ],
+        };
       throw new Error('boom');
     });
     const kinds = await fetchKinds(p => request(p));
@@ -114,12 +168,35 @@ describe('kind discovery', () => {
     expect(kinds.map(k => k.custom)).toEqual([false, false, true]);
   });
   it('builds list paths', () => {
-    expect(listPath({ group: '', version: 'v1', plural: 'pods', kind: 'Pod', namespaced: true })).toBe('/api/v1/pods');
-    expect(listPath({ group: 'apps', version: 'v1', plural: 'deployments', kind: 'Deployment', namespaced: true }, 'a b')).toBe('/apis/apps/v1/namespaces/a%20b/deployments');
-    expect(listPath({ group: '', version: 'v1', plural: 'nodes', kind: 'Node', namespaced: false }, 'x')).toBe('/api/v1/nodes');
+    expect(
+      listPath({ group: '', version: 'v1', plural: 'pods', kind: 'Pod', namespaced: true })
+    ).toBe('/api/v1/pods');
+    expect(
+      listPath(
+        {
+          group: 'apps',
+          version: 'v1',
+          plural: 'deployments',
+          kind: 'Deployment',
+          namespaced: true,
+        },
+        'a b'
+      )
+    ).toBe('/apis/apps/v1/namespaces/a%20b/deployments');
+    expect(
+      listPath({ group: '', version: 'v1', plural: 'nodes', kind: 'Node', namespaced: false }, 'x')
+    ).toBe('/api/v1/nodes');
   });
   it('removes duplicate kinds', () => {
-    const k = { group: 'g', version: 'v1', plural: 'x', kind: 'X', namespaced: true, custom: true, label: 'X' };
+    const k = {
+      group: 'g',
+      version: 'v1',
+      plural: 'x',
+      kind: 'X',
+      namespaced: true,
+      custom: true,
+      label: 'X',
+    };
     expect(sortKinds([k, k])).toHaveLength(1);
   });
 });
@@ -133,11 +210,14 @@ describe('settings editor', () => {
         <ReportSettings config={DEFAULT_REPORT} onChange={onChange} />
       </MemoryRouter>
     );
-    for (const name of ['Source', 'Columns', 'Filters', 'Grouping', 'Chart']) expect(screen.getByRole('button', { name })).toBeTruthy();
+    for (const name of ['Source', 'Columns', 'Filters', 'Grouping', 'Chart'])
+      expect(screen.getByRole('button', { name })).toBeTruthy();
     await waitFor(() => expect(screen.getByText('a')).toBeTruthy()); // the preview
     fireEvent.click(screen.getByRole('button', { name: 'Filters' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add filter' }));
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ filters: [{ field: '', op: 'eq', value: '' }] }));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ filters: [{ field: '', op: 'eq', value: '' }] })
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Grouping' }));
     fireEvent.click(screen.getByRole('button', { name: 'Summary' }));
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ reportType: 'summary' }));

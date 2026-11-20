@@ -5,7 +5,11 @@ const { registerRoute, registerSidebarEntry, registerPluginSettings } = vi.hoist
   registerSidebarEntry: vi.fn(),
   registerPluginSettings: vi.fn(),
 }));
-vi.mock('@kinvolk/headlamp-plugin/lib', () => ({ registerRoute, registerSidebarEntry, registerPluginSettings }));
+vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
+  registerRoute,
+  registerSidebarEntry,
+  registerPluginSettings,
+}));
 vi.mock('./icons/registerIcons', () => ({}));
 vi.mock('./DashboardPage', () => ({ DashboardPage: () => null }));
 vi.mock('./DashboardsListPage', () => ({ DashboardsListPage: () => null }));
@@ -15,7 +19,11 @@ import './index';
 
 describe('plugin entry', () => {
   it('adds the sidebar entry, the list route and the dashboard route', () => {
-    expect(registerSidebarEntry.mock.calls[0][0]).toMatchObject({ name: 'dashboards', label: 'Dashboards', url: '/dashboards' });
+    expect(registerSidebarEntry.mock.calls[0][0]).toMatchObject({
+      name: 'dashboards',
+      label: 'Dashboards',
+      url: '/dashboards',
+    });
     const byPath = (p: string) => registerRoute.mock.calls.map(c => c[0]).find(r => r.path === p);
     expect(byPath('/dashboards')).toMatchObject({ exact: true, sidebar: 'dashboards' });
     expect(byPath('/dashboards/:name/:tab?')).toMatchObject({ exact: true, isFullWidth: true });

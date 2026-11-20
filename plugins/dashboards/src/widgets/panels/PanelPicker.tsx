@@ -15,9 +15,13 @@ export interface SourcePanelConfig {
   panel: string;
 }
 
-export const sourceOf = (config: { source?: unknown }): string => (typeof config.source === 'string' && config.source !== '' ? config.source : AGENT_SOURCE_ID);
+export const sourceOf = (config: { source?: unknown }): string =>
+  typeof config.source === 'string' && config.source !== '' ? config.source : AGENT_SOURCE_ID;
 
-export function SourcePanelPicker<C extends SourcePanelConfig>({ config, onChange }: WidgetSettingsProps<C>): JSX.Element {
+export function SourcePanelPicker<C extends SourcePanelConfig>({
+  config,
+  onChange,
+}: WidgetSettingsProps<C>): JSX.Element {
   const sources = useSources();
   const sourceId = sourceOf(config);
   const source = findSource(sources, sourceId);
@@ -50,10 +54,14 @@ export function SourcePanelPicker<C extends SourcePanelConfig>({ config, onChang
         label="Panel"
         value={config.panel}
         disabled={list.loading}
-        helperText={description || (list.loading ? 'Loading the panels.' : 'The source supplies the panels.')}
+        helperText={
+          description || (list.loading ? 'Loading the panels.' : 'The source supplies the panels.')
+        }
         onChange={e => onChange({ ...config, panel: e.target.value })}
       >
-        {!knownPanel && config.panel !== '' && <MenuItem value={config.panel}>{config.panel}</MenuItem>}
+        {!knownPanel && config.panel !== '' && (
+          <MenuItem value={config.panel}>{config.panel}</MenuItem>
+        )}
         {list.panels.map(p => (
           <MenuItem key={p.id} value={p.id}>
             {p.title}

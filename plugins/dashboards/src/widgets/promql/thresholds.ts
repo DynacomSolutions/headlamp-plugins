@@ -66,7 +66,11 @@ export function parseThresholds(text: unknown): ThresholdStep[] {
  * The level of a value: the step with the largest threshold that the value reaches. Below
  * every step the level is `good`. Returns undefined when there are no steps (no status shown).
  */
-export function thresholdLevel(value: number, steps: ThresholdStep[], invert = false): Level | undefined {
+export function thresholdLevel(
+  value: number,
+  steps: ThresholdStep[],
+  invert = false
+): Level | undefined {
   if (steps.length === 0 || !Number.isFinite(value)) return undefined;
   const sorted = [...steps].sort((a, b) => (invert ? b.value - a.value : a.value - b.value));
   let level: Level = 'good';

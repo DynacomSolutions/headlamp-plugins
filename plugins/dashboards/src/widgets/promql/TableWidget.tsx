@@ -26,7 +26,8 @@ export interface TableConfig {
 }
 
 export const DEFAULT_TABLE: TableConfig = {
-  queries: '# Memory | bytes\nsum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"$namespace",container!=""})',
+  queries:
+    '# Memory | bytes\nsum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"$namespace",container!=""})',
   labels: 'namespace, pod',
   unit: 'plain',
 };
@@ -43,7 +44,13 @@ export function sortRows(rows: Row[], labelCount: number, sort: SortState): Row[
   const isLabel = sort.column < labelCount;
   return [...rows].sort((a, b) => {
     if (isLabel) {
-      return sign * a.cells[sort.column].localeCompare(b.cells[sort.column], undefined, { numeric: true, sensitivity: 'base' });
+      return (
+        sign *
+        a.cells[sort.column].localeCompare(b.cells[sort.column], undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        })
+      );
     }
     const av = a.values[sort.column - labelCount];
     const bv = b.values[sort.column - labelCount];
@@ -54,24 +61,56 @@ export function sortRows(rows: Row[], labelCount: number, sort: SortState): Row[
   });
 }
 
-function TableWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }: WidgetProps<TableConfig>): JSX.Element {
+function TableWidget({
+  config,
+  filters,
+  refreshSignal,
+  reportRefreshed,
+  kiosk,
+}: WidgetProps<TableConfig>): JSX.Element {
   const { sizeRef } = useElementSize<HTMLDivElement>();
   const { ink } = useInk(kiosk);
   const blocks: QueryBlock[] = React.useMemo(() => parseBlocks(config.queries), [config.queries]);
   const queries = React.useMemo(() => blocks.map(b => b.query), [blocks]);
-  const state = useQueries({ mode: 'instant', queries, filters, refreshSignal, reportRefreshed, widthRef: sizeRef });
+  const state = useQueries({
+    mode: 'instant',
+    queries,
+    filters,
+    refreshSignal,
+    reportRefreshed,
+    widthRef: sizeRef,
+  });
   const [sort, setSort] = React.useState<SortState | null>(null);
 
   const samples = React.useMemo(
     () => state.results?.map(r => parseVector(r.result, undefined, r.resultType)),
     [state.results]
   );
-  const columns = React.useMemo(() => (samples ? pickLabelColumns(samples.flat(), config.labels) : []), [samples, config.labels]);
-  const rows = React.useMemo(() => (samples ? buildTableRows(samples, columns) : []), [samples, columns]);
+  const columns = React.useMemo(
+    () => (samples ? pickLabelColumns(samples.flat(), config.labels) : []),
+    [samples, config.labels]
+  );
+  const rows = React.useMemo(
+    () => (samples ? buildTableRows(samples, columns) : []),
+    [samples, columns]
+  );
   const active: SortState = sort ?? { column: columns.length, dir: 'desc' };
-  const sorted = React.useMemo(() => sortRows(rows, columns.length, active), [rows, columns.length, active.column, active.dir]); // eslint-disable-line react-hooks/exhaustive-deps
+  const sorted = React.useMemo(
+    () => sortRows(rows, columns.length, active),
+    [rows, columns.length, active.column, active.dir]
+  ); // eslint-disable-line react-hooks/exhaustive-deps
   const click = (column: number) =>
-    setSort({ column, dir: active.column === column && active.dir === 'desc' ? 'asc' : active.column === column ? 'desc' : column < columns.length ? 'asc' : 'desc' });
+    setSort({
+      column,
+      dir:
+        active.column === column && active.dir === 'desc'
+          ? 'asc'
+          : active.column === column
+          ? 'desc'
+          : column < columns.length
+          ? 'asc'
+          : 'desc',
+    });
 
   if (state.error) return <Notice kind="error">{state.error}</Notice>;
   if (blocks.length === 0) return <Notice kind="empty">Set a query in the widget settings.</Notice>;
@@ -89,7 +128,10 @@ function TableWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }:
         active={active.column === column}
         direction={active.column === column ? active.dir : 'asc'}
         onClick={() => click(column)}
-        sx={{ color: 'inherit !important', '& .MuiTableSortLabel-icon': { color: 'inherit !important' } }}
+        sx={{
+          color: 'inherit !important',
+          '& .MuiTableSortLabel-icon': { color: 'inherit !important' },
+        }}
       >
         {label}
       </TableSortLabel>
@@ -99,13 +141,26 @@ function TableWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }:
   return (
     <Box
       data-promql-table
-      sx={{ height: '100%', overflow: kiosk ? 'hidden' : 'auto', opacity: state.loading ? 0.6 : 1, transition: 'opacity 150ms', color: ink.primary, ...kioskBox(kiosk) }}
+      sx={{
+        height: '100%',
+        overflow: kiosk ? 'hidden' : 'auto',
+        opacity: state.loading ? 0.6 : 1,
+        transition: 'opacity 150ms',
+        color: ink.primary,
+        ...kioskBox(kiosk),
+      }}
     >
       <Table size="small" stickyHeader>
         <TableHead>
           <TableRow>
             {columns.map((c, i) => head(c, i, 'left'))}
-            {blocks.map((b, i) => head(b.title || (blocks.length > 1 ? `Value ${i + 1}` : 'Value'), columns.length + i, 'right'))}
+            {blocks.map((b, i) =>
+              head(
+                b.title || (blocks.length > 1 ? `Value ${i + 1}` : 'Value'),
+                columns.length + i,
+                'right'
+              )
+            )}
           </TableRow>
         </TableHead>
         <TableBody>
@@ -117,7 +172,15 @@ function TableWidget({ config, filters, refreshSignal, reportRefreshed, kiosk }:
                 </TableCell>
               ))}
               {r.values.map((v, i) => (
-                <TableCell key={i} align="right" sx={{ color: ink.primary, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                <TableCell
+                  key={i}
+                  align="right"
+                  sx={{
+                    color: ink.primary,
+                    fontVariantNumeric: 'tabular-nums',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {v === null ? '-' : formatValue(v, blocks[i]?.unit ?? config.unit)}
                 </TableCell>
               ))}
@@ -143,7 +206,12 @@ function TableSettings({ config, onChange }: WidgetSettingsProps<TableConfig>): 
         config={config}
         onChange={onChange}
         fields={[
-          { key: 'labels', label: 'Label columns', type: 'text', help: 'Label names separated by commas, in the order to show. Blank shows every label.' },
+          {
+            key: 'labels',
+            label: 'Label columns',
+            type: 'text',
+            help: 'Label names separated by commas, in the order to show. Blank shows every label.',
+          },
           { key: 'unit', label: 'Default unit', type: 'select', options: UNIT_OPTIONS },
         ]}
       />

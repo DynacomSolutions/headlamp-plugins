@@ -24,12 +24,24 @@ export interface RingConfig extends PanelConfig {
   ring: string;
 }
 
-function RingWidget({ config, refreshSignal, reportRefreshed, kiosk }: WidgetProps<RingConfig>): JSX.Element {
+function RingWidget({
+  config,
+  refreshSignal,
+  reportRefreshed,
+  kiosk,
+}: WidgetProps<RingConfig>): JSX.Element {
   const sourceId = sourceOf(config);
   const source = findSource(useSources(), sourceId);
   const list = usePanelList(source, sourceId);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
-  const state = usePanel(source, config.panel, refreshSignal, minSeconds, reportRefreshed, sourceId);
+  const state = usePanel(
+    source,
+    config.panel,
+    refreshSignal,
+    minSeconds,
+    reportRefreshed,
+    sourceId
+  );
   const ring = state.panel?.rings.find(r => r.id === config.ring) ?? state.panel?.rings[0];
   const data = React.useMemo(() => (ring ? ringToSunburst(ring) : null), [ring]);
   if (!config.panel) {
@@ -52,7 +64,9 @@ function RingWidget({ config, refreshSignal, reportRefreshed, kiosk }: WidgetPro
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       {state.error && (
         <Alert severity={state.panel ? 'warning' : 'error'} sx={{ mb: 1 }}>
-          {state.panel ? `Refresh failed, showing the last data: ${state.error}` : `Could not load the panel: ${state.error}`}
+          {state.panel
+            ? `Refresh failed, showing the last data: ${state.error}`
+            : `Could not load the panel: ${state.error}`}
         </Alert>
       )}
       {state.panel && !ring && (

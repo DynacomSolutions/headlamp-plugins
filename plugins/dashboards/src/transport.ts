@@ -11,7 +11,10 @@ export const apiTransport: Transport = {
  * SelfSubjectAccessReview. Returns undefined when the check itself fails, and the caller then
  * lets the user try (a refused save still shows the read-only message).
  */
-export async function canWriteConfigMaps(transport: Transport, namespace: string): Promise<boolean | undefined> {
+export async function canWriteConfigMaps(
+  transport: Transport,
+  namespace: string
+): Promise<boolean | undefined> {
   const check = async (verb: string): Promise<boolean> => {
     const res = await transport.request('/apis/authorization.k8s.io/v1/selfsubjectaccessreviews', {
       method: 'POST',

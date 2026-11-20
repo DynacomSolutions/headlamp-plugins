@@ -51,14 +51,27 @@ describe('migrateSpec', () => {
           id: 'main',
           label: 'Main',
           icon: 'mdi:server',
-          sections: [{ id: 's1', title: 'A', mode: 'sticky-top', widgets: [{ id: 'w1', type: 'core.clock', x: 2, y: 1, w: 3, h: 2, config: { a: 1 } }] }],
+          sections: [
+            {
+              id: 's1',
+              title: 'A',
+              mode: 'sticky-top',
+              widgets: [{ id: 'w1', type: 'core.clock', x: 2, y: 1, w: 3, h: 2, config: { a: 1 } }],
+            },
+          ],
         },
       ],
     });
     expect(spec.tabPosition).toBe('left');
     expect(spec.refreshSeconds).toBe(30);
     expect(spec.tabs[0].sections[0].mode).toBe('sticky-top');
-    expect(spec.tabs[0].sections[0].widgets[0]).toMatchObject({ x: 2, y: 1, w: 3, h: 2, config: { a: 1 } });
+    expect(spec.tabs[0].sections[0].widgets[0]).toMatchObject({
+      x: 2,
+      y: 1,
+      w: 3,
+      h: 2,
+      config: { a: 1 },
+    });
   });
 
   it('repairs invalid values', () => {
@@ -103,7 +116,12 @@ describe('migrateSpec', () => {
   });
 
   it('gives duplicate tab ids new ids', () => {
-    const { spec } = migrateSpec({ tabs: [{ id: 'a', label: 'A' }, { id: 'a', label: 'B' }] });
+    const { spec } = migrateSpec({
+      tabs: [
+        { id: 'a', label: 'A' },
+        { id: 'a', label: 'B' },
+      ],
+    });
     expect(new Set(spec.tabs.map(t => t.id)).size).toBe(2);
   });
 

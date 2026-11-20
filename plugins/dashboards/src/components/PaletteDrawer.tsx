@@ -16,10 +16,15 @@ import React from 'react';
 import { WIDGET_CATEGORIES, WidgetDefinition } from '../contract';
 
 /** Group by category in a fixed order (known categories first, then others by name), filtered by a search text. */
-export function groupWidgets(defs: WidgetDefinition[], query: string): Array<{ category: string; items: WidgetDefinition[] }> {
+export function groupWidgets(
+  defs: WidgetDefinition[],
+  query: string
+): Array<{ category: string; items: WidgetDefinition[] }> {
   const q = query.trim().toLowerCase();
   const shown = q
-    ? defs.filter(d => `${d.title} ${d.description ?? ''} ${d.type} ${d.category}`.toLowerCase().includes(q))
+    ? defs.filter(d =>
+        `${d.title} ${d.description ?? ''} ${d.type} ${d.category}`.toLowerCase().includes(q)
+      )
     : defs;
   const known = WIDGET_CATEGORIES as ReadonlyArray<string>;
   const cats = [...new Set(shown.map(d => d.category))].sort((a, b) => {
@@ -30,7 +35,9 @@ export function groupWidgets(defs: WidgetDefinition[], query: string): Array<{ c
   });
   return cats.map(category => ({
     category,
-    items: shown.filter(d => d.category === category).sort((a, b) => a.title.localeCompare(b.title)),
+    items: shown
+      .filter(d => d.category === category)
+      .sort((a, b) => a.title.localeCompare(b.title)),
   }));
 }
 
@@ -59,7 +66,18 @@ export function PaletteDrawer(props: PaletteDrawerProps): JSX.Element {
       // Headlamp's top bar sits above the default drawer level and would hide the header of the palette.
       sx={{ zIndex: theme => theme.zIndex.modal }}
     >
-      <Box role="region" aria-label="Widget palette" sx={{ width: 360, maxWidth: '100vw', p: 2, display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <Box
+        role="region"
+        aria-label="Widget palette"
+        sx={{
+          width: 360,
+          maxWidth: '100vw',
+          p: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+        }}
+      >
         <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
           <Typography variant="h6" component="h2" sx={{ flex: 1 }}>
             Add a widget
@@ -82,8 +100,19 @@ export function PaletteDrawer(props: PaletteDrawerProps): JSX.Element {
             </MenuItem>
           ))}
         </TextField>
-        <TextField size="small" label="Search widgets" value={query} onChange={e => setQuery(e.target.value)} sx={{ mb: 1 }} />
-        <Typography variant="caption" color="text.secondary" aria-live="polite" sx={{ minHeight: 18 }}>
+        <TextField
+          size="small"
+          label="Search widgets"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          sx={{ mb: 1 }}
+        />
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          aria-live="polite"
+          sx={{ minHeight: 18 }}
+        >
           {added && `Added ${added}.`}
         </Typography>
         <Box sx={{ flex: 1, overflowY: 'auto' }}>
@@ -93,7 +122,11 @@ export function PaletteDrawer(props: PaletteDrawerProps): JSX.Element {
             </Typography>
           )}
           {groups.map(g => (
-            <List key={g.category} dense subheader={<ListSubheader disableSticky>{g.category}</ListSubheader>}>
+            <List
+              key={g.category}
+              dense
+              subheader={<ListSubheader disableSticky>{g.category}</ListSubheader>}
+            >
               {g.items.map(d => (
                 <ListItem
                   key={d.type}

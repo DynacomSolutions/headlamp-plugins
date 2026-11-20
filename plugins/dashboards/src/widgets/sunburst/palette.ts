@@ -5,8 +5,26 @@
  * alternating lightness. The same palette and rules as the Usage plugin donuts. Colour is
  * never the only encoding: the legend and the hover text name every arc.
  */
-export const LIGHT = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9', '#D55E00', '#6A51A3', '#8A6D3B'];
-export const DARK = ['#56B4E9', '#F5B841', '#2FBF9B', '#E59BC4', '#8FD0F5', '#F07F3C', '#B39DDB', '#C9A66B'];
+export const LIGHT = [
+  '#0072B2',
+  '#E69F00',
+  '#009E73',
+  '#CC79A7',
+  '#56B4E9',
+  '#D55E00',
+  '#6A51A3',
+  '#8A6D3B',
+];
+export const DARK = [
+  '#56B4E9',
+  '#F5B841',
+  '#2FBF9B',
+  '#E59BC4',
+  '#8FD0F5',
+  '#F07F3C',
+  '#B39DDB',
+  '#C9A66B',
+];
 
 export type Mode = 'light' | 'dark';
 

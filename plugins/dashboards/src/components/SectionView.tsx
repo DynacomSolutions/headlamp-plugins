@@ -49,7 +49,10 @@ export interface SectionActions {
   setShowTitle(sectionId: string, show: boolean): void;
   move(sectionId: string, direction: -1 | 1): void;
   remove(sectionId: string): void;
-  positions(sectionId: string, positions: ReadonlyArray<{ i: string; x: number; y: number; w: number; h: number }>): void;
+  positions(
+    sectionId: string,
+    positions: ReadonlyArray<{ i: string; x: number; y: number; w: number; h: number }>
+  ): void;
   moveWidget(fromSectionId: string, toSectionId: string, widgetId: string): void;
 }
 
@@ -63,9 +66,12 @@ export interface SectionViewProps {
   actions: SectionActions;
 }
 
-const limitsOf = (type: string): Pick<WidgetDefinition, 'minSize' | 'maxSize'> | undefined => getRegistry().get(type);
+const limitsOf = (type: string): Pick<WidgetDefinition, 'minSize' | 'maxSize'> | undefined =>
+  getRegistry().get(type);
 
-function SectionHeader(props: Pick<SectionViewProps, 'section' | 'index' | 'count' | 'actions'>): JSX.Element {
+function SectionHeader(
+  props: Pick<SectionViewProps, 'section' | 'index' | 'count' | 'actions'>
+): JSX.Element {
   const { section, index, count, actions } = props;
   return (
     <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -110,21 +116,36 @@ function SectionHeader(props: Pick<SectionViewProps, 'section' | 'index' | 'coun
       <Box sx={{ flex: 1 }} />
       <Tooltip title="Move section up">
         <span>
-          <IconButton size="small" aria-label="Move section up" disabled={index === 0} onClick={() => actions.move(section.id, -1)}>
+          <IconButton
+            size="small"
+            aria-label="Move section up"
+            disabled={index === 0}
+            onClick={() => actions.move(section.id, -1)}
+          >
             <Icon icon="mdi:arrow-up" width={18} height={18} />
           </IconButton>
         </span>
       </Tooltip>
       <Tooltip title="Move section down">
         <span>
-          <IconButton size="small" aria-label="Move section down" disabled={index === count - 1} onClick={() => actions.move(section.id, 1)}>
+          <IconButton
+            size="small"
+            aria-label="Move section down"
+            disabled={index === count - 1}
+            onClick={() => actions.move(section.id, 1)}
+          >
             <Icon icon="mdi:arrow-down" width={18} height={18} />
           </IconButton>
         </span>
       </Tooltip>
       <Tooltip title={count <= 1 ? 'A tab keeps at least one section' : 'Delete section'}>
         <span>
-          <IconButton size="small" aria-label="Delete section" disabled={count <= 1} onClick={() => actions.remove(section.id)}>
+          <IconButton
+            size="small"
+            aria-label="Delete section"
+            disabled={count <= 1}
+            onClick={() => actions.remove(section.id)}
+          >
             <Icon icon="mdi:delete-outline" width={18} height={18} />
           </IconButton>
         </span>
@@ -140,7 +161,10 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
 
   // The layout is derived from the widgets. Positions come from the saved spec.
   const layout = React.useMemo(() => toLayout(section.widgets, limitsOf), [section.widgets]);
-  const layouts = React.useMemo(() => ({ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }), [layout]);
+  const layouts = React.useMemo(
+    () => ({ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }),
+    [layout]
+  );
 
   const sectionId = section.id;
   const onDragStop = React.useCallback(
@@ -152,10 +176,15 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
     },
     [actions, sectionId]
   );
-  const onResizeStop = React.useCallback((l: Layout[]) => actions.positions(sectionId, layoutPositions(l)), [actions, sectionId]);
+  const onResizeStop = React.useCallback(
+    (l: Layout[]) => actions.positions(sectionId, layoutPositions(l)),
+    [actions, sectionId]
+  );
 
   const sticky = !editing && (section.mode === 'sticky-top' || section.mode === 'sticky-bottom');
-  const hideScrollbars = kiosk ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } } : {};
+  const hideScrollbars = kiosk
+    ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }
+    : {};
 
   return (
     <Box

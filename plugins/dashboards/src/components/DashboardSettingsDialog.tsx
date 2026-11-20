@@ -15,15 +15,40 @@ export function DashboardSettingsDialog(props: {
   const [title, setTitle] = React.useState(props.title);
   const [description, setDescription] = React.useState(props.description);
   return (
-    <Dialog open onClose={props.onCancel} fullWidth maxWidth="sm" aria-labelledby="dash-settings-title">
+    <Dialog
+      open
+      onClose={props.onCancel}
+      fullWidth
+      maxWidth="sm"
+      aria-labelledby="dash-settings-title"
+    >
       <DialogTitle id="dash-settings-title">Dashboard settings</DialogTitle>
       <DialogContent>
-        <TextField fullWidth size="small" label="Title" value={title} onChange={e => setTitle(e.target.value)} sx={{ mt: 1, mb: 2 }} />
-        <TextField fullWidth size="small" multiline minRows={2} label="Description" value={description} onChange={e => setDescription(e.target.value)} />
+        <TextField
+          fullWidth
+          size="small"
+          label="Title"
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          sx={{ mt: 1, mb: 2 }}
+        />
+        <TextField
+          fullWidth
+          size="small"
+          multiline
+          minRows={2}
+          label="Description"
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+        />
       </DialogContent>
       <DialogActions>
         <Button onClick={props.onCancel}>Cancel</Button>
-        <Button variant="contained" disabled={title.trim() === ''} onClick={() => props.onApply(title.trim(), description.trim())}>
+        <Button
+          variant="contained"
+          disabled={title.trim() === ''}
+          onClick={() => props.onApply(title.trim(), description.trim())}
+        >
           Apply
         </Button>
       </DialogActions>

@@ -53,7 +53,9 @@ export function chartData(report: SummaryReport, type: ChartType, measure: numbe
     id: g.id,
     label: g.label,
     total: measureOf(g, measure),
-    segments: stacked ? g.children.map(c => ({ id: c.id, label: c.label, value: measureOf(c, measure) })) : [],
+    segments: stacked
+      ? g.children.map(c => ({ id: c.id, label: c.label, value: measureOf(c, measure) }))
+      : [],
   }));
   return { categories, series, measureLabel };
 }
@@ -71,8 +73,26 @@ export function niceScale(max: number): { end: number; ticks: number[] } {
 }
 
 /** The reference categorical palette (dataviz skill), light and dark steps. Slot 1 is blue. */
-export const SERIES_LIGHT = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
-export const SERIES_DARK = ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'];
+export const SERIES_LIGHT = [
+  '#2a78d6',
+  '#eb6834',
+  '#1baf7a',
+  '#eda100',
+  '#e87ba4',
+  '#008300',
+  '#6250d6',
+  '#e34948',
+];
+export const SERIES_DARK = [
+  '#3987e5',
+  '#d95926',
+  '#199e70',
+  '#c98500',
+  '#d55181',
+  '#008300',
+  '#9085e9',
+  '#e66767',
+];
 
 export interface SeriesPaint {
   color: string;
@@ -88,7 +108,10 @@ export interface SeriesPaint {
 export function seriesPaint(index: number, dark: boolean): SeriesPaint {
   const colors = dark ? SERIES_DARK : SERIES_LIGHT;
   const pass = Math.floor(index / colors.length);
-  return { color: colors[index % colors.length], opacity: pass === 0 ? 1 : Math.max(0.35, 1 - pass * 0.25) };
+  return {
+    color: colors[index % colors.length],
+    opacity: pass === 0 ? 1 : Math.max(0.35, 1 - pass * 0.25),
+  };
 }
 
 export interface Arc {
@@ -115,12 +138,29 @@ export function donutArcs(categories: ChartCategory[]): Arc[] {
 }
 
 /** An SVG path for a donut slice. A full circle is drawn as two halves, as one arc cannot close itself. */
-export function arcPath(cx: number, cy: number, outer: number, inner: number, start: number, end: number): string {
+export function arcPath(
+  cx: number,
+  cy: number,
+  outer: number,
+  inner: number,
+  start: number,
+  end: number
+): string {
   const full = end - start >= Math.PI * 2 - 1e-6;
-  const pt = (r: number, a: number) => `${(cx + r * Math.sin(a)).toFixed(2)} ${(cy - r * Math.cos(a)).toFixed(2)}`;
+  const pt = (r: number, a: number) =>
+    `${(cx + r * Math.sin(a)).toFixed(2)} ${(cy - r * Math.cos(a)).toFixed(2)}`;
   if (full) {
-    return `M ${pt(outer, 0)} A ${outer} ${outer} 0 1 1 ${pt(outer, Math.PI)} A ${outer} ${outer} 0 1 1 ${pt(outer, 0)} Z M ${pt(inner, 0)} A ${inner} ${inner} 0 1 0 ${pt(inner, Math.PI)} A ${inner} ${inner} 0 1 0 ${pt(inner, 0)} Z`;
+    return `M ${pt(outer, 0)} A ${outer} ${outer} 0 1 1 ${pt(
+      outer,
+      Math.PI
+    )} A ${outer} ${outer} 0 1 1 ${pt(outer, 0)} Z M ${pt(inner, 0)} A ${inner} ${inner} 0 1 0 ${pt(
+      inner,
+      Math.PI
+    )} A ${inner} ${inner} 0 1 0 ${pt(inner, 0)} Z`;
   }
   const large = end - start > Math.PI ? 1 : 0;
-  return `M ${pt(outer, start)} A ${outer} ${outer} 0 ${large} 1 ${pt(outer, end)} L ${pt(inner, end)} A ${inner} ${inner} 0 ${large} 0 ${pt(inner, start)} Z`;
+  return `M ${pt(outer, start)} A ${outer} ${outer} 0 ${large} 1 ${pt(outer, end)} L ${pt(
+    inner,
+    end
+  )} A ${inner} ${inner} 0 ${large} 0 ${pt(inner, start)} Z`;
 }

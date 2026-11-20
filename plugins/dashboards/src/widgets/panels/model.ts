@@ -83,10 +83,13 @@ export interface PanelInfo {
 }
 
 const STATUSES: PanelStatus[] = ['ok', 'warn', 'crit', 'unknown'];
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback);
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+const str = (v: unknown, fallback = ''): string =>
+  typeof v === 'string' ? v : typeof v === 'number' ? String(v) : fallback;
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-const status = (v: unknown): PanelStatus => (STATUSES.includes(v as PanelStatus) ? (v as PanelStatus) : 'unknown');
+const status = (v: unknown): PanelStatus =>
+  STATUSES.includes(v as PanelStatus) ? (v as PanelStatus) : 'unknown';
 const array = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 
 /** Only web and path links open from a panel. Anything else (javascript:, data:) is dropped. */
@@ -133,7 +136,11 @@ function parseTable(raw: unknown): PanelTable | null {
   if (!isObject(raw)) return null;
   const columns = array(raw.columns)
     .filter(isObject)
-    .map(c => ({ key: str(c.key), label: str(c.label, str(c.key)), align: c.align === 'right' ? ('right' as const) : ('left' as const) }))
+    .map(c => ({
+      key: str(c.key),
+      label: str(c.label, str(c.key)),
+      align: c.align === 'right' ? ('right' as const) : ('left' as const),
+    }))
     .filter(c => c.key !== '');
   if (columns.length === 0) return null;
   const rows = array(raw.rows)
@@ -154,8 +161,12 @@ function parseTable(raw: unknown): PanelTable | null {
  * so the widget shows a clear error card for an app that does not serve the panel API.
  */
 function checkVersion(json: Record<string, unknown>, what: string): void {
-  if (json.version === undefined) throw new Error(`The source sent ${what} with no version. Expected version 1.`);
-  if (json.version !== 1) throw new Error(`The source sent ${what} with version ${str(json.version, '?')}. Only version 1 is supported.`);
+  if (json.version === undefined)
+    throw new Error(`The source sent ${what} with no version. Expected version 1.`);
+  if (json.version !== 1)
+    throw new Error(
+      `The source sent ${what} with version ${str(json.version, '?')}. Only version 1 is supported.`
+    );
 }
 
 /** A panel from the JSON a source served. Throws an error with a short message when it is not a panel. */
@@ -177,7 +188,10 @@ export function parsePanel(json: unknown): PanelModel {
     rows: array(json.rows)
       .filter(isObject)
       .map(r => {
-        const fraction = typeof r.fraction === 'number' && Number.isFinite(r.fraction) ? Math.min(1, Math.max(0, r.fraction)) : undefined;
+        const fraction =
+          typeof r.fraction === 'number' && Number.isFinite(r.fraction)
+            ? Math.min(1, Math.max(0, r.fraction))
+            : undefined;
         return {
           label: str(r.label),
           detail: str(r.detail),
@@ -191,7 +205,9 @@ export function parsePanel(json: unknown): PanelModel {
       .filter(isObject)
       .map(s => ({
         label: str(s.label),
-        points: array(s.points).filter((p): p is number => typeof p === 'number' && Number.isFinite(p)),
+        points: array(s.points).filter(
+          (p): p is number => typeof p === 'number' && Number.isFinite(p)
+        ),
       })),
     rings: array(json.rings)
       .map(parseRing)
@@ -206,7 +222,8 @@ export function parsePanel(json: unknown): PanelModel {
 export function parsePanelList(json: unknown): PanelInfo[] {
   if (!isObject(json)) throw new Error('The source sent an answer that is not a panel list.');
   checkVersion(json, 'a panel list');
-  if (!Array.isArray(json.panels)) throw new Error('The source sent a panel list with no panels field.');
+  if (!Array.isArray(json.panels))
+    throw new Error('The source sent a panel list with no panels field.');
   return json.panels
     .filter(isObject)
     .map(p => ({
@@ -222,7 +239,12 @@ export function parsePanelList(json: unknown): PanelInfo[] {
 
 /** A panel is empty when it shows nothing at all. */
 export const isEmptyPanel = (p: PanelModel): boolean =>
-  p.stats.length === 0 && p.rows.length === 0 && p.series.every(s => s.points.length === 0) && p.rings.every(r => r.segments.length === 0) && p.tables.every(t => t.rows.length === 0) && p.summary === '';
+  p.stats.length === 0 &&
+  p.rows.length === 0 &&
+  p.series.every(s => s.points.length === 0) &&
+  p.rings.every(r => r.segments.length === 0) &&
+  p.tables.every(t => t.rows.length === 0) &&
+  p.summary === '';
 
 /** A ring as sunburst data. Every segment stays its own arc: nothing is merged or cut. */
 export function ringToSunburst(ring: PanelRing): SunburstData {
@@ -248,7 +270,11 @@ export function mayFetch(lastFetchAt: number | null, now: number, minSeconds: nu
 export type SortDir = 'asc' | 'desc';
 
 /** The rows of a table sorted by one column. Numbers sort as numbers and text sorts naturally. The input is not changed. */
-export function sortTableRows(rows: PanelTable['rows'], key: string, dir: SortDir): PanelTable['rows'] {
+export function sortTableRows(
+  rows: PanelTable['rows'],
+  key: string,
+  dir: SortDir
+): PanelTable['rows'] {
   const sign = dir === 'asc' ? 1 : -1;
   const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
   return rows
@@ -256,7 +282,10 @@ export function sortTableRows(rows: PanelTable['rows'], key: string, dir: SortDi
     .sort((a, b) => {
       const x = a.row[key];
       const y = b.row[key];
-      const c = typeof x === 'number' && typeof y === 'number' ? x - y : collator.compare(String(x ?? ''), String(y ?? ''));
+      const c =
+        typeof x === 'number' && typeof y === 'number'
+          ? x - y
+          : collator.compare(String(x ?? ''), String(y ?? ''));
       // The original order breaks ties, so the sort is stable in both directions.
       return c === 0 ? a.index - b.index : sign * c;
     })

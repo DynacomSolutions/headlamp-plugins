@@ -4,7 +4,15 @@ import { arcPath, CENTRE, layoutArcs, TAU, trackPath, usedShare } from './geomet
 const data = {
   capacity: 100,
   categories: [
-    { key: 'a', label: 'A', value: 40, children: [{ key: 'a1', label: 'A1', value: 30 }, { key: 'a2', label: 'A2', value: 5 }] },
+    {
+      key: 'a',
+      label: 'A',
+      value: 40,
+      children: [
+        { key: 'a1', label: 'A1', value: 30 },
+        { key: 'a2', label: 'A2', value: 5 },
+      ],
+    },
     { key: 'b', label: 'B', value: 10, children: [{ key: 'b1', label: 'B1', value: 10 }] },
   ],
 };
@@ -37,7 +45,11 @@ describe('layoutArcs', () => {
         key: `c${i}`,
         label: `C${i}`,
         value: 1 + i,
-        children: Array.from({ length: 30 }, (_, j) => ({ key: `c${i}-${j}`, label: `x${j}`, value: (1 + i) / 40 })),
+        children: Array.from({ length: 30 }, (_, j) => ({
+          key: `c${i}-${j}`,
+          label: `x${j}`,
+          value: (1 + i) / 40,
+        })),
       })),
     };
     const arcs = layoutArcs(many, 100);
@@ -46,17 +58,52 @@ describe('layoutArcs', () => {
     expect(arcs.some(a => /other/i.test(a.label))).toBe(false);
   });
   it('uses the sum of the categories when they exceed the capacity', () => {
-    const arcs = layoutArcs({ capacity: 10, categories: [{ key: 'a', label: 'A', value: 30 }, { key: 'b', label: 'B', value: 10 }] }, 100);
+    const arcs = layoutArcs(
+      {
+        capacity: 10,
+        categories: [
+          { key: 'a', label: 'A', value: 30 },
+          { key: 'b', label: 'B', value: 10 },
+        ],
+      },
+      100
+    );
     expect(arcs[arcs.length - 1].end).toBeCloseTo(TAU);
   });
   it('scales children down when they exceed their category', () => {
-    const arcs = layoutArcs({ capacity: 100, categories: [{ key: 'a', label: 'A', value: 10, children: [{ key: 'x', label: 'X', value: 8 }, { key: 'y', label: 'Y', value: 8 }] }] }, 100);
+    const arcs = layoutArcs(
+      {
+        capacity: 100,
+        categories: [
+          {
+            key: 'a',
+            label: 'A',
+            value: 10,
+            children: [
+              { key: 'x', label: 'X', value: 8 },
+              { key: 'y', label: 'Y', value: 8 },
+            ],
+          },
+        ],
+      },
+      100
+    );
     const a = arcs.find(x => x.key === 'a')!;
     expect(Math.max(...arcs.filter(x => x.level === 2).map(x => x.end))).toBeCloseTo(a.end);
   });
   it('drops zero, negative and not-a-number values and handles no data', () => {
     expect(layoutArcs({ capacity: 0, categories: [] }, 100)).toEqual([]);
-    const arcs = layoutArcs({ capacity: 10, categories: [{ key: 'a', label: 'A', value: NaN }, { key: 'b', label: 'B', value: -3 }, { key: 'c', label: 'C', value: 5, children: [{ key: 'z', label: 'Z', value: 0 }] }] }, 100);
+    const arcs = layoutArcs(
+      {
+        capacity: 10,
+        categories: [
+          { key: 'a', label: 'A', value: NaN },
+          { key: 'b', label: 'B', value: -3 },
+          { key: 'c', label: 'C', value: 5, children: [{ key: 'z', label: 'Z', value: 0 }] },
+        ],
+      },
+      100
+    );
     expect(arcs.map(a => a.key)).toEqual(['c']);
   });
   it('keeps the centre hole at the Usage plugin proportion', () => {

@@ -23,11 +23,23 @@ export function HeaderView({ config }: { config: HeaderConfig }): JSX.Element {
   return (
     <Box
       data-header-widget
-      sx={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: JUSTIFY[config.align] ?? 'flex-start', textAlign: config.align }}
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: JUSTIFY[config.align] ?? 'flex-start',
+        textAlign: config.align,
+      }}
     >
       {showText && (
         <>
-          <Typography variant={VARIANT[config.size] ?? 'h6'} component="h2" sx={{ fontWeight: 600 }} noWrap>
+          <Typography
+            variant={VARIANT[config.size] ?? 'h6'}
+            component="h2"
+            sx={{ fontWeight: 600 }}
+            noWrap
+          >
             {config.text}
           </Typography>
           {config.subtitle && (

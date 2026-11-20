@@ -6,10 +6,34 @@ import React from 'react';
 import { DEFAULT_ENDPOINT, isEndpointName, isEndpointPort, isPathPrefix } from './endpoint';
 
 const FIELDS = [
-  { key: 'metricsNamespace', label: 'Metrics namespace', help: 'Namespace of the Prometheus-compatible Service.', fallback: DEFAULT_ENDPOINT.namespace, valid: isEndpointName },
-  { key: 'metricsService', label: 'Metrics service', help: 'Name of the Service (VictoriaMetrics, Prometheus or similar).', fallback: DEFAULT_ENDPOINT.service, valid: isEndpointName },
-  { key: 'metricsPort', label: 'Metrics port', help: 'Service port number or name.', fallback: DEFAULT_ENDPOINT.port, valid: isEndpointPort },
-  { key: 'metricsPathPrefix', label: 'Metrics path prefix', help: 'A path in front of /api/v1, for example /prometheus. Blank for none.', fallback: '/prometheus', valid: isPathPrefix },
+  {
+    key: 'metricsNamespace',
+    label: 'Metrics namespace',
+    help: 'Namespace of the Prometheus-compatible Service.',
+    fallback: DEFAULT_ENDPOINT.namespace,
+    valid: isEndpointName,
+  },
+  {
+    key: 'metricsService',
+    label: 'Metrics service',
+    help: 'Name of the Service (VictoriaMetrics, Prometheus or similar).',
+    fallback: DEFAULT_ENDPOINT.service,
+    valid: isEndpointName,
+  },
+  {
+    key: 'metricsPort',
+    label: 'Metrics port',
+    help: 'Service port number or name.',
+    fallback: DEFAULT_ENDPOINT.port,
+    valid: isEndpointPort,
+  },
+  {
+    key: 'metricsPathPrefix',
+    label: 'Metrics path prefix',
+    help: 'A path in front of /api/v1, for example /prometheus. Blank for none.',
+    fallback: '/prometheus',
+    valid: isPathPrefix,
+  },
 ] as const;
 
 export function MetricsEndpointSection(props: {
@@ -20,8 +44,8 @@ export function MetricsEndpointSection(props: {
   return (
     <Box display="flex" flexDirection="column" gap={2}>
       <Typography variant="body2">
-        The PromQL widgets query this Service through the Kubernetes API service proxy. A blank field uses the default. The signed
-        in user needs the get verb on services/proxy there.
+        The PromQL widgets query this Service through the Kubernetes API service proxy. A blank
+        field uses the default. The signed in user needs the get verb on services/proxy there.
       </Typography>
       {FIELDS.map(f => {
         const value = typeof data?.[f.key] === 'string' ? (data[f.key] as string) : '';
