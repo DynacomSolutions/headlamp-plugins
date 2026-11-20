@@ -7,7 +7,12 @@
  * /usage/nodes URL redirects to it.
  */
 import './nodes/registerIcons';
-import { registerPluginSettings, registerRoute, registerSidebarEntry } from '@kinvolk/headlamp-plugin/lib';
+import './dashboardWidgets';
+import {
+  registerPluginSettings,
+  registerRoute,
+  registerSidebarEntry,
+} from '@kinvolk/headlamp-plugin/lib';
 import { LegacyNodesRedirect } from './nodes/LegacyNodesRedirect';
 import { NodesPage } from './nodes/NodesPage';
 import { Settings } from './settings';

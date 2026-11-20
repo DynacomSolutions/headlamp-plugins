@@ -270,6 +270,22 @@ Settings (Headlamp **Settings > Plugins > usage**, stored in the browser):
 - **Idle threshold (seconds):** how long without a touch before the page goes
   back to the overview. Default 120, at least 30.
 
+## Dashboards widgets
+
+When the [Dashboards plugin](../dashboards/README.md) is installed, this plugin adds two widgets to its palette,
+through the cross-plugin `window.headlampDashboards` contract (`src/dashboardsContract.ts` is a copy of the
+contract file). The registration works in any plugin load order. The Usage pages do not change.
+
+| Type | What it shows |
+| --- | --- |
+| `usage.sunburst` | CPU or memory as a two-level sunburst: the full circle is the cluster capacity (`kube_node_status_capacity`), the filled part is the use. The groups are the namespaces, workloads, nodes or a pod label. Each group has its children inside it (workloads, nodes or namespaces). Every group has its own arc. |
+| `usage.donut` | One donut for CPU, memory, disk or network, with a legend of every group (the `DonutCard` of the Usage page). |
+
+Both use the same data code as the Usage page. They take the dashboard filters into account: the namespaces,
+the nodes and the time range (5 and 15 minutes use the 1 hour data). The label selector is not used. They fetch
+when a filter, a setting or the dashboard refresh signal changes. Grouping by pod label needs
+`kube_pod_labels` (kube-state-metrics) and, over 24 hours, one of the recorded label keys.
+
 ## Groups that cannot be placed (workload fallback)
 
 There is no "Other", "unknown" or "no label" bucket and no top-N: every group
