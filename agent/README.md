@@ -157,10 +157,15 @@ and memory). It uses the same numbers as the usage nodes dashboard. Each ring is
 - `unit` is `cores` (3 decimals) for CPU and `bytes` (whole numbers) for memory.
 - `segments` are the categories (`k8s`, `t3`, `system`, and so on). Each is
   `{ key, label, value, children? }`, biggest first.
-- `children` hold the biggest users of one category (for example the namespace
-  `k8s/ns:shop`). There is one level only. Small children (below 0.2 % of
-  `capacity`) are left out and the list stops at 60. Their use stays inside the
-  value of the category. There is no "Other" entry.
+- `children` hold every user of one category (for example the namespace
+  `k8s/ns:shop`), biggest first. There is one level only. No child is left out,
+  however small, and the list has no length cap. There is no "Other" entry.
+
+Panels never cut their output to a top N. Every panel returns every row, and the
+rings return every segment and child, each at its real size. Rows are sorted
+worst first, and the sort never drops a row. A client may show only what fits,
+but the app's own screens reach every row. Only the two-ring limit (CPU and
+memory) and the clipping of one long label stay.
 
 ## Incident diagnosis
 

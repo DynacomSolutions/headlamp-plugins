@@ -55,9 +55,11 @@ describe('sorting', () => {
     const r = (label: string, status: Row['status']): Row => ({ label, detail: '', value: '', status });
     expect(sortRows([r('a', 'ok'), r('b', 'warn'), r('c', 'crit'), r('d', 'unknown'), r('e', 'warn')]).map(x => x.label)).toEqual(['c', 'b', 'e', 'd', 'a']);
   });
-  it('keeps at most 50 rows', () => {
-    const rows = Array.from({ length: 80 }, (_, i): Row => ({ label: String(i), detail: '', value: '', status: 'ok' }));
-    expect(sortRows(rows)).toHaveLength(50);
+  it('never drops a row', () => {
+    const rows = Array.from({ length: 500 }, (_, i): Row => ({ label: String(i), detail: '', value: '', status: i % 7 === 0 ? 'crit' : 'ok' }));
+    const sorted = sortRows(rows);
+    expect(sorted).toHaveLength(500);
+    expect(sorted[0].status).toBe('crit');
   });
 });
 
@@ -240,6 +242,36 @@ describe('panel mappings', () => {
     expect(m!.summary).toContain('53.0% memory free');
   });
 
+  describe('no row cap', () => {
+    it('agent-memory shows every agent', async () => {
+      const units = Array.from({ length: 80 }, (_, i) => ({ name: `a${i}.scope`, role: 'agent', orchestrator: 't3', displayName: `Agent ${i}`, current: 2 ** 30, cpuCores: 0.1 }));
+      const m = await buildPanel('agent-memory', deps({}, { serviceGet: async () => ({ error: '', host: { total: 100, available: 50 }, orchestrators: [], units }) }));
+      expect(m!.rows).toHaveLength(80);
+    });
+
+    it('registry shows every repository', async () => {
+      const repositories = Array.from({ length: 60 }, (_, i) => ({ name: `repo-${i}`, tags: [{ tag: '1', digest: 'sha256:x', mediaType: null, artifactType: null, configMediaType: null, sizeBytes: 1024 * (i + 1), created: '2026-11-17T08:00:00Z', platforms: [] }] }));
+      const m = await buildPanel('registry', deps({}, { serviceGet: async () => ({ repositories }) }));
+      expect(m!.rows).toHaveLength(60);
+    });
+
+    it('usage, incidents and sites ask their tools for every row and show them all', async () => {
+      const asked: Array<{ tool: string; args: Record<string, unknown> }> = [];
+      const rows = Array.from({ length: 120 }, (_, i) => ({ group: `node-${i}`, value: 1 }));
+      const diagnoses = Array.from({ length: 120 }, (_, i) => ({ alert: `A${i}`, status: 'done', severity: 'warning', resolved: false, likelyCause: '' }));
+      const sites = Array.from({ length: 120 }, (_, i) => ({ host: `h${i}.example.com`, prefix: '/', service: 's', namespace: 'n', mapping: 'm' }));
+      const outputs: Record<string, unknown> = { usage_top: { rows }, list_diagnoses: { diagnoses }, sites_lookup: { sites } };
+      const call = async (tool: string, args: Record<string, unknown>) => {
+        asked.push({ tool, args });
+        return tool === 'query_metrics' ? { samples: [] } : outputs[tool];
+      };
+      expect((await buildPanel('usage', deps({}, { call })))!.rows).toHaveLength(120);
+      expect((await buildPanel('incidents', deps({}, { call })))!.rows).toHaveLength(120);
+      expect((await buildPanel('sites', deps({}, { call })))!.rows).toHaveLength(120);
+      for (const a of asked.filter(x => x.tool === 'usage_top' || x.tool === 'list_diagnoses')) expect(a.args.limit).toBeGreaterThanOrEqual(1000);
+    });
+  });
+
   describe('usage-dashboard', () => {
     const ring = (id: 'cpu' | 'memory', capacity: number, used: number) => ({
       id,
@@ -268,6 +300,14 @@ describe('panel mappings', () => {
       expect(m!.rows.map(r => r.label)).toEqual(['Shop', 'System', 'Web']);
       expect(m!.rows[0]).toMatchObject({ detail: 'CPU 21.2%, Mem 26.1%', value: '26.1%', fraction: 0.2608, status: 'ok' });
       expect(m!.rows[1]).toMatchObject({ detail: 'CPU 15.9%, Mem 19.6%' });
+    });
+
+    it('shows every segment and every row, with no cap', async () => {
+      const many = Array.from({ length: 200 }, (_, i) => ({ key: `k8s/ns:n${i}`, label: `n${i}`, value: 0.001 }));
+      const wide = (id: 'cpu' | 'memory') => ({ ...ring(id, 100, 10), segments: [{ key: 'k8s', label: 'Kubernetes', value: 0.2, children: many }] });
+      const m = await buildPanel('usage-dashboard', deps({ usage_dashboard: { nodes: 5, hostMetrics: true, rings: [wide('cpu'), wide('memory')] } }));
+      expect(m!.rows).toHaveLength(200);
+      expect(m!.rings![0].segments[0].children).toHaveLength(200);
     });
 
     it('takes the status from the worse of the two percentages', async () => {

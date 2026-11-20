@@ -96,21 +96,21 @@ export interface PanelDefinition extends PanelInfo {
   build(deps: PanelDeps): Promise<PanelBody>;
 }
 
+/** Limit that asks a tool for every row. The tools accept up to this many. */
+const TOP_ALL = 1000;
 const RANK: Record<PanelStatus, number> = { crit: 0, warn: 1, unknown: 2, ok: 3 };
-export const MAX_ROWS = 50;
 
 export function worst(statuses: PanelStatus[]): PanelStatus {
   if (statuses.length === 0) return 'unknown';
   return statuses.reduce((a, b) => (RANK[b] < RANK[a] ? b : a));
 }
 
-/** Worst first (crit, warn, unknown, ok). The sort is stable, so the panel's own order stays within a group. */
+/** Worst first (crit, warn, unknown, ok). The sort is stable, so the panel's own order stays within a group. It never drops a row. */
 export function sortRows(rows: Row[]): Row[] {
   return rows
     .map((row, i) => ({ row, i }))
     .sort((a, b) => RANK[a.row.status] - RANK[b.row.status] || a.i - b.i)
-    .map(x => x.row)
-    .slice(0, MAX_ROWS);
+    .map(x => x.row);
 }
 
 export function stat(label: string, value: string | number, status: PanelStatus = 'ok'): Stat {
@@ -173,8 +173,8 @@ function levelOf(pct: number): PanelStatus {
 
 async function usage(d: PanelDeps): Promise<PanelBody> {
   const [cpu, mem] = (await Promise.all([
-    d.call('usage_top', { resource: 'cpu', by: 'node', limit: 50 }),
-    d.call('usage_top', { resource: 'memory', by: 'node', limit: 50 }),
+    d.call('usage_top', { resource: 'cpu', by: 'node', limit: TOP_ALL }),
+    d.call('usage_top', { resource: 'memory', by: 'node', limit: TOP_ALL }),
   ])) as Obj[];
   // Capacity is optional: without it the rows show absolute use and no bar.
   const capacity = async (query: string): Promise<Map<string, number>> => {
@@ -428,7 +428,7 @@ async function updates(d: PanelDeps): Promise<PanelBody> {
 // ---------- incidents ----------
 
 async function incidents(d: PanelDeps): Promise<PanelBody> {
-  const data = (await d.call('list_diagnoses', { limit: 30 })) as Obj;
+  const data = (await d.call('list_diagnoses', { limit: TOP_ALL })) as Obj;
   const all = list(data.diagnoses);
   const rows: Row[] = all.map(x => {
     const open = !x.resolved;
@@ -472,7 +472,6 @@ async function agentResource(d: PanelDeps): Promise<PanelBody> {
   const rows: Row[] = list(state.units)
     .filter(u => u.role === 'agent')
     .sort((a, b) => Number(b.current) - Number(a.current))
-    .slice(0, 25)
     .map(u => {
       const limit = Number(u.high) || softLimit.get(String(u.orchestrator)) || 0;
       const fraction = limit ? Number(u.current) / limit : undefined;
@@ -590,7 +589,7 @@ async function registry(d: PanelDeps): Promise<PanelBody> {
   const sorted = [...repos].sort((a, b) => (recent ? (registryModel.lastCreated(b) ?? 0) - (registryModel.lastCreated(a) ?? 0) : registryModel.repoSize(b) - registryModel.repoSize(a)));
   const biggest = Math.max(1, ...repos.map(r => registryModel.repoSize(r)));
   const now = d.now.getTime();
-  const rows: Row[] = sorted.slice(0, 15).map(r => {
+  const rows: Row[] = sorted.map(r => {
     const size = registryModel.repoSize(r);
     const last = registryModel.lastCreated(r);
     return {
@@ -659,7 +658,6 @@ async function vmImages(d: PanelDeps): Promise<PanelBody> {
   const imageRows: Row[] = repos
     .map(r => ({ r, used: counts.get(r.name) ?? 0 }))
     .sort((a, b) => b.used - a.used || registryModel.repoSize(b.r) - registryModel.repoSize(a.r))
-    .slice(0, 20)
     .map(({ r, used }) => ({ label: r.name, detail: `${r.tags.length} tags, used by ${used}`, value: sizeText(registryModel.repoSize(r)), status: 'ok' as const }));
   const running = vmList.filter(v => v.state === 'Running').length;
   const rows = sortRows([...problems, ...imageRows]);
@@ -718,7 +716,7 @@ export async function buildPanel(id: string, deps: PanelDeps): Promise<PanelMode
     generatedAt: deps.now.toISOString(),
     link: panel.link,
     stats: body.stats.slice(0, 4),
-    rows: body.rows.slice(0, MAX_ROWS).map(r => ({ ...r, link: r.link ?? panel.link })),
+    rows: body.rows.map(r => ({ ...r, link: r.link ?? panel.link })),
     ...(body.rings?.length ? { rings: body.rings.slice(0, 2) } : {}),
     ...(body.series?.length ? { series: body.series.slice(0, 2).map(s => ({ label: s.label, points: s.points.slice(-48) })) } : {}),
   };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { provider, MAX_CHILDREN } from '../../plugins/usage/agent/provider.js';
+import { provider } from '../../plugins/usage/agent/provider.js';
 import { usageFixture, AGENT_STATE_URL, CORES_PER_NODE, MEMORY_PER_NODE } from './usage-dashboard-fixture.js';
 
 const tool = provider.tools.find(t => t.name === 'usage_dashboard')!;
@@ -71,16 +71,13 @@ describe('usage_dashboard tool', () => {
     }
   });
 
-  it('drops children below 0.2 % of capacity and never makes an Other entry', async () => {
+  it('keeps every child, small or not, and never makes an Other entry', async () => {
     const { data } = await run();
     for (const ring of data.rings) {
-      for (const seg of ring.segments) {
-        for (const child of seg.children ?? []) expect(child.value).toBeGreaterThanOrEqual(ring.capacity * 0.002);
-        expect(seg.children?.length ?? 0).toBeLessThanOrEqual(MAX_CHILDREN);
-      }
+      for (const seg of ring.segments) for (const child of seg.children ?? []) expect(child.value).toBeGreaterThan(0);
     }
     const k8s = data.rings[0].segments.find(s => s.key === 'k8s')!;
-    expect(k8s.children!.map(c => c.key)).not.toContain('k8s/ns:cert-manager');
+    expect(k8s.children!.map(c => c.key)).toContain('k8s/ns:cert-manager');
     const labels = JSON.stringify(data.rings);
     expect(labels).not.toMatch(/other/i);
   });

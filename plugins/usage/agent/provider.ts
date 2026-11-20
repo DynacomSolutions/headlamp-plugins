@@ -25,7 +25,7 @@ const top = defineTool({
     window: z.string().regex(/^\d+[mhd]$/).default('5m'),
     namespace: z.string().optional(),
     node: z.string().optional(),
-    limit: z.number().int().min(1).max(50).default(15),
+    limit: z.number().int().min(1).max(1000).default(15),
   }),
   output: z.object({ unit: z.string(), rows: z.array(z.object({ group: z.string(), namespace: z.string().optional(), value: z.number() })) }),
   async run(args, ctx) {
@@ -51,10 +51,6 @@ const top = defineTool({
 // namespace is the rollout fallback.
 const DEFAULT_AGENT_STATE_URLS =
   'http://agent-resource.agent-resource.svc/api/state,http://agent-resource.agent-memory.svc/api/state';
-/** Children below this share of the ring's capacity stay inside their parent's value. */
-const MIN_CHILD_SHARE = 0.002;
-export const MAX_CHILDREN = 60;
-
 const segmentSchema = z.object({
   key: z.string(),
   label: z.string(),
@@ -91,14 +87,12 @@ function ring(id: 'cpu' | 'memory', trees: NodeTree[]): z.infer<typeof ringSchem
   const round = (n: number) => (cores ? Math.round(n * 1000) / 1000 : Math.round(n));
   const capacity = trees.reduce((sum, t) => sum + t.capacity, 0);
   const used = trees.reduce((sum, t) => sum + t.root.value, 0);
-  const minChild = capacity * MIN_CHILD_SHARE;
   const segments: Segment[] = [];
   for (const seg of mergeByKey(trees.map(t => t.root.children)).values()) {
     if (!(seg.value > 0)) continue;
     const kids = [...mergeByKey(seg.kids).values()]
-      .filter(k => k.value > 0 && k.value >= minChild)
+      .filter(k => k.value > 0)
       .sort((a, b) => b.value - a.value)
-      .slice(0, MAX_CHILDREN)
       .map(k => ({ key: k.key, label: k.label, value: round(k.value) }));
     segments.push({ key: seg.key, label: seg.label, value: round(seg.value), ...(kids.length ? { children: kids } : {}) });
   }
@@ -120,7 +114,7 @@ const dashboard = defineTool({
   name: 'usage_dashboard',
   title: 'Usage dashboard',
   description:
-    'CPU and memory rings of the whole cluster, as the usage dashboard shows them: capacity, use, and who uses it (Kubernetes namespaces, agent orchestrators, system), with the biggest children of each.',
+    'CPU and memory rings of the whole cluster, as the usage dashboard shows them: capacity, use, and who uses it (Kubernetes namespaces, agent orchestrators, system), with every child of each.',
   input: z.object({}),
   output: z.object({ nodes: z.number(), hostMetrics: z.boolean(), rings: z.array(ringSchema) }),
   async run(_args, ctx) {
