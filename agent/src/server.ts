@@ -543,6 +543,8 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       if (path === '/api/launches' || path.startsWith('/api/launches/')) {
         const parts = path.split('/').slice(3).map(decodeURIComponent);
         const [id, action] = parts;
+        // An id has letters, digits, dash and underscore only. Any other id cannot exist.
+        if (id && id !== 'config' && id !== 'preview' && !/^[A-Za-z0-9_-]+$/.test(id)) return send(res, 404, { error: 'not found' });
         if (parts.length > 2 || (action && !['approve', 'reject', 'messages'].includes(action)) || (id === 'config' && (action || req.method !== 'GET')) || (id === 'preview' && (action || req.method !== 'POST'))) return send(res, 404, { error: 'not found' });
         try {
           if (id === 'config') return send(res, 200, launches.publicConfig());
@@ -555,7 +557,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           if (!id && req.method === 'POST') {
             const body = await chatBody(req, launchSchema);
             const { requestedBy, ...request } = body;
-            return send(res, 201, launches.create(request, operator(req, requestedBy)));
+            return send(res, 201, await launches.create(request, operator(req, requestedBy)));
           }
           if (id === 'preview') {
             const { requestedBy: _by, ...request } = await chatBody(req, launchSchema);
@@ -566,7 +568,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
             return l ? send(res, 200, l) : send(res, 404, { error: 'not found' });
           }
           if (id && action === 'approve' && req.method === 'POST') return send(res, 200, await launches.approve(id, operator(req, (await chatBody(req, decisionSchema)).by)));
-          if (id && action === 'reject' && req.method === 'POST') return send(res, 200, launches.reject(id, operator(req, (await chatBody(req, decisionSchema)).by)));
+          if (id && action === 'reject' && req.method === 'POST') return send(res, 200, await launches.reject(id, operator(req, (await chatBody(req, decisionSchema)).by)));
           if (id && action === 'messages' && req.method === 'POST') return send(res, 202, await launches.message(id, (await chatBody(req, launchMessageSchema)).text));
         } catch (error) {
           if (error instanceof LaunchError) throw new HttpError(error.status, error.message);
@@ -595,7 +597,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       const closed = new Promise<void>(resolve => server.close(() => resolve()));
       server.closeIdleConnections();
       chats.shutdown();
-      launches.shutdown();
+      await launches.shutdown();
       await runner.drain();
       await mcp.close();
       server.closeIdleConnections();

@@ -152,25 +152,25 @@ export class LaunchService {
   }
 
   /** Marks pending requests older than the limit as expired. */
-  expireStale(): void {
+  async expireStale(): Promise<void> {
     const cutoff = new Date(Date.now() - this.expireMs).toISOString();
     for (const l of this.o.store.list()) {
       if (l.status === 'pending_approval' && l.requestedAt < cutoff) {
-        this.o.store.update(l.id, c => (c.status === 'pending_approval' && c.requestedAt < cutoff ? { ...c, status: 'expired', finishedAt: new Date().toISOString() } : undefined));
+        await this.o.store.update(l.id, c => (c.status === 'pending_approval' && c.requestedAt < cutoff ? { ...c, status: 'expired', finishedAt: new Date().toISOString() } : undefined));
       }
     }
   }
 
   /** Creates a request. Nothing starts until `approve`. */
-  create(req: LaunchRequest, by: string): Launch {
+  async create(req: LaunchRequest, by: string): Promise<Launch> {
     this.requireEnabled();
-    this.expireStale();
+    await this.expireStale();
     const project = this.project(req.projectKey);
     const { brief, fix } = this.prepare(req);
     const open = this.o.store.list().filter(l => !FINAL_STATUSES.has(l.status)).length;
     if (open >= this.o.store.capacity) throw new LaunchError(429, `${open} requests and launches are open (the limit). Approve, reject or wait.`);
     const m = this.o.config.settings.model;
-    return this.o.store.create({
+    return await this.o.store.create({
       id: randomUUID(),
       purpose: req.purpose,
       source: { ...(req.diagnosisId ? { diagnosisId: req.diagnosisId } : {}), ...(req.chatId ? { chatId: req.chatId } : {}), ...(fix ? { fix } : {}) },
@@ -206,13 +206,13 @@ export class LaunchService {
   /** The approval. This is the only way a launch starts. */
   async approve(id: string, by: string): Promise<Launch> {
     this.requireEnabled();
-    this.expireStale();
+    await this.expireStale();
     const t3 = this.o.t3 as T3Client;
     const threadId = t3.newId();
     const max = this.o.config.settings.maxRunning;
     const perHour = this.o.config.maxApprovalsPerHour;
     // One lock for the checks and the state change, so two requests (or two pods) cannot both pass the limit.
-    const launching = this.o.store.withLock('capacity', () => {
+    const launching = await this.o.store.withLock('capacity', async () => {
       const cur = this.o.store.get(id);
       if (!cur) throw new LaunchError(404, 'not found');
       if (cur.status !== 'pending_approval') throw new LaunchError(409, `The launch is ${cur.status}, not pending approval`);
@@ -221,7 +221,7 @@ export class LaunchService {
       const approved = this.o.store.list().filter(l => l.decidedAt && l.decidedAt >= since && !['pending_approval', 'rejected', 'expired'].includes(l.status)).length;
       if (approved >= perHour) throw new LaunchError(429, `${perHour} approvals in the last hour (the limit). Try again later.`);
       const project = this.project(cur.projectKey);
-      const next = this.o.store.update(id, c => (c.status === 'pending_approval' ? { ...c, status: 'launching', threadId, decidedAt: new Date().toISOString(), decidedBy: by, owner: this.owner, leaseUntil: this.lease() } : undefined));
+      const next = await this.o.store.update(id, c => (c.status === 'pending_approval' ? { ...c, status: 'launching', threadId, decidedAt: new Date().toISOString(), decidedBy: by, owner: this.owner, leaseUntil: this.lease() } : undefined));
       if (!next) throw this.notFoundOrWrongState(id, 'not pending approval');
       return { launch: next, projectId: project.projectId };
     });
@@ -236,25 +236,25 @@ export class LaunchService {
           modelSelection: { instanceId: l.model.instanceId, model: l.model.model, ...(this.o.config.settings.model.options ? { options: this.o.config.settings.model.options } : {}) },
           text: l.brief,
         });
-        return this.started(id, threadId);
+        return await this.started(id, threadId);
       } catch (error) {
         // The call may have reached T3 before it failed. Only a missing thread proves the launch did not happen.
         const message = maskText(error instanceof Error ? error.message : String(error));
         if ((await this.exists(threadId)) === 'missing') {
           this.log('error', 'agent launch failed', { id, error: message });
-          return this.o.store.update(id, c => ({ ...c, status: 'failed', error: message, finishedAt: new Date().toISOString() })) ?? l;
+          return (await this.o.store.update(id, c => ({ ...c, status: 'failed', error: message, finishedAt: new Date().toISOString() }))) ?? l;
         }
         this.log('warn', 'agent launch call failed but the thread exists or is unknown, tracking it', { id, error: message });
-        return this.started(id, threadId);
+        return await this.started(id, threadId);
       }
     } finally {
       this.inflight.delete(id);
     }
   }
 
-  private started(id: string, threadId: string): Launch {
+  private async started(id: string, threadId: string): Promise<Launch> {
     const link = this.link(threadId);
-    const running = this.o.store.update(id, c => ({ ...c, status: 'running', threadId, startedAt: c.startedAt ?? new Date().toISOString(), owner: this.owner, leaseUntil: this.lease(), ...(link ? { threadLink: link } : {}) })) as Launch;
+    const running = (await this.o.store.update(id, c => ({ ...c, status: 'running', threadId, startedAt: c.startedAt ?? new Date().toISOString(), owner: this.owner, leaseUntil: this.lease(), ...(link ? { threadLink: link } : {}) }))) as Launch;
     this.track(id);
     this.log('info', 'agent launched', { id, threadId });
     return running;
@@ -270,8 +270,8 @@ export class LaunchService {
     }
   }
 
-  reject(id: string, by: string): Launch {
-    const done = this.o.store.update(id, c => (c.status === 'pending_approval' ? { ...c, status: 'rejected', decidedAt: new Date().toISOString(), decidedBy: by } : undefined));
+  async reject(id: string, by: string): Promise<Launch> {
+    const done = await this.o.store.update(id, c => (c.status === 'pending_approval' ? { ...c, status: 'rejected', decidedAt: new Date().toISOString(), decidedBy: by } : undefined));
     if (!done) throw this.notFoundOrWrongState(id, 'not pending approval');
     return done;
   }
@@ -285,14 +285,14 @@ export class LaunchService {
     const t3 = this.o.t3 as T3Client;
     const max = this.o.config.settings.maxRunning;
     const marker = new Date(Date.now() + REVIVE_GRACE_MS).toISOString();
-    const { before, wasActive } = this.o.store.withLock('capacity', () => {
+    const { before, wasActive } = await this.o.store.withLock('capacity', async () => {
       const cur = this.o.store.get(id);
       if (!cur) throw new LaunchError(404, 'not found');
       if (!cur.threadId || !['running', 'waiting', 'tracking_lost', 'completed', 'failed'].includes(cur.status)) throw new LaunchError(409, `The launch is ${cur.status}: it has no thread to message`);
       const active = ACTIVE_STATUSES.has(cur.status);
       if (!active && this.o.store.active().length >= max) throw new LaunchError(409, `${max} launches are active already (the limit). Wait for one to end.`);
       const runs = cur.runsSeen ?? cur.timeline.filter(e => e.kind === 'run').length;
-      this.o.store.update(id, c => {
+      await this.o.store.update(id, c => {
         const { finishedAt: _f, error: _e, ...rest } = c;
         return active ? { ...c, reviveRuns: runs, reviveUntil: marker } : { ...rest, status: 'running', reviveRuns: runs, reviveUntil: marker, owner: this.owner, leaseUntil: this.lease() };
       });
@@ -301,7 +301,7 @@ export class LaunchService {
     try {
       await t3.sendMessage(before.threadId as string, text, wasActive ? 'queue_after_active' : 'start_immediately');
     } catch (error) {
-      this.o.store.update(id, c => {
+      await this.o.store.update(id, c => {
         if (c.reviveUntil !== marker) return undefined;
         const { reviveRuns: _r, reviveUntil: _u, ...rest } = c;
         return { ...rest, status: before.status, ...(before.finishedAt ? { finishedAt: before.finishedAt } : {}), ...(before.error ? { error: before.error } : {}), ...(before.reviveUntil ? { reviveRuns: before.reviveRuns, reviveUntil: before.reviveUntil } : {}) };
@@ -320,19 +320,19 @@ export class LaunchService {
    */
   async scan(): Promise<void> {
     if (this.stopped) return;
-    this.expireStale();
+    await this.expireStale();
     for (const l of this.o.store.list()) {
       if (!ACTIVE_STATUSES.has(l.status) || this.timers.has(l.id) || this.inflight.has(l.id)) continue;
       if (this.foreign(l)) continue;
-      const taken = this.o.store.update(l.id, c => (ACTIVE_STATUSES.has(c.status) && !this.foreign(c) ? { ...c, owner: this.owner, leaseUntil: this.lease() } : undefined));
+      const taken = await this.o.store.update(l.id, c => (ACTIVE_STATUSES.has(c.status) && !this.foreign(c) ? { ...c, owner: this.owner, leaseUntil: this.lease() } : undefined));
       if (!taken) continue;
       if (!taken.threadId) {
-        this.o.store.update(l.id, c => ({ ...c, status: 'failed', error: 'interrupted by restart before T3 confirmed the launch', finishedAt: new Date().toISOString() }));
+        await this.o.store.update(l.id, c => ({ ...c, status: 'failed', error: 'interrupted by restart before T3 confirmed the launch', finishedAt: new Date().toISOString() }));
       } else if (taken.status === 'launching') {
         // The call may or may not have reached T3. A missing thread means it did not.
         if ((await this.exists(taken.threadId)) === 'missing') {
-          this.o.store.update(l.id, c => ({ ...c, status: 'failed', error: 'interrupted by restart before T3 confirmed the launch', finishedAt: new Date().toISOString() }));
-        } else this.started(l.id, taken.threadId);
+          await this.o.store.update(l.id, c => ({ ...c, status: 'failed', error: 'interrupted by restart before T3 confirmed the launch', finishedAt: new Date().toISOString() }));
+        } else await this.started(l.id, taken.threadId);
       } else this.track(l.id);
     }
   }
@@ -347,20 +347,21 @@ export class LaunchService {
   }
 
   /** Stops all polling. */
-  shutdown(): void {
+  async shutdown(): Promise<void> {
     this.stopped = true;
     if (this.scanTimer) clearInterval(this.scanTimer);
     this.scanTimer = undefined;
     // Give the claims back, so the next pod takes the launches over at once.
-    for (const id of this.timers.keys()) {
+    const ids = [...this.timers.keys()];
+    for (const t of this.timers.values()) clearTimeout(t);
+    this.timers.clear();
+    for (const id of ids) {
       try {
-        this.o.store.update(id, c => (c.owner === this.owner ? { ...c, leaseUntil: new Date(0).toISOString() } : undefined));
+        await this.o.store.update(id, c => (c.owner === this.owner ? { ...c, leaseUntil: new Date(0).toISOString() } : undefined));
       } catch {
         // The lease ends on its own.
       }
     }
-    for (const t of this.timers.values()) clearTimeout(t);
-    this.timers.clear();
   }
 
   /** Number of launches that are polled now. */
@@ -372,7 +373,7 @@ export class LaunchService {
     if (this.stopped) return;
     const old = this.timers.get(id);
     if (old) clearTimeout(old);
-    const timer = setTimeout(() => void this.poll(id), delayMs);
+    const timer = setTimeout(() => void this.poll(id).catch(error => this.log('error', 'launch poll failed', { id, error: maskText(String(error)) })), delayMs);
     timer.unref();
     this.timers.set(id, timer);
   }
@@ -385,9 +386,10 @@ export class LaunchService {
     if (!l?.threadId || !ACTIVE_STATUSES.has(l.status) || l.status === 'launching' || this.foreign(l)) return;
     try {
       const snap = await (this.o.t3 as T3Client).thread(l.threadId);
+      if (this.stopped) return;
       const t = mapProjection(snap.projection);
       const runs = snap.projection.runs.length;
-      const next = this.o.store.update(id, cur => {
+      const next = await this.o.store.update(id, cur => {
         if (!ACTIVE_STATUSES.has(cur.status) || cur.status === 'launching' || this.foreign(cur)) return undefined;
         const { error: _e, finishedAt: _f, reviveRuns, reviveUntil, ...rest } = cur;
         let final = t.final;
@@ -422,12 +424,12 @@ export class LaunchService {
       const message = maskText(error instanceof Error ? error.message : String(error));
       if (error instanceof T3Error && error.status === 404) {
         this.errors.delete(id);
-        this.o.store.update(id, c => (ACTIVE_STATUSES.has(c.status) && !this.foreign(c) ? { ...c, status: 'failed', error: 'T3 no longer has this thread', finishedAt: new Date().toISOString() } : undefined));
+        await this.o.store.update(id, c => (ACTIVE_STATUSES.has(c.status) && !this.foreign(c) ? { ...c, status: 'failed', error: 'T3 no longer has this thread', finishedAt: new Date().toISOString() } : undefined));
         this.log('error', 'launch thread is gone', { id });
         return;
       }
       // Any other error is not proof that the agent stopped. Keep the launch active and try again, slower each time.
-      this.o.store.update(id, c => (ACTIVE_STATUSES.has(c.status) && c.status !== 'launching' && !this.foreign(c) ? { ...c, status: 'tracking_lost', error: `Lost contact with T3: ${message}`, owner: this.owner, leaseUntil: this.lease() } : undefined));
+      await this.o.store.update(id, c => (ACTIVE_STATUSES.has(c.status) && c.status !== 'launching' && !this.foreign(c) ? { ...c, status: 'tracking_lost', error: `Lost contact with T3: ${message}`, owner: this.owner, leaseUntil: this.lease() } : undefined));
       this.log('warn', 'launch tracking error', { id, attempt: n, error: message });
       this.track(id, Math.min(this.pollMs * 2 ** n, this.maxBackoffMs));
     }

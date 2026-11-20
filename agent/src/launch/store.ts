@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mask } from '../mask.js';
 
@@ -61,6 +61,8 @@ export const FINAL_STATUSES: ReadonlySet<LaunchStatus> = new Set(['rejected', 'e
 const LOCK_WAIT_MS = 500;
 const LOCK_STALE_MS = 10_000;
 
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
+
 /**
  * Launches, capped at `max`. With a data directory each launch is one JSON file,
  * `<dir>/launches/<id>.json`, written by atomic rename. Without one they live in
@@ -78,6 +80,7 @@ export class LaunchStore {
   constructor(
     dataDir: string,
     private readonly max: number,
+    private readonly lockOptions: { waitMs?: number; staleMs?: number } = {},
   ) {
     this.dir = dataDir ? join(dataDir, 'launches') : '';
     if (this.dir) mkdirSync(this.dir, { recursive: true });
@@ -155,40 +158,84 @@ export class LaunchStore {
   }
 
   /**
-   * Runs `fn` while holding a lock file named `name`. Waits up to about 500 ms. A lock older
-   * than 10 s is left over from a crashed process and is removed. Without a data directory
-   * there is nothing to share, so `fn` just runs.
+   * Takes the lock file `name`. The file holds a random token and the time it was made. A lock
+   * older than the stale limit belongs to a process that died. Breaking it is safe against a
+   * second waiter and against a new owner: the stale file is first renamed to a unique name (only
+   * one waiter wins the rename), and it is removed only when the renamed file still holds the
+   * token that was seen as stale. When the rename caught a lock that is not stale, because its
+   * owner replaced it meanwhile, the file goes back. Returns the token, or throws after the wait.
    */
-  withLock<T>(name: string, fn: () => T): T {
+  private async acquire(lock: string): Promise<string> {
+    const token = randomUUID();
+    const staleMs = this.lockOptions.staleMs ?? LOCK_STALE_MS;
+    const deadline = Date.now() + (this.lockOptions.waitMs ?? LOCK_WAIT_MS);
+    for (;;) {
+      try {
+        writeFileSync(lock, JSON.stringify({ token, at: Date.now() }), { flag: 'wx' });
+        return token;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      }
+      const seen = this.readLock(lock);
+      if (seen && Date.now() - seen.at > staleMs) {
+        const moved = `${lock}.stale-${randomUUID()}`;
+        try {
+          renameSync(lock, moved);
+          const caught = this.readLock(moved);
+          if (caught && caught.token === seen.token) unlinkSync(moved);
+          else if (caught && Date.now() - caught.at <= staleMs) {
+            // We moved a live lock: its owner replaced the stale one after we read it. Put it back.
+            try {
+              linkSync(moved, lock);
+            } catch {
+              // Someone else holds the lock now. The moved file is only a copy.
+            }
+            unlinkSync(moved);
+          } else unlinkSync(moved);
+        } catch {
+          // Another waiter broke it first, or it is gone. Try again at once.
+        }
+        continue;
+      }
+      if (Date.now() > deadline) throw new Error(`Timed out waiting for the lock ${lock.split('/').pop()}`);
+      await sleep(10);
+    }
+  }
+
+  private readLock(lock: string): { token: string; at: number } | undefined {
+    try {
+      const raw = readFileSync(lock, 'utf8');
+      try {
+        const parsed = JSON.parse(raw) as { token?: unknown; at?: unknown };
+        if (typeof parsed.token === 'string' && typeof parsed.at === 'number') return { token: parsed.token, at: parsed.at };
+      } catch {
+        // A lock without content: use the file time. The token is the raw text.
+      }
+      return { token: `raw:${raw}`, at: statSync(lock).mtimeMs };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Runs `fn` while holding a lock file named `name`. Waits up to about 500 ms without blocking
+   * the process. Without a data directory there is nothing to share, so `fn` just runs.
+   */
+  async withLock<T>(name: string, fn: () => T | Promise<T>): Promise<T> {
     if (!this.dir) return fn();
     if (!/^[A-Za-z0-9_-]+$/.test(name)) throw new Error(`Invalid lock name: ${name}`);
     const lock = join(this.dir, `${name}.lock`);
-    const deadline = Date.now() + LOCK_WAIT_MS;
-    for (;;) {
-      try {
-        closeSync(openSync(lock, 'wx'));
-        break;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-        try {
-          if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
-            unlinkSync(lock);
-            continue;
-          }
-        } catch {
-          continue;
-        }
-        if (Date.now() > deadline) throw new Error(`Timed out waiting for the lock ${name}`);
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-      }
-    }
+    const token = await this.acquire(lock);
     try {
-      return fn();
+      return await fn();
     } finally {
-      try {
-        unlinkSync(lock);
-      } catch {
-        // Already removed as stale.
+      // Remove the lock only when it is still ours.
+      if (this.readLock(lock)?.token === token) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          // Already removed.
+        }
       }
     }
   }
@@ -198,7 +245,7 @@ export class LaunchStore {
    * `fn` returns undefined to leave the record as it is. Returns the stored record, or undefined
    * when `fn` declined or the record does not exist. The change is made on the newest state.
    */
-  update(id: string, fn: (current: Launch) => Launch | undefined): Launch | undefined {
+  update(id: string, fn: (current: Launch) => Launch | undefined): Promise<Launch | undefined> {
     return this.withLock(id, () => {
       const current = this.get(id);
       if (!current) return undefined;
@@ -208,7 +255,7 @@ export class LaunchStore {
   }
 
   /** Creates a record. It is an error when the id exists. */
-  create(launch: Launch): Launch {
+  create(launch: Launch): Promise<Launch> {
     return this.withLock(launch.id, () => {
       if (this.get(launch.id)) throw new Error(`Launch ${launch.id} exists`);
       const stored = this.write(launch);
