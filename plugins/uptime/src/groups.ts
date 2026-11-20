@@ -2,11 +2,20 @@
  * Pure model of the Dashboards widget: checks grouped by one key, with a status, counts and a
  * worst-per-bucket history line for every group. Nothing here fetches or renders.
  *
- * The probe series carry no Kubernetes namespace or app by default, so the groupings are the ones the
- * data can offer: a `namespace`, `app` or `group` series label when the scrape config sets one, the
- * first word of the check name, or the check type. `auto` picks the first of them the data has.
+ * The probe series carry no Kubernetes namespace or app, so the cluster supplies them: the host of a check
+ * is matched with the routes (see routes.ts) and the route gives the namespace and the app. A check that no
+ * route serves goes in "Not in cluster", one group per check type, never in a mixed "Other" group.
+ * The other groupings are a `group` series label, the first word of the check name and the check type.
+ * `auto` takes the namespace when any check has one, then the app, then the name.
  */
 import { Check, CountSummary, HistoryGrid, Status, summarise } from './model';
+import type { Placement } from './routes';
+
+/** The placement of each check that a route serves, by check name. */
+export type Placements = ReadonlyMap<string, Placement>;
+const NO_PLACEMENTS: Placements = new Map();
+
+export const NOT_IN_CLUSTER = 'Not in cluster';
 
 export type GroupBy = 'auto' | 'namespace' | 'app' | 'group' | 'name' | 'type';
 export type WidgetRange = 'dashboard' | '1h' | '6h' | '24h' | '7d' | '30d';
@@ -14,7 +23,7 @@ export type WidgetRange = 'dashboard' | '1h' | '6h' | '24h' | '7d' | '30d';
 export const GROUP_BY_VALUES: readonly GroupBy[] = ['auto', 'namespace', 'app', 'group', 'name', 'type'];
 export const RANGE_VALUES: readonly WidgetRange[] = ['dashboard', '1h', '6h', '24h', '7d', '30d'];
 
-/** The series labels that can carry a grouping, in the order `auto` prefers them. */
+/** The series labels that can carry a grouping, in the order they are read. A label wins over the cluster. */
 const LABEL_KEYS: Record<'namespace' | 'app' | 'group', string[]> = {
   namespace: ['namespace', 'kubernetes_namespace'],
   app: ['app', 'app_kubernetes_io_name', 'application'],
@@ -64,23 +73,43 @@ export function namePrefix(name: string): string {
   return name.split(/[.-]/)[0] || name;
 }
 
-/** The grouping `auto` resolves to for these checks: the first label kind any check carries. */
-export function resolveGroupBy(groupBy: GroupBy, checks: Check[]): Exclude<GroupBy, 'auto'> {
+function placementKey(check: Check, kind: 'namespace' | 'app', placements: Placements): string | undefined {
+  return labelOf(check, kind) ?? placements.get(check.name)?.[kind];
+}
+
+/** The grouping `auto` resolves to: the namespace when any check has one, then the app, then the name. */
+export function resolveGroupBy(
+  groupBy: GroupBy,
+  checks: Check[],
+  placements: Placements = NO_PLACEMENTS
+): Exclude<GroupBy, 'auto'> {
   if (groupBy !== 'auto') return groupBy;
-  for (const kind of ['namespace', 'app', 'group'] as const) {
-    if (checks.some(c => labelOf(c, kind) !== undefined)) return kind;
+  for (const kind of ['namespace', 'app'] as const) {
+    if (checks.some(c => placementKey(c, kind, placements) !== undefined)) return kind;
   }
   return 'name';
 }
 
-export function groupKeyOf(check: Check, groupBy: Exclude<GroupBy, 'auto'>): string {
+export function groupKeyOf(
+  check: Check,
+  groupBy: Exclude<GroupBy, 'auto'>,
+  placements: Placements = NO_PLACEMENTS
+): string {
+  const type = check.type ? check.type.toUpperCase() : '(no type)';
   switch (groupBy) {
     case 'type':
-      return check.type ? check.type.toUpperCase() : '(no type)';
+      return type;
     case 'name':
       return namePrefix(check.name);
+    case 'group':
+      return labelOf(check, 'group') ?? '(no group)';
     default:
-      return labelOf(check, groupBy) ?? `(no ${groupBy})`;
+      // The app falls back to the namespace of its route, as the cluster knows no better.
+      return (
+        placementKey(check, groupBy, placements) ??
+        (groupBy === 'app' ? placementKey(check, 'namespace', placements) : undefined) ??
+        `${NOT_IN_CLUSTER} · ${type}`
+      );
   }
 }
 
@@ -122,12 +151,13 @@ export function buildGroups(
   checks: Check[],
   groupBy: GroupBy,
   grid: HistoryGrid,
-  onlyFailing: boolean
+  onlyFailing: boolean,
+  placements: Placements = NO_PLACEMENTS
 ): { groups: UptimeGroup[]; resolved: Exclude<GroupBy, 'auto'> } {
-  const resolved = resolveGroupBy(groupBy, checks);
+  const resolved = resolveGroupBy(groupBy, checks, placements);
   const byKey = new Map<string, Check[]>();
   for (const c of checks) {
-    const key = groupKeyOf(c, resolved);
+    const key = groupKeyOf(c, resolved, placements);
     const list = byKey.get(key);
     if (list) list.push(c);
     else byKey.set(key, [c]);

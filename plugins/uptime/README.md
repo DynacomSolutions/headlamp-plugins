@@ -37,12 +37,31 @@ Settings:
 | `range` | `dashboard`, `1h`, `6h`, `24h`, `7d`, `30d` | `24h` |
 | `onlyFailing` | show only down or degraded groups | `false` |
 
-`namespace`, `app` and `group` read a series label of that name (`app` also
-reads `app_kubernetes_io_name`) that your scrape config can add to the probe
-series. `name` uses the first word of the check name (up to the first dot or
-dash). `auto` uses the first of namespace, app and group that any check has,
-and `name` when none has. The widget fetches when the dashboard refreshes, not
-on its own timer.
+Namespace and app come from the cluster. The widget lists the HTTPRoutes
+(`gateway.networking.k8s.io/v1`), Ingresses (`networking.k8s.io/v1`) and
+Emissary Mappings (`getambassador.io/v3alpha1`) once per refresh, for the whole
+cluster, and matches the host of each check with the hosts of the routes. The
+host comes from the `host` series label, then the probed URL or address, then
+the check name when it looks like a host name. The port is ignored. An exact
+host beats a wildcard host (`*.example.com` covers one or more labels, not the
+bare domain). When several routes share a host, the one whose path covers the
+check path wins, then HTTPRoute before Mapping before Ingress. A kind that is
+not installed or not readable counts as empty, and the widget shows a warning
+for a kind it cannot read. The widget needs `list` on those three kinds.
+
+| `groupBy` | Group key |
+| --- | --- |
+| `namespace` | namespace of the route that serves the check |
+| `app` | the route's `app.kubernetes.io/name`, then `app.kubernetes.io/part-of`, then its namespace |
+| `group` | a `group` series label |
+| `name` | the first word of the check name (up to the first dot or dash) |
+| `type` | the check type |
+| `auto` | `namespace` when any check has one, then `app`, then `name` |
+
+A `namespace` or `app` series label on the probes wins over the cluster. A
+check that no route serves (DNS, ICMP, external sites, raw addresses) goes in
+"Not in cluster", one group per check type, for example "Not in cluster · DNS".
+The widget fetches when the dashboard refreshes, not on its own timer.
 
 ## Where the data comes from
 
