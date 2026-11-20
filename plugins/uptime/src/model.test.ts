@@ -156,3 +156,24 @@ describe('formatting', () => {
     });
   });
 });
+
+describe('history grid', () => {
+  it('the default grid is the page grid, and a custom grid sets the bucket count and width', () => {
+    const w = { ...web };
+    const grid = { stepSec: 60, buckets: 4 };
+    const start = historyStart(NOW, grid);
+    const raw = { ...empty(), success: [s({ ...w, location: 'a' }, 1)], history: [{ metric: { ...w, location: 'a' }, values: [[start + 120, '0.5'] as [number, string]] }] };
+    const { checks } = buildChecks(raw, NOW, grid);
+    expect(checks[0].history).toEqual([undefined, undefined, 0.5, undefined]);
+    expect(buildChecks(raw, NOW).checks[0].history.length).toBe(HISTORY_BUCKETS);
+    expect(historyStart(NOW)).toBe(historyStart(NOW, { stepSec: HISTORY_STEP_SEC, buckets: HISTORY_BUCKETS }));
+  });
+  it('keeps the series labels that are not probe plumbing, for grouping', () => {
+    const raw = { ...empty(), success: [s({ ...web, location: 'a', namespace: 'shop', host: 'x' }, 1)] };
+    expect(buildChecks(raw, NOW).checks[0].labels).toEqual({ namespace: 'shop', host: 'x' });
+  });
+  it('the history query uses the requested window', () => {
+    expect(queries('uptime', 60).history).toBe('avg_over_time(probe_success{job="uptime"}[60s])');
+    expect(queries('uptime').history).toBe(`avg_over_time(probe_success{job="uptime"}[${HISTORY_STEP_SEC}s])`);
+  });
+});

@@ -1,0 +1,145 @@
+/*
+ * Pure model of the Dashboards widget: checks grouped by one key, with a status, counts and a
+ * worst-per-bucket history line for every group. Nothing here fetches or renders.
+ *
+ * The probe series carry no Kubernetes namespace or app by default, so the groupings are the ones the
+ * data can offer: a `namespace`, `app` or `group` series label when the scrape config sets one, the
+ * first word of the check name, or the check type. `auto` picks the first of them the data has.
+ */
+import { Check, CountSummary, HistoryGrid, Status, summarise } from './model';
+
+export type GroupBy = 'auto' | 'namespace' | 'app' | 'group' | 'name' | 'type';
+export type WidgetRange = 'dashboard' | '1h' | '6h' | '24h' | '7d' | '30d';
+
+export const GROUP_BY_VALUES: readonly GroupBy[] = ['auto', 'namespace', 'app', 'group', 'name', 'type'];
+export const RANGE_VALUES: readonly WidgetRange[] = ['dashboard', '1h', '6h', '24h', '7d', '30d'];
+
+/** The series labels that can carry a grouping, in the order `auto` prefers them. */
+const LABEL_KEYS: Record<'namespace' | 'app' | 'group', string[]> = {
+  namespace: ['namespace', 'kubernetes_namespace'],
+  app: ['app', 'app_kubernetes_io_name', 'application'],
+  group: ['group'],
+};
+
+export interface UptimeGroup {
+  key: string;
+  status: Status;
+  counts: CountSummary;
+  checks: Check[];
+  /** The worst availability of its checks per history bucket (0..1), undefined = no data. */
+  history: (number | undefined)[];
+}
+
+/** The widget grid for a time range: about 60 to 96 buckets, never narrower than a minute. */
+export function gridFor(range: WidgetRange, dashboardRange: string): HistoryGrid {
+  const effective = range === 'dashboard' ? dashboardRange : range;
+  switch (effective) {
+    case '6h':
+      return { stepSec: 300, buckets: 72 };
+    case '7d':
+      return { stepSec: 7200, buckets: 84 };
+    case '30d':
+      return { stepSec: 28800, buckets: 90 };
+    case '1h':
+    case '5m':
+    case '15m':
+      return { stepSec: 60, buckets: 60 };
+    default:
+      return { stepSec: 900, buckets: 96 };
+  }
+}
+
+export function gridLabel(grid: HistoryGrid): string {
+  const hours = (grid.stepSec * grid.buckets) / 3600;
+  return hours >= 48 ? `${Math.round(hours / 24)} days` : `${Math.round(hours)} h`;
+}
+
+function labelOf(check: Check, kind: keyof typeof LABEL_KEYS): string | undefined {
+  for (const k of LABEL_KEYS[kind]) if (check.labels[k]) return check.labels[k];
+  return undefined;
+}
+
+/** The first word of a check name: `t3.hq.example.com` and `t3-host` both give `t3`. */
+export function namePrefix(name: string): string {
+  return name.split(/[.-]/)[0] || name;
+}
+
+/** The grouping `auto` resolves to for these checks: the first label kind any check carries. */
+export function resolveGroupBy(groupBy: GroupBy, checks: Check[]): Exclude<GroupBy, 'auto'> {
+  if (groupBy !== 'auto') return groupBy;
+  for (const kind of ['namespace', 'app', 'group'] as const) {
+    if (checks.some(c => labelOf(c, kind) !== undefined)) return kind;
+  }
+  return 'name';
+}
+
+export function groupKeyOf(check: Check, groupBy: Exclude<GroupBy, 'auto'>): string {
+  switch (groupBy) {
+    case 'type':
+      return check.type ? check.type.toUpperCase() : '(no type)';
+    case 'name':
+      return namePrefix(check.name);
+    default:
+      return labelOf(check, groupBy) ?? `(no ${groupBy})`;
+  }
+}
+
+/** Worst status wins: down, then degraded, then up. Unknown only when no check has data. */
+export function worstStatus(checks: Check[]): Status {
+  if (checks.some(c => c.status === 'down')) return 'down';
+  if (checks.some(c => c.status === 'degraded')) return 'degraded';
+  if (checks.some(c => c.status === 'up')) return 'up';
+  return 'unknown';
+}
+
+/** The lowest availability of the checks in every bucket. A bucket with no data stays undefined. */
+export function worstHistory(checks: Check[], buckets: number): (number | undefined)[] {
+  const out: (number | undefined)[] = new Array(buckets).fill(undefined);
+  for (const c of checks) {
+    for (let i = 0; i < buckets; i++) {
+      const v = c.history[i];
+      if (v !== undefined && (out[i] === undefined || v < (out[i] as number))) out[i] = v;
+    }
+  }
+  return out;
+}
+
+/** The mean availability over the buckets that have data. */
+export function meanAvailability(history: (number | undefined)[]): number | undefined {
+  const defined = history.filter((v): v is number => v !== undefined);
+  if (defined.length === 0) return undefined;
+  return defined.reduce((a, b) => a + b, 0) / defined.length;
+}
+
+const ORDER: Record<Status, number> = { down: 0, degraded: 1, unknown: 2, up: 3 };
+
+/**
+ * Group the checks. Every check lands in exactly one group, with no top-N and no "Other" group.
+ * Failing groups sort first, then by name. `onlyFailing` drops the groups that are not down or degraded.
+ * Checks keep their order inside a group (failing first, as the page sorts them).
+ */
+export function buildGroups(
+  checks: Check[],
+  groupBy: GroupBy,
+  grid: HistoryGrid,
+  onlyFailing: boolean
+): { groups: UptimeGroup[]; resolved: Exclude<GroupBy, 'auto'> } {
+  const resolved = resolveGroupBy(groupBy, checks);
+  const byKey = new Map<string, Check[]>();
+  for (const c of checks) {
+    const key = groupKeyOf(c, resolved);
+    const list = byKey.get(key);
+    if (list) list.push(c);
+    else byKey.set(key, [c]);
+  }
+  let groups: UptimeGroup[] = [...byKey.entries()].map(([key, list]) => ({
+    key,
+    status: worstStatus(list),
+    counts: summarise(list),
+    checks: list,
+    history: worstHistory(list, grid.buckets),
+  }));
+  if (onlyFailing) groups = groups.filter(g => g.status === 'down' || g.status === 'degraded');
+  groups.sort((a, b) => ORDER[a.status] - ORDER[b.status] || a.key.localeCompare(b.key));
+  return { groups, resolved };
+}

@@ -19,6 +19,31 @@ adds an **Uptime** sidebar entry with one row per check:
 Failing and degraded checks sort to the top. The page refreshes every 30
 seconds.
 
+## Dashboards widget
+
+With the Dashboards plugin installed, this plugin adds the widget
+`uptime.targets` ("Uptime targets", category Monitoring). It draws the same
+history line as the page, with the same colours, for every check, in groups
+that expand and collapse. A group header shows the worst status of its checks,
+the counts and the worst availability per time bucket. The widget scrolls on
+its own and works by touch in kiosk mode.
+
+Settings:
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `groupBy` | `auto`, `namespace`, `app`, `group`, `name`, `type` | `auto` |
+| `expanded` | groups open at the start | `false` |
+| `range` | `dashboard`, `1h`, `6h`, `24h`, `7d`, `30d` | `24h` |
+| `onlyFailing` | show only down or degraded groups | `false` |
+
+`namespace`, `app` and `group` read a series label of that name (`app` also
+reads `app_kubernetes_io_name`) that your scrape config can add to the probe
+series. `name` uses the first word of the check name (up to the first dot or
+dash). `auto` uses the first of namespace, app and group that any check has,
+and `name` when none has. The widget fetches when the dashboard refreshes, not
+on its own timer.
+
 ## Where the data comes from
 
 [blackbox_exporter](https://github.com/prometheus/blackbox_exporter) probes
