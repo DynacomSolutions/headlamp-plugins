@@ -1,5 +1,6 @@
 /* The saved settings of the Kubernetes report widget, with defaults and a defensive normaliser. */
 import { FILTER_OPS, ReportFilter } from './filters';
+import { isSafeSource } from './names';
 
 export interface SourceRef {
   /** API group. Empty for the core group. */
@@ -105,19 +106,16 @@ export function normaliseConfig(raw: unknown): ReportConfig {
   const c = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>;
   const d = DEFAULT_REPORT;
   const s = c.source && typeof c.source === 'object' ? c.source : {};
-  const source: SourceRef =
-    typeof s.plural === 'string' &&
-    s.plural !== '' &&
-    typeof s.version === 'string' &&
-    s.version !== ''
-      ? {
-          group: str(s.group),
-          version: s.version,
-          plural: s.plural,
-          kind: str(s.kind, s.plural),
-          namespaced: s.namespaced !== false,
-        }
-      : d.source;
+  const candidate: SourceRef = {
+    group: str(s.group),
+    version: str(s.version),
+    plural: str(s.plural),
+    kind: str(s.kind, str(s.plural)),
+    namespaced: s.namespaced !== false,
+  };
+  // A group, version or plural that is not a valid API name could point the request at another
+  // API path. Secrets are never a source. Both fall back to the default.
+  const source: SourceRef = isSafeSource(candidate) ? candidate : d.source;
   const columns: ColumnSpec[] = Array.isArray(c.columns)
     ? c.columns
         .filter((x: any) => x && typeof x.field === 'string' && x.field.trim() !== '')

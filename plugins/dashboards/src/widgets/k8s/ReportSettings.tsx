@@ -601,7 +601,10 @@ export function ReportSettings({
   const [step, setStep] = React.useState(0);
   const patch: Patch = React.useCallback(p => onChange({ ...cfg, ...p }), [cfg, onChange]);
   const live = useResources(cfg.source, NO_FILTERS, 0, noop);
-  const suggestions = React.useMemo(() => suggestPaths(live.items), [live.items]);
+  const suggestions = React.useMemo(
+    () => suggestPaths(live.items, 400, 25, 6, cfg.source.kind),
+    [live.items, cfg.source.kind]
+  );
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>

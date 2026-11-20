@@ -76,28 +76,99 @@ describe('Kubernetes report widget', () => {
     ]);
     expect(streamResults.mock.calls[0][3]).toEqual({ labelSelector: 'app=web' });
   });
-  it('starts again when the refresh signal changes, and only then', async () => {
+  const refreshView = (signal: number, reportRefreshed: () => void, config = DEFAULT_REPORT) => (
+    <MemoryRouter>
+      <Widget
+        instanceId="w"
+        config={config}
+        filters={defaultFilters()}
+        refreshSignal={signal}
+        reportRefreshed={reportRefreshed}
+        editing={false}
+        kiosk={false}
+      />
+    </MemoryRouter>
+  );
+  it('keeps a healthy stream on a refresh tick and still reports the refresh', async () => {
     const reportRefreshed = vi.fn();
-    const filters = defaultFilters();
-    const view = (signal: number) => (
-      <MemoryRouter>
-        <Widget
-          instanceId="w"
-          config={DEFAULT_REPORT}
-          filters={filters}
-          refreshSignal={signal}
-          reportRefreshed={reportRefreshed}
-          editing={false}
-          kiosk={false}
-        />
-      </MemoryRouter>
-    );
-    const { rerender } = render(view(0));
-    await waitFor(() => expect(streamResults).toHaveBeenCalledTimes(1));
-    rerender(view(0));
+    const { rerender } = render(refreshView(0, reportRefreshed));
+    await waitFor(() => expect(reportRefreshed).toHaveBeenCalledTimes(1));
     expect(streamResults).toHaveBeenCalledTimes(1);
-    rerender(view(1));
+    rerender(refreshView(0, reportRefreshed));
+    expect(streamResults).toHaveBeenCalledTimes(1);
+    rerender(refreshView(1, reportRefreshed));
+    rerender(refreshView(2, reportRefreshed));
+    await waitFor(() => expect(reportRefreshed).toHaveBeenCalledTimes(3));
+    expect(streamResults).toHaveBeenCalledTimes(1);
+  });
+  it('starts the streams again on a refresh tick only after a stream error', async () => {
+    streamResults.mockImplementation(
+      async (_u: string, _cb: unknown, errCb: (e: unknown) => void) => {
+        errCb(Object.assign(new Error('gone'), { status: 500 }));
+        return () => undefined;
+      }
+    );
+    const reportRefreshed = vi.fn();
+    const { rerender } = render(refreshView(0, reportRefreshed));
+    await waitFor(() => expect(screen.getByText(/Could not load pods/)).toBeTruthy());
+    expect(streamResults).toHaveBeenCalledTimes(1);
+    rerender(refreshView(1, reportRefreshed));
     await waitFor(() => expect(streamResults).toHaveBeenCalledTimes(2));
+  });
+  it('never requests a path from a hostile source in a saved spec', async () => {
+    const hostile = {
+      ...DEFAULT_REPORT,
+      source: {
+        group: '',
+        version: 'v1',
+        plural: '../../../api/v1/namespaces/x/services/app:80/proxy/admin/reset',
+        kind: 'Pod',
+        namespaced: true,
+      },
+    };
+    render(refreshView(0, vi.fn(), hostile));
+    await waitFor(() => expect(streamResults).toHaveBeenCalled());
+    expect(streamResults.mock.calls.map(c => c[0])).toEqual(['/api/v1/pods']);
+  });
+  it('does not request a namespace that is not a valid name', async () => {
+    renderWidget({ ...defaultFilters(), namespaces: ['..', 'a/b'] });
+    await waitFor(() => expect(screen.getByText(/no valid name/)).toBeTruthy());
+    expect(streamResults).not.toHaveBeenCalled();
+    cleanup();
+    renderWidget({ ...defaultFilters(), namespaces: ['..', 'dev'] });
+    await waitFor(() => expect(streamResults).toHaveBeenCalled());
+    expect(streamResults.mock.calls.map(c => c[0])).toEqual(['/api/v1/namespaces/dev/pods']);
+  });
+  it('never shows the data of a Secret, even when the list items have no kind', async () => {
+    streamResults.mockImplementation(async (_u: string, cb: (items: unknown[]) => void) => {
+      cb([
+        {
+          metadata: { name: 'db', namespace: 'dev', uid: 'u' },
+          data: { password: 'cGFzc3dvcmQ=' },
+          stringData: { password: 'plain-text-value' },
+        },
+      ]);
+      return () => undefined;
+    });
+    const config = {
+      ...DEFAULT_REPORT,
+      source: {
+        group: 'example.com',
+        version: 'v1',
+        plural: 'vaultitems',
+        kind: 'Secret',
+        namespaced: true,
+      },
+      columns: [
+        { field: 'name', header: '' },
+        { field: '.data.password', header: '' },
+        { field: '.stringData.password', header: '' },
+      ],
+    };
+    render(refreshView(0, vi.fn(), config));
+    await waitFor(() => expect(screen.getByText('db')).toBeTruthy());
+    expect(document.body.textContent).not.toContain('cGFzc3dvcmQ=');
+    expect(document.body.textContent).not.toContain('plain-text-value');
   });
   it('narrows the rows by the dashboard namespace filter', async () => {
     streamResults.mockImplementation(async (_u: string, cb: (items: unknown[]) => void) => {
@@ -186,6 +257,34 @@ describe('kind discovery', () => {
     expect(
       listPath({ group: '', version: 'v1', plural: 'nodes', kind: 'Node', namespaced: false }, 'x')
     ).toBe('/api/v1/nodes');
+  });
+  it('never lists Secrets, and drops names that are not safe in a path', async () => {
+    request.mockImplementation(async (path: string) => {
+      if (path === '/api/v1')
+        return {
+          resources: [
+            { name: 'pods', kind: 'Pod', namespaced: true, verbs: ['list'] },
+            { name: 'secrets', kind: 'Secret', namespaced: true, verbs: ['list'] },
+            { name: '../x', kind: 'Bad', namespaced: true, verbs: ['list'] },
+          ],
+        };
+      if (path === '/apis')
+        return {
+          groups: [
+            { name: '../evil', preferredVersion: { version: 'v1' } },
+            { name: 'ok.example.com', preferredVersion: { version: '../v1' } },
+          ],
+        };
+      throw new Error(`unexpected ${path}`);
+    });
+    const kinds = await fetchKinds(p => request(p));
+    expect(kinds.map(k => k.plural)).toEqual(['pods']);
+    expect(request.mock.calls.map(c => c[0])).toEqual(['/api/v1', '/apis']);
+  });
+  it('encodes every part of a list path', () => {
+    expect(
+      listPath({ group: 'a/b', version: 'v1', plural: 'x/y', kind: 'X', namespaced: true }, 'n/s')
+    ).toBe('/apis/a%2Fb/v1/namespaces/n%2Fs/x%2Fy');
   });
   it('removes duplicate kinds', () => {
     const k = {

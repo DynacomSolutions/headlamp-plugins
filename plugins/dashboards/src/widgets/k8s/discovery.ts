@@ -3,6 +3,7 @@
  * resources (CRDs). `fetchKinds` takes the request function as an argument, so tests need no cluster.
  */
 import type { SourceRef } from './config';
+import { isApiVersion, isDnsLabel, isDnsSubdomain, isSecretsSource } from './names';
 
 export interface KindEntry extends SourceRef {
   /** A custom resource (the group is not a Kubernetes one). */
@@ -25,7 +26,6 @@ const PRIORITY = [
   'Service',
   'Ingress',
   'ConfigMap',
-  'Secret',
   'PersistentVolumeClaim',
   'PersistentVolume',
   'Node',
@@ -47,12 +47,16 @@ export function isBuiltinGroup(group: string): boolean {
 }
 
 function entriesOf(group: string, version: string, list: any): KindEntry[] {
+  // Discovery answers are checked like saved settings: a name that is not safe in a path is dropped.
+  if ((group !== '' && !isDnsSubdomain(group)) || !isApiVersion(version)) return [];
   const resources: any[] = Array.isArray(list?.resources) ? list.resources : [];
   return resources
     .filter(
       r =>
         typeof r?.name === 'string' &&
-        !r.name.includes('/') &&
+        isDnsLabel(r.name) &&
+        // Secrets are never a report source: the rows would show secret values.
+        !isSecretsSource(group, r.name) &&
         Array.isArray(r.verbs) &&
         r.verbs.includes('list')
     )
@@ -99,7 +103,7 @@ export async function fetchKinds(request: Request): Promise<KindEntry[]> {
   const results = await Promise.allSettled(
     list.map(async g => {
       const version = g?.preferredVersion?.version ?? g?.versions?.[0]?.version;
-      if (typeof g?.name !== 'string' || typeof version !== 'string') return [];
+      if (!isDnsSubdomain(g?.name) || !isApiVersion(version)) return [];
       return entriesOf(g.name, version, await request(`/apis/${g.name}/${version}`));
     })
   );
@@ -107,11 +111,19 @@ export async function fetchKinds(request: Request): Promise<KindEntry[]> {
   return sortKinds(out);
 }
 
-/** The API path of a kind, for one namespace or for the whole cluster. */
+/**
+ * The API path of a kind, for one namespace or for the whole cluster. Every part is encoded, so a
+ * value with a `/` cannot add a path segment. The callers also check the names (see `isSafeSource`),
+ * because encoding does not change `.` or `..`.
+ */
 export function listPath(source: SourceRef, namespace?: string): string {
+  const version = encodeURIComponent(source.version);
   const base =
-    source.group === '' ? `/api/${source.version}` : `/apis/${source.group}/${source.version}`;
+    source.group === ''
+      ? `/api/${version}`
+      : `/apis/${encodeURIComponent(source.group)}/${version}`;
+  const plural = encodeURIComponent(source.plural);
   return namespace && source.namespaced
-    ? `${base}/namespaces/${encodeURIComponent(namespace)}/${source.plural}`
-    : `${base}/${source.plural}`;
+    ? `${base}/namespaces/${encodeURIComponent(namespace)}/${plural}`
+    : `${base}/${plural}`;
 }

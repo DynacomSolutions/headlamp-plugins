@@ -116,12 +116,29 @@ function walk(node: unknown, segments: Segment[], index: number, out: unknown[])
   }
 }
 
+const SECRET_FIELDS = ['data', 'stringData'] as const;
+
+/**
+ * A copy of a Secret without its `data` and `stringData`, so a report can never show a secret
+ * value. `kind` is the kind of the report source: list items often have no `kind` of their own.
+ * Any other object is returned as it is.
+ */
+export function redactSecrets<T>(obj: T, kind = ''): T {
+  const o = obj as unknown as Record<string, unknown> | null;
+  if (!o || typeof o !== 'object') return obj;
+  if (kind !== 'Secret' && o.kind !== 'Secret') return obj;
+  const copy = { ...o };
+  for (const key of SECRET_FIELDS) delete copy[key];
+  return copy as unknown as T;
+}
+
 /** Every value the path reaches. A wildcard can reach several. Missing paths give an empty list. */
 export function getPathValues(obj: unknown, path: string): unknown[] {
   const segments = parseFieldPath(path);
   if (!segments) return [];
+  // A Secret never gives its values, whatever path a saved report asks for.
   const out: unknown[] = [];
-  walk(obj, segments, 0, out);
+  walk(redactSecrets(obj), segments, 0, out);
   return out;
 }
 

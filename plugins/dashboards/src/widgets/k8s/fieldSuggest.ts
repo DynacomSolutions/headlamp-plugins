@@ -13,12 +13,21 @@ export function formatPath(segments: Segment[]): string {
 }
 
 const SKIP = new Set(['managedFields']);
+/** The keys of a Secret that hold values. They are never suggested. */
+const SECRET_KEYS = new Set(['data', 'stringData']);
 
 /**
  * Leaf paths found in a sample of objects, most common first. Arrays use the index 0 so the
  * list stays short. The result is capped, because an object can be deep.
  */
-export function suggestPaths(objects: unknown[], limit = 400, sample = 25, maxDepth = 6): string[] {
+export function suggestPaths(
+  objects: unknown[],
+  limit = 400,
+  sample = 25,
+  maxDepth = 6,
+  /** The kind of the source. A Secret gives no `data` or `stringData` path. */
+  kind = ''
+): string[] {
   const counts = new Map<string, number>();
   const visit = (node: unknown, segs: Segment[]) => {
     if (counts.size >= limit * 4) return;
@@ -34,8 +43,9 @@ export function suggestPaths(objects: unknown[], limit = 400, sample = 25, maxDe
       if (node.length > 0) visit(node[0], [...segs, 0]);
       return;
     }
+    const isSecret = segs.length === 0 && (kind === 'Secret' || (node as any).kind === 'Secret');
     for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-      if (SKIP.has(k)) continue;
+      if (SKIP.has(k) || (isSecret && SECRET_KEYS.has(k))) continue;
       visit(v, [...segs, k]);
     }
   };
