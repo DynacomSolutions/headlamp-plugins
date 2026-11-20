@@ -7,11 +7,13 @@ import React from 'react';
 import {
   formatBytes,
   formatGhz,
-  formatLink,
+  formatLinkWithMax,
   HardwareProfile,
   isBelowMax,
   LinkInfo,
+  m2Summary,
   memorySummary,
+  moduleLabel,
   PciDevice,
   Slot,
   SLOT_KIND_LABEL,
@@ -27,16 +29,16 @@ function LinkCell({ link }: { link: LinkInfo | undefined }): JSX.Element {
   if (!link) {
     return <>-</>;
   }
-  const max = isBelowMax(link) ? ` (max ${formatLink(link.maxWidth, link.maxSpeedGts)})` : '';
+  const narrow = isBelowMax(link);
+  const text = formatLinkWithMax(link);
+  const title = narrow
+    ? `Running below its maximum link width (max x${link.maxWidth})`
+    : link.belowMaxSpeed
+      ? 'Link speed can drop while the device is idle'
+      : undefined;
   return (
-    <Typography
-      component="span"
-      variant="body2"
-      sx={{ color: isBelowMax(link) ? WARN : undefined }}
-      title={isBelowMax(link) ? 'Running below its maximum link width or speed' : undefined}
-    >
-      {formatLink(link.width, link.speedGts)}
-      {max}
+    <Typography component="span" variant="body2" sx={{ color: narrow ? WARN : undefined }} title={title}>
+      {text}
     </Typography>
   );
 }
@@ -114,7 +116,7 @@ function MemoryTable({ p }: { p: HardwareProfile }): JSX.Element {
         rows={[
           { name: 'ECC', value: dash(m.ecc) },
           { name: 'Corrected errors', value: dash(m.correctableErrors) },
-          { name: 'Uncorrected errors', value: m.uncorrectableErrors === undefined ? '-' : <span style={{ color: m.uncorrectableErrors > 0 ? 'red' : undefined }}>{m.uncorrectableErrors}</span> },
+          { name: 'Uncorrected errors', value: m.uncorrectableErrors === undefined ? '-' : <Typography component="span" variant="body2" sx={{ color: m.uncorrectableErrors > 0 ? 'error.main' : undefined }}>{m.uncorrectableErrors}</Typography> },
         ]}
       />
       {m.modules.length === 0 ? (
@@ -123,7 +125,7 @@ function MemoryTable({ p }: { p: HardwareProfile }): JSX.Element {
         <SimpleTable
           data={m.modules}
           columns={[
-            { label: 'Slot', getter: d => d.locator },
+            { label: 'Slot', getter: d => moduleLabel(d) },
             { label: 'Size', getter: d => (d.empty ? 'Empty' : formatBytes(d.sizeBytes)) },
             { label: 'Type', getter: d => (d.empty ? '-' : dash(`${d.type} ${d.formFactor}`.trim())) },
             { label: 'Rated speed', getter: d => (d.empty || d.ratedMts === undefined ? '-' : `${d.ratedMts} MT/s`) },
@@ -151,7 +153,6 @@ const deviceName = (d: PciDevice) => `${d.vendor} ${d.device}`.trim() || d.addre
 
 function SlotsTable({ p }: { p: HardwareProfile }): JSX.Element {
   const pcie = slotCounts(p, 'pcie');
-  const m2 = slotCounts(p, 'm2');
   return (
     <>
       <SubTitle>Expansion slots</SubTitle>
@@ -160,7 +161,7 @@ function SlotsTable({ p }: { p: HardwareProfile }): JSX.Element {
       ) : (
         <>
           <Typography variant="body2" sx={{ mb: 0.5 }}>
-            PCIe: {pcie.inUse} of {pcie.total} in use. M.2: {m2.inUse} of {m2.total} in use.
+            PCIe: {pcie.inUse} of {pcie.total} in use. {m2Summary(p)}.
           </Typography>
           <SimpleTable
             data={p.slots}
@@ -191,7 +192,7 @@ function PciTable({ p }: { p: HardwareProfile }): JSX.Element | null {
       <SubTitle>PCI devices</SubTitle>
       {slow > 0 && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          {slow} device{slow === 1 ? ' runs' : 's run'} below the maximum PCIe link width or speed.
+          {slow} device{slow === 1 ? ' runs' : 's run'} below the maximum PCIe link width.
         </Alert>
       )}
       <SimpleTable
@@ -304,7 +305,7 @@ export function HardwareProfileSection({ nodeName }: { nodeName: string }): JSX.
   return (
     <SectionBox title="Hardware profile">
       <Typography variant="body2" sx={{ mb: 1 }} color="text.secondary">
-        Motherboard, CPU, memory, expansion slots, GPUs and NVMe drives with their maximum capacity and what is in use. Amber means a link or memory module runs below its maximum.
+        Motherboard, CPU, memory, expansion slots, GPUs and NVMe drives with their maximum capacity and what is in use. Amber means a PCIe link runs below its maximum width or a memory module runs below its rated speed. A lower link speed is normal at idle and is not flagged.
       </Typography>
       <ProfileBody nodeName={nodeName} />
     </SectionBox>

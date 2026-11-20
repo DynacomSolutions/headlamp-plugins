@@ -3,11 +3,14 @@ import {
   buildProfiles,
   formatBytes,
   formatLink,
+  formatLinkWithMax,
   gpuColumn,
   InventoryData,
   isBelowMax,
   linkInfo,
+  m2Summary,
   memorySummary,
+  moduleLabel,
   normalizePciAddress,
   QUERIES,
   ramColumn,
@@ -39,9 +42,9 @@ function fullData(): InventoryData {
   d.memModule = ['A1', 'A2', 'B1', 'B2'].map((locator, i) =>
     sample({ ...n, locator, bank: 'bank', type: i < 2 ? 'DDR5' : '', form_factor: 'DIMM', manufacturer: i < 2 ? 'MemCo' : '', part_number: i < 2 ? 'PN-1' : '', rank: '2' }),
   );
-  d.memModuleSize = [sample({ ...n, locator: 'A1' }, 64 * GiB), sample({ ...n, locator: 'A2' }, 64 * GiB), sample({ ...n, locator: 'B1' }, 0), sample({ ...n, locator: 'B2' }, 0)];
-  d.memModuleSpeed = [sample({ ...n, locator: 'A1' }, 5600), sample({ ...n, locator: 'A2' }, 5600)];
-  d.memModuleConfSpeed = [sample({ ...n, locator: 'A1' }, 4800), sample({ ...n, locator: 'A2' }, 5600)];
+  d.memModuleSize = [sample({ ...n, bank: 'bank', locator: 'A1' }, 64 * GiB), sample({ ...n, bank: 'bank', locator: 'A2' }, 64 * GiB), sample({ ...n, bank: 'bank', locator: 'B1' }, 0), sample({ ...n, bank: 'bank', locator: 'B2' }, 0)];
+  d.memModuleSpeed = [sample({ ...n, bank: 'bank', locator: 'A1' }, 5600), sample({ ...n, bank: 'bank', locator: 'A2' }, 5600)];
+  d.memModuleConfSpeed = [sample({ ...n, bank: 'bank', locator: 'A1' }, 4800), sample({ ...n, bank: 'bank', locator: 'A2' }, 5600)];
   d.edacCorrectable = [sample(n, 3)];
   d.edacUncorrectable = [sample(n, 0)];
   d.slotInfo = [
@@ -123,9 +126,43 @@ describe('buildProfiles with a full inventory', () => {
 describe('link flags', () => {
   it('flags a lower speed and ignores unknown values', () => {
     expect(linkInfo(4, 4, 8, 16).belowMaxSpeed).toBe(true);
+    expect(isBelowMax(linkInfo(16, 16, 2.5, 32))).toBe(false);
+    expect(formatLinkWithMax(linkInfo(16, 16, 2.5, 32))).toBe('Gen1 x16 (2.5 GT/s) (max Gen5)');
+    expect(isBelowMax(linkInfo(8, 16, 32, 32))).toBe(true);
     expect(isBelowMax(linkInfo(4, 4, 16, 16))).toBe(false);
     expect(isBelowMax(linkInfo(undefined, 4, undefined, undefined))).toBe(false);
     expect(isBelowMax(undefined)).toBe(false);
+  });
+});
+
+describe('memory modules repeated across banks', () => {
+  const d = emptyData();
+  const mod = (bank: string, locator: string) => ({ ...n, bank, locator, type: 'DDR4', form_factor: 'DIMM', manufacturer: 'MemCo', part_number: 'PN', rank: '1' });
+  d.memModule = [sample(mod('P0 CHANNEL A', 'DIMM 1')), sample(mod('P0 CHANNEL B', 'DIMM 1'))];
+  d.memModuleSize = [sample({ ...n, bank: 'P0 CHANNEL A', locator: 'DIMM 1' }, 16 * GiB), sample({ ...n, bank: 'P0 CHANNEL B', locator: 'DIMM 1' }, 32 * GiB)];
+  d.memModuleSpeed = [sample({ ...n, bank: 'P0 CHANNEL A', locator: 'DIMM 1' }, 3200), sample({ ...n, bank: 'P0 CHANNEL B', locator: 'DIMM 1' }, 2933)];
+  const m = buildProfiles(d).get('worker-1')!.memory;
+
+  it('keeps each bank own size and speed', () => {
+    expect(m.modules.map(x => [x.bank, x.sizeBytes, x.ratedMts])).toEqual([
+      ['P0 CHANNEL A', 16 * GiB, 3200],
+      ['P0 CHANNEL B', 32 * GiB, 2933],
+    ]);
+    expect(m.installedBytes).toBe(48 * GiB);
+    expect(moduleLabel(m.modules[0])).toBe('P0 CHANNEL A / DIMM 1');
+    expect(moduleLabel({ bank: '', locator: 'DIMM 1' })).toBe('DIMM 1');
+  });
+});
+
+describe('M.2 summary', () => {
+  it('names the mismatch when NVMe drives outnumber listed M.2 slots', () => {
+    const d = fullData();
+    d.nvmeInfo.push(sample({ ...n, device: 'nvme1', address: '0000:04:00.0', model: 'Fake SSD 2', firmware: 'FW1' }));
+    expect(m2Summary(buildProfiles(d).get('worker-1')!)).toBe('M.2: 1 listed by firmware, 2 NVMe drives installed');
+  });
+
+  it('keeps x of y in use otherwise', () => {
+    expect(m2Summary(buildProfiles(fullData()).get('worker-1')!)).toBe('M.2: 1 of 1 in use');
   });
 });
 

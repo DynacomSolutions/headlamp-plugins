@@ -203,7 +203,8 @@ export function linkInfo(width?: number, maxWidth?: number, speedGts?: number, m
   };
 }
 
-export const isBelowMax = (l: LinkInfo | undefined): boolean => !!l && (l.belowMaxWidth || l.belowMaxSpeed);
+/** Only a width below max counts as a problem. Speed drops at idle (ASPM, power states) and is normal. */
+export const isBelowMax = (l: LinkInfo | undefined): boolean => !!l && l.belowMaxWidth;
 
 /** Groups samples by their `node` label. Samples without a node are dropped. */
 function groupByNode(samples: MetricSample[]): Map<string, MetricSample[]> {
@@ -272,13 +273,25 @@ function buildCpu(d: Record<string, MetricSample[]>): HardwareProfile['cpu'] {
 }
 
 function buildMemory(d: Record<string, MetricSample[]>): Memory {
-  const sizes = valuesBy(d.memModuleSize, 'locator');
-  const rated = valuesBy(d.memModuleSpeed, 'locator');
-  const configured = valuesBy(d.memModuleConfSpeed, 'locator');
+  // Real boards repeat locators across banks, so every module series is keyed by bank and locator.
+  const slotKey = (m: Record<string, string>) => `${m.bank ?? ''}|${m.locator ?? ''}`;
+  const keyed = (samples: MetricSample[]) => {
+    const result = new Map<string, number>();
+    for (const s of samples) {
+      const v = numberFromValue(s);
+      if (v !== undefined) {
+        result.set(slotKey(s.metric), v);
+      }
+    }
+    return result;
+  };
+  const sizes = keyed(d.memModuleSize);
+  const rated = keyed(d.memModuleSpeed);
+  const configured = keyed(d.memModuleConfSpeed);
   const modules: MemoryModule[] = d.memModule
     .map(s => {
       const locator = str(s.metric.locator);
-      const sizeBytes = sizes.get(s.metric.locator) ?? 0;
+      const sizeBytes = sizes.get(slotKey(s.metric)) ?? 0;
       return {
         locator,
         bank: str(s.metric.bank),
@@ -287,12 +300,12 @@ function buildMemory(d: Record<string, MetricSample[]>): Memory {
         formFactor: str(s.metric.form_factor),
         manufacturer: str(s.metric.manufacturer),
         partNumber: str(s.metric.part_number),
-        ratedMts: rated.get(s.metric.locator),
-        configuredMts: configured.get(s.metric.locator),
+        ratedMts: rated.get(slotKey(s.metric)),
+        configuredMts: configured.get(slotKey(s.metric)),
         empty: sizeBytes === 0,
       };
     })
-    .sort((a, b) => a.locator.localeCompare(b.locator, undefined, { numeric: true }));
+    .sort((a, b) => a.bank.localeCompare(b.bank) || a.locator.localeCompare(b.locator, undefined, { numeric: true }));
 
   const slotCounts = valuesBy(d.memSlots, 'state');
   const populated = modules.filter(m => !m.empty).length;
@@ -468,6 +481,27 @@ export function formatBytes(bytes: number | undefined): string {
 
 export function formatGhz(hz: number | undefined): string {
   return hz === undefined ? '-' : `${(hz / 1e9).toFixed(2)} GHz`;
+}
+
+/** Slot label for a memory module: "bank / locator" when the bank is known. */
+export const moduleLabel = (m: { bank: string; locator: string }): string => (m.bank ? `${m.bank} / ${m.locator}` : m.locator);
+
+/** "Gen1 x16 (max Gen5)" when the link speed runs below its maximum, else the plain link text. */
+export function formatLinkWithMax(l: LinkInfo): string {
+  if (!l.belowMaxSpeed) {
+    return formatLink(l.width, l.speedGts);
+  }
+  const gen = pcieGeneration(l.maxSpeedGts);
+  return `${formatLink(l.width, l.speedGts)} (max ${gen ? `Gen${gen}` : `${l.maxSpeedGts} GT/s`})`;
+}
+
+/** PCIe and M.2 slot counts for the summary line. Firmware often lists fewer M.2 slots than exist. */
+export function m2Summary(p: HardwareProfile): string {
+  const m2 = slotCounts(p, 'm2');
+  if (p.nvme.length > m2.total) {
+    return `M.2: ${m2.total} listed by firmware, ${p.nvme.length} NVMe drives installed`;
+  }
+  return `M.2: ${m2.inUse} of ${m2.total} in use`;
 }
 
 export function formatLink(width: number | undefined, gts: number | undefined): string {
