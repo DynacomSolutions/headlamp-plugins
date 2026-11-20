@@ -10,7 +10,15 @@ import ButtonBase from '@mui/material/ButtonBase';
 import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { arcPath, ArcShape, fitCentreText, layoutArcs, SunburstData, trackPath, usedShare } from './geometry';
+import {
+  arcPath,
+  ArcShape,
+  fitCentreText,
+  layoutArcs,
+  SunburstData,
+  trackPath,
+  usedShare,
+} from './geometry';
 import { childShade, colourAt } from './palette';
 
 /** The drawing is laid out in these units and scaled to the card by the viewBox. */
@@ -194,7 +202,11 @@ export function SunburstChart({
             textAnchor="middle"
             fill={theme.palette.text.primary}
           >
-            <text y={-8} fontSize={fitCentreText(centreLabel, 8.5, -11, RADIUS)} fill={theme.palette.text.secondary}>
+            <text
+              y={-8}
+              fontSize={fitCentreText(centreLabel, 8.5, -11, RADIUS)}
+              fill={theme.palette.text.secondary}
+            >
               {centreLabel}
             </text>
             <text
@@ -205,7 +217,11 @@ export function SunburstChart({
             >
               {centreValue}
             </text>
-            <text y={17} fontSize={fitCentreText(centreSub, 7.5, 14, RADIUS)} fill={theme.palette.text.secondary}>
+            <text
+              y={17}
+              fontSize={fitCentreText(centreSub, 7.5, 14, RADIUS)}
+              fill={theme.palette.text.secondary}
+            >
               {centreSub}
             </text>
           </g>

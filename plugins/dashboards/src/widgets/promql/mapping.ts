@@ -90,7 +90,9 @@ export function shortenNames(series: Series[]): Series[] {
   const count = new Map<string, number>();
   shorts.forEach(n => count.set(n, (count.get(n) ?? 0) + 1));
   return series.map((s, i) =>
-    shorts[i] === '' || (count.get(shorts[i]) ?? 0) > 1 ? s : { ...s, name: shorts[i], fullName: s.name }
+    shorts[i] === '' || (count.get(shorts[i]) ?? 0) > 1
+      ? s
+      : { ...s, name: shorts[i], fullName: s.name }
   );
 }
 

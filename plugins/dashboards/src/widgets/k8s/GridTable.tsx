@@ -84,7 +84,8 @@ export function GridTable(props: {
           left: 0,
           zIndex: 1,
           bgcolor: colors.surface,
-          backgroundImage: strong && !header ? `linear-gradient(${colors.band}, ${colors.band})` : undefined,
+          backgroundImage:
+            strong && !header ? `linear-gradient(${colors.band}, ${colors.band})` : undefined,
           borderRight: `1px solid ${colors.line}`,
         }
       : {};
@@ -148,7 +149,9 @@ export function GridTable(props: {
                 fontVariantNumeric: c.numeric ? 'tabular-nums' : undefined,
                 ...(ci === 0 ? stickyCell(strong, false) : {}),
                 // A sticky cell fills the row height, so the line colour reaches the edges.
-                ...(ci === 0 && stickyFirst ? { alignSelf: 'stretch', display: 'flex', alignItems: 'center' } : {}),
+                ...(ci === 0 && stickyFirst
+                  ? { alignSelf: 'stretch', display: 'flex', alignItems: 'center' }
+                  : {}),
               }}
             >
               {line.cells?.[ci]}
@@ -221,7 +224,9 @@ export function GridTable(props: {
                   whiteSpace: 'nowrap',
                   textAlign: c.numeric ? 'right' : 'left',
                   ...(ci === 0 ? stickyCell(false, true) : {}),
-                  ...(ci === 0 && stickyFirst ? { alignSelf: 'stretch', display: 'flex', alignItems: 'center' } : {}),
+                  ...(ci === 0 && stickyFirst
+                    ? { alignSelf: 'stretch', display: 'flex', alignItems: 'center' }
+                    : {}),
                 }}
               >
                 {c.sortable && onSort ? (
@@ -264,7 +269,16 @@ export function GridTable(props: {
   );
 
   return (
-    <Box sx={{ position: 'relative', flex: 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+    <Box
+      sx={{
+        position: 'relative',
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       {table}
       {moreRight && (
         <Box

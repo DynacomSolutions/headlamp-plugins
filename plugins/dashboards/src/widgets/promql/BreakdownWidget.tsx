@@ -333,7 +333,16 @@ function BreakdownWidget({
       />
     );
   else
-    body = <Donut groups={groups} unit={unit} colourFor={colourFor} ink={ink} size={size.width} kiosk={kiosk} />;
+    body = (
+      <Donut
+        groups={groups}
+        unit={unit}
+        colourFor={colourFor}
+        ink={ink}
+        size={size.width}
+        kiosk={kiosk}
+      />
+    );
 
   return (
     <Box

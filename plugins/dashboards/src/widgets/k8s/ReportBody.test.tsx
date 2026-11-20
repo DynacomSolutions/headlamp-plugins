@@ -107,10 +107,16 @@ describe('ReportBody', () => {
     expect(screen.getByText('Total', { selector: '[role="cell"]' })).toBeTruthy();
   });
   it('keeps the first column of a matrix in view, and not of a tabular report', () => {
-    const { container, unmount } = show({ reportType: 'matrix', matrixRow: 'namespace', matrixCol: 'status' });
+    const { container, unmount } = show({
+      reportType: 'matrix',
+      matrixRow: 'namespace',
+      matrixCol: 'status',
+    });
     const firstOf = (c: HTMLElement) => c.querySelector('[role="columnheader"]') as HTMLElement;
     expect(getComputedStyle(firstOf(container)).position).toBe('sticky');
-    const firstCell = container.querySelector('[role="row"][aria-rowindex="2"] [role="cell"]') as HTMLElement;
+    const firstCell = container.querySelector(
+      '[role="row"][aria-rowindex="2"] [role="cell"]'
+    ) as HTMLElement;
     expect(getComputedStyle(firstCell).position).toBe('sticky');
     unmount();
     const tabular = show({});

@@ -150,10 +150,14 @@ describe('fitCentreText', () => {
       expect(size).toBeLessThanOrEqual(13);
       expect(size * text.length * 0.56).toBeLessThanOrEqual(hole * 2);
     }
-    expect(fitCentreText('123456789012', 13, 1, R, true)).toBeLessThan(fitCentreText('123', 13, 1, R, true));
+    expect(fitCentreText('123456789012', 13, 1, R, true)).toBeLessThan(
+      fitCentreText('123', 13, 1, R, true)
+    );
   });
   it('gives less room on a line far from the middle, and never goes below a floor', () => {
-    expect(fitCentreText('abcdefghijklmnop', 9, 14, R)).toBeLessThan(fitCentreText('abcdefghijklmnop', 9, 0, R));
+    expect(fitCentreText('abcdefghijklmnop', 9, 14, R)).toBeLessThan(
+      fitCentreText('abcdefghijklmnop', 9, 0, R)
+    );
     expect(fitCentreText('x'.repeat(200), 9, 0, R)).toBe(3);
   });
 });

@@ -390,7 +390,8 @@ describe('endpoint', () => {
 });
 
 describe('shortenNames', () => {
-  const mk = (labels: Record<string, string>) => parseMatrix([{ metric: labels, values: [[1, '1']] }])[0];
+  const mk = (labels: Record<string, string>) =>
+    parseMatrix([{ metric: labels, values: [[1, '1']] }])[0];
   it('shows only the label values that differ, and keeps the full set as the full name', () => {
     const out = shortenNames([
       mk({ namespace: 'agent-memory', job: 'x' }),
@@ -410,7 +411,11 @@ describe('shortenNames', () => {
     expect(shortenNames(same)).toBe(same);
   });
   it('treats a missing label as empty and never gives two series the same short name', () => {
-    const out = shortenNames([mk({ a: '1' }), mk({ a: '1', b: '2' }), mk({ a: '1', b: '2', c: '3' })]);
+    const out = shortenNames([
+      mk({ a: '1' }),
+      mk({ a: '1', b: '2' }),
+      mk({ a: '1', b: '2', c: '3' }),
+    ]);
     expect(out[0].name).toBe('{a="1"}');
     expect(new Set(out.map(s => s.name)).size).toBe(3);
   });

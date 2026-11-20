@@ -162,7 +162,13 @@ const GLYPH_BOLD = 0.62;
  * distance of the line centre from the middle of the hole and `radius` is the radius of the whole chart.
  * The width is the chord of the hole at that height, with a small margin. It never goes above `base`.
  */
-export function fitCentreText(text: string, base: number, lineY: number, radius: number, bold = false): number {
+export function fitCentreText(
+  text: string,
+  base: number,
+  lineY: number,
+  radius: number,
+  bold = false
+): number {
   const hole = radius * CENTRE;
   const half = Math.sqrt(Math.max(0, hole * hole - lineY * lineY));
   const width = half * 2 * 0.9;

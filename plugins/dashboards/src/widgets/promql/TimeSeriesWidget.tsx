@@ -49,9 +49,7 @@ export function collectSeries(
     // A query with its own label template keeps the names the template gives.
     return legends[qi] && legends[qi].trim() !== '' ? parsed : shortenNames(parsed);
   });
-  return named.flatMap((list, qi) =>
-    list.map(s => (many ? { ...s, key: `${qi}:${s.key}` } : s))
-  );
+  return named.flatMap((list, qi) => list.map(s => (many ? { ...s, key: `${qi}:${s.key}` } : s)));
 }
 
 function TimeSeriesWidget({
