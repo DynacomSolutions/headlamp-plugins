@@ -84,13 +84,13 @@ function viewportKind(): { phone: boolean; portrait: boolean } {
 }
 
 /**
- * The size of an element, kept current with a ResizeObserver. In kiosk the element fills the
+ * The size of an element, kept current with a ResizeObserver. When it fits its box the element fills the
  * rest of the screen, so its own height is the room. Otherwise the room is what is left of the
  * window below the element.
  */
 function useBox(
   ref: React.RefObject<HTMLElement>,
-  kiosk: boolean
+  fit: boolean
 ): { width: number; height: number; phone: boolean; portrait: boolean } {
   const [box, setBox] = React.useState({
     width: 0,
@@ -104,7 +104,7 @@ function useBox(
       setBox({
         ...viewportKind(),
         width: el.clientWidth,
-        height: kiosk
+        height: fit
           ? el.clientHeight
           : Math.max(0, window.innerHeight - el.getBoundingClientRect().top - 8),
       });
@@ -116,7 +116,7 @@ function useBox(
       window.removeEventListener('resize', update);
       ro?.disconnect();
     };
-  }, [ref, kiosk]);
+  }, [ref, fit]);
   return box;
 }
 
@@ -128,14 +128,22 @@ function useBox(
  * On a phone the page scrolls, so the height does not limit the charts: in portrait they are
  * stacked, each as wide as the room; in landscape they are side by side, half the width each.
  * `portrait` is the viewport's, and defaults to the room being no wider than tall.
+ * `largest` (a dashboard widget) ignores those rules and takes the layout with the bigger charts.
  */
 export function chartLayout(
   width: number,
   height: number,
   phone = false,
-  portrait = width <= height
+  portrait = width <= height,
+  largest = false
 ): { size: number; twoUp: boolean } {
   const clamp = (v: number) => Math.floor(Math.max(MIN_CHART, v));
+  if (largest) {
+    // A dashboard widget: whichever layout gives the bigger charts in the room it has.
+    const side = clamp(Math.min((width - GAP) / 2, height - CHART_HEAD));
+    const stacked = clamp(Math.min(width, (height - 2 * CHART_HEAD - GAP) / 2));
+    return side >= stacked ? { size: side, twoUp: true } : { size: stacked, twoUp: false };
+  }
   if (phone) {
     return portrait
       ? { size: clamp(width), twoUp: false }
@@ -161,6 +169,13 @@ export function NodeView(props: {
   /** Selected path ([] for none). */
   sel: string[];
   kiosk: boolean;
+  /**
+   * The view fills the box it is in (the kiosk page, or a dashboard widget): the charts size from
+   * that box, not from the window, and nothing in it pushes the page to scroll. Default: `kiosk`.
+   */
+  fit?: boolean;
+  /** A dashboard widget: the charts take the layout (side by side or stacked) that makes them bigger. */
+  widget?: boolean;
   /** Rings drawn in both charts. */
   rings: number;
   onRings: (rings: number) => void;
@@ -179,6 +194,8 @@ export function NodeView(props: {
     path,
     sel,
     kiosk,
+    fit = kiosk,
+    widget = false,
     rings,
     onRings,
     toolbar,
@@ -211,13 +228,14 @@ export function NodeView(props: {
     [cpu, mem, base, detail.path]
   );
   const ref = React.useRef<HTMLDivElement>(null);
-  const box = useBox(ref, kiosk);
+  const box = useBox(ref, fit);
   const { size, twoUp } = chartLayout(
     box.width,
     box.height,
-    // In kiosk the charts fill the screen and do not scroll, so the phone rule is for the page only.
-    box.phone && !kiosk,
-    box.portrait
+    // A fitted view (kiosk, widget) fills its box and does not scroll, so the phone rule is for the page only.
+    box.phone && !fit,
+    box.portrait,
+    fit && widget
   );
   const centreSubject = { label: detail.focus.label, icon: detail.focus.icon };
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
@@ -264,7 +282,7 @@ export function NodeView(props: {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        flex: kiosk ? '1 1 0' : '1 1 auto',
+        flex: fit ? '1 1 0' : '1 1 auto',
         width: '100%',
         minWidth: 0,
         minHeight: 0,
@@ -380,7 +398,7 @@ export function NodeView(props: {
           if (e.target === e.currentTarget) onSelect([]);
         }}
         sx={{
-          flex: kiosk ? '1 1 0' : '0 0 auto',
+          flex: fit ? '1 1 0' : '0 0 auto',
           minHeight: 0,
           display: 'flex',
           flexWrap: twoUp ? 'nowrap' : 'wrap',

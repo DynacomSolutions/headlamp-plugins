@@ -1,5 +1,6 @@
 /*
- * Polls VictoriaMetrics and the agent-resource backends every 10 s. A failed metrics refresh keeps
+ * Polls VictoriaMetrics and the agent-resource backends every 10 s. A dashboard widget passes
+ * `manual` instead: it fetches once, then again only when the refresh signal changes. A failed metrics refresh keeps
  * the last data and marks it stale. A failing agent backend keeps its node's last good agent data
  * on screen, marked with its time, for up to MAX_AGENT_FAILURES failed polls in a row; its error
  * is shown on the node it served last time (or page-wide if it never answered).
@@ -98,7 +99,13 @@ export function mergeAgents(
 
 const message = (e: unknown) => String((e as Error)?.message ?? e) || 'Request failed';
 
-export function useNodesData(): NodesData {
+/** Dashboard widget mode: no timer, fetch when `signal` changes and report each finished fetch. */
+export interface ManualRefresh {
+  signal: number;
+  onLoaded: (at: number) => void;
+}
+
+export function useNodesData(manual?: ManualRefresh): NodesData {
   const backends = useNodesSettings().agentBackends;
   const [data, setData] = React.useState<NodesData>({
     metrics: [],
@@ -112,6 +119,10 @@ export function useNodesData(): NodesData {
   });
   const memory = React.useRef(emptyAgentMemory());
   const key = backends.join(',');
+  const onLoaded = React.useRef(manual?.onLoaded);
+  onLoaded.current = manual?.onLoaded;
+  const polling = !manual;
+  const signal = manual?.signal ?? 0;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -151,17 +162,18 @@ export function useNodesData(): NodesData {
             loading: false,
           };
         });
+        onLoaded.current?.(Date.now());
       } finally {
         busy = false;
       }
     };
     load();
-    const timer = setInterval(load, REFRESH_MS);
+    const timer = polling ? setInterval(load, REFRESH_MS) : undefined;
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [key]);
+  }, [key, polling, signal]);
 
   return data;
 }
