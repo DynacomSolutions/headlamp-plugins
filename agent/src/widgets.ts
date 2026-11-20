@@ -83,7 +83,7 @@ export interface PanelDeps {
   serviceGet(url: string, options?: { maxBytes?: number }): Promise<unknown>;
   /** Lists Kubernetes objects of a kind (read-only client). Rejects when the type is not served. */
   kubeList(kind: string, options?: { namespace?: string }): Promise<Array<Record<string, any>>>;
-  agentMemoryUrl: string;
+  agentResourceUrl: string;
   registryCatalogueUrl: string;
   query: URLSearchParams;
   now: Date;
@@ -453,10 +453,10 @@ async function incidents(d: PanelDeps): Promise<PanelBody> {
 
 // ---------- agent resources ----------
 
-async function agentMemory(d: PanelDeps): Promise<PanelBody> {
+async function agentResource(d: PanelDeps): Promise<PanelBody> {
   let state: Obj;
   try {
-    state = (await d.serviceGet(d.agentMemoryUrl)) as Obj;
+    state = (await d.serviceGet(d.agentResourceUrl)) as Obj;
   } catch {
     throw new PanelError('agent-resource is not reachable');
   }
@@ -688,8 +688,11 @@ export const PANELS: PanelDefinition[] = [
   { id: 'github-runners', title: 'GitHub runners', description: 'Runner sets, running and pending runners.', plugin: 'github-runners', link: '/c/{cluster}/github-runners', refreshSeconds: 300, build: githubRunners },
   { id: 'registry', title: 'Registry', description: 'Repositories, tags and size of the registry.', plugin: 'registry', link: '/c/{cluster}/registry', refreshSeconds: 3600, build: registry },
   { id: 'vm-images', title: 'VM images', description: 'VM images, disk imports and virtual machines.', plugin: 'vm-images', link: '/c/{cluster}/vm-images', refreshSeconds: 900, build: vmImages },
-  { id: 'agent-memory', title: 'Agent resources', description: 'Memory use and warnings of the coding agents.', plugin: 'agent-resource', link: '/c/{cluster}/agent-resource', refreshSeconds: 300, build: agentMemory },
+  { id: 'agent-resource', title: 'Agent resources', description: 'Memory use and warnings of the coding agents.', plugin: 'agent-resource', link: '/c/{cluster}/agent-resource', refreshSeconds: 300, build: agentResource },
 ];
+
+/** Panel ids that clients still ask for under a name the panel had before. Not listed in /api/widgets. */
+const PANEL_ALIASES: Record<string, string> = { 'agent-memory': 'agent-resource' };
 
 export function listPanels(): { version: 1; panels: PanelInfo[] } {
   return { version: 1, panels: PANELS.map(({ build: _build, ...info }) => info) };
@@ -697,7 +700,7 @@ export function listPanels(): { version: 1; panels: PanelInfo[] } {
 
 /** Builds one panel, or returns undefined for an unknown id. Throws PanelError when the backend fails. */
 export async function buildPanel(id: string, deps: PanelDeps): Promise<PanelModel | undefined> {
-  const panel = PANELS.find(p => p.id === id);
+  const panel = PANELS.find(p => p.id === (PANEL_ALIASES[id] ?? id));
   if (!panel) return undefined;
   let body: PanelBody;
   try {

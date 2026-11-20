@@ -83,8 +83,8 @@ class PanelTest {
             panelsUrl("https://h.example.com/", "prod-1"),
         )
         assertEquals(
-            "https://h.example.com/clusters/team%20a%2Fb/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets/agent-memory",
-            panelUrl("https://h.example.com", "team a/b", "agent-memory"),
+            "https://h.example.com/clusters/team%20a%2Fb/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/widgets/agent-resource",
+            panelUrl("https://h.example.com", "team a/b", "agent-resource"),
         )
     }
 

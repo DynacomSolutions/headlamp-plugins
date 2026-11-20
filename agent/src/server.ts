@@ -434,7 +434,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
             },
             serviceGet,
             kubeList: async (kind, options) => (await runtime.kube.list(kind, { limit: 2000, ...options })).items,
-            agentMemoryUrl: config.agentMemoryUrl,
+            agentResourceUrl: config.agentResourceUrl,
             registryCatalogueUrl: config.registryCatalogueUrl,
             query: url.searchParams,
             now: new Date(),

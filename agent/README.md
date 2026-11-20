@@ -145,7 +145,7 @@ reads its own settings `job` and `slowSeconds` for `uptime_response_times`.
 read-only, need no auth and answer from the same tools as MCP, with the same
 masking. The Headlamps phone app reads them through the Headlamp service proxy.
 Panels: `uptime`, `usage`, `usage-dashboard`, `alerts`, `disks`, `hardware`, `sites`, `updates`,
-`incidents`, `github-runners`, `registry`, `vm-images` and `agent-memory` (the panel id keeps its old name for existing clients, the panel title is Agent resources). An unknown id gives 404 and a failing backend
+`incidents`, `github-runners`, `registry`, `vm-images` and `agent-resource` (the old id `agent-memory` still answers with the same panel, for installed apps; it is not in the list). An unknown id gives 404 and a failing backend
 gives 502 with a short reason. The `sites` panel takes `?q=<text>`.
 
 The `usage-dashboard` panel adds a typed `rings` field (at most two rings, CPU
@@ -530,7 +530,7 @@ turns launching off with a reason. It does not stop the service.
 | `METRICS_URL` | – | Prometheus-compatible endpoint (VictoriaMetrics) |
 | `VMALERT_URL` | – | vmalert, for rules and alerts |
 | `PROVIDER_CONFIG_FILE` | – | JSON with each provider's settings, `{"<provider>": {...}}` |
-| `AGENT_MEMORY_URL` | `http://agent-memory.agent-memory.svc/api/state` | State endpoint for the agent-memory panel |
+| `AGENT_RESOURCE_URL` | `http://agent-resource.agent-resource.svc/api/state` | State endpoint for the agent-resource panel. The old name `AGENT_MEMORY_URL` is still read when this one is not set |
 | `REGISTRY_CATALOGUE_URL` | `http://registry-catalog.registry.svc/api/repositories` | Registry catalogue backend, for the registry and VM images panels. Set the namespace of your catalogue Service. |
 | `DATA_DIR` | memory only | Where the diagnoses, chats and launches are kept, one file each in `diagnoses/`, `chats/` and `launches/` |
 | `MAX_DIAGNOSES` | `200` | Diagnoses kept |

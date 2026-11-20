@@ -19,7 +19,7 @@ function deps(outputs: Record<string, unknown>, extra: Partial<PanelDeps> = {}):
     kubeList: async kind => {
       throw new Error(`no list for ${kind}`);
     },
-    agentMemoryUrl: 'http://agent-memory.example.svc/api/state',
+    agentResourceUrl: 'http://agent-resource.example.svc/api/state',
     registryCatalogueUrl: 'http://registry-catalog.example.svc/api/repositories',
     query: new URLSearchParams(),
     now: new Date('2026-11-18T08:00:00Z'),
@@ -31,7 +31,7 @@ describe('panel list', () => {
   it('lists the v1 panels with the contract fields', () => {
     const { version, panels } = listPanels();
     expect(version).toBe(1);
-    expect(panels.map(p => p.id)).toEqual(['uptime', 'usage', 'usage-dashboard', 'alerts', 'disks', 'hardware', 'sites', 'updates', 'incidents', 'github-runners', 'registry', 'vm-images', 'agent-memory']);
+    expect(panels.map(p => p.id)).toEqual(['uptime', 'usage', 'usage-dashboard', 'alerts', 'disks', 'hardware', 'sites', 'updates', 'incidents', 'github-runners', 'registry', 'vm-images', 'agent-resource']);
     for (const p of panels) {
       expect(p.title).toBeTruthy();
       expect(p.description).toBeTruthy();
@@ -235,7 +235,7 @@ describe('panel mappings', () => {
   });
 
   it('prints one decimal in every percentage', async () => {
-    const m = await buildPanel('agent-memory', deps({}, { serviceGet: async () => ({ error: '', host: { total: 100, available: 53 }, orchestrators: [], units: [] }) }));
+    const m = await buildPanel('agent-resource', deps({}, { serviceGet: async () => ({ error: '', host: { total: 100, available: 53 }, orchestrators: [], units: [] }) }));
     expect(m!.stats[1].value).toBe('53.0%');
     expect(m!.summary).toContain('53.0% memory free');
   });
@@ -302,10 +302,24 @@ describe('panel mappings', () => {
     });
   });
 
-  it('agent-memory reads the state endpoint', async () => {
+  it('answers the old panel id agent-memory with the same panel, and does not list it', async () => {
+    const state = async () => ({ error: '', host: { total: 100, available: 50 }, orchestrators: [], units: [] });
+    const m = await buildPanel('agent-memory', deps({}, { serviceGet: state }));
+    expect(m!.id).toBe('agent-resource');
+    expect(m!.title).toBe('Agent resources');
+    expect(listPanels().panels.map(p => p.id)).not.toContain('agent-memory');
+  });
+
+  it('reads AGENT_RESOURCE_URL, then the old AGENT_MEMORY_URL, then the default', () => {
+    expect(loadConfig({} as NodeJS.ProcessEnv).agentResourceUrl).toBe('http://agent-resource.agent-resource.svc/api/state');
+    expect(loadConfig({ AGENT_MEMORY_URL: 'http://old.example.svc/s/' } as NodeJS.ProcessEnv).agentResourceUrl).toBe('http://old.example.svc/s');
+    expect(loadConfig({ AGENT_MEMORY_URL: 'http://old.example.svc/s', AGENT_RESOURCE_URL: 'http://new.example.svc/s' } as NodeJS.ProcessEnv).agentResourceUrl).toBe('http://new.example.svc/s');
+  });
+
+  it('agent-resource reads the state endpoint', async () => {
     let asked = '';
     const m = await buildPanel(
-      'agent-memory',
+      'agent-resource',
       deps(
         {},
         {
@@ -326,7 +340,7 @@ describe('panel mappings', () => {
         },
       ),
     );
-    expect(asked).toBe('http://agent-memory.example.svc/api/state');
+    expect(asked).toBe('http://agent-resource.example.svc/api/state');
     expect(m!.rows.map(r => r.label)).toEqual(['Agent A', 'Agent B']);
     expect(m!.rows[0]).toMatchObject({ value: '2 GiB', fraction: 1, status: 'warn' });
     expect(m!.stats[0]).toMatchObject({ label: 'Agents', value: '2' });
