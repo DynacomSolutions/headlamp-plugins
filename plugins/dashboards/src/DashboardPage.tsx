@@ -89,7 +89,7 @@ import {
   resolveFilters,
   serialiseQuery,
 } from './urlState';
-import { useTabSwipe } from './useTabSwipe';
+import { TAB_AREA_TOUCH, useTabSwipe } from './useTabSwipe';
 import { ensureClusterSources } from './widgets/panels/clusterSources';
 import { transportFor } from './widgets/panels/sourcesConfig';
 
@@ -702,6 +702,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           ref={setSwipeArea}
           data-tab-area
           sx={{
+            ...TAB_AREA_TOUCH,
             display: 'flex',
             flexDirection: left ? 'row' : 'column',
             alignItems: 'stretch',
@@ -838,10 +839,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           data-title-bar-sticky={!kiosk && !editing && spec.header.sticky ? '' : undefined}
           sx={{
             display: 'flex',
-            // One row. Below the full width the bar folds its controls (see barLevel) and never wraps.
-            flexWrap: barLevel >= 1 ? 'nowrap' : 'wrap',
+            // The bar folds its controls as it narrows (see barLevel). When they still do not fit
+            // in one row, they wrap to the next row. A control is never drawn over another one.
+            flexWrap: 'wrap',
             alignItems: 'center',
-            gap: kiosk ? 2.25 : 1,
+            columnGap: kiosk ? 2.25 : 1,
+            rowGap: 1,
             mb: 1,
             minWidth: 0,
             // The wall header sits straight on the page background: no fill, edge or side padding.
@@ -892,46 +895,61 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
             {(!kiosk || spec.kioskShowFilters) && filterBar}
           </Box>
-          {!kiosk && !editing && (
-            <Tooltip
-              title={
-                writable ? 'Edit this dashboard' : 'You have read-only access to dashboards here'
-              }
-            >
-              <span>
-                <Button
-                  variant="outlined"
-                  disabled={!writable}
-                  startIcon={<Icon icon="mdi:pencil-outline" width={18} height={18} />}
-                  onClick={() => setEdit(true)}
-                >
-                  Edit
-                </Button>
-              </span>
-            </Tooltip>
-          )}
-          {headerStrip}
-          {kiosk ? (
-            <KioskExitButton onExit={() => replaceQuery({ kiosk: false })} />
-          ) : (
-            <Tooltip title="Full screen">
-              <IconButton
-                aria-label="Full screen"
-                sx={{
-                  width: 40,
-                  height: 40,
-                  bgcolor: 'action.hover',
-                  '&:hover': { bgcolor: 'action.selected' },
-                }}
-                onClick={() => {
-                  enterBrowserFullscreen();
-                  replaceQuery({ kiosk: true, edit: false });
-                }}
+          <Box
+            data-title-bar-tail
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              columnGap: kiosk ? 2.25 : 1,
+              rowGap: 1,
+              marginLeft: 'auto',
+              minWidth: 0,
+              maxWidth: '100%',
+            }}
+          >
+            {!kiosk && !editing && (
+              <Tooltip
+                title={
+                  writable ? 'Edit this dashboard' : 'You have read-only access to dashboards here'
+                }
               >
-                <Icon icon="mdi:fullscreen" width={22} height={22} />
-              </IconButton>
-            </Tooltip>
-          )}
+                <span>
+                  <Button
+                    variant="outlined"
+                    disabled={!writable}
+                    startIcon={<Icon icon="mdi:pencil-outline" width={18} height={18} />}
+                    onClick={() => setEdit(true)}
+                  >
+                    Edit
+                  </Button>
+                </span>
+              </Tooltip>
+            )}
+            {headerStrip}
+            {kiosk ? (
+              <KioskExitButton onExit={() => replaceQuery({ kiosk: false })} />
+            ) : (
+              <Tooltip title="Full screen">
+                <IconButton
+                  aria-label="Full screen"
+                  sx={{
+                    width: 40,
+                    height: 40,
+                    bgcolor: 'action.hover',
+                    '&:hover': { bgcolor: 'action.selected' },
+                  }}
+                  onClick={() => {
+                    enterBrowserFullscreen();
+                    replaceQuery({ kiosk: true, edit: false });
+                  }}
+                >
+                  <Icon icon="mdi:fullscreen" width={22} height={22} />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
         </Box>
         {!kiosk && canWrite === false && (
           <Alert severity="info" sx={{ mb: 1 }}>

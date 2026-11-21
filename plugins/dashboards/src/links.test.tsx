@@ -69,6 +69,38 @@ describe('resolveLink', () => {
     expect(resolveLink(link, TARGETS, origin)).toBe(`/c/main/dashboards/operations/${tab}`);
   });
 
+  describe('a path to a Headlamp page that is a tab of the dashboard', () => {
+    const UPTIME = { sourceId: 'agent', panelId: 'uptime' };
+    const TAB = '/c/main/dashboards/operations/uptime';
+    it('opens the tab, with the cluster filled in or already in the path', () => {
+      expect(resolveLink('/c/{cluster}/uptime', TARGETS, UPTIME)).toBe(TAB);
+      expect(resolveLink('/c/main/uptime', TARGETS, UPTIME)).toBe(TAB);
+      expect(resolveLink('/uptime', TARGETS, UPTIME)).toBe(TAB);
+      expect(resolveLink('/c/main/uptime?x=1', TARGETS, UPTIME)).toBe(TAB);
+    });
+
+    it('keeps the path when there is no such tab or the row comes from another panel', () => {
+      expect(resolveLink('/c/main/uptime', { ...TARGETS, tabs: ['overview'] }, UPTIME)).toBe(
+        '/c/main/uptime'
+      );
+      expect(resolveLink('/c/main/uptime', TARGETS, { sourceId: 'agent', panelId: 'disks' })).toBe(
+        '/c/main/uptime'
+      );
+      expect(resolveLink('/c/main/uptime', TARGETS)).toBe('/c/main/uptime');
+      expect(resolveLink('/c/main/uptime', null, UPTIME)).toBe('/c/main/uptime');
+    });
+
+    it('keeps a path that goes deeper than the page', () => {
+      expect(resolveLink('/c/main/uptime/site-a', TARGETS, UPTIME)).toBe('/c/main/uptime/site-a');
+      expect(resolveLink('/c/main/nodes/a', TARGETS, { panelId: 'nodes' })).toBe('/c/main/nodes/a');
+    });
+
+    it('never gives a link to another host', () => {
+      for (const raw of ['https://uptime.example.com/uptime', '//uptime.example.com/uptime'])
+        expect(resolveLink(raw, TARGETS, UPTIME) ?? '/').toMatch(/^\/(?!\/)/);
+    });
+  });
+
   it('gives no link for an address with no matching tab', () => {
     expect(
       resolveLink('https://runwarden.example.com/overview', TARGETS, {
@@ -211,8 +243,19 @@ describe('panel row links', () => {
     expect(container.querySelector('a')).toBeNull();
   });
 
-  it('puts the {cluster} placeholder of a path link right', () => {
+  it('opens the uptime tab for an uptime row with a path link to the Uptime page', () => {
     const { container } = view('uptime', '/c/{cluster}/uptime', 'list', 'agent');
+    const anchors = Array.from(container.querySelectorAll('a'));
+    expect(anchors.length).toBeGreaterThan(0);
+    for (const a of anchors)
+      expect(a.getAttribute('href')).toBe('/c/main/dashboards/operations/uptime');
+  });
+
+  it('keeps the Headlamp path of an uptime row when the dashboard has no uptime tab', () => {
+    const { container } = view('uptime', '/c/{cluster}/uptime', 'list', 'agent', {
+      ...TARGETS,
+      tabs: ['overview'],
+    });
     expect(container.querySelector('a')?.getAttribute('href')).toBe('/c/main/uptime');
   });
 

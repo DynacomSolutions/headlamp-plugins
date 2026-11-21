@@ -283,7 +283,9 @@ describe('one row header', () => {
       within(overlay).getByRole('button', { name: 'Exit full screen' })
     );
     // The bar and the exit button share one flex row, and the header is in that row.
-    const row = within(overlay).getByRole('button', { name: 'Exit full screen' }).parentElement!;
+    const row = within(overlay)
+      .getByRole('button', { name: 'Exit full screen' })
+      .closest('[data-title-bar]') as HTMLElement;
     expect(row.contains(header)).toBe(true);
     expect(row.contains(within(overlay).getByRole('heading', { name: 'Ops' }))).toBe(true);
   });

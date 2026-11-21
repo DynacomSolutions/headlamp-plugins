@@ -203,6 +203,70 @@ describe('dashboard page', () => {
     expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?edit=1');
   });
 
+  it('wraps the title bar at every width, so no control is drawn over another one', async () => {
+    const Original = globalThis.ResizeObserver;
+    const rect = Element.prototype.getBoundingClientRect;
+    globalThis.ResizeObserver = class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      for (const [width, level] of [
+        [2560, '0'],
+        [1300, '1'],
+        [360, '2'],
+      ] as const) {
+        Element.prototype.getBoundingClientRect = function (this: Element) {
+          return this.hasAttribute('data-title-bar')
+            ? ({ width, height: 48, top: 0, left: 0, right: width, bottom: 48 } as DOMRect)
+            : rect.call(this);
+        };
+        mount('/dashboards/ops');
+        await screen.findByText('Hello header');
+        const bar = document.querySelector('[data-title-bar]') as HTMLElement;
+        expect(bar.getAttribute('data-title-bar-level')).toBe(level);
+        expect(getComputedStyle(bar).flexWrap).toBe('wrap');
+        // The filter row wraps too, and the Edit button, the header widgets and the full screen
+        // button stay together at the end of the bar.
+        expect(getComputedStyle(bar.querySelector('[role="search"]') as HTMLElement).flexWrap).toBe(
+          'wrap'
+        );
+        const tail = bar.querySelector('[data-title-bar-tail]') as HTMLElement;
+        expect(tail.querySelector('button[aria-label="Full screen"]')).not.toBeNull();
+        expect(getComputedStyle(tail).flexWrap).toBe('wrap');
+        cleanup();
+      }
+    } finally {
+      Element.prototype.getBoundingClientRect = rect;
+      globalThis.ResizeObserver = Original;
+    }
+  });
+
+  it('keeps the tab area from panning the page sideways, and a wide table scrolls sideways', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Hello header');
+    const area = document.querySelector('[data-tab-area]') as HTMLElement;
+    // jsdom drops the touch properties from computed styles, so read the rules of the style sheet.
+    const css = Array.from(document.querySelectorAll('style'))
+      .map(el => el.textContent ?? '')
+      .join('\n')
+      .replace(/\s+/g, '');
+    const rules = (cls: string) =>
+      Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g))
+        .filter(m => m[1].split(',').some(sel => sel.includes(`.${cls}`)))
+        .map(m => ({ selector: m[1], body: m[2] }));
+    const own = area.className.split(' ').flatMap(rules);
+    expect(own.some(r => !r.selector.includes('[') && r.body.includes('touch-action:pan-y'))).toBe(
+      true
+    );
+    expect(own.some(r => r.body.includes('overscroll-behavior-x:none'))).toBe(true);
+    // A wide table and a table widget inside the area take sideways pans again.
+    const inner = own.filter(r => r.body.includes('touch-action:pan-xpan-y'));
+    expect(inner.map(r => r.selector).join('|')).toContain('[data-table]');
+    expect(inner.map(r => r.selector).join('|')).toContain('[role="table"]');
+  });
+
   it('enters edit mode from the query string, with the edit toolbar', async () => {
     mount('/dashboards/ops?edit=1');
     expect(await screen.findByRole('toolbar', { name: 'Edit tools' })).toBeTruthy();

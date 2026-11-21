@@ -56,6 +56,45 @@ export function toLayout(widgets: WidgetInstance[], limitsOf: (type: string) => 
   });
 }
 
+/**
+ * The layout for a grid with fewer columns than the saved 12. react-grid-layout would only push
+ * each widget back inside the new width, which leaves blank columns (a widget at column 8 of 12
+ * lands at column 2 of 6, next to a gap). This flows the widgets in reading order instead: each is
+ * about as wide as in the saved layout but not narrower than half of the columns (the full width
+ * on a 2 column grid), and a widget that does not fit in the row starts the next row. No gap is left
+ * at the left, and the saved positions stay as they are (only the 12 column layout is saved).
+ */
+export function layoutForColumns(layout: ReadonlyArray<Layout>, cols: number): Layout[] {
+  if (cols >= GRID_COLUMNS) return layout.map(l => ({ ...l }));
+  // On a phone (2 columns) every widget has the full width. Wider, none is narrower than half.
+  const half = cols <= 2 ? cols : Math.ceil(cols / 2);
+  const order = [...layout].sort((a, b) => a.y - b.y || a.x - b.x);
+  const out: Layout[] = [];
+  let x = 0;
+  let rowTop = 0;
+  let rowBottom = 0;
+  for (const l of order) {
+    const wanted = Math.ceil((l.w * cols) / GRID_COLUMNS);
+    // A widget that cannot be as narrow as the minimum fills the row.
+    const w = Math.min(cols, Math.max(wanted, half, l.minW ?? 1));
+    if (x + w > cols) {
+      x = 0;
+      rowTop = rowBottom;
+    }
+    out.push({
+      ...l,
+      x,
+      y: rowTop,
+      w,
+      maxW: l.maxW === undefined ? undefined : Math.max(l.maxW, w),
+    });
+    x += w;
+    rowBottom = Math.max(rowBottom, rowTop + l.h);
+  }
+  // Keep the order of the input, so the result matches the saved layout item by item.
+  return layout.map(l => out.find(o => o.i === l.i) as Layout);
+}
+
 export const layoutPositions = (layout: ReadonlyArray<Layout>) =>
   layout.map(({ i, x, y, w, h }) => ({ i, x, y, w, h }));
 

@@ -17,7 +17,7 @@ and a header or divider.
   widget has a settings dialog, a duplicate action and a delete action. Layout changes
   rerender only the widget that moved and never refetch data.
 - **Sections**: a tab holds sections, and each section has its own grid. A section is
-  *normal*, *sticky* at the top or bottom of the scrolling page, or *self-scroll* (a fixed
+  _normal_, _sticky_ at the top or bottom of the scrolling page, or _self-scroll_ (a fixed
   height with its own scrollbar, so the page does not scroll). A widget also has a
   "Self-scroll content" option. Move a widget to another section by dropping it there or
   with its menu. Reorder sections with the arrows in the section header.
@@ -44,16 +44,16 @@ The URL alone reproduces the view. The dashboard and the tab are path segments (
 a history push). View options are query parameters, written with history replace and left out
 when they have their default value.
 
-| Parameter | Meaning |
-| --- | --- |
-| `edit=1` | Edit mode (needs write access) |
-| `kiosk=1` | Kiosk (full screen) |
-| `view=<id>` | A saved view of filter values |
-| `ns=a,b` | Namespaces (percent-encoded items) |
-| `node=a,b` | Nodes |
-| `sel=<selector>` | Label selector, for example `app=web` |
-| `range=<r>` | `5m`, `15m`, `1h`, `6h`, `24h`, `7d` or `30d` |
-| `refresh=<s>` | Automatic refresh in seconds (0, 10, 30, 60, 300 or 900), over the saved value |
+| Parameter        | Meaning                                                                        |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `edit=1`         | Edit mode (needs write access)                                                 |
+| `kiosk=1`        | Kiosk (full screen)                                                            |
+| `view=<id>`      | A saved view of filter values                                                  |
+| `ns=a,b`         | Namespaces (percent-encoded items)                                             |
+| `node=a,b`       | Nodes                                                                          |
+| `sel=<selector>` | Label selector, for example `app=web`                                          |
+| `range=<r>`      | `5m`, `15m`, `1h`, `6h`, `24h`, `7d` or `30d`                                  |
+| `refresh=<s>`    | Automatic refresh in seconds (0, 10, 30, 60, 300 or 900), over the saved value |
 
 A filter key in the URL overrides the saved view, even with an empty value.
 
@@ -62,7 +62,8 @@ A filter key in the URL overrides the saved view, even with an empty value.
 The app can run as an installed web app with no browser bar, so no widget link leaves Headlamp.
 
 - A widget link goes to a Headlamp route: a dashboard, a dashboard tab or a Headlamp page. It is a history push, so Back
-  returns to the dashboard. `{cluster}` in a path becomes the current cluster.
+  returns to the dashboard. `{cluster}` in a path becomes the current cluster. A path to a Headlamp page that is also a
+  tab of the dashboard (for example `/c/{cluster}/uptime` on an uptime row) opens that tab.
 - A panel row with an `http` or `https` link goes to the tab of the dashboard whose id is the panel id, else the source id
   (for example `ais-console`, `hoarddb`, `uptime`). With no such tab the row has no link. A note shows an address on
   another host as text.
@@ -70,6 +71,10 @@ The app can run as an installed web app with no browser bar, so no widget link l
   finger. A swipe left or right on the tab area of a dashboard shows the next or the previous tab (one history entry each).
   A swipe is ignored on a text field, in a sideways scroll area (a wide table), with a text selection, with two fingers
   and in edit mode. Mark an element `data-no-swipe` to keep a swipe for it. Alt+Left still works on a desktop.
+- The tab area takes vertical pans only (`touch-action: pan-y`, `overscroll-behavior-x: none`), so a sideways drag does
+  not pan the whole page on a phone. A wide table keeps its own sideways scroll.
+- The title bar wraps: controls that do not fit in one row move to the next row, and the title ends with an ellipsis. No
+  control is drawn over another one, from 360 px to 2560 px.
 
 ## Header, footer and tab rail
 
@@ -86,10 +91,10 @@ row wraps only on a narrow screen. The widgets draw without a card or a card tit
 footer stay when the tab changes (a clock keeps ticking, and nothing is fetched again). In edit mode the header
 shows as an editable strip under the toolbar, so you can still add, move, configure and remove its widgets.
 
-| Option | Values | Meaning |
-| --- | --- | --- |
-| Sticky | on or off (default off) | The title bar with the header widgets stays at the top and the footer at the bottom of the scrolling view. Sticky is off while you edit. |
-| Show in | `both` (default), `normal`, `kiosk` | Where the band draws: in the normal view and the kiosk, in the normal view only, or in the kiosk only. |
+| Option  | Values                              | Meaning                                                                                                                                  |
+| ------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Sticky  | on or off (default off)             | The title bar with the header widgets stays at the top and the footer at the bottom of the scrolling view. Sticky is off while you edit. |
+| Show in | `both` (default), `normal`, `kiosk` | Where the band draws: in the normal view and the kiosk, in the normal view only, or in the kiosk only.                                   |
 
 A band with no widgets draws nothing in view mode. In edit mode it always shows, with its two options.
 
@@ -146,10 +151,10 @@ One ConfigMap per dashboard, in the namespace set in the plugin settings (defaul
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: ops-overview          # made from the first title, never changed (URLs use it)
+  name: ops-overview # made from the first title, never changed (URLs use it)
   namespace: headlamp-dashboards
   labels:
-    headlamp.dev/dashboard: "true"
+    headlamp.dev/dashboard: 'true'
 data:
   dashboard.json: '{"version":1,"title":"Ops overview", ...}'
 ```
@@ -159,6 +164,7 @@ data:
   header and footer and `tabRail: "compact"`, and nothing else changes. Version 3 adds `fitHeight` (see
   "Fit to screen height"); an older spec gets `fitHeight: false`, so it looks the same. A spec from a newer plugin version is shown as an error and is
   never overwritten.
+
 ### Fit to screen height
 
 The grid has a fixed row height (30 px), so a dashboard can leave an empty band under the last row on a tall
@@ -188,7 +194,7 @@ metadata:
   name: dashboards-editor
   namespace: headlamp-dashboards
 rules:
-  - apiGroups: [""]
+  - apiGroups: ['']
     resources: [configmaps]
     verbs: [get, list, create, update, delete]
 ```
@@ -236,7 +242,7 @@ registerDashboardWidget<Config>({
   description: 'The namespaces that use the most CPU.',
   icon: 'mdi:table',
   category: 'Tables',
-  defaultSize: { w: 6, h: 8 },     // grid units: 12 columns, rows of 30 px
+  defaultSize: { w: 6, h: 8 }, // grid units: 12 columns, rows of 30 px
   minSize: { w: 3, h: 4 },
   defaultConfig: { limit: 10 },
   configSchema: [{ key: 'limit', label: 'Rows', type: 'number', min: 1, max: 50 }],
@@ -247,14 +253,14 @@ registerDashboardWidget<Config>({
 
 The pieces of the contract (see the comments in `src/contract.ts`):
 
-| Name | Purpose |
-| --- | --- |
-| `WidgetDefinition<C>` | `type`, `title`, `description`, `icon` (Iconify), `category`, `defaultSize`, `minSize`, `maxSize`, `defaultConfig`, `configSchema` or `SettingsComponent`, `Component`, `selfScroll`, `card` |
-| `WidgetProps<C>` | `instanceId`, `config`, `filters`, `refreshSignal`, `reportRefreshed(at?)`, `editing`, `kiosk` |
-| `WidgetSettingsProps<C>` | `config` and `onChange(config)` for a custom settings form |
-| `ConfigField` | one field of a generated settings form: `text`, `multiline`, `number`, `boolean` or `select` |
-| `DashboardFilters` | `namespaces`, `nodes`, `labelSelector`, `range` |
-| `registerDashboardWidget(def)` | register, in any plugin load order |
+| Name                           | Purpose                                                                                                                                                                                      |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WidgetDefinition<C>`          | `type`, `title`, `description`, `icon` (Iconify), `category`, `defaultSize`, `minSize`, `maxSize`, `defaultConfig`, `configSchema` or `SettingsComponent`, `Component`, `selfScroll`, `card` |
+| `WidgetProps<C>`               | `instanceId`, `config`, `filters`, `refreshSignal`, `reportRefreshed(at?)`, `editing`, `kiosk`                                                                                               |
+| `WidgetSettingsProps<C>`       | `config` and `onChange(config)` for a custom settings form                                                                                                                                   |
+| `ConfigField`                  | one field of a generated settings form: `text`, `multiline`, `number`, `boolean` or `select`                                                                                                 |
+| `DashboardFilters`             | `namespaces`, `nodes`, `labelSelector`, `range`                                                                                                                                              |
+| `registerDashboardWidget(def)` | register, in any plugin load order                                                                                                                                                           |
 
 Rules for a widget:
 
@@ -273,11 +279,11 @@ Rules for a widget:
 
 ### Built-in widgets
 
-| Type | Settings |
-| --- | --- |
-| `core.clock` | Hours, minutes and seconds on or off, 12 or 24 hour, date on or off, a date format (preset or custom), time zone, size, zone name |
-| `core.note` | Markdown text (no raw HTML, no images, only path links), alignment |
-| `core.header` | Header text, subtitle, header or line or both, size, alignment |
+| Type          | Settings                                                                                                                          |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `core.clock`  | Hours, minutes and seconds on or off, 12 or 24 hour, date on or off, a date format (preset or custom), time zone, size, zone name |
+| `core.note`   | Markdown text (no raw HTML, no images, only path links), alignment                                                                |
+| `core.header` | Header text, subtitle, header or line or both, size, alignment                                                                    |
 
 The date format uses these letters: `yyyy`, `yy` (year), `MMMM`, `MMM`, `MM`, `M` (month),
 `EEEE`, `EEE` (weekday), `dd`, `d` (day), `HH`, `H`, `hh`, `h` (hour), `mm`, `ss`, `a` (AM or PM).
@@ -286,10 +292,10 @@ Quote literal text in single quotes, for example `'Week' d`. Examples: `EEE d MM
 
 ## Settings
 
-| Setting | Meaning |
-| --- | --- |
-| Namespace | The namespace that holds the dashboard ConfigMaps. Blank uses `headlamp-dashboards`. |
-| Panel sources | The places the panel widgets read panels from. See [Panel sources](#panel-sources). |
+| Setting       | Meaning                                                                              |
+| ------------- | ------------------------------------------------------------------------------------ |
+| Namespace     | The namespace that holds the dashboard ConfigMaps. Blank uses `headlamp-dashboards`. |
+| Panel sources | The places the panel widgets read panels from. See [Panel sources](#panel-sources).  |
 
 ## Development
 
@@ -324,10 +330,10 @@ error card, not a broken widget. Unknown extra fields are ignored.
 The Dashboards settings page has a **Panel sources** section. Each source has an id (lower case letters, digits,
 dashes and underscores), a title, an optional `mdi:` icon and a kind:
 
-| Kind | Fields | How it is reached |
-| --- | --- | --- |
-| `service` | namespace, service, port, path prefix (default empty) | The Kubernetes API service proxy: `/api/v1/namespaces/<ns>/services/<svc>:<port>/proxy<prefix>/api/widgets`. Kubernetes RBAC is the guard. |
-| `url` | base URL | The browser calls the URL directly with `fetch` and `credentials: 'include'`, so the cookie login of the app works. The app must allow the Headlamp origin with credentials (CORS). No token is stored in the settings. |
+| Kind      | Fields                                                | How it is reached                                                                                                                                                                                                       |
+| --------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `service` | namespace, service, port, path prefix (default empty) | The Kubernetes API service proxy: `/api/v1/namespaces/<ns>/services/<svc>:<port>/proxy<prefix>/api/widgets`. Kubernetes RBAC is the guard.                                                                              |
+| `url`     | base URL                                              | The browser calls the URL directly with `fetch` and `credentials: 'include'`, so the cookie login of the app works. The app must allow the Headlamp origin with credentials (CORS). No token is stored in the settings. |
 
 - **The agent** is always the first source, with the id `agent`. It uses the three agent fields of earlier versions
   (`agentNamespace`, `agentService`, `agentPort`), kept under the same keys, so an old setting works with no change.
@@ -508,11 +514,11 @@ and a live preview that uses the real cluster data.
   replaces that. A wrong logic string shows a message and falls back to AND. For `exists`, the value
   `false` means "does not exist". Text tests ignore case.
 - **Report types**:
-  - *Tabular*: the columns, sortable.
-  - *Summary*: group by up to two fields, with row counts and sum, avg, min or max of numeric fields.
+  - _Tabular_: the columns, sortable.
+  - _Summary_: group by up to two fields, with row counts and sum, avg, min or max of numeric fields.
     Groups collapse. Each group has a subtotal and the report has a grand total. The rows can show inside
     the groups.
-  - *Matrix*: rows by one field, columns by another, with a row count or an aggregate in each cell, and
+  - _Matrix_: rows by one field, columns by another, with a row count or an aggregate in each cell, and
     row, column and grand totals.
 - **Chart** (summary only): bar, horizontal bar, donut or stacked bar (two group fields). Every group is its
   own bar or slice at its real size. There is no "Other" group and no top-N cut. After eight groups the
@@ -539,25 +545,25 @@ Set where the service is in the plugin settings (blank fields use the defaults):
 (`monitoring`), service (`victoria-metrics`), port (`8428`) and an optional path prefix such as
 `/prometheus`.
 
-| Type | What it shows |
-| --- | --- |
+| Type                | What it shows                                                                   |
+| ------------------- | ------------------------------------------------------------------------------- |
 | `promql.timeseries` | Line, area, stacked area or bars from a range query. Several queries per chart. |
-| `promql.stat` | One value, an optional sparkline and thresholds. |
-| `promql.gauge` | One value against a scale, with thresholds. |
-| `promql.table` | One row per series of an instant query. Pick the label columns. Sortable. |
-| `promql.breakdown` | A pie (donut) or bars from an instant query, grouped by a label. |
+| `promql.stat`       | One value, an optional sparkline and thresholds.                                |
+| `promql.gauge`      | One value against a scale, with thresholds.                                     |
+| `promql.table`      | One row per series of an instant query. Pick the label columns. Sortable.       |
+| `promql.breakdown`  | A pie (donut) or bars from an instant query, grouped by a label.                |
 
 **Template variables.** They follow the filter bar, so one query serves every filter. An unknown
 `$name` stays as typed. Use double quotes around them.
 
-| Variable | Value |
-| --- | --- |
+| Variable     | Value                                                                                    |
+| ------------ | ---------------------------------------------------------------------------------------- |
 | `$namespace` | The chosen namespaces as a regex, for `namespace=~"$namespace"`. None chosen gives `.*`. |
-| `$node` | The same for nodes. Dots and other regex characters are escaped. |
-| `$range` | The time range as a PromQL duration, for example `[$range]`. |
-| `$step` | The query step, for example `30s`. |
-| `$rate` | A window for `rate()`: four steps, at least one minute. |
-| `$selector` | The label selector as PromQL matchers, for `up{$selector}`. |
+| `$node`      | The same for nodes. Dots and other regex characters are escaped.                         |
+| `$range`     | The time range as a PromQL duration, for example `[$range]`.                             |
+| `$step`      | The query step, for example `30s`.                                                       |
+| `$rate`      | A window for `rate()`: four steps, at least one minute.                                  |
+| `$selector`  | The label selector as PromQL matchers, for `up{$selector}`.                              |
 
 **Several queries.** In the time series chart and the table, put a line with only `---` between
 queries. A first line `# {{pod}}` names the series from labels (chart). In the table, a first line
