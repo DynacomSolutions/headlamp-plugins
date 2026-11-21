@@ -526,6 +526,20 @@ capacity, and its free capacity is a faint crosshatch on a transparent fill. It 
 `nodes` for each ring. Without `nodes` the chart stays category first. To turn it on, set `"groupBy": "node"`
 in the `config` of the widget.
 
+### Agent usage pair (`agent.usage-pair`)
+
+Draws two rings of one panel (by default `cpu` and `memory` of `usage-dashboard` on the agent) as two
+node-first sunbursts side by side with ONE shared legend. It has the same source and panel settings as the
+panel widget, and it keeps the last good panel (the `cache` of the widget) like the other panel widgets.
+It is sized for 6 columns and 8 rows (`w` 6, `h` 8). Options: `first` and `second` set the two rings.
+
+- The same node and the same category have the same colour in both rings and in the legend.
+- The legend lists the node, then its categories, then its free capacity (faint crosshatch). Each row has one
+  value for each ring, in two columns of equal width. A group that only one ring has shows a dash in the other.
+- The legend stays in place and scrolls inside itself when it is long. There is no "+N more" row and no "Other" group.
+- A hover on a legend row or on an arc shows the same group in both rings. In kiosk mode a tap selects instead.
+- Without per-node data from the agent, the widget draws two category-first charts, each with its own legend.
+
 ### The sunburst component
 
 `src/widgets/sunburst/SunburstChart.tsx` is a reusable two-level sunburst: the inner ring has one arc per
@@ -587,7 +601,7 @@ Users need `list` (and `watch`) access to the chosen kind. A refused list shows 
 
 ## PromQL widgets
 
-Five widgets in the **Monitoring** group query a Prometheus-compatible service (VictoriaMetrics,
+Six widgets in the **Monitoring** group query a Prometheus-compatible service (VictoriaMetrics,
 Prometheus). They use the plain HTTP API (`/api/v1/query` and `/api/v1/query_range`) through the
 Kubernetes API service proxy, as the other plugins do. The signed in user needs the `get` verb on
 `services/proxy` for that Service.
@@ -596,13 +610,14 @@ Set where the service is in the plugin settings (blank fields use the defaults):
 (`monitoring`), service (`victoria-metrics`), port (`8428`) and an optional path prefix such as
 `/prometheus`.
 
-| Type                | What it shows                                                                   |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `promql.timeseries` | Line, area, stacked area or bars from a range query. Several queries per chart. |
-| `promql.stat`       | One value, an optional sparkline and thresholds.                                |
-| `promql.gauge`      | One value against a scale, with thresholds.                                     |
-| `promql.table`      | One row per series of an instant query. Pick the label columns. Sortable.       |
-| `promql.breakdown`  | A pie (donut) or bars from an instant query, grouped by a label.                |
+| Type                | What it shows                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `promql.timeseries` | Line, area, stacked area or bars from a range query. Several queries per chart.      |
+| `promql.stat`       | One value, an optional sparkline and thresholds.                                     |
+| `promql.gauge`      | One value against a scale, with thresholds.                                          |
+| `promql.table`      | One row per series of an instant query. Pick the label columns. Sortable.            |
+| `promql.breakdown`  | A pie (donut) or bars from an instant query, grouped by a label.                     |
+| `promql.matrix`     | A rows by columns matrix from an instant query, for example ping loss per node pair. |
 
 **Template variables.** They follow the filter bar, so one query serves every filter. An unknown
 `$name` stays as typed. Use double quotes around them.
@@ -627,6 +642,16 @@ shown as percent) and seconds (ms, s, min, h, d).
 **Thresholds.** `70:warning, 90:critical` gives the status from a value up. Below the first step the
 status is good. The statuses are good, warning, serious and critical. "A lower value is worse" reads
 the steps as "or less". A status always shows an icon and a word, so colour is never the only cue.
+
+**Matrix.** `promql.matrix` draws one cell for each pair of a row label and a column label (default
+`source` and `target`). The value query gives the cell value. An optional path query (1 direct, 0 relayed)
+puts an `R` mark on a relayed pair. An optional round trip query (seconds) goes in the cell tooltip. With
+"same members" on, rows and columns are the union of every label value that a query returned, and the
+diagonal is blank. A pair with no sample shows a dash on a hatched cell ("no data"), never 0. A value above
+"Warning above" gets a triangle and an amber fill. A value above "Critical above" gets a square and a red
+fill. A value equal to a limit is not above it. A summary line stays in the widget footer: "30 pairs, 2 above
+2%, 4 no data, worst a to b 3.5%". The matrix shows every pair, scrolls when the widget is small and has no
+"+N more" row and no "Other" group.
 
 **Performance and behaviour.**
 

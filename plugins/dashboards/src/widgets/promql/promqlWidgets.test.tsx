@@ -71,13 +71,14 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('registration', () => {
-  it('has five widgets with unique types, a settings component and sensible sizes', () => {
+  it('has six widgets with unique types, a settings component and sensible sizes', () => {
     expect(PROMQL_WIDGETS.map(w => w.type)).toEqual([
       'promql.timeseries',
       'promql.stat',
       'promql.gauge',
       'promql.table',
       'promql.breakdown',
+      'promql.matrix',
     ]);
     for (const w of PROMQL_WIDGETS) {
       expect(w.SettingsComponent).toBeTruthy();
