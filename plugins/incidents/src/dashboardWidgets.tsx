@@ -313,10 +313,18 @@ function IncidentChatWidget({
         flexDirection: 'column',
         minWidth: 0,
         minHeight: 0,
-        containerType: 'inline-size',
       }}
     >
-      <Box sx={{ flex: 'none', pb: 1, minHeight: 28, display: 'flex', alignItems: 'center' }}>
+      <Box
+        sx={theme => ({
+          flex: 'none',
+          pb: 1,
+          minHeight: 28,
+          display: 'flex',
+          alignItems: 'center',
+          borderBottom: `1px solid ${theme.palette.divider}`,
+        })}
+      >
         {selected ? (
           <Chip
             size="small"
@@ -346,65 +354,33 @@ function IncidentChatWidget({
                 flex: 1,
                 display: 'flex',
                 flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 1.5,
-                textAlign: 'center',
+                alignItems: 'flex-start',
+                justifyContent: 'flex-end',
+                textAlign: 'left',
               }}
             >
               <Typography
+                variant="subtitle1"
                 component="h2"
-                sx={{
-                  fontSize: 'clamp(22px, 3.4cqw, 34px)',
-                  lineHeight: 1.2,
-                  fontWeight: 600,
-                  mb: 1.5,
-                }}
+                color="text.secondary"
+                sx={{ fontSize: 13, mb: 1 }}
               >
                 {selected
                   ? `Ask the agent about ${selected.alertName}`
                   : 'What do you want to know about the cluster?'}
               </Typography>
               <Box
-                sx={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-                  gap: 1.5,
-                  width: '100%',
-                }}
+                sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, justifyContent: 'flex-start' }}
               >
                 {prompts.map(p => (
                   <Button
                     key={p}
-                    variant="contained"
+                    size="small"
+                    variant="outlined"
                     color="inherit"
                     disabled={busy}
                     onClick={() => onSend(p)}
-                    sx={theme => ({
-                      textTransform: 'none',
-                      borderRadius: 2.5,
-                      justifyContent: 'flex-start',
-                      textAlign: 'left',
-                      minHeight: kiosk ? 96 : 72,
-                      px: 2.25,
-                      py: 1.5,
-                      fontSize: 'clamp(16px, 2.2cqw, 21px)',
-                      lineHeight: 1.25,
-                      fontWeight: 400,
-                      boxShadow: 'none',
-                      color: theme.palette.text.primary,
-                      bgcolor:
-                        theme.palette.mode === 'dark'
-                          ? 'rgba(255,255,255,0.16)'
-                          : 'rgba(0,0,0,0.08)',
-                      '&:hover': {
-                        boxShadow: 'none',
-                        bgcolor:
-                          theme.palette.mode === 'dark'
-                            ? 'rgba(255,255,255,0.24)'
-                            : 'rgba(0,0,0,0.14)',
-                      },
-                    })}
+                    sx={{ textTransform: 'none', borderRadius: 4, fontSize: 12.5, py: 0.25 }}
                   >
                     {p}
                   </Button>
@@ -425,7 +401,6 @@ function IncidentChatWidget({
           </Alert>
         )}
         <Composer
-          large={kiosk}
           running={running}
           disabled={busy}
           onSend={onSend}

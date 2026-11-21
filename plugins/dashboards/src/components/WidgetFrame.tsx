@@ -163,40 +163,26 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
     <Paper
       data-widget={id}
       variant="outlined"
-      sx={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        // The dense frame: a hairline box, a small radius and tight padding.
-        borderRadius: '4px',
-        borderColor: 'divider',
-      }}
+      sx={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
     >
       <Box
         sx={{
           display: 'flex',
           alignItems: 'center',
           px: 1,
-          pt: editing ? 0.25 : 1,
-          pb: editing ? 0.25 : 0.75,
+          py: editing ? 0.25 : 0.5,
           minHeight: 28,
           flex: 'none',
         }}
       >
         {handle}
-        <Typography
-          variant="subtitle2"
-          component="h3"
-          noWrap
-          sx={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 400, color: 'text.secondary' }}
-        >
+        <Typography variant="subtitle2" noWrap sx={{ flex: 1, minWidth: 0 }}>
           {shownTitle}
         </Typography>
         {staleSince !== undefined && <StaleMarker since={staleSince} />}
         {menu}
       </Box>
-      <Box sx={{ flex: 1, minHeight: 0, overflow: scroll ? 'auto' : 'hidden', px: 1, pb: 0.75 }}>
+      <Box sx={{ flex: 1, minHeight: 0, overflow: scroll ? 'auto' : 'hidden', px: 1, pb: 1 }}>
         {body}
       </Box>
     </Paper>
