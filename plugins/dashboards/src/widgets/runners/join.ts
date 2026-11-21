@@ -94,6 +94,79 @@ export function orderRuns(runs: ReadonlyArray<PanelRun>): PanelRun[] {
     .map(e => e.run);
 }
 
+/** The org label of a run whose repo name has no "org/" part. */
+export const NO_ORG = 'No org';
+
+/** One repo with its runs. The runs keep the order they came in. */
+export interface RepoGroup {
+  /** The org, then a slash, then the repo name. Unique in the list. */
+  key: string;
+  /** The repo name without the org. */
+  name: string;
+  runs: PanelRun[];
+  running: number;
+  queued: number;
+  /** The longest time in seconds: how long a run has run, or how long it has waited. */
+  longest: number;
+}
+
+/** One org with its repos. */
+export interface OrgGroup {
+  key: string;
+  name: string;
+  repos: RepoGroup[];
+  running: number;
+  queued: number;
+  longest: number;
+}
+
+/** "org/repo" gives the org and the repo name. Without a slash the org is `NO_ORG`. */
+export function splitRepo(full: string): { org: string; name: string } {
+  const at = full.indexOf('/');
+  if (at <= 0 || at === full.length - 1) return { org: NO_ORG, name: full };
+  return { org: full.slice(0, at), name: full.slice(at + 1) };
+}
+
+interface Counted {
+  running: number;
+  queued: number;
+  longest: number;
+}
+
+const tally = (runs: ReadonlyArray<PanelRun>): Counted => ({
+  running: runs.filter(r => r.state === 'running').length,
+  queued: runs.filter(r => r.state !== 'running').length,
+  longest: runs.reduce((m, r) => Math.max(m, r.seconds), 0),
+});
+
+/** Most running first, then the longest time first. The sort is stable, so ties keep their place. */
+const byBusy = (a: Counted, b: Counted): number => b.running - a.running || b.longest - a.longest;
+
+/**
+ * Groups runs by org, then by repo name. Orgs and repos go by running count (most first), then by
+ * the longest time. Runs keep their order inside a repo. Every run is in exactly one group.
+ */
+export function groupRuns(runs: ReadonlyArray<PanelRun>): OrgGroup[] {
+  const orgs = new Map<string, Map<string, PanelRun[]>>();
+  for (const run of runs) {
+    const { org, name } = splitRepo(run.repo);
+    const repos = orgs.get(org) ?? new Map<string, PanelRun[]>();
+    repos.set(name, [...(repos.get(name) ?? []), run]);
+    orgs.set(org, repos);
+  }
+  return [...orgs.entries()]
+    .map(([org, repos]): OrgGroup => {
+      const list = [...repos.entries()]
+        .map(
+          ([name, own]): RepoGroup => ({ key: `${org}/${name}`, name, runs: own, ...tally(own) })
+        )
+        .sort(byBusy);
+      const all = list.flatMap(r => r.runs);
+      return { key: org, name: org, repos: list, ...tally(all) };
+    })
+    .sort(byBusy);
+}
+
 /** The steps of a run in job order. */
 export const stepsOfRun = (run: PanelRun): PanelStep[] => run.jobs.flatMap(j => j.steps);
 

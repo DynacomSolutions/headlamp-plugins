@@ -1,7 +1,9 @@
 /*
  * Draws the runner model (see `join.ts`): fixed stat tiles on top, one ring for each pool (use,
  * queued and free), then one scroll area with the list. With the `runs` panel the list is a tree:
- * a run, its jobs and their steps, collapsed by default. Without it the list is the queue rows.
+ * an org, its repos, their runs, then the jobs and steps of a run. Orgs and repos are open by
+ * default and a run is collapsed. A group the user folds stays folded only until the page reloads.
+ * Without the `runs` panel the list is the queue rows.
  * Every row is drawn: nothing folds into a "+N more" line. A link goes only to a dashboard tab.
  */
 import { Icon } from '@iconify/react';
@@ -16,8 +18,11 @@ import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
 import {
   formatWait,
+  groupRuns,
+  type OrgGroup,
   progressOf,
   type QueueRow,
+  type RepoGroup,
   type RunnerModel,
   type RunnerPool,
   STEP_GAP,
@@ -359,10 +364,7 @@ function Progress(props: { steps: ReadonlyArray<PanelStep>; waiting?: boolean })
   const tk = useTokens();
   const p = progressOf(props.steps);
   return (
-    <Box
-      data-progress
-      sx={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}
-    >
+    <Box data-progress sx={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}>
       {p ? (
         <>
           <StepBar steps={props.steps} />
@@ -424,6 +426,7 @@ const TIME_SX = {
 } as const;
 
 function StepList(props: { steps: ReadonlyArray<PanelStep>; depth: number }): JSX.Element {
+  // `depth` is the indent level of the job row. The steps sit one chevron further in.
   const tk = useTokens();
   const colours = useStepColours();
   return (
@@ -460,8 +463,13 @@ function StepList(props: { steps: ReadonlyArray<PanelStep>; depth: number }): JS
   );
 }
 
-function JobRow(props: { job: PanelJob; open: boolean; toggle: () => void }): JSX.Element {
-  const { job, open, toggle } = props;
+function JobRow(props: {
+  job: PanelJob;
+  depth: number;
+  open: boolean;
+  toggle: () => void;
+}): JSX.Element {
+  const { job, depth, open, toggle } = props;
   const tk = useTokens();
   const hasSteps = job.steps.length > 0;
   return (
@@ -479,7 +487,7 @@ function JobRow(props: { job: PanelJob; open: boolean; toggle: () => void }): JS
             toggle();
           }
         }}
-        sx={{ ...rowSx(tk, 1), cursor: hasSteps ? 'pointer' : 'default' }}
+        sx={{ ...rowSx(tk, depth), cursor: hasSteps ? 'pointer' : 'default' }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
           <Chevron open={open} show={hasSteps} />
@@ -501,7 +509,7 @@ function JobRow(props: { job: PanelJob; open: boolean; toggle: () => void }): JS
           <Progress steps={job.steps} waiting={job.state === 'queued'} />
         </Box>
       </Box>
-      {open && hasSteps && <StepList steps={job.steps} depth={1} />}
+      {open && hasSteps && <StepList steps={job.steps} depth={depth} />}
     </>
   );
 }
@@ -509,20 +517,23 @@ function JobRow(props: { job: PanelJob; open: boolean; toggle: () => void }): JS
 function RunRow(props: {
   run: PanelRun;
   link?: string;
+  depth: number;
   open: boolean;
   openJobs: ReadonlySet<string>;
   toggle: (id: string) => void;
 }): JSX.Element {
-  const { run, link, open, openJobs, toggle } = props;
+  const { run, link, depth, open, openJobs, toggle } = props;
   const tk = useTokens();
   const steps = stepsOfRun(run);
   const expandable = run.jobs.length > 0;
-  const repo = (
+  // The org and the repo are the group headers, so the row starts with the workflow.
+  const workflow = (
     <Box
       component="span"
+      data-run-workflow
       sx={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}
     >
-      {run.repo}
+      {run.workflow || run.id}
     </Box>
   );
   return (
@@ -541,16 +552,16 @@ function RunRow(props: {
             toggle(run.id);
           }
         }}
-        sx={{ ...rowSx(tk, 0), cursor: expandable ? 'pointer' : 'default' }}
+        sx={{ ...rowSx(tk, depth), cursor: expandable ? 'pointer' : 'default' }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
           <Chevron open={open} show={expandable} />
           {link ? (
             <InternalLink to={link} style={{ ...LINK_STYLE, display: 'flex', minWidth: 0 }}>
-              {repo}
+              {workflow}
             </InternalLink>
           ) : (
-            repo
+            workflow
           )}
           <Box
             data-run-meta
@@ -561,9 +572,10 @@ function RunRow(props: {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               minWidth: 0,
+              flex: '0 1 auto',
             }}
           >
-            {[run.workflow, run.ref].filter(Boolean).join(' · ')}
+            {run.ref}
           </Box>
           <Box
             data-run-pool
@@ -592,10 +604,202 @@ function RunRow(props: {
           <JobRow
             key={job.id}
             job={job}
+            depth={depth + 1}
             open={openJobs.has(`${run.id}\u0000${job.id}`)}
             toggle={() => toggle(`${run.id}\u0000${job.id}`)}
           />
         ))}
+    </>
+  );
+}
+
+/** "2 running, 1 queued". A count of 0 is left out. Both 0 gives "idle". */
+export function countsText(g: { running: number; queued: number }): string {
+  const parts = [
+    g.running > 0 ? `${g.running} running` : '',
+    g.queued > 0 ? `${g.queued} queued` : '',
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : 'idle';
+}
+
+/** The header of an org or a repo: chevron, name, the counts and the longest time. */
+function GroupHeader(props: {
+  kind: 'org' | 'repo';
+  group: OrgGroup | RepoGroup;
+  depth: number;
+  open: boolean;
+  toggle: () => void;
+}): JSX.Element {
+  const { kind, group, depth, open, toggle } = props;
+  const tk = useTokens();
+  const c = useRingColours();
+  return (
+    <Box
+      data-group={kind}
+      data-group-key={group.key}
+      data-open={open ? '' : undefined}
+      role="button"
+      tabIndex={0}
+      aria-expanded={open}
+      aria-label={`${open ? 'Fold' : 'Expand'} ${group.name}`}
+      onClick={toggle}
+      onKeyDown={e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          toggle();
+        }
+      }}
+      sx={{
+        ...rowSx(tk, depth),
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: '4px',
+        cursor: 'pointer',
+      }}
+    >
+      <Chevron open={open} show />
+      <Box
+        data-group-name
+        sx={{
+          fontSize: kind === 'org' ? 13.5 : 13,
+          fontWeight: kind === 'org' ? 700 : 600,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          minWidth: 0,
+        }}
+      >
+        {group.name}
+      </Box>
+      <Box
+        data-group-counts
+        sx={{
+          ml: 'auto',
+          flex: 'none',
+          display: 'flex',
+          gap: '6px',
+          fontSize: 11.5,
+          fontVariantNumeric: 'tabular-nums',
+          whiteSpace: 'nowrap',
+          color: tk.fg2,
+        }}
+      >
+        {group.running > 0 && (
+          <Box component="span" data-group-running sx={{ color: c.running }}>
+            {group.running} running
+          </Box>
+        )}
+        {group.queued > 0 && (
+          <Box component="span" data-group-queued sx={{ color: c.queued }}>
+            {group.queued} queued
+          </Box>
+        )}
+      </Box>
+      <Box
+        data-time
+        title="Longest time in this group"
+        sx={{ ...TIME_SX, minWidth: 52, ml: '8px', textAlign: 'right' }}
+      >
+        {formatWait(group.longest)}
+      </Box>
+    </Box>
+  );
+}
+
+/**
+ * The folded groups of each runner source. This lives in the page, not in storage: a tab switch
+ * keeps the folds, and a reload opens every group again.
+ */
+const FOLDED = new Map<string, ReadonlySet<string>>();
+
+/** Forget every fold. Tests use it to start from an open list. */
+export function resetRunnerFolds(): void {
+  FOLDED.clear();
+}
+
+/**
+ * The runs as org groups, then repo groups, then run rows. A group is open until the user folds
+ * it.
+ */
+function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): JSX.Element {
+  const { sourceId } = props;
+  const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
+  const [folded, setFoldedState] = React.useState<ReadonlySet<string>>(
+    () => FOLDED.get(sourceId) ?? new Set()
+  );
+  const setFolded = React.useCallback(
+    (update: (prev: ReadonlySet<string>) => ReadonlySet<string>) =>
+      setFoldedState(prev => {
+        const next = update(prev);
+        FOLDED.set(sourceId, next);
+        return next;
+      }),
+    [sourceId]
+  );
+  const toggle = React.useCallback(
+    (id: string) =>
+      setOpen(prev => {
+        const next = new Set(prev);
+        if (!next.delete(id)) next.add(id);
+        return next;
+      }),
+    []
+  );
+  const fold = React.useCallback(
+    (key: string) =>
+      setFolded(prev => {
+        const next = new Set(prev);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      }),
+    [setFolded]
+  );
+  const groups = React.useMemo(() => groupRuns(props.runs), [props.runs]);
+  return (
+    <>
+      {groups.map(org => {
+        const orgKey = `org\u0000${org.key}`;
+        const orgOpen = !folded.has(orgKey);
+        return (
+          <React.Fragment key={orgKey}>
+            <GroupHeader
+              kind="org"
+              group={org}
+              depth={0}
+              open={orgOpen}
+              toggle={() => fold(orgKey)}
+            />
+            {orgOpen &&
+              org.repos.map(repo => {
+                const repoKey = `repo\u0000${repo.key}`;
+                const repoOpen = !folded.has(repoKey);
+                return (
+                  <React.Fragment key={repoKey}>
+                    <GroupHeader
+                      kind="repo"
+                      group={repo}
+                      depth={1}
+                      open={repoOpen}
+                      toggle={() => fold(repoKey)}
+                    />
+                    {repoOpen &&
+                      repo.runs.map(run => (
+                        <RunRow
+                          key={run.id}
+                          run={run}
+                          link={props.link}
+                          depth={2}
+                          open={open.has(run.id)}
+                          openJobs={open}
+                          toggle={toggle}
+                        />
+                      ))}
+                  </React.Fragment>
+                );
+              })}
+          </React.Fragment>
+        );
+      })}
     </>
   );
 }
@@ -651,16 +855,6 @@ export function RunnersView(props: {
   const tk = useTokens();
   const resolveLink = useResolveLink();
   const root = useElementSize<HTMLDivElement>();
-  const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
-  const toggle = React.useCallback(
-    (id: string) =>
-      setOpen(prev => {
-        const next = new Set(prev);
-        if (!next.delete(id)) next.add(id);
-        return next;
-      }),
-    []
-  );
   // Every link goes to the runner tab of the dashboard, or is dropped.
   const link = editing ? undefined : resolveLink(model.link, { panelId: 'runners', sourceId });
   const empty = model.tree ? model.runs.length === 0 : model.queue.length === 0;
@@ -686,16 +880,7 @@ export function RunnersView(props: {
             {EMPTY}
           </Box>
         ) : model.tree ? (
-          model.runs.map(run => (
-            <RunRow
-              key={run.id}
-              run={run}
-              link={link}
-              open={open.has(run.id)}
-              openJobs={open}
-              toggle={toggle}
-            />
-          ))
+          <RunTree runs={model.runs} link={link} sourceId={sourceId} />
         ) : (
           <QueueRows rows={model.queue} link={link} />
         )}
