@@ -418,10 +418,10 @@ export function RunWardenNotice({ board }: { board: Board }) {
     <>
       {rw.state === 'error' && (
         <Alert severity={rw.source.mode === 'on' ? 'error' : 'info'} sx={{ mb: 1 }}>
-          RunWarden is not reachable ({rw.error}).{' '}
+          The runner service is not reachable ({rw.error}).{' '}
           {rw.source.mode === 'on'
-            ? 'Check the RunWarden settings and the service proxy permission.'
-            : 'The page shows the ARC feed instead. To use RunWarden, check the settings and the service proxy permission, or turn it off here to hide this notice.'}
+            ? 'Check the runner service settings and the service proxy permission.'
+            : 'The page shows the ARC feed instead. To use the runner service, check the settings and the service proxy permission, or turn it off here to hide this notice.'}
         </Alert>
       )}
       {rw.failed.length > 0 && rw.state === 'ok' && (
@@ -434,13 +434,13 @@ export function RunWardenNotice({ board }: { board: Board }) {
   );
 }
 
-/** Link to the RunWarden site, taken from the panel's own link. Only http and https links are shown. */
+/** Link to the runner service site, taken from the panel's own link. Only http and https links are shown. */
 export function RunWardenLink({ board }: { board: Board }) {
   const link = board.runwarden.board?.panels.pools?.link;
   if (!link) return null;
   return (
     <MuiLink href={link} target="_blank" rel="noopener noreferrer">
-      Open RunWarden
+      Open the runner service
     </MuiLink>
   );
 }

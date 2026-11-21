@@ -8,7 +8,7 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { getJson, useConfig } from './data';
 import { DEFAULT_STRIP_SUFFIXES } from './model';
-import { DEFAULT_RUNWARDEN, listPath, resolveSource } from './runwarden';
+import { listPath, resolveSource } from './runwarden';
 import type { PluginConfig } from './types';
 
 type TestState =
@@ -17,7 +17,7 @@ type TestState =
   | { state: 'ok'; count: number }
   | { state: 'error'; message: string };
 
-/** The Test button: asks the RunWarden service for its panel list, as the Dashboards sources do. */
+/** The Test button: asks the runner service for its panel list, as the Dashboards sources do. */
 function RunWardenTest({ cfg }: { cfg: PluginConfig }) {
   const [result, setResult] = React.useState<TestState>({ state: 'idle' });
   const source = resolveSource(cfg);
@@ -43,7 +43,7 @@ function RunWardenTest({ cfg }: { cfg: PluginConfig }) {
         Test
       </Button>
       <Box role="status" aria-live="polite" sx={{ minWidth: 0 }}>
-        {result.state === 'running' && <Typography variant="body2">Asking RunWarden.</Typography>}
+        {result.state === 'running' && <Typography variant="body2">Asking the runner service.</Typography>}
         {result.state === 'ok' && (
           <Typography variant="body2" data-test-result="ok">
             Works: {result.count} {result.count === 1 ? 'panel' : 'panels'}.
@@ -72,47 +72,47 @@ export function Settings(props: PluginSettingsDetailsProps) {
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={640}>
       <Typography variant="h6" component="h2">
-        RunWarden
+        Runner service
       </Typography>
       <Typography variant="body2">
-        The page reads RunWarden when it can. RunWarden serves its widget panels on a Kubernetes
+        The page reads the runner service when it can. The runner service serves its widget panels on a Kubernetes
         Service. The browser reaches it through the Kubernetes API service proxy, so Kubernetes
         permissions apply (the get verb on services/proxy there). A blank field uses the default.
       </Typography>
       <TextField
         select
-        label="RunWarden"
-        helperText="Auto uses RunWarden and falls back to the ARC feed when it does not answer. On uses RunWarden only. Off uses the ARC feed only."
+        label="Runner service"
+        helperText="Auto uses the runner service and falls back to the ARC feed when it does not answer. On uses the runner service only. Off uses the ARC feed only."
         value={['on', 'off'].includes(cfg.runwardenMode || '') ? cfg.runwardenMode : 'auto'}
         onChange={set('runwardenMode')}
         fullWidth
       >
         <MenuItem value="auto">Auto (fall back to the ARC feed)</MenuItem>
-        <MenuItem value="on">On (RunWarden only)</MenuItem>
+        <MenuItem value="on">On (runner service only)</MenuItem>
         <MenuItem value="off">Off (ARC feed only)</MenuItem>
       </TextField>
       <TextField
-        label="RunWarden namespace"
-        helperText="Namespace of the RunWarden widgets Service."
+        label="Runner service namespace"
+        helperText="Namespace of the runner service widgets Service."
         value={cfg.runwardenNamespace || ''}
         onChange={set('runwardenNamespace')}
-        placeholder={DEFAULT_RUNWARDEN.namespace}
+        placeholder="Built-in default"
         fullWidth
       />
       <TextField
-        label="RunWarden service"
+        label="Runner service name"
         helperText="Name of the Service that serves /api/widgets."
         value={cfg.runwardenService || ''}
         onChange={set('runwardenService')}
-        placeholder={DEFAULT_RUNWARDEN.service}
+        placeholder="Built-in default"
         fullWidth
       />
       <TextField
-        label="RunWarden port"
+        label="Runner service port"
         helperText="Service port number or name."
         value={cfg.runwardenPort || ''}
         onChange={set('runwardenPort')}
-        placeholder={DEFAULT_RUNWARDEN.port}
+        placeholder="Built-in default"
         fullWidth
       />
       <RunWardenTest cfg={cfg} />

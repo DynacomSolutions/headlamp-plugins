@@ -682,10 +682,10 @@ export function GitHubRunnersPage() {
   const nodeChips = rwOn ? (rw?.nodes ?? []).map(n => ({ id: n.name, label: n.name })) : status.nodes.map(n => ({ id: n.id, label: n.display_name }));
   const setChips = rwOn ? (rw?.pools ?? []).map(p => p.name) : status.scale_sets.map(x => x.name);
   const sourceLabel = rwOn
-    ? 'RunWarden'
+    ? 'Runner service'
     : board.runwarden.state === 'off'
-    ? 'ARC feed (RunWarden is off)'
-    : 'ARC feed (RunWarden is not reachable)';
+    ? 'ARC feed (runner service is off)'
+    : 'ARC feed (runner service is not reachable)';
   const arcOnlyTab = tab === 'scalesets' || tab === 'listeners';
 
   return (
@@ -700,7 +700,7 @@ export function GitHubRunnersPage() {
             color={rwOn ? 'success' : 'warning'}
             variant="outlined"
             label={`Source: ${sourceLabel}`}
-            data-source={rwOn ? 'runwarden' : 'arc'}
+            data-source={rwOn ? 'service' : 'arc'}
           />
         </Tooltip>
         {rwOn && <RunWardenLink board={board} />}
@@ -725,7 +725,7 @@ export function GitHubRunnersPage() {
       )}
       {stale && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          {rwOn ? 'RunWarden' : 'Scanner'} data is stale ({ago(remoteAge as number)}).
+          {rwOn ? 'Runner service' : 'Scanner'} data is stale ({ago(remoteAge as number)}).
         </Alert>
       )}
       <Box display="flex" gap={4} flexWrap="wrap" mb={2}>
@@ -826,7 +826,7 @@ export function GitHubRunnersPage() {
       )}
       <Typography variant="caption" color="text.secondary" display="block" mt={2}>
         {rwOn
-          ? `Updated ${generated}. Numbers come from RunWarden through the Kubernetes API service proxy. This plugin makes no GitHub API calls.`
+          ? `Updated ${generated}. Numbers come from the runner service through the Kubernetes API service proxy. This plugin makes no GitHub API calls.`
           : `Updated ${generated}. Links open github.com; this plugin makes no GitHub API calls.`}
       </Typography>
     </Box>
