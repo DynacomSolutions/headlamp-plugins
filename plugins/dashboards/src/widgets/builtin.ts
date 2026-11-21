@@ -6,6 +6,7 @@ import { headerWidget } from './HeaderWidget';
 import { hoardWidget } from './hoarddb/HoardWidget';
 import { issuesWidget } from './issues/IssuesWidget';
 import { k8sReportWidget } from './k8s/K8sReportWidget';
+import { NETFLOW_WIDGETS } from './netflow';
 import { noteWidget } from './NoteWidget';
 import { PANEL_WIDGETS } from './panels';
 import { PROMQL_WIDGETS } from './promql';
@@ -24,4 +25,5 @@ export function registerBuiltinWidgets(store: WidgetStore): void {
   store.registerWidget(hoardWidget);
   for (const w of PANEL_WIDGETS) store.registerWidget(w);
   for (const w of PROMQL_WIDGETS) store.registerWidget(w);
+  for (const w of NETFLOW_WIDGETS) store.registerWidget(w);
 }
