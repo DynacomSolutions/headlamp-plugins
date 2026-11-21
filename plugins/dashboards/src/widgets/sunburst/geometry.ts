@@ -4,7 +4,7 @@
  * angle is its share of capacity and the unused part stays empty. A parent may be larger than
  * its children together: that gap stays empty too. Every group is its own arc at its real
  * size: there is no "Other" arc and no top-N cut. The ring proportions follow the Usage
- * plugin sunburst (the dashboard copies use a larger centre hole of 36 % of the radius, so the centre text fits).
+ * plugin sunburst (the dashboard copies use a larger centre hole of 50 % of the radius, so the centre text fits).
  */
 
 export interface SunburstChild {
@@ -43,10 +43,10 @@ export interface ArcShape {
 }
 
 export const TAU = 2 * Math.PI;
-/** The centre hole, as a share of the radius. Larger than on the Usage pages, so the centre text fits. */
-export const CENTRE = 0.36;
+/** The centre hole, as a share of the radius. Larger than on the Usage pages, so the centre text and the used value are large. */
+export const CENTRE = 0.5;
 /** The inner ring ends at this share of the radius. The outer ring fills the rest. */
-export const INNER_END = 0.68;
+export const INNER_END = 0.7;
 /** A small gap between the two rings, in pixels. */
 export const RING_GAP = 2;
 

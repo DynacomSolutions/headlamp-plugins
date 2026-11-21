@@ -99,10 +99,11 @@ const DISPLAY_FIELDS: ConfigField[] = [
     key: 'rowLayout',
     label: 'Row layout',
     type: 'select',
-    help: 'List is a table. Grouped bars draws one bar per label, with a segment for each row (by its detail), and a legend.',
+    help: 'List is a table. Grouped bars draws one bar per label, with a segment for each row (by its detail), and a legend. Stacked lanes splits each bar into one lane for each limit that the label has.',
     options: [
       { value: 'list', label: 'List' },
       { value: 'grouped-bars', label: 'Grouped bars' },
+      { value: 'stacked-lanes', label: 'Stacked lanes' },
     ],
   },
 ];

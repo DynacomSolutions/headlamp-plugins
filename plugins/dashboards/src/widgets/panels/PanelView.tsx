@@ -4,64 +4,22 @@
  * Status is never colour alone: each status has its own shape and its own word.
  */
 import Box from '@mui/material/Box';
-import { useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { useElementSize } from '../promql/useElementSize';
 import { SunburstChart } from '../sunburst/SunburstChart';
-import {
-  isEmptyPanel,
-  PanelModel,
-  PanelRing,
-  PanelRow,
-  PanelStatus,
-  ringToSunburst,
-} from './model';
+import { isEmptyPanel, PanelModel, PanelRing, ringToSunburst } from './model';
 import { PanelBars } from './PanelBars';
+import { PanelLanes } from './PanelLanes';
 import { PanelTables } from './PanelTables';
-import { RowIcon } from './RowIcon';
+import { RowList } from './RowList';
+import { SeriesPlot, useSeriesColours } from './SeriesPlot';
 import type { PanelSource } from './sources';
 import { Sparkline } from './Sparkline';
+import { StatTiles } from './StatTiles';
 import { STATUS_WORD, StatusMark, useStatusColours } from './StatusMark';
 
 export { STATUS_WORD, StatusMark, useStatusColours };
-
-function Label(props: { row: PanelRow; editing: boolean }): JSX.Element {
-  const { row, editing } = props;
-  const link = row.link;
-  if (!link || editing) return <>{row.label}</>;
-  return link.startsWith('/') ? (
-    <RouterLink to={link} style={{ color: 'inherit' }}>
-      {row.label}
-    </RouterLink>
-  ) : (
-    <a href={link} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
-      {row.label}
-    </a>
-  );
-}
-
-function FractionBar(props: { fraction: number; status: PanelStatus }): JSX.Element {
-  const colours = useStatusColours();
-  const theme = useTheme();
-  const track = theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)';
-  return (
-    <Box
-      role="img"
-      aria-label={`${Math.round(props.fraction * 100)} percent`}
-      sx={{ height: 6, borderRadius: '3px', bgcolor: track, overflow: 'hidden', minWidth: 48 }}
-    >
-      <Box
-        data-fraction={props.fraction}
-        sx={{
-          height: '100%',
-          width: `${props.fraction * 100}%`,
-          bgcolor: colours[props.status === 'unknown' ? 'ok' : props.status],
-        }}
-      />
-    </Box>
-  );
-}
 
 export const ringFormat =
   (ring: PanelRing) =>
@@ -80,9 +38,12 @@ export const ringFormat =
     return `${v}`;
   };
 
-/** How the rows draw: a table (`list`) or one bar per label with a segment per row (`grouped-bars`). */
-export type RowLayout = 'list' | 'grouped-bars';
-export const ROW_LAYOUTS: ReadonlyArray<RowLayout> = ['list', 'grouped-bars'];
+/**
+ * How the rows draw: a table (`list`), one bar per label with a segment per row (`grouped-bars`),
+ * or one bar per label split into a lane per limit (`stacked-lanes`).
+ */
+export type RowLayout = 'list' | 'grouped-bars' | 'stacked-lanes';
+export const ROW_LAYOUTS: ReadonlyArray<RowLayout> = ['list', 'grouped-bars', 'stacked-lanes'];
 
 export interface PanelDisplay {
   /** The status line with the summary. Default on. */
@@ -107,7 +68,10 @@ export function displayOf(config: {
   return {
     showSummary: config.showSummary !== false,
     showStats: config.showStats !== false,
-    rowLayout: config.rowLayout === 'grouped-bars' ? 'grouped-bars' : 'list',
+    rowLayout:
+      config.rowLayout === 'grouped-bars' || config.rowLayout === 'stacked-lanes'
+        ? config.rowLayout
+        : 'list',
   };
 }
 
@@ -127,9 +91,19 @@ export function PanelView({
   display = DEFAULT_DISPLAY,
   source,
 }: PanelViewProps): JSX.Element {
-  const withBar = panel.rows.some(r => r.fraction !== undefined);
-  // One icon slot for every row when any row has an icon, so the labels stay aligned.
-  const withIcon = source !== undefined && panel.rows.some(r => r.icon !== undefined);
+  const seriesColour = useSeriesColours();
+  const root = useElementSize<HTMLDivElement>();
+  const rowsBox = useElementSize<HTMLDivElement>();
+  // The rows fit the height of the widget (and show "+N more") when the list is the last block
+  // and nothing else needs the height. Other layouts keep their own height and the widget scrolls.
+  const fitted =
+    (display.rowLayout === 'list' || display.rowLayout === 'stacked-lanes') &&
+    panel.rings.length === 0 &&
+    panel.tables.length === 0;
+  const hasSeries = panel.series.length > 0;
+  const plotWidth = root.size.width;
+  const plotHeight = Math.max(90, Math.min(220, Math.round(root.size.height * 0.42)));
+  const sharedPlot = hasSeries && plotWidth > 0 && root.size.height > 0;
   if (isEmptyPanel(panel)) {
     return (
       <Box data-panel-empty sx={{ p: 1 }}>
@@ -139,57 +113,39 @@ export function PanelView({
       </Box>
     );
   }
+  // One colour for each series, matched to its row by the label.
+  const swatch = sharedPlot
+    ? (r: { label: string }) => {
+        const i = panel.series.findIndex(s => s.label === r.label);
+        return i >= 0 ? seriesColour(i) : undefined;
+      }
+    : undefined;
   return (
     <Box
+      ref={root.ref}
       data-panel={panel.id}
-      sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, minWidth: 0 }}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1.25,
+        minWidth: 0,
+        ...(fitted ? { height: '100%', minHeight: 0, overflow: 'hidden' } : {}),
+      }}
     >
       {display.showSummary && (panel.summary || panel.status !== 'unknown') && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <StatusMark status={panel.status} size={14} />
-          <Typography variant="body2" data-panel-summary sx={{ fontWeight: 500 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
+          <StatusMark status={panel.status} size={13} />
+          <Typography
+            variant="body2"
+            data-panel-summary
+            sx={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3 }}
+          >
             {panel.summary || STATUS_WORD[panel.status]}
           </Typography>
         </Box>
       )}
       {display.showStats && panel.stats.length > 0 && (
-        <Box
-          sx={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(84px, 1fr))',
-            gap: 1,
-          }}
-        >
-          {panel.stats.map((s, i) => (
-            <Box
-              key={`${s.label}-${i}`}
-              data-stat
-              sx={{
-                border: 1,
-                borderColor: 'divider',
-                borderRadius: 1,
-                px: 1,
-                py: 0.75,
-                minWidth: 0,
-                bgcolor: kiosk ? 'transparent' : undefined,
-              }}
-            >
-              <Typography variant="caption" color="text.secondary" noWrap component="div">
-                {s.label}
-              </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                <StatusMark status={s.status} size={10} />
-                <Typography
-                  variant="h6"
-                  component="div"
-                  sx={{ lineHeight: 1.2, fontVariantNumeric: 'tabular-nums' }}
-                >
-                  {s.value}
-                </Typography>
-              </Box>
-            </Box>
-          ))}
-        </Box>
+        <StatTiles stats={panel.stats} width={root.size.width} />
       )}
       {panel.rings.length > 0 && (
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center' }}>
@@ -205,89 +161,50 @@ export function PanelView({
           ))}
         </Box>
       )}
-      {panel.series.length > 0 && (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-          {panel.series.map((s, i) => (
-            <Box
-              key={`${s.label}-${i}`}
-              data-series
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(60px, 30%) 1fr',
-                alignItems: 'center',
-                gap: 1,
-              }}
-            >
-              <Typography variant="caption" color="text.secondary" noWrap>
-                {s.label}
-              </Typography>
-              <Sparkline label={s.label} points={s.points} />
-            </Box>
-          ))}
-        </Box>
-      )}
+      {hasSeries &&
+        (sharedPlot ? (
+          <SeriesPlot series={panel.series} width={plotWidth} height={plotHeight} />
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            {panel.series.map((s, i) => (
+              <Box
+                key={`${s.label}-${i}`}
+                data-series
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(60px, 30%) 1fr',
+                  alignItems: 'center',
+                  gap: 1,
+                }}
+              >
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {s.label}
+                </Typography>
+                <Sparkline label={s.label} points={s.points} />
+              </Box>
+            ))}
+          </Box>
+        ))}
       {panel.rows.length > 0 && display.rowLayout === 'grouped-bars' && (
         <PanelBars rows={panel.rows} kiosk={kiosk} editing={editing} source={source} />
       )}
+      {panel.rows.length > 0 && display.rowLayout === 'stacked-lanes' && (
+        <Box sx={fitted ? { flex: '1 1 0', minHeight: 0, overflow: 'hidden' } : { minWidth: 0 }}>
+          <PanelLanes rows={panel.rows} kiosk={kiosk} editing={editing} source={source} />
+        </Box>
+      )}
       {panel.rows.length > 0 && display.rowLayout === 'list' && (
         <Box
-          component="table"
-          data-rows
-          sx={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}
+          ref={rowsBox.ref}
+          sx={fitted ? { flex: '1 1 0', minHeight: 0, overflow: 'hidden' } : { minWidth: 0 }}
         >
-          <tbody>
-            {panel.rows.map((r, i) => (
-              <Box
-                component="tr"
-                key={`${r.label}-${i}`}
-                data-row
-                sx={{ borderTop: i === 0 ? 0 : 1, borderColor: 'divider' }}
-              >
-                <Box component="td" sx={{ py: 0.5, pr: 1, width: 18 }}>
-                  <StatusMark status={r.status} size={10} />
-                </Box>
-                {withIcon && (
-                  <Box component="td" data-row-icon-cell sx={{ py: 0.5, pr: 1, width: 20 }}>
-                    <RowIcon source={source} icon={r.icon} />
-                  </Box>
-                )}
-                <Box component="td" sx={{ py: 0.5, pr: 1, maxWidth: 220 }}>
-                  <Typography variant="body2" noWrap title={r.label}>
-                    <Label row={r} editing={editing} />
-                  </Typography>
-                  {r.detail && (
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      noWrap
-                      component="div"
-                      title={r.detail}
-                    >
-                      {r.detail}
-                    </Typography>
-                  )}
-                </Box>
-                {withBar && (
-                  <Box component="td" sx={{ py: 0.5, pr: 1, width: '28%' }}>
-                    {r.fraction !== undefined && (
-                      <FractionBar fraction={r.fraction} status={r.status} />
-                    )}
-                  </Box>
-                )}
-                <Box
-                  component="td"
-                  sx={{
-                    py: 0.5,
-                    textAlign: 'right',
-                    whiteSpace: 'nowrap',
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  {r.value}
-                </Box>
-              </Box>
-            ))}
-          </tbody>
+          <RowList
+            rows={panel.rows}
+            height={fitted ? rowsBox.size.height : 0}
+            editing={editing}
+            source={source}
+            swatch={swatch}
+          />
         </Box>
       )}
       {panel.tables.length > 0 && <PanelTables tables={panel.tables} />}

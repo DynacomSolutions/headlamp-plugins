@@ -39,6 +39,13 @@ export interface PanelRow {
 export interface PanelSeries {
   label: string;
   points: number[];
+  /**
+   * An optional v1 extension: the value that the series must stay under (for example 5 for a lag
+   * of 5 seconds). The plot draws it as a dashed line. A bad value drops the line, never the series.
+   */
+  limit?: number;
+  /** An optional v1 extension: the unit of the values, for the axis (for example `s`). */
+  unit?: string;
 }
 
 export interface RingSegment {
@@ -244,12 +251,19 @@ export function parsePanel(json: unknown): PanelModel {
       }),
     series: array(json.series)
       .filter(isObject)
-      .map(s => ({
-        label: str(s.label),
-        points: array(s.points).filter(
-          (p): p is number => typeof p === 'number' && Number.isFinite(p)
-        ),
-      })),
+      .map(s => {
+        const series: PanelSeries = {
+          label: str(s.label),
+          points: array(s.points).filter(
+            (p): p is number => typeof p === 'number' && Number.isFinite(p)
+          ),
+        };
+        if (typeof s.limit === 'number' && Number.isFinite(s.limit) && s.limit > 0)
+          series.limit = s.limit;
+        const unit = str(s.unit).trim().slice(0, 8);
+        if (unit !== '') series.unit = unit;
+        return series;
+      }),
     rings: array(json.rings)
       .map(parseRing)
       .filter((r): r is PanelRing => r !== null),

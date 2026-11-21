@@ -1,7 +1,7 @@
 /* The status words, colours and marks of a panel. A status is a shape and a word, never colour alone. */
-import { useTheme } from '@mui/material/styles';
 import React from 'react';
 import type { PanelStatus } from './model';
+import { useTokens } from './tokens';
 
 export const STATUS_WORD: Record<PanelStatus, string> = {
   ok: 'OK',
@@ -10,15 +10,9 @@ export const STATUS_WORD: Record<PanelStatus, string> = {
   unknown: 'Unknown',
 };
 
-/** Status colours from the theme. They are reserved for status, never used for a series. */
+/** Status colours (see `STATUS_HUES`). They are reserved for status, never used for a series. */
 export function useStatusColours(): Record<PanelStatus, string> {
-  const t = useTheme();
-  return {
-    ok: t.palette.success.main,
-    warn: t.palette.warning.main,
-    crit: t.palette.error.main,
-    unknown: t.palette.text.secondary,
-  };
+  return useTokens().status;
 }
 
 /** A status mark with its own shape: circle (ok), triangle (warning), square (critical), ring (unknown). */

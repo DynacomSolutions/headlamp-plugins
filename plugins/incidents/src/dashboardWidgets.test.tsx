@@ -123,28 +123,28 @@ describe('incidents.list', () => {
     const p = props(incidentListWidget.defaultConfig);
     view(<List {...p} />);
     expect(await screen.findByText('HighCPU')).toBeTruthy();
-    expect(screen.getByText('3 incidents')).toBeTruthy();
-    expect(screen.getByText('1 critical')).toBeTruthy();
-    expect(screen.getByText('1 running')).toBeTruthy();
+    expect(screen.getByText(/^3 incidents\./)).toBeTruthy();
+    expect(document.querySelector('[data-count="critical"]')?.textContent).toBe('1');
+    expect(screen.getByText(/1 running/)).toBeTruthy();
     expect(p.reportRefreshed).toHaveBeenCalled();
   });
   it('keeps the summary outside the scrolling list', async () => {
     const { container } = view(<List {...props(incidentListWidget.defaultConfig)} />);
     await screen.findByText('HighCPU');
     const scroller = container.querySelector('[data-incident-list-scroll]') as HTMLElement;
-    expect(scroller.contains(screen.getByText('3 incidents'))).toBe(false);
+    expect(scroller.contains(screen.getByText(/^3 incidents\./))).toBe(false);
     expect(scroller.contains(screen.getByText('HighCPU'))).toBe(true);
   });
   it('applies the status, severity and resolved filters, and counts only the rows shown', async () => {
     view(<List {...props({ status: 'all', severity: 'all', openOnly: true })} />);
     await screen.findByText('HighCPU');
     expect(screen.queryByText('OldAlert')).toBeNull();
-    expect(screen.getByText('2 incidents')).toBeTruthy();
+    expect(screen.getByText(/^2 incidents\./)).toBeTruthy();
     cleanup();
     view(<List {...props({ status: 'running', severity: 'warning', openOnly: false })} />);
     expect(await screen.findByText('DiskFull')).toBeTruthy();
     expect(screen.queryByText('HighCPU')).toBeNull();
-    expect(screen.getByText('1 incident')).toBeTruthy();
+    expect(screen.getByText(/^1 incident\./)).toBeTruthy();
   });
   it('says so when the filters hide every row', async () => {
     view(<List {...props({ status: 'queued', severity: 'all', openOnly: false })} />);
@@ -280,7 +280,7 @@ describe('list and chat on one dashboard', () => {
 
   it('selects the incident for the chat on a row click instead of navigating', async () => {
     both();
-    const row = (await screen.findByText('HighCPU')).closest('tr') as HTMLElement;
+    const row = (await screen.findByText('HighCPU')).closest('[data-incident-row]') as HTMLElement;
     expect(within(row).queryByRole('link')).toBeTruthy();
     fireEvent.click(row);
     expect(await screen.findByText('About incident: HighCPU')).toBeTruthy();
@@ -292,7 +292,9 @@ describe('list and chat on one dashboard', () => {
 
   it('creates the chat with the selected incident and sends the message', async () => {
     both();
-    fireEvent.click((await screen.findByText('HighCPU')).closest('tr') as HTMLElement);
+    fireEvent.click(
+      (await screen.findByText('HighCPU')).closest('[data-incident-row]') as HTMLElement
+    );
     await screen.findByText('About incident: HighCPU');
     const box = screen.getByLabelText('Message') as HTMLTextAreaElement;
     fireEvent.change(box, { target: { value: 'why?' } });
