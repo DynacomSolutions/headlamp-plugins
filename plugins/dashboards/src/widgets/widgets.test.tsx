@@ -20,6 +20,7 @@ import { getRegistry } from '../registry';
 import { defaultFilters } from '../spec/model';
 import { DEFAULT_CLOCK } from './clockFormat';
 import { ClockView, useTick } from './ClockWidget';
+import { WidgetFooter } from './footer';
 import { HeaderView } from './HeaderWidget';
 import { NoteView, safeHref } from './NoteWidget';
 
@@ -165,6 +166,44 @@ describe('widget frame', () => {
       </DashboardContext.Provider>
     );
     expect(container.querySelector('[data-widget-placeholder]')).not.toBeNull();
+  });
+
+  it('draws the title on the box edge and a footer that a widget fills with its summary', () => {
+    const def: WidgetDefinition = {
+      type: 'test.footer',
+      title: 'Footer probe',
+      icon: 'mdi:cube-outline',
+      category: 'Other',
+      defaultSize: { w: 2, h: 2 },
+      defaultConfig: {},
+      Component: p => (
+        <WidgetFooter status="warn" footer={p.footer}>
+          3 warnings
+        </WidgetFooter>
+      ),
+    };
+    getRegistry().registerWidget(def);
+    const { container } = render(
+      <DashboardContext.Provider value={ctxValue()}>
+        <WidgetFrame
+          sectionId="s"
+          id="w1"
+          type="test.footer"
+          title=""
+          config={{}}
+          selfScroll={undefined}
+          actions={actions}
+        />
+      </DashboardContext.Provider>
+    );
+    const legend = container.querySelector('[data-widget-legend]') as HTMLElement;
+    expect(legend.textContent).toContain('Footer probe');
+    expect(legend.style.top || getComputedStyle(legend).top).toBe('-12px');
+    const footer = container.querySelector('[data-widget-footer]') as HTMLElement;
+    expect(footer.textContent).toBe('3 warnings');
+    expect(footer.querySelector('svg[aria-label="Warning"]')).not.toBeNull();
+    // The summary is in the footer, not in the body.
+    expect(container.querySelectorAll('[data-widget-summary]')).toHaveLength(1);
   });
 
   it('passes config merged over defaults, the filters, the signal and the report callback to a widget', () => {

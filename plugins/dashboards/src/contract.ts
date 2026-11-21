@@ -71,6 +71,12 @@ export interface WidgetProps<C = Record<string, unknown>> {
    * row, and about 48 px of height. A widget that has no compact form can ignore it.
    */
   compact?: boolean;
+  /**
+   * The footer line of the widget frame, an empty element at the bottom of the box. Draw the
+   * summary line of the widget into it with `createPortal`, so every widget shows its summary at
+   * the same place. It is null when the widget has no frame. A widget may ignore it.
+   */
+  footer?: HTMLElement | null;
 }
 
 /** What the dashboard passes to a widget's `SettingsComponent`. */
