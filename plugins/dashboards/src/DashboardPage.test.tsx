@@ -233,11 +233,15 @@ describe('dashboard page', () => {
         expect(bar.getAttribute('data-title-bar-level')).toBe(level);
         // A wide bar has three parts, so the clock is in the middle. Each side wraps its own
         // controls. A narrower bar is one wrapping row.
-        if (Number(level) < 2 && width >= 1280) {
+        if (Number(level) < 2 && width >= 1000) {
           expect(getComputedStyle(bar).display).toBe('grid');
           expect(getComputedStyle(bar).gridTemplateColumns).toBe(
             'minmax(0, 1fr) auto minmax(0, 1fr)'
           );
+          // The filters stay behind one Filters button, with the time range and Views beside it.
+          expect(bar.querySelector('[data-filters-button]')).not.toBeNull();
+          expect(within(bar).queryByLabelText('Namespaces')).toBeNull();
+          expect(within(bar).getByRole('button', { name: /Views/ })).toBeTruthy();
           const left = bar.querySelector('[data-title-bar-left]') as HTMLElement;
           expect(getComputedStyle(left).flexWrap).toBe('wrap');
         } else {

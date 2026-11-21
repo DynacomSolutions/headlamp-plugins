@@ -96,9 +96,9 @@ Each dashboard has a **header** and a **footer**. Each is one section with its o
 edited like any section: drag and resize widgets, add them from the palette (choose "Header (every tab)" or
 "Footer (every tab)" as the target section), open the widget settings, duplicate, delete or move a widget to
 another section from its menu. The footer sits below the tab content. The header widgets draw inline in the
-title bar in three parts. A wide bar (1280 px and more) has three equal parts, so the clock is in the exact
-middle. On the left are the title and the header widgets before the clock (the alert chips), and the filters and
-views in a second row. On the right are the header widgets after the clock, the auto refresh select, the small
+title bar in three parts. A wide bar (1000 px and more) has three equal parts, so the clock is in the exact
+middle. On the left are the title and the header widgets before the clock (the alert chips), and the Filters button, the
+time range and Views in a second row (the filter fields stay behind the Filters button). On the right are the header widgets after the clock, the auto refresh select, the small
 "Refreshed 12 s ago" text, the Refresh icon and the Full screen icon (Exit full screen in the kiosk) at the far
 right. The Refresh and Full screen controls are plain icons with the colour of the tab rail icons. Their words are
 the tooltip and the label. The "Refreshed" text goes only when the bar is narrow (under 1060 px). A narrower bar

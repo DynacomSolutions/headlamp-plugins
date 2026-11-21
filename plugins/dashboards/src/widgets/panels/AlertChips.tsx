@@ -25,6 +25,7 @@ function AlertChips({
   config,
   refreshSignal,
   reportRefreshed,
+  kiosk,
   cache,
 }: WidgetProps<AlertChipsConfig>): JSX.Element | null {
   const sourceId = sourceOf(config);
@@ -51,10 +52,12 @@ function AlertChips({
       data-alert-chips
       sx={{
         display: 'flex',
-        gap: 1.25,
+        gap: kiosk ? 1.25 : 1,
         flex: 'none',
-        // Under 1500 px the chips give way, so a narrow header keeps its room.
+        // A narrow screen gives the room to the other header items. The page bar has the
+        // sidebar, so its chips are smaller and give way a little later than the wall's.
         '@media (max-width: 1499.95px)': { display: 'none' },
+        ...(kiosk ? {} : { '@media (max-width: 1579.95px)': { display: 'none' } }),
       }}
     >
       {stats.map((s, i) => {
@@ -68,20 +71,24 @@ function AlertChips({
               display: 'flex',
               alignItems: 'center',
               gap: 0.75,
-              height: 40,
-              px: 1.75,
-              borderRadius: '20px',
+              height: kiosk ? 40 : 32,
+              px: kiosk ? 1.75 : 1.25,
+              borderRadius: kiosk ? '20px' : '16px',
               whiteSpace: 'nowrap',
-              fontSize: 17,
+              fontSize: kiosk ? 17 : 14,
               border: `1px solid ${tinted ? tk.status[s.status] : tk.line2}`,
               bgcolor: tinted ? tk.fill[s.status] : 'transparent',
               color: zero ? tk.mut : tk.fg,
             }}
           >
-            <StatusMark status={s.status} size={16} />
+            <StatusMark status={s.status} size={kiosk ? 16 : 14} />
             <Box
               component="strong"
-              sx={{ fontWeight: 600, fontSize: 21, fontVariantNumeric: 'tabular-nums' }}
+              sx={{
+                fontWeight: 600,
+                fontSize: kiosk ? 21 : 17,
+                fontVariantNumeric: 'tabular-nums',
+              }}
             >
               {s.value}
             </Box>
