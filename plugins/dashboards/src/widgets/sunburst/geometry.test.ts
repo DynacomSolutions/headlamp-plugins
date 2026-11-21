@@ -6,6 +6,8 @@ import {
   freeKey,
   layoutArcs,
   layoutNodeArcs,
+  MIN_NODE_ANGLE,
+  nodeAngles,
   nodeSpan,
   SunburstNode,
   TAU,
@@ -303,5 +305,41 @@ describe('layoutNodeArcs', () => {
     expect(
       layoutNodeArcs([{ key: 'n', label: 'n', capacity: 0, used: 0, categories: [] }], 96)
     ).toEqual([]);
+  });
+
+  it('gives a small node, and a node with no capacity, its minimum arc and keeps the circle whole', () => {
+    const list: SunburstNode[] = [
+      { key: 'node:big', label: 'big', capacity: 380, used: 100, categories: [cat('k8s', 100)] },
+      { key: 'node:tiny', label: 'tiny', capacity: 2, used: 1, categories: [cat('k8s', 1, [1])] },
+      { key: 'node:none', label: 'none', capacity: 0, used: 0, categories: [] },
+    ];
+    const arcsOf = layoutNodeArcs(list, 96);
+    const ring = arcsOf.filter(a => a.kind === 'node');
+    expect(ring.map(a => a.key)).toEqual(['node:big', 'node:tiny', 'node:none']);
+    for (const a of ring.slice(1)) expect(a.end - a.start).toBeCloseTo(MIN_NODE_ANGLE, 6);
+    expect(ring[0].start).toBe(0);
+    expect(ring[2].end).toBeCloseTo(TAU, 6);
+    for (let i = 1; i < ring.length; i++) expect(ring[i].start).toBeCloseTo(ring[i - 1].end, 9);
+    // The inside of the widened node still fills it exactly: the used arcs and the free arc.
+    const tiny = ring[1];
+    const inside = arcsOf
+      .filter(a => a.nodeKey === 'node:tiny' && (a.kind === 'category' || a.kind === 'free'))
+      .reduce((s, a) => s + (a.end - a.start), 0);
+    expect(inside).toBeCloseTo(tiny.end - tiny.start, 6);
+  });
+});
+
+describe('nodeAngles', () => {
+  it('keeps the real share of nodes that are large enough', () => {
+    expect(nodeAngles([1, 1, 2]).map(a => a / TAU)).toEqual([
+      expect.closeTo(0.25, 6),
+      expect.closeTo(0.25, 6),
+      expect.closeTo(0.5, 6),
+    ]);
+  });
+  it('lowers the minimum when there are very many nodes, and still fills the circle', () => {
+    const angles = nodeAngles([1000, ...Array.from({ length: 29 }, () => 0)]);
+    expect(angles.reduce((s, a) => s + a, 0)).toBeCloseTo(TAU, 6);
+    expect(Math.min(...angles)).toBeGreaterThan(0);
   });
 });

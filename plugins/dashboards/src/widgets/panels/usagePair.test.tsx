@@ -28,7 +28,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 import { lastGoodStore, resetLastGoodStore, widgetCache } from '../../cache/lastGood';
 import { getRegistry } from '../../registry';
 import { registerBuiltinWidgets } from '../builtin';
-import { pairNodes } from '../sunburst/pairModel';
+import { inOrder, pairNodes, pairOrder } from '../sunburst/pairModel';
 import { UsagePair } from '../sunburst/UsagePair';
 import { clearPanelListCache } from './data';
 import { usagePairWidget } from './UsagePairWidget';
@@ -97,6 +97,77 @@ describe('pairNodes', () => {
     const nodes = pairNodes(only, mem.data);
     expect(nodes).toHaveLength(2);
     expect(nodes[1].rows[0].values).toEqual([undefined, 25]);
+  });
+});
+
+describe('node order of a pair', () => {
+  const node = (key: string, label: string, capacity: number, used: number) => ({
+    key,
+    label,
+    capacity,
+    used,
+    categories: used > 0 ? [cat('k8s', 'Kubernetes', used)] : [],
+  });
+  const a = {
+    capacity: 100,
+    categories: [],
+    nodes: [
+      node('n:worker-3', 'worker-3', 50, 10),
+      node('n:worker-2', 'worker-2', 30, 5),
+      node('n:worker-10', 'worker-10', 2, 1),
+    ],
+  };
+  const b = {
+    capacity: 100,
+    categories: [],
+    nodes: [
+      node('n:worker-2', 'worker-2', 40, 5),
+      node('n:worker-4', 'worker-4', 60, 5),
+      node('n:worker-3', 'worker-3', 8, 4),
+    ],
+  };
+  it('is one order by name for both rings and the legend, whatever the size or the chart', () => {
+    const order = pairOrder(a, b);
+    expect(order.map(o => o.label)).toEqual(['worker-2', 'worker-3', 'worker-4', 'worker-10']);
+    expect(inOrder(a, order).nodes!.map(n => n.label)).toEqual([
+      'worker-2',
+      'worker-3',
+      'worker-4',
+      'worker-10',
+    ]);
+    expect(inOrder(b, order).nodes!.map(n => n.label)).toEqual([
+      'worker-2',
+      'worker-3',
+      'worker-4',
+      'worker-10',
+    ]);
+    expect(pairNodes(a, b).map(n => n.label)).toEqual([
+      'worker-2',
+      'worker-3',
+      'worker-4',
+      'worker-10',
+    ]);
+  });
+  it('draws the same node at the same angle start order in both rings, with an arc for every legend node', () => {
+    const { container } = render(
+      wrap(
+        <UsagePair
+          first={{ data: a, format: v => `${v}`, title: 'CPU' }}
+          second={{ data: b, format: v => `${v}`, title: 'Memory' }}
+        />
+      )
+    );
+    const keys = (ring: string) =>
+      Array.from(container.querySelectorAll(`svg[data-ring="${ring}"] [data-arc="node"]`)).map(p =>
+        p.getAttribute('data-node')
+      );
+    const legend = Array.from(container.querySelectorAll('[data-legend-node]')).map(n =>
+      n.getAttribute('data-legend-node')
+    );
+    expect(keys('CPU')).toEqual(legend);
+    expect(keys('Memory')).toEqual(legend);
+    // The node that only one ring has still has an arc in the other ring.
+    expect(legend).toContain('n:worker-4');
   });
 });
 
