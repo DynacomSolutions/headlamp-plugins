@@ -124,14 +124,14 @@ const rwIcon = {
 const WAITING = 'Waiting for job';
 const UNKNOWN = 'unknown';
 
-/** A RunWarden tenant label `Owner.Repo`, split on the first dot only (a repo may start with one). */
+/** A runner pool tenant label `Owner.Repo`, split on the first dot only (a repo may start with one). */
 export function splitTenant(tenant: string): { owner: string; repo: string } {
   const i = tenant.indexOf('.');
   if (i < 0) return { owner: tenant, repo: '' };
   return { owner: tenant.slice(0, i), repo: tenant.slice(i + 1) };
 }
 
-/** Where a runner pod sits in the RunWarden rings: the group labels from the outer ring inwards. */
+/** Where a runner pod sits in the runner pool rings: the group labels from the outer ring inwards. */
 interface RunnerPath {
   /** Key, label and kind of each ring from the first one inside the namespace down. */
   rings: { key: string; label: string; kind: SunNode['kind']; icon: SunNode['icon'] }[];
@@ -139,7 +139,7 @@ interface RunnerPath {
   podLeaf: boolean;
 }
 
-/** The rings for a pod RunWarden manages, or null when it has too little to group by. */
+/** The rings for a pod the runner pool manages, or null when it has too little to group by. */
 function runnerPath(r: RunnerInfo): RunnerPath | null {
   const { tenant, pool, job } = r;
   if (job) {
@@ -234,7 +234,7 @@ function kubernetes(m: NodeMetrics, r: Resource): SunNode {
   for (const [ns, pods] of nss) {
     const nsKey = `k8s/ns:${ns}`;
     const podNodes: SunNode[] = [];
-    // RunWarden groups: built top-down by key, values rolled up from the container leaves.
+    // Runner pool groups: built top-down by key, values rolled up from the container leaves.
     const holder: SunNode = { key: nsKey, label: ns, kind: 'namespace', value: 0, children: [] };
     for (const [pod, acc] of pods) {
       const podKey = `${nsKey}/pod:${pod}`;

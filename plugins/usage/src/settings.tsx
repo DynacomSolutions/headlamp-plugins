@@ -10,10 +10,41 @@ export const CONFIG_KEY = 'usage';
 
 export const configStore = new ConfigStore<Record<string, unknown>>(CONFIG_KEY);
 
-/** Browser-local overrides layered over the built-in defaults. */
+let defaultsPromise: Promise<Record<string, unknown>> | null = null;
+
+/**
+ * Deployment defaults: an optional defaults.json next to main.js in the plugin directory. It lets an
+ * installer preset the settings (for example the runner pool prefix) for every browser.
+ */
+function loadDefaults(): Promise<Record<string, unknown>> {
+  if (!defaultsPromise) {
+    defaultsPromise = fetch(`/plugins/${CONFIG_KEY}/defaults.json`)
+      .then(r => (r.ok ? r.json() : {}))
+      .then(j => (j && typeof j === 'object' && !Array.isArray(j) ? (j as Record<string, unknown>) : {}))
+      .catch(() => ({}));
+  }
+  return defaultsPromise;
+}
+
+/** Browser-local overrides layered over the deployment defaults, then the built-in defaults. */
 export function useNodesSettings(): NodesSettings {
   const stored = configStore.useConfig()() as Record<string, unknown> | undefined;
-  return React.useMemo(() => resolveNodesSettings(stored), [stored]);
+  const [defaults, setDefaults] = React.useState<Record<string, unknown>>({});
+  React.useEffect(() => {
+    let alive = true;
+    loadDefaults().then(d => alive && setDefaults(d));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return React.useMemo(() => {
+    const merged: Record<string, unknown> = { ...defaults };
+    // A stored value wins when it is not blank.
+    for (const [k, v] of Object.entries(stored || {})) {
+      if (v !== '' && v !== null && v !== undefined) merged[k] = v;
+    }
+    return resolveNodesSettings(merged);
+  }, [defaults, stored]);
 }
 
 export function Settings(props: PluginSettingsDetailsProps) {
@@ -44,7 +75,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
       />
       <TextField
         label="Display names"
-        helperText="One id=Name per line, for example runwarden-runners=Runwarden. The id is a namespace, pod, container or arc key. It overrides every guessed name."
+        helperText="One id=Name per line, for example my-runners=My runners. The id is a namespace, pod, container or arc key. It overrides every guessed name."
         multiline
         minRows={3}
         value={
@@ -55,6 +86,13 @@ export function Settings(props: PluginSettingsDetailsProps) {
                 .join('\n')
         }
         onChange={e => set('displayNames', e.target.value)}
+        fullWidth
+      />
+      <TextField
+        label="Runner pool prefix"
+        helperText="Optional. The word that starts the metric and label names of your runner pool service, for example a prefix of acme reads acme_runner_job_info and the pod labels acme.io/tenant, acme.io/pool and acme.io/role. Blank: the runner rings are off and no query goes out for them."
+        value={(data as any)?.runnerPoolPrefix ?? ''}
+        onChange={e => set('runnerPoolPrefix', e.target.value)}
         fullWidth
       />
     </Box>

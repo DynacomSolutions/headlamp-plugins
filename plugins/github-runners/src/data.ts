@@ -1,5 +1,6 @@
 import { ApiProxy, ConfigStore, K8s } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
+import { migrateKeys } from './legacy-keys';
 import {
   buildFromMetrics,
   metricsConfigured,
@@ -19,15 +20,15 @@ import {
   parseAliases,
 } from './model';
 import {
-  buildRunWarden,
+  buildPoolBoard,
   PANEL_IDS,
   panelPath,
   Panels,
   parsePanel,
+  PoolBoard,
+  PoolSource,
   resolveSource,
-  RunWardenBoard,
-  RunWardenSource,
-} from './runwarden';
+} from './pool';
 import type { History, PluginConfig, Raw, Status } from './types';
 
 export const CONFIG_KEY = 'github-runners';
@@ -63,8 +64,9 @@ export function useConfig(): PluginConfig {
     };
   }, []);
   return React.useMemo(() => {
-    const out: PluginConfig = { ...defaults };
-    for (const [k, v] of Object.entries(stored)) if (v) (out as Record<string, unknown>)[k] = v;
+    // Old key names are moved to the new ones in each layer first, so a stored value wins over a default.
+    const out: PluginConfig = { ...migrateKeys(defaults) };
+    for (const [k, v] of Object.entries(migrateKeys(stored))) if (v) (out as Record<string, unknown>)[k] = v;
     return out;
   }, [defaults, stored]);
 }
@@ -249,12 +251,12 @@ export function useExternalWorkers(cfg: PluginConfig): { items: Raw[]; error: st
   return state;
 }
 
-export type RunWardenState = 'off' | 'loading' | 'ok' | 'error';
+export type PoolServiceState = 'off' | 'loading' | 'ok' | 'error';
 
-export interface RunWardenData {
-  source: RunWardenSource;
-  state: RunWardenState;
-  board: RunWardenBoard | null;
+export interface PoolServiceData {
+  source: PoolSource;
+  state: PoolServiceState;
+  board: PoolBoard | null;
   /** Panels that failed on the last poll, with the reason. The others still show. */
   failed: Array<{ id: string; reason: string }>;
   error: string | null;
@@ -263,12 +265,12 @@ export interface RunWardenData {
 const reasonOf = (e: unknown): string => String((e as Error)?.message || e);
 
 /** Poll the runner service panels through the Kubernetes service proxy. Off when the mode is off. */
-export function useRunWarden(cfg: PluginConfig): RunWardenData {
+export function usePoolService(cfg: PluginConfig): PoolServiceData {
   const source = React.useMemo(
     () => resolveSource(cfg),
-    [cfg.runwardenMode, cfg.runwardenNamespace, cfg.runwardenService, cfg.runwardenPort]
+    [cfg.poolMode, cfg.poolNamespace, cfg.poolService, cfg.poolPort]
   );
-  const enabled = source.mode !== 'off' && source.problem === null;
+  const enabled = source.mode !== 'off' && source.configured && source.problem === null;
   const key = `${source.namespace}/${source.service}:${source.port}`;
   const [state, setState] = React.useState<{
     key: string;
@@ -315,10 +317,10 @@ export function useRunWarden(cfg: PluginConfig): RunWardenData {
   }, [enabled, key, source]);
   const fresh = state.key === key;
   const board = React.useMemo(
-    () => (fresh && state.got ? buildRunWarden(state.panels) : null),
+    () => (fresh && state.got ? buildPoolBoard(state.panels) : null),
     [fresh, state.got, state.panels]
   );
-  let st: RunWardenState = 'off';
+  let st: PoolServiceState = 'off';
   if (source.problem && source.mode !== 'off') st = 'error';
   else if (enabled) st = !fresh || (!state.got && !state.error) ? 'loading' : board ? 'ok' : 'error';
   return {
@@ -333,8 +335,8 @@ export function useRunWarden(cfg: PluginConfig): RunWardenData {
 export interface Board {
   cfg: PluginConfig;
   /** Where the numbers come from. The runner service when it answers, otherwise the ARC feed and Kubernetes. */
-  dataSource: 'runwarden' | 'arc';
-  runwarden: RunWardenData;
+  dataSource: 'pool' | 'arc';
+  pool: PoolServiceData;
   loading: boolean;
   arcPresent: boolean;
   status: Status;
@@ -357,12 +359,12 @@ export function useBoard(): Board {
   const listeners = useKind(AutoscalingListener);
   const workers = useExternalWorkers(cfg);
   const remote = useRemote(cfg);
-  const runwarden = useRunWarden(cfg);
+  const poolSvc = usePoolService(cfg);
   // Auto: the runner service while it loads or works, the ARC path once it fails. On: the runner service only. Off: ARC only.
-  const dataSource: 'runwarden' | 'arc' =
-    runwarden.state === 'off' || (runwarden.source.mode === 'auto' && runwarden.state === 'error')
+  const dataSource: 'pool' | 'arc' =
+    poolSvc.state === 'off' || (poolSvc.source.mode === 'auto' && poolSvc.state === 'error')
       ? 'arc'
-      : 'runwarden';
+      : 'pool';
 
   const arcPresent = !(sets.absent && runners.absent);
   const local = React.useMemo(
@@ -387,7 +389,7 @@ export function useBoard(): Board {
   return {
     cfg,
     dataSource,
-    runwarden,
+    pool: poolSvc,
     loading: sets.loading || runners.loading,
     arcPresent,
     status,

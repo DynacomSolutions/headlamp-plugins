@@ -7,6 +7,7 @@
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import type { AgentHost } from './agentState';
 import { parseAgentState } from './agentState';
+import { cleanPoolPrefix } from './nodeMetrics';
 
 export { parseAgentState } from './agentState';
 export type { AgentHost, AgentProc, AgentUnit } from './agentState';
@@ -16,12 +17,15 @@ export interface NodesSettings {
   idleSeconds: number;
   /** Arc id (or key) to display name: overrides every guess. */
   displayNames: Record<string, string>;
+  /** Word that starts the metric and label names of the runner pool service. Blank: off. */
+  runnerPoolPrefix: string;
 }
 
 export const DEFAULT_NODES_SETTINGS: NodesSettings = {
   agentBackends: ['service/agent-resource/agent-resource:80'],
   idleSeconds: 120,
   displayNames: {},
+  runnerPoolPrefix: '',
 };
 
 const MIN_IDLE_SECONDS = 30;
@@ -157,5 +161,6 @@ export function resolveNodesSettings(raw: unknown): NodesSettings {
       ? Math.max(MIN_IDLE_SECONDS, Math.round(idle))
       : DEFAULT_NODES_SETTINGS.idleSeconds,
     displayNames: parseDisplayNames(r.displayNames),
+    runnerPoolPrefix: cleanPoolPrefix(r.runnerPoolPrefix),
   };
 }

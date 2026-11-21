@@ -30,6 +30,8 @@ function numberFromValue(sample: MetricSample | undefined): number | undefined {
   return Number.isNaN(n) ? undefined : n;
 }
 
+export type RunnerQueryKey = 'runnerLabels' | 'runnerJobs';
+
 export type QueryKey =
   | 'cpuCount'
   | 'cpuIdleRate'
@@ -56,7 +58,7 @@ export type QueryKey =
   | 'remainderCpu'
   | 'remainderMem';
 
-export const NODE_QUERIES: Record<QueryKey, string> = {
+const STATIC_QUERIES: Record<Exclude<QueryKey, RunnerQueryKey>, string> = {
   cpuCount: 'count by (node) (node_cpu_seconds_total{mode="idle"})',
   cpuIdleRate: 'sum by (node) (rate(node_cpu_seconds_total{mode=~"idle|iowait"}[2m]))',
   macCpuRate: 'sum by (node) (rate(node_cpu_usage_seconds_total[2m]))',
@@ -72,12 +74,6 @@ export const NODE_QUERIES: Record<QueryKey, string> = {
     'sum by (node, namespace, pod, container) (rate(container_cpu_usage_seconds_total{container!=""}[2m]))',
   podMem:
     'sum by (node, namespace, pod, container) (container_memory_working_set_bytes{container!=""})',
-  runnerLabels:
-    'max by (namespace, pod, label_runwarden_io_tenant, label_runwarden_io_pool, label_runwarden_io_role) (kube_pod_labels{label_runwarden_io_managed_by="runwarden"})',
-  // The scrape adds its own pod and job labels, so the series keeps the runner's as exported_pod and
-  // exported_job. Copy them back when present. A scrape with honor_labels keeps pod and job as they are.
-  runnerJobs:
-    'max by (namespace, pod, owner, repo, pool, runs_on, workflow, job, run_id) (label_replace(label_replace(runwarden_runner_job_info, "pod", "$1", "exported_pod", "(.+)"), "job", "$1", "exported_job", "(.+)"))',
   cgroupInfo: 'max by (node, unit, parent, agent_unit) (agent_resource_cgroup_info)',
   cgroupCpu: 'sum by (node, unit) (rate(agent_resource_cgroup_cpu_seconds_total[2m]))',
   cgroupMem: 'sum by (node, unit) (agent_resource_cgroup_memory_bytes{type=~"anon|shmem|kernel"})',
@@ -88,6 +84,46 @@ export const NODE_QUERIES: Record<QueryKey, string> = {
   remainderCpu: 'max by (node) (agent_resource_node_remainder_cpu_cores)',
   remainderMem: 'max by (node) (agent_resource_node_remainder_memory_bytes)',
 };
+
+/** A pool prefix is a plain word: letters, digits, dash and underscore. Anything else counts as unset. */
+export function cleanPoolPrefix(raw: unknown): string {
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  return /^[A-Za-z0-9_-]+$/.test(text) ? text : '';
+}
+
+/** Pod label name (as kube-state-metrics writes it) for a key of the runner pool service. */
+const poolLabel = (prefix: string, key: string): string =>
+  `label_${prefix.replace(/-/g, '_')}_io_${key}`;
+
+/**
+ * Queries for the runner pool service. Its metric and label names start with a prefix that the
+ * user sets (`runnerPoolPrefix`). With no prefix there is no query: nothing is requested.
+ */
+export function runnerQueries(rawPrefix: unknown): Record<RunnerQueryKey, string> {
+  const prefix = cleanPoolPrefix(rawPrefix);
+  if (!prefix) return { runnerLabels: '', runnerJobs: '' };
+  const metricPrefix = prefix.replace(/-/g, '_');
+  const tenant = poolLabel(prefix, 'tenant');
+  const pool = poolLabel(prefix, 'pool');
+  const role = poolLabel(prefix, 'role');
+  return {
+    runnerLabels: `max by (namespace, pod, ${tenant}, ${pool}, ${role}) (kube_pod_labels{${poolLabel(
+      prefix,
+      'managed_by'
+    )}="${prefix}"})`,
+    // The scrape adds its own pod and job labels, so the series keeps the runner's as exported_pod and
+    // exported_job. Copy them back when present. A scrape with honor_labels keeps pod and job as they are.
+    runnerJobs: `max by (namespace, pod, owner, repo, pool, runs_on, workflow, job, run_id) (label_replace(label_replace(${metricPrefix}_runner_job_info, "pod", "$1", "exported_pod", "(.+)"), "job", "$1", "exported_job", "(.+)"))`,
+  };
+}
+
+/** Every query for a prefix. */
+export function nodeQueries(poolPrefix?: unknown): Record<QueryKey, string> {
+  return { ...STATIC_QUERIES, ...runnerQueries(poolPrefix) };
+}
+
+/** The queries with the runner pool service off. */
+export const NODE_QUERIES: Record<QueryKey, string> = nodeQueries('');
 
 type NodeValues = Map<string, number>;
 
@@ -182,15 +218,18 @@ function assembleSystem(
 /** Queries whose failure or empty result only means "no data": the rest of the page still works. */
 export const OPTIONAL_QUERIES: QueryKey[] = ['runnerLabels', 'runnerJobs'];
 
-/** RunWarden info per pod (key `namespace/pod`): pod labels first, job info on top. */
-function assembleRunners(results: Record<QueryKey, MetricSample[]>): Map<string, RunnerInfo> {
+/** Runner pool info per pod (key `namespace/pod`): pod labels first, job info on top. */
+function assembleRunners(
+  results: Record<QueryKey, MetricSample[]>,
+  prefix: string
+): Map<string, RunnerInfo> {
   const out = new Map<string, RunnerInfo>();
   for (const { metric: m } of results.runnerLabels ?? []) {
     if (!m.namespace || !m.pod) continue;
     out.set(`${m.namespace}/${m.pod}`, {
-      tenant: m.label_runwarden_io_tenant ?? '',
-      pool: m.label_runwarden_io_pool ?? '',
-      role: m.label_runwarden_io_role ?? '',
+      tenant: m[poolLabel(prefix, 'tenant')] ?? '',
+      pool: m[poolLabel(prefix, 'pool')] ?? '',
+      role: m[poolLabel(prefix, 'role')] ?? '',
     });
   }
   for (const { metric: m } of results.runnerJobs ?? []) {
@@ -213,7 +252,10 @@ function assembleRunners(results: Record<QueryKey, MetricSample[]>): Map<string,
   return out;
 }
 
-export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): NodeMetrics[] {
+export function assembleNodeMetrics(
+  results: Record<QueryKey, MetricSample[]>,
+  poolPrefix?: unknown
+): NodeMetrics[] {
   const v = {} as Record<QueryKey, NodeValues>;
   for (const key of Object.keys(NODE_QUERIES) as QueryKey[]) {
     v[key] = byNode(results[key] ?? []);
@@ -239,7 +281,7 @@ export function assembleNodeMetrics(results: Record<QueryKey, MetricSample[]>): 
   addPods(results.podMem ?? [], 'memBytes');
 
   const system = assembleSystem(results, v);
-  const runners = assembleRunners(results);
+  const runners = assembleRunners(results, cleanPoolPrefix(poolPrefix));
 
   const names = new Set<string>();
   for (const map of Object.values(v)) {

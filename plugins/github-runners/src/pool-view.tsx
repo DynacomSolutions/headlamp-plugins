@@ -21,7 +21,7 @@ import {
   Pool,
   PoolFilter,
   QueueEntry,
-} from './runwarden';
+} from './pool';
 
 type HLStatus = 'success' | 'warning' | 'error' | '';
 
@@ -322,14 +322,14 @@ function SeriesBox({ series }: { series: PanelSeries[] }) {
 
 /* ------------------------------------------------------------------- tabs */
 
-export interface RunWardenTabProps {
+export interface PoolTabProps {
   board: Board;
   filter: PoolFilter;
 }
 
 /** Overview: slots per pool, then the queue. */
-export function RunWardenOverview({ board, filter }: RunWardenTabProps) {
-  const rw = board.runwarden.board;
+export function PoolOverview({ board, filter }: PoolTabProps) {
+  const rw = board.pool.board;
   if (!rw) return null;
   return (
     <>
@@ -340,8 +340,8 @@ export function RunWardenOverview({ board, filter }: RunWardenTabProps) {
 }
 
 /** Capacity: slots, node load and persistent machines. */
-export function RunWardenCapacity({ board, filter }: RunWardenTabProps) {
-  const rw = board.runwarden.board;
+export function PoolCapacity({ board, filter }: PoolTabProps) {
+  const rw = board.pool.board;
   if (!rw) return null;
   return (
     <>
@@ -353,8 +353,8 @@ export function RunWardenCapacity({ board, filter }: RunWardenTabProps) {
 }
 
 /** Runners: pods by state in each pool. */
-export function RunWardenRunners({ board, filter }: RunWardenTabProps) {
-  const rw = board.runwarden.board;
+export function PoolRunners({ board, filter }: PoolTabProps) {
+  const rw = board.pool.board;
   if (!rw) return null;
   const pools = filterPools(rw.pools, filter).filter(p => p.runnersDetail);
   const states = Array.from(new Set(pools.flatMap(p => p.runners.map(([k]) => k))));
@@ -398,8 +398,8 @@ export function RunWardenRunners({ board, filter }: RunWardenTabProps) {
 }
 
 /** History: wait, start and run times, and failures of the last jobs. */
-export function RunWardenHistory({ board, filter }: RunWardenTabProps) {
-  const rw = board.runwarden.board;
+export function PoolHistory({ board, filter }: PoolTabProps) {
+  const rw = board.pool.board;
   if (!rw) return null;
   return (
     <>
@@ -411,8 +411,8 @@ export function RunWardenHistory({ board, filter }: RunWardenTabProps) {
 }
 
 /** Notice for a source that failed or has no data. */
-export function RunWardenNotice({ board }: { board: Board }) {
-  const rw = board.runwarden;
+export function PoolNotice({ board }: { board: Board }) {
+  const rw = board.pool;
   if (rw.state === 'loading') return null;
   return (
     <>
@@ -435,8 +435,8 @@ export function RunWardenNotice({ board }: { board: Board }) {
 }
 
 /** Link to the runner service site, taken from the panel's own link. Only http and https links are shown. */
-export function RunWardenLink({ board }: { board: Board }) {
-  const link = board.runwarden.board?.panels.pools?.link;
+export function PoolLink({ board }: { board: Board }) {
+  const link = board.pool.board?.panels.pools?.link;
   if (!link) return null;
   return (
     <MuiLink href={link} target="_blank" rel="noopener noreferrer">

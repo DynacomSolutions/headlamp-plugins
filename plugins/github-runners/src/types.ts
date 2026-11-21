@@ -103,11 +103,11 @@ export interface PluginConfig {
   policyRepoCaps?: string;
   projectStripPrefixes?: string;
   projectStripSuffixes?: string;
-  /** Runner service data source: auto (default), on or off. */
-  runwardenMode?: string;
-  runwardenNamespace?: string;
-  runwardenService?: string;
-  runwardenPort?: string;
+  /** Runner service data source: auto (default), on or off. Old key names are read through legacy-keys.ts. */
+  poolMode?: string;
+  poolNamespace?: string;
+  poolService?: string;
+  poolPort?: string;
   /**
    * Scanner data from a Prometheus-compatible store (for example VictoriaMetrics), read through
    * the Kubernetes API service proxy. On when a service name is set. A status endpoint, if set,

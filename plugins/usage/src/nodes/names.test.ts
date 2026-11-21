@@ -17,7 +17,7 @@ import type { NodeMetrics } from './types';
 
 describe('humanise', () => {
   it('drops a common suffix and title-cases', () => {
-    expect(humanise('runwarden-runners')).toBe('Runwarden');
+    expect(humanise('acme-runners')).toBe('Acme');
     expect(humanise('my_cool-operator')).toBe('My Cool');
     expect(humanise('payments-api')).toBe('Payments API');
   });
@@ -48,7 +48,7 @@ describe('stripPodHash', () => {
 describe('namespaceDataName', () => {
   it('prefers a display-name annotation, then part-of, name and instance labels', () => {
     expect(namespaceDataName({ annotations: { 'app.kubernetes.io/display-name': 'Shop' } })).toBe('Shop');
-    expect(namespaceDataName({ labels: { 'app.kubernetes.io/part-of': 'runwarden' } })).toBe('Runwarden');
+    expect(namespaceDataName({ labels: { 'app.kubernetes.io/part-of': 'acme' } })).toBe('Acme');
     expect(namespaceDataName({ labels: { 'app.kubernetes.io/name': 'foo-bar' } })).toBe('Foo Bar');
     expect(namespaceDataName({})).toBeUndefined();
   });
@@ -67,7 +67,7 @@ const metrics = (): NodeMetrics => ({
   memCapacity: 8,
   memUsed: 4,
   pods: [
-    { namespace: 'runwarden-runners', pod: 'job-7d9f8b6c5d-x2k4p', container: 'grafana', cpuCores: 1, memBytes: 1 },
+    { namespace: 'acme-runners', pod: 'job-7d9f8b6c5d-x2k4p', container: 'grafana', cpuCores: 1, memBytes: 1 },
   ],
 });
 const icon = () => '';
@@ -76,16 +76,16 @@ describe('names in the tree', () => {
   it('names namespaces, pods and containers, and keeps the raw id as the label', () => {
     const t = buildNodeTree(metrics(), null, 'cpu', icon);
     const ns = t.root.children[0].children[0];
-    expect(ns.label).toBe('runwarden-runners');
-    expect(ns.displayName).toBe('Runwarden');
+    expect(ns.label).toBe('acme-runners');
+    expect(ns.displayName).toBe('Acme');
     expect(ns.children[0].displayName).toBe('Job');
     expect(ns.children[0].children[0].displayName).toBe('Grafana');
   });
 
   it('prefers the cluster data over the guess, and an override over everything', () => {
-    const data = { overrides: {}, namespaces: new Map([['runwarden-runners', 'Runwarden CI']]) };
-    expect(buildNodeTree(metrics(), null, 'cpu', icon, [], data).root.children[0].children[0].displayName).toBe('Runwarden CI');
-    const forced = { ...data, overrides: { 'runwarden-runners': 'RW' } };
+    const data = { overrides: {}, namespaces: new Map([['acme-runners', 'Acme CI']]) };
+    expect(buildNodeTree(metrics(), null, 'cpu', icon, [], data).root.children[0].children[0].displayName).toBe('Acme CI');
+    const forced = { ...data, overrides: { 'acme-runners': 'RW' } };
     expect(buildNodeTree(metrics(), null, 'cpu', icon, [], forced).root.children[0].children[0].displayName).toBe('RW');
   });
 
@@ -124,8 +124,8 @@ describe('names in the tree', () => {
 describe('the selection carries both names', () => {
   it('gives the friendly name as the label and the raw id apart', () => {
     const t = buildNodeTree(metrics(), null, 'cpu', icon);
-    const sel = selectionFor(t, t, [], ['k8s', 'k8s/ns:runwarden-runners'])!;
-    expect(sel.label).toBe('Runwarden');
-    expect(sel.id).toBe('runwarden-runners');
+    const sel = selectionFor(t, t, [], ['k8s', 'k8s/ns:acme-runners'])!;
+    expect(sel.label).toBe('Acme');
+    expect(sel.id).toBe('acme-runners');
   });
 });
