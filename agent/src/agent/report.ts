@@ -192,7 +192,7 @@ export function renderDiagnosis(d: Diagnosis): A2uiMessage[] {
   const body = b.column([...top, b.divider(), b.tabs(tabs)]);
   b.card(body, 'root');
   const dataModel = {
-    trail: d.evidence.map(e => ({ heading: `**${e.id}** ${e.tool}${e.ok ? '' : ' (failed)'} — ${md(e.reason)}`, summary: md(e.summary) })),
+    trail: d.evidence.map(e => ({ heading: `**${e.id}** ${e.tool}${e.ok ? '' : ' (failed)'}: ${md(e.reason)}`, summary: md(e.summary) })),
   };
   return b.build(surfaceId('diagnosis', d.id), dataModel);
 }
