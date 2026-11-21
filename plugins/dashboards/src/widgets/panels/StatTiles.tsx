@@ -55,25 +55,43 @@ export function StatTiles(props: {
   sizeFrom?: ReadonlyArray<Stat>;
   /** The width share of each tile (default 1; a text tile is 2). A longer label gets a larger share. */
   weights?: ReadonlyArray<number>;
+  /**
+   * A fixed number of tiles in each row, for a narrow widget. The tiles fill a grid, the rows grow
+   * with the tiles, and a text tile takes a whole row so that its name is not cut. The numeral size
+   * stays the one of a tile with room (never the small size).
+   */
+  columns?: number;
 }): JSX.Element {
-  const { stats, width, textTiles = [], sizeFrom, weights: shares } = props;
+  const { stats, width, textTiles = [], sizeFrom, weights: shares, columns } = props;
   const tk = useTokens();
   const weight = (i: number): number => shares?.[i] ?? (textTiles.includes(i) ? 2 : 1);
   const weights = stats.reduce((n, _s, i) => n + weight(i), 0);
-  const narrow = width > 0 && width / Math.max(1, weights) < NARROW;
+  const narrow = columns === undefined && width > 0 && width / Math.max(1, weights) < NARROW;
   const worst = worstStat(stats);
   const size = tileSize(sizeFrom ?? stats.filter((_s, i) => !textTiles.includes(i)), narrow);
   return (
     <Box
       data-stats
-      sx={{
-        display: 'flex',
-        gap: narrow ? '6px' : '10px',
-        height: TILES_HEIGHT,
-        flex: 'none',
-        alignItems: 'flex-start',
-        pt: '4px',
-      }}
+      data-stat-columns={columns}
+      sx={
+        columns === undefined
+          ? {
+              display: 'flex',
+              gap: narrow ? '6px' : '10px',
+              height: TILES_HEIGHT,
+              flex: 'none',
+              alignItems: 'flex-start',
+              pt: '4px',
+            }
+          : {
+              display: 'grid',
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              gap: '6px 10px',
+              flex: 'none',
+              alignItems: 'start',
+              pt: '4px',
+            }
+      }
     >
       {stats.map((s, i) => {
         const zero = isZero(s);
@@ -83,7 +101,11 @@ export function StatTiles(props: {
             key={`${s.label}-${i}`}
             data-stat
             data-stat-worst={isWorst ? '' : undefined}
-            sx={{ flex: `${weight(i)} 1 0`, minWidth: 0 }}
+            sx={
+              columns === undefined
+                ? { flex: `${weight(i)} 1 0`, minWidth: 0 }
+                : { minWidth: 0, ...(textTiles.includes(i) ? { gridColumn: '1 / -1' } : {}) }
+            }
           >
             <Box
               component="div"

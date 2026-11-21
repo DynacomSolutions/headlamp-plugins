@@ -15,7 +15,14 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 
 import { LinkContext } from '../../links';
 import { parsePanel } from '../panels/model';
-import { AisView, worstLimit } from './AisView';
+import {
+  AisView,
+  isStacked,
+  STACK_TILE_COLUMNS,
+  STACK_WIDTH,
+  WIDE_WIDTH,
+  worstLimit,
+} from './AisView';
 import { joinAis } from './join';
 
 afterEach(cleanup);
@@ -500,5 +507,119 @@ describe('AisView with the member that the gateway serves', () => {
     const c = view();
     expect(c.querySelector('[data-serving-chip]')).toBeNull();
     expect(c.querySelector('[data-active-chip]')?.textContent).toBe('Active');
+  });
+});
+
+/** jsdom has no layout: the widget width is the clientWidth that the test sets on every element. */
+function withWidth<T>(width: number, run: () => T): T {
+  const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true,
+    get: () => width,
+  });
+  try {
+    return run();
+  } finally {
+    if (desc) Object.defineProperty(HTMLElement.prototype, 'clientWidth', desc);
+    else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth;
+  }
+}
+const viewAt = (width: number) =>
+  withWidth(
+    width,
+    () =>
+      render(wrap(<AisView model={model()} sourceId="ais-console" kiosk={false} editing={false} />))
+        .container
+  );
+
+describe('isStacked', () => {
+  it('decides on the widget width: narrow stacks, wide does not', () => {
+    expect(isStacked(470)).toBe(true);
+    expect(isStacked(STACK_WIDTH - 1)).toBe(true);
+    expect(isStacked(STACK_WIDTH)).toBe(false);
+    expect(isStacked(1200)).toBe(false);
+  });
+
+  it('does not stack before the first measurement', () => {
+    expect(isStacked(0)).toBe(false);
+  });
+
+  it('stacks below the width that draws the status key', () => {
+    expect(STACK_WIDTH).toBeLessThanOrEqual(WIDE_WIDTH);
+  });
+});
+
+describe('AisView stacked (narrow widget)', () => {
+  it('draws one vertical list, a pool header with its members indented below it', () => {
+    const c = viewAt(470);
+    expect(c.querySelector('[data-ais]')?.getAttribute('data-ais-layout')).toBe('stacked');
+    const list = c.querySelector('[data-ais-list]') as HTMLElement;
+    expect(list.getAttribute('data-columns')).toBe('1');
+    const keys = Array.from(list.children).map(
+      e => e.getAttribute('data-ais-group') ?? e.getAttribute('data-ais-row')
+    );
+    const pool = keys.findIndex(k => k !== null && model().groups[0].key === k);
+    expect(pool).toBe(0);
+    const members = model().groups[0].members;
+    expect(keys.slice(1, 1 + members.length)).toEqual(members.map(m => m.key));
+  });
+
+  it('draws every identity and every group, with no "+N more" line and no Other group', () => {
+    const c = viewAt(470);
+    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(7);
+    expect(c.querySelectorAll('[data-ais-group]')).toHaveLength(5);
+    expect(c.textContent).not.toMatch(/\+\s*\d+\s*more/i);
+    expect(c.textContent).not.toMatch(/\bother\b/i);
+    for (const g of model().groups)
+      for (const m of g.members)
+        expect(c.querySelector(`[data-ais-row="${m.key}"]`)).not.toBeNull();
+  });
+
+  it('puts the name, the login state and each limit with its percentage in each row', () => {
+    const c = viewAt(470);
+    const red = c.querySelector('[data-ais-row="anthropic/red"]') as HTMLElement;
+    const row = red ?? (c.querySelector('[data-ais-row$="/red"]') as HTMLElement);
+    expect(row.hasAttribute('data-stacked')).toBe(true);
+    expect(row.querySelector('[data-login]')).not.toBeNull();
+    const lanes = row.querySelectorAll('[data-lane]');
+    expect(lanes.length).toBeGreaterThan(0);
+    lanes.forEach(l => expect(l.querySelector('[data-lane-value]')?.textContent).toMatch(/\d+%/));
+  });
+
+  it('marks the active member and keeps the summary line outside the scroll area', () => {
+    const c = viewAt(470);
+    expect(c.querySelector('[data-active] [data-active-chip]')?.textContent).toBe('Active');
+    const scroll = c.querySelectorAll('[data-scroll-area]');
+    expect(scroll).toHaveLength(1);
+    expect(scroll[0].contains(c.querySelector('[data-ais-summary]'))).toBe(false);
+    expect(scroll[0].contains(c.querySelector('[data-stats]'))).toBe(false);
+    expect(c.querySelector('[data-ais-summary]')?.textContent).toBe(
+      '42 sessions, 7 identities, 1 pool'
+    );
+  });
+
+  it('puts the summary numbers in a small grid and keeps one numeral size', () => {
+    const c = viewAt(470);
+    const stats = c.querySelector('[data-stats]') as HTMLElement;
+    expect(stats.getAttribute('data-stat-columns')).toBe(String(STACK_TILE_COLUMNS));
+    const sizes = Array.from(c.querySelectorAll('[data-stat] > div:first-child')).map(
+      e => getComputedStyle(e).fontSize
+    );
+    expect(new Set(sizes).size).toBe(1);
+    expect(sizes[0]).toBe('34px');
+  });
+
+  it('draws no legend, as each limit is named in its row', () => {
+    expect(viewAt(470).querySelector('[data-legend]')).toBeNull();
+  });
+
+  it('keeps the wide layout for a wide widget', () => {
+    const c = viewAt(1200);
+    const root = c.querySelector('[data-ais]');
+    expect(root?.getAttribute('data-ais-layout')).toBe('wide');
+    expect(c.querySelector('[data-stacked]')).toBeNull();
+    expect(c.querySelector('[data-legend]')).not.toBeNull();
+    expect(c.querySelector('[data-stats]')?.getAttribute('data-stat-columns')).toBeNull();
+    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(7);
   });
 });
