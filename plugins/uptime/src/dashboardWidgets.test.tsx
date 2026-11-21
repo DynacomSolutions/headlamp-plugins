@@ -10,6 +10,11 @@ const { queryMetrics, queryRange } = vi.hoisted(() => ({
 const { fetchRouteLists } = vi.hoisted(() => ({ fetchRouteLists: vi.fn() }));
 vi.mock('./metrics', () => ({ PROBE_JOB: 'uptime', queryMetrics, queryRange }));
 vi.mock('./routeApi', () => ({ fetchRouteLists }));
+const { fetchClusterInfo } = vi.hoisted(() => ({ fetchClusterInfo: vi.fn() }));
+vi.mock('./clusterApi', async importOriginal => ({
+  ...(await importOriginal<typeof import('./clusterApi')>()),
+  fetchClusterInfo,
+}));
 
 import { normaliseConfig, uptimeTargetsWidget } from './dashboardWidgets';
 
@@ -56,6 +61,11 @@ beforeEach(() => {
   queryMetrics.mockReset();
   queryRange.mockReset();
   fetchRouteLists.mockReset();
+  fetchClusterInfo.mockReset();
+  fetchClusterInfo.mockReturnValue({
+    nodes: Promise.resolve(new Map()),
+    icons: Promise.resolve(new Map()),
+  });
   fetchRouteLists.mockResolvedValue({
     routes: { httproutes: [], ingresses: [], mappings: [] },
     errors: [],
@@ -279,6 +289,30 @@ describe('uptime.targets widget', () => {
     expect(icons[0].textContent).toBe('W');
     expect(icons[1].textContent).toBe('D');
     expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('shows the icon from the icon map, and a node glyph for the address of a node', async () => {
+    const png = 'data:image/png;base64,iVBORw0KGgo=';
+    queryMetrics.mockResolvedValue([
+      s('shop', 'eu', 1),
+      s('gateway-a', 'eu', 1, { instance: '198.51.100.7:47132' }),
+      s('plain', 'eu', 1),
+    ]);
+    queryRange.mockResolvedValue([]);
+    fetchClusterInfo.mockReturnValue({
+      nodes: Promise.resolve(new Map([['198.51.100.7', 'node-a']])),
+      icons: Promise.resolve(new Map([['shop', png]])),
+    });
+    view(<Widget {...props({ groupBy: 'app' })} />);
+    await flush();
+    const row = (name: string) =>
+      document.querySelector(`[data-uptime-root] section[aria-label="${name}"] [data-uptime-icon]`);
+    expect(row('shop')?.getAttribute('data-uptime-icon')).toBe('image');
+    expect(row('shop')?.getAttribute('data-uptime-icon-source')).toBe('map');
+    expect(row('node-a')?.getAttribute('data-uptime-icon')).toBe('node');
+    expect(row('node-a')?.querySelector('svg')).not.toBeNull();
+    expect(row('plain')?.getAttribute('data-uptime-icon')).toBe('initial');
+    expect(screen.queryByText('198.51.100.7')).toBeNull();
   });
 
   it('only failing hides the groups that are up', async () => {

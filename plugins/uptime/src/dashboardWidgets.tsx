@@ -19,13 +19,14 @@ import { alpha, useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { fetchClusterInfo } from './clusterApi';
 import {
   registerDashboardWidget,
   WidgetCache,
   WidgetDefinition,
   WidgetProps,
 } from './dashboardsContract';
-import { GroupIcon, useGroupIcons } from './GroupIcon';
+import { GroupIcon, type GroupIconInfo, useGroupIcons } from './GroupIcon';
 import {
   buildGroups,
   gridFor,
@@ -33,6 +34,7 @@ import {
   GROUP_BY_VALUES,
   GroupBy,
   meanAvailability,
+  NodeAddresses,
   RANGE_VALUES,
   UptimeGroup,
   WidgetRange,
@@ -526,7 +528,7 @@ function GroupBlock(props: {
   expanded: boolean;
   onToggle: () => void;
   kiosk: boolean;
-  icon?: string;
+  icon?: GroupIconInfo;
 }): JSX.Element {
   const { group, grid, startSec, expanded, onToggle, kiosk, icon } = props;
   const bodyId = React.useId();
@@ -594,7 +596,7 @@ function GroupBlock(props: {
             [NARROW]: { gridArea: 'name' },
           }}
         >
-          <GroupIcon name={group.key} url={icon} dark={dark} />
+          <GroupIcon name={group.key} info={icon} dark={dark} />
           <Box sx={{ minWidth: 0, flex: '1 1 0' }}>
             <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, minWidth: 0 }}>
               <Box
@@ -664,6 +666,39 @@ function GroupBlock(props: {
   );
 }
 
+const NO_NODES: NodeAddresses = new Map();
+const NO_ICON_MAP: ReadonlyMap<string, string> = new Map();
+
+/** The node addresses and the icon map, read again with each refresh (the reads are cached for a minute). */
+function useClusterInfo(refreshSignal: number): {
+  nodes: NodeAddresses;
+  icons: ReadonlyMap<string, string>;
+} {
+  const [info, setInfo] = React.useState({ nodes: NO_NODES, icons: NO_ICON_MAP });
+  React.useEffect(() => {
+    let live = true;
+    const { nodes, icons } = fetchClusterInfo();
+    Promise.all([nodes, icons]).then(([n, i]) => {
+      if (!live) return;
+      // Keep the same objects when the content is the same, so the groups are not built again.
+      setInfo(prev => ({
+        nodes: sameMap(prev.nodes, n) ? prev.nodes : n,
+        icons: sameMap(prev.icons, i) ? prev.icons : i,
+      }));
+    });
+    return () => {
+      live = false;
+    };
+  }, [refreshSignal]);
+  return info;
+}
+
+function sameMap(a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) if (b.get(k) !== v) return false;
+  return true;
+}
+
 function UptimeTargetsWidget({
   config,
   filters,
@@ -693,11 +728,13 @@ function UptimeTargetsWidget({
       return !ns || namespaces.includes(ns);
     });
   }, [state.checks, placements, namespaces]);
+  const cluster = useClusterInfo(refreshSignal);
   const { groups, resolved } = React.useMemo(
-    () => buildGroups(visible, settings.groupBy, grid, settings.onlyFailing, placements),
-    [visible, settings.groupBy, grid, settings.onlyFailing, placements]
+    () =>
+      buildGroups(visible, settings.groupBy, grid, settings.onlyFailing, placements, cluster.nodes),
+    [visible, settings.groupBy, grid, settings.onlyFailing, placements, cluster.nodes]
   );
-  const icons = useGroupIcons(groups, placements);
+  const icons = useGroupIcons(groups, placements, cluster.icons);
   // `key` resets the toggles when the default changes, so no effect syncs them.
   return (
     <Scroller kiosk={kiosk}>
@@ -754,7 +791,7 @@ function Scroller(props: { kiosk: boolean; children: React.ReactNode }): JSX.Ele
 
 function TargetGroups(props: {
   groups: UptimeGroup[];
-  icons: ReadonlyMap<string, string>;
+  icons: ReadonlyMap<string, GroupIconInfo>;
   resolved: string;
   total: number;
   grid: HistoryGrid;
