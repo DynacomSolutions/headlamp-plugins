@@ -28,6 +28,9 @@ export interface TimeSeriesConfig {
   legend: boolean;
 }
 
+/** The plot never gets shorter than this (px), so it stays readable beside a long legend. */
+const MIN_PLOT_HEIGHT = 96;
+
 export const DEFAULT_TIMESERIES: TimeSeriesConfig = {
   queries:
     'sum by (namespace) (rate(container_cpu_usage_seconds_total{namespace=~"$namespace"}[$rate]))',
@@ -194,7 +197,8 @@ function TimeSeriesWidget({
         ref={ref}
         sx={{
           flex: '1 1 0',
-          minHeight: 0,
+          // The plot keeps a readable height; a long legend scrolls instead of squeezing it.
+          minHeight: MIN_PLOT_HEIGHT,
           position: 'relative',
           opacity: state.loading ? 0.6 : 1,
           transition: 'opacity 150ms',
@@ -204,25 +208,32 @@ function TimeSeriesWidget({
       </Box>
       {(showLegend || (!kiosk && hasData)) && (
         <Box
+          data-legend-row
           sx={{
-            flex: 'none',
+            // The row never grows past 30% of the widget. The legend inside scrolls.
+            flex: '0 1 auto',
             display: 'flex',
             alignItems: 'flex-start',
             gap: 1,
             pt: 0.5,
+            minHeight: 0,
             maxHeight: '30%',
+            overflow: 'hidden',
           }}
         >
           <Box
             role="group"
             aria-label="Legend"
+            data-legend
             sx={{
               flex: '1 1 0',
               display: 'flex',
               flexWrap: 'wrap',
               gap: '2px 12px',
-              overflow: 'auto',
-              maxHeight: 'inherit',
+              alignSelf: 'stretch',
+              minHeight: 0,
+              overflowY: 'auto',
+              overscrollBehavior: 'contain',
               ...kioskBox(kiosk),
             }}
           >
