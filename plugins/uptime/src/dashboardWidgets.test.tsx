@@ -3,7 +3,10 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { queryMetrics, queryRange } = vi.hoisted(() => ({ queryMetrics: vi.fn(), queryRange: vi.fn() }));
+const { queryMetrics, queryRange } = vi.hoisted(() => ({
+  queryMetrics: vi.fn(),
+  queryRange: vi.fn(),
+}));
 const { fetchRouteLists } = vi.hoisted(() => ({ fetchRouteLists: vi.fn() }));
 vi.mock('./metrics', () => ({ PROBE_JOB: 'uptime', queryMetrics, queryRange }));
 vi.mock('./routeApi', () => ({ fetchRouteLists }));
@@ -12,7 +15,14 @@ import { normaliseConfig, uptimeTargetsWidget } from './dashboardWidgets';
 
 const NOW_MS = 1_800_000_000_000;
 const s = (target: string, location: string, up: number, extra: Record<string, string> = {}) => ({
-  metric: { target, location, type: 'http', policy: 'all', instance: `https://${target}/`, ...extra },
+  metric: {
+    target,
+    location,
+    type: 'http',
+    policy: 'all',
+    instance: `https://${target}/`,
+    ...extra,
+  },
   value: [NOW_MS / 1000, String(up)] as [number, string],
 });
 const series = (target: string, location: string, values: number[]) => ({
@@ -20,7 +30,12 @@ const series = (target: string, location: string, values: number[]) => ({
   values: values.map((v, i) => [1_799_990_000 + i * 900, String(v)] as [number, string]),
 });
 
-const filters = { namespaces: [] as string[], nodes: [] as string[], labelSelector: '', range: '1h' as const };
+const filters = {
+  namespaces: [] as string[],
+  nodes: [] as string[],
+  labelSelector: '',
+  range: '1h' as const,
+};
 const props = (config: any, over: any = {}) => ({
   instanceId: 'w',
   config: { ...uptimeTargetsWidget.defaultConfig, ...config },
@@ -41,7 +56,10 @@ beforeEach(() => {
   queryMetrics.mockReset();
   queryRange.mockReset();
   fetchRouteLists.mockReset();
-  fetchRouteLists.mockResolvedValue({ routes: { httproutes: [], ingresses: [], mappings: [] }, errors: [] });
+  fetchRouteLists.mockResolvedValue({
+    routes: { httproutes: [], ingresses: [], mappings: [] },
+    errors: [],
+  });
   queryMetrics.mockResolvedValue([
     s('web-1', 'eu', 1),
     s('web-1', 'hq', 1),
@@ -50,7 +68,10 @@ beforeEach(() => {
     s('db', 'eu', 1),
     s('db', 'hq', 1),
   ]);
-  queryRange.mockResolvedValue([series('web-2', 'eu', [1, 0, 0]), series('web-2', 'hq', [1, 0, 0])]);
+  queryRange.mockResolvedValue([
+    series('web-2', 'eu', [1, 0, 0]),
+    series('web-2', 'hq', [1, 0, 0]),
+  ]);
 });
 afterEach(() => {
   cleanup();
@@ -61,7 +82,12 @@ describe('uptime.targets definition', () => {
   it('has the contract fields', () => {
     expect(uptimeTargetsWidget.type).toBe('uptime.targets');
     expect(uptimeTargetsWidget.selfScroll).toBe(true);
-    expect(uptimeTargetsWidget.configSchema?.map(f => f.key)).toEqual(['groupBy', 'expanded', 'range', 'onlyFailing']);
+    expect(uptimeTargetsWidget.configSchema?.map(f => f.key)).toEqual([
+      'groupBy',
+      'expanded',
+      'range',
+      'onlyFailing',
+    ]);
     expect(uptimeTargetsWidget.defaultConfig).toEqual({
       groupBy: 'auto',
       expanded: false,
@@ -75,9 +101,14 @@ describe('uptime.targets definition', () => {
     expect(stub.queue?.map(d => d.type)).toContain('uptime.targets');
   });
   it('falls back to the defaults for bad saved settings', () => {
-    expect(normaliseConfig({ groupBy: 'x' as any, expanded: 'y' as any, range: 'z' as any, onlyFailing: 1 as any })).toEqual(
-      uptimeTargetsWidget.defaultConfig
-    );
+    expect(
+      normaliseConfig({
+        groupBy: 'x' as any,
+        expanded: 'y' as any,
+        range: 'z' as any,
+        onlyFailing: 1 as any,
+      })
+    ).toEqual(uptimeTargetsWidget.defaultConfig);
     expect(normaliseConfig(undefined)).toEqual(uptimeTargetsWidget.defaultConfig);
   });
 });
@@ -85,7 +116,14 @@ describe('uptime.targets definition', () => {
 describe('uptime.targets in the cluster', () => {
   const routes = {
     httproutes: [
-      { metadata: { namespace: 'shop', name: 'a', labels: { 'app.kubernetes.io/name': 'storefront' } }, spec: { hostnames: ['web-1', 'web-2'].map(h => `${h}.example.com`) } },
+      {
+        metadata: {
+          namespace: 'shop',
+          name: 'a',
+          labels: { 'app.kubernetes.io/name': 'storefront' },
+        },
+        spec: { hostnames: ['web-1', 'web-2'].map(h => `${h}.example.com`) },
+      },
       { metadata: { namespace: 'ops', name: 'b' }, spec: { hostnames: ['db.example.com'] } },
     ],
     ingresses: [],
@@ -105,9 +143,17 @@ describe('uptime.targets in the cluster', () => {
     fetchRouteLists.mockResolvedValue({ routes, errors: [] });
     view(<Widget {...props({ groupBy: 'namespace' })} />);
     await flush();
+    // The failing group is a band. The groups that are up fold into one row until it opens.
+    fireEvent.click(document.querySelector('[data-uptime-fold]') as HTMLElement);
     const names = screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent);
-    expect(names).toEqual(['shop', 'Not in cluster · HTTP', 'Not in cluster · TCP', 'ops']);
-    expect(screen.getByText(/4 groups by namespace · 5 checks/)).toBeTruthy();
+    expect(names).toEqual([
+      'shop',
+      '3 more up, worst of each period',
+      'Not in cluster · HTTP',
+      'Not in cluster · TCP',
+      'ops',
+    ]);
+    expect(screen.getByText(/4 groups by namespace/)).toBeTruthy();
   });
 
   it('auto uses the namespace, and app groups use the route app label', async () => {
@@ -119,7 +165,9 @@ describe('uptime.targets in the cluster', () => {
     first.unmount();
     view(<Widget {...props({ groupBy: 'app' })} />);
     await flush();
-    expect(screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent)).toContain('storefront');
+    expect(screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent)).toContain(
+      'storefront'
+    );
   });
 
   it('lists the routes once per refresh, not once per check', async () => {
@@ -163,7 +211,10 @@ describe('uptime.targets widget', () => {
     expect(headers.map(h => h.getAttribute('aria-expanded'))).toEqual(['false', 'false']);
     expect(headers[0].textContent).toContain('web');
     expect(headers[0].textContent).toContain('2 · 1 down · 1 up');
-    expect(headers[1].textContent).toContain('db');
+    // The group that is up folds into one row with its own strip.
+    expect(headers[1].textContent).toContain('1 more up, worst of each period');
+    fireEvent.click(headers[1]);
+    expect(screen.getAllByRole('button')[2].textContent).toContain('db');
     expect(screen.queryByText('web-1')).toBeNull();
   });
 
@@ -173,7 +224,6 @@ describe('uptime.targets widget', () => {
     fireEvent.click(screen.getAllByRole('button')[0]);
     expect(screen.getByText('web-1')).toBeTruthy();
     expect(screen.getByText('web-2')).toBeTruthy();
-    expect(screen.queryByText('db')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button')[0]);
     expect(screen.queryByText('web-1')).toBeNull();
   });
@@ -185,7 +235,8 @@ describe('uptime.targets widget', () => {
     expect(screen.getByText('web-2')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button')[0]);
     expect(screen.queryByText('web-1')).toBeNull();
-    expect(screen.getAllByRole('button')[1].getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(document.querySelector('[data-uptime-fold]') as HTMLElement);
+    expect(screen.getAllByRole('button')[2].getAttribute('aria-expanded')).toBe('true');
   });
 
   it('only failing hides the groups that are up', async () => {
@@ -196,7 +247,11 @@ describe('uptime.targets widget', () => {
   });
 
   it('groups by an app label the probes carry', async () => {
-    queryMetrics.mockResolvedValue([s('a', 'eu', 1, { app: 'shop' }), s('b', 'eu', 1, { app: 'shop' }), s('c', 'eu', 1, { app: 'ops' })]);
+    queryMetrics.mockResolvedValue([
+      s('a', 'eu', 1, { app: 'shop' }),
+      s('b', 'eu', 1, { app: 'shop' }),
+      s('c', 'eu', 1, { app: 'ops' }),
+    ]);
     queryRange.mockResolvedValue([]);
     view(<Widget {...props({})} />);
     await flush();
@@ -204,6 +259,19 @@ describe('uptime.targets widget', () => {
       expect.stringContaining('ops'),
       expect.stringContaining('shop'),
     ]);
+  });
+
+  it('shows the stat tiles, the folded row with its own strip and the summary line', async () => {
+    view(<Widget {...props({})} />);
+    await flush();
+    expect(
+      ['up', 'degraded', 'down', 'unknown'].map(
+        s => document.querySelector(`[data-uptime-tile="${s}"]`)?.textContent
+      )
+    ).toEqual(['2Up', '0Degraded', '1Down', '0No data']);
+    const strip = screen.getByLabelText(/^1 more up, worst of each period: the worst of 1 checks/);
+    expect(strip.children.length).toBe(96);
+    expect(document.body.textContent).toContain('2 up, 0 degraded, 1 down, 0 no data');
   });
 
   it('draws the group line with the page strip and its colours', async () => {
