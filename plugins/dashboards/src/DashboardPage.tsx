@@ -823,10 +823,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           gap: kiosk ? 2.25 : 1,
           mb: 1,
           minWidth: 0,
-          // The wall header: a filled band with square top and round bottom corners.
-          ...(kiosk
-            ? { bgcolor: 'action.hover', borderRadius: '0 0 10px 10px', px: 2, minHeight: 68 }
-            : {}),
+          // The wall header sits straight on the page background: no fill, edge or side padding.
+          ...(kiosk ? { minHeight: 68 } : {}),
           ...(!kiosk && !editing && spec.header.sticky
             ? { position: 'sticky', top: 0, zIndex: 4, bgcolor: 'background.default' }
             : {}),
