@@ -41,6 +41,8 @@ describe('DiagnosesTable', () => {
     );
     expect(screen.queryByRole('columnheader', { name: 'Resolved' })).toBeNull();
     expect(screen.getAllByText('resolved')).toHaveLength(1);
+    // Confidence and source have no column, so they sit under the cause.
+    expect(screen.getAllByText('high confidence, webhook')).toHaveLength(2);
     // Time, severity and status stay.
     for (const h of ['Time', 'Severity', 'Status'])
       expect(screen.getByRole('columnheader', { name: h })).toBeTruthy();
@@ -57,7 +59,38 @@ describe('DiagnosesTable', () => {
     expect(screen.getByText('done')).toBeTruthy();
     expect(screen.getByText('cause')).toBeTruthy();
     expect(screen.getByText('resolved')).toBeTruthy();
+    expect(screen.getByText('high confidence, webhook')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Alert1' })).toBeTruthy();
+  });
+
+  it('shows all nine columns and the Run again button in a wide place', () => {
+    render(
+      <MemoryRouter>
+        <DiagnosesTable
+          rows={[{ ...d('1', true), status: 'failed' }]}
+          onRerun={async () => undefined}
+          selection={{ ids: [], onToggle: vi.fn(), onToggleAll: vi.fn() }}
+        />
+      </MemoryRouter>
+    );
+    expect(
+      screen
+        .getAllByRole('columnheader')
+        .map(h => h.textContent)
+        .filter(Boolean)
+    ).toEqual([
+      'Time',
+      'Alert',
+      'Severity',
+      'Status',
+      'Likely cause',
+      'Confidence',
+      'Source',
+      'Resolved',
+      'Actions',
+    ]);
+    expect(screen.getByRole('button', { name: 'Run again: Alert1' })).toBeTruthy();
+    expect(screen.queryByText('high confidence, webhook')).toBeNull();
   });
 
   it('reports the toggles of the header and row checkboxes', () => {

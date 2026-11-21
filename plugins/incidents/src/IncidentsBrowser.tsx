@@ -37,8 +37,13 @@ import { chatUrl } from './routes';
 import { ScrollArea } from './ScrollArea';
 import { useFillHeight } from './useFillHeight';
 
-/** Below this width the table drops its confidence, source and resolved columns. */
-export const COMPACT_BELOW = 1100;
+/**
+ * Below this width the table has no columns for confidence, source, resolved and the button: they
+ * move under the status and the likely cause. All nine columns need about 880 px (the likely cause
+ * keeps 18 characters). A 1280 px window with the sidebar open gives the table 960 px, so the
+ * full table shows there. The old limit of 1100 px hid four columns at that width.
+ */
+export const COMPACT_BELOW = 900;
 /** Below this width the table stacks to three columns, so a phone needs no sideways scroll. */
 export const NARROW_BELOW = 860;
 
