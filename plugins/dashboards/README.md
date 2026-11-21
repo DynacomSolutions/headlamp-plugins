@@ -589,6 +589,7 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
 `state` of a run or job is `running` or `queued`. `state` of a step is `done`, `running`, `failed`, `skipped`
 or `pending`. `seconds` is the time that the run has run or waited. A bad value is dropped or replaced by a
 default, and the widget never throws on bad data.
+
 ### HoardDB widget (`hoarddb.engines`)
 
 One widget for the engines of a HoardDB source (default source id `hoarddb`) and the nodes that run them. It
