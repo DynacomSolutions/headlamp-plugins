@@ -76,6 +76,18 @@ The app can run as an installed web app with no browser bar, so no widget link l
 - The title bar wraps: controls that do not fit in one row move to the next row, and the title ends with an ellipsis. No
   control is drawn over another one, from 360 px to 2560 px.
 
+## Last good data
+
+Every widget keeps its last good data in the browser (localStorage, a size cap of 3 million characters,
+600 000 for one widget). A reload, a self reload into a new plugin version and a first load draw the
+dashboard and every widget from it at once, with no spinner, and fetch in the background. The header
+shows the age of that data ("Refreshed 2 min ago") until the first fresh answer. Data older than 15
+minutes shows a small "Cached" mark. The dashboard spec, the cluster sources and the kiosk scroll
+position are kept the same way.
+
+A widget from another plugin reads and writes its data with the optional `cache` prop of
+`WidgetProps` (see `contract.ts`). It must work when `cache` is missing.
+
 ## Header, footer and tab rail
 
 ### Header and footer

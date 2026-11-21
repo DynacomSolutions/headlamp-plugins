@@ -7,7 +7,12 @@ describe('refresh store', () => {
     const store = createRefreshStore(() => t);
     const l = vi.fn();
     store.subscribe(l);
-    expect(store.getState()).toEqual({ signal: 0, triggeredAt: 1000, reportedAt: 0 });
+    expect(store.getState()).toEqual({
+      signal: 0,
+      triggeredAt: 1000,
+      reportedAt: 0,
+      cachedAt: 0,
+    });
     t = 2000;
     store.trigger();
     expect(store.getState().signal).toBe(1);
@@ -17,6 +22,25 @@ describe('refresh store', () => {
     expect(store.getState().reportedAt).toBe(2500);
     expect(lastRefreshedAt(store.getState())).toBe(2500);
     expect(l).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the cached time until a widget reports, then the report', () => {
+    let t = 10_000;
+    const store = createRefreshStore(() => t);
+    store.cached(4_000);
+    store.cached(2_000);
+    expect(store.getState().cachedAt).toBe(4_000);
+    // A refresh request alone does not change the time: nothing has fresh data yet.
+    t = 11_000;
+    store.trigger();
+    expect(lastRefreshedAt(store.getState())).toBe(4_000);
+    store.report(11_500);
+    expect(lastRefreshedAt(store.getState())).toBe(11_500);
+  });
+
+  it('shows the request time when nothing is cached and nothing has reported', () => {
+    const store = createRefreshStore(() => 7_000);
+    expect(lastRefreshedAt(store.getState())).toBe(7_000);
   });
 
   it('stops notifying after unsubscribe', () => {

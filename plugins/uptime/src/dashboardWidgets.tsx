@@ -18,7 +18,12 @@ import { alpha, useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { createPortal } from 'react-dom';
-import { registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
+import {
+  registerDashboardWidget,
+  WidgetCache,
+  WidgetDefinition,
+  WidgetProps,
+} from './dashboardsContract';
 import {
   buildGroups,
   gridFor,
@@ -118,16 +123,63 @@ interface Loaded {
   grid: HistoryGrid;
   at: number;
   error: string | null;
+  /** True while this is data from the browser cache. */
+  cached: boolean;
+}
+
+/** What the widget keeps in the browser cache: the raw answers, so a new plugin version builds the checks again. */
+interface CachedChecks {
+  key: string;
+  success: Raw['success'];
+  history: Raw['history'];
+  routes: Route[];
+  routeErrors: string[];
+}
+
+/** The cached checks for this grid, built again from the raw answers, or undefined. */
+export function checksFromCache(cache: WidgetCache | undefined, grid: HistoryGrid): Loaded | null {
+  if (!cache) return null;
+  try {
+    const hit = cache.read<CachedChecks>();
+    const v = hit?.value;
+    const key = `${grid.stepSec}x${grid.buckets}`;
+    if (!hit || !v || v.key !== key || !Array.isArray(v.success) || !Array.isArray(v.history))
+      return null;
+    const raw: Raw = {
+      success: v.success,
+      duration: [],
+      httpStatus: [],
+      tlsExpiry: [],
+      siteUptime24h: [],
+      uptime24h: [],
+      uptime7d: [],
+      history: v.history,
+    };
+    return {
+      key,
+      checks: buildChecks(raw, Math.floor(hit.at / 1000), grid).checks,
+      routes: Array.isArray(v.routes) ? v.routes : EMPTY_ROUTES,
+      routeErrors: Array.isArray(v.routeErrors) ? v.routeErrors : [],
+      grid,
+      at: hit.at,
+      error: null,
+      cached: true,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * The checks with their history for the grid. Fetches when the grid or the refresh signal changes.
- * The last good data stays on screen when a refresh fails.
+ * The last good data stays on screen when a refresh fails. With a `cache`, the first render shows
+ * the last good checks (`cached`), with no spinner, and the fetch runs in the background.
  */
 export function useUptimeChecks(
   grid: HistoryGrid,
   refreshSignal: number,
-  reportRefreshed: (at?: number) => void
+  reportRefreshed: (at?: number) => void,
+  cache?: WidgetCache
 ): {
   loading: boolean;
   error: string | null;
@@ -135,8 +187,10 @@ export function useUptimeChecks(
   routes: Route[];
   routeErrors: string[];
   at: number | null;
+  /** True while the checks on screen come from the browser cache and no fresh answer has come. */
+  cached: boolean;
 } {
-  const [loaded, setLoaded] = React.useState<Loaded | null>(null);
+  const [loaded, setLoaded] = React.useState<Loaded | null>(() => checksFromCache(cache, grid));
   const key = `${grid.stepSec}x${grid.buckets}`;
   React.useEffect(() => {
     let live = true;
@@ -161,15 +215,18 @@ export function useUptimeChecks(
           history,
         };
         const at = Date.now();
+        const routes = buildRoutes(lists.routes);
         setLoaded({
           key,
           checks: buildChecks(raw, nowSec, grid).checks,
-          routes: buildRoutes(lists.routes),
+          routes,
           routeErrors: lists.errors,
           grid,
           at,
           error: null,
+          cached: false,
         });
+        cache?.write({ key, success, history, routes, routeErrors: lists.errors } satisfies CachedChecks, at);
         reportRefreshed(at);
       },
       (e: unknown) =>
@@ -182,6 +239,7 @@ export function useUptimeChecks(
           grid,
           at: prev?.key === key ? prev.at : 0,
           error: String((e as Error)?.message || e),
+          cached: prev?.key === key ? prev.cached : false,
         }))
     );
     return () => {
@@ -198,6 +256,7 @@ export function useUptimeChecks(
     routes: current?.routes ?? EMPTY_ROUTES,
     routeErrors: current?.routeErrors ?? [],
     at: current?.at || null,
+    cached: !!current?.cached,
   };
 }
 
@@ -587,13 +646,14 @@ function UptimeTargetsWidget({
   reportRefreshed,
   kiosk,
   footer,
+  cache,
 }: WidgetProps<UptimeWidgetConfig>): JSX.Element {
   const settings = normaliseConfig(config);
   const grid = React.useMemo(
     () => gridFor(settings.range, filters.range),
     [settings.range, filters.range]
   );
-  const state = useUptimeChecks(grid, refreshSignal, reportRefreshed);
+  const state = useUptimeChecks(grid, refreshSignal, reportRefreshed, cache);
   // The cluster placement is derived from the routes of the last refresh, so a settings change reuses them.
   const placements = React.useMemo(
     () => placeChecks(state.checks, state.routes),

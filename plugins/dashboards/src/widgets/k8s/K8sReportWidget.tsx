@@ -14,10 +14,11 @@ function K8sReport({
   reportRefreshed,
   editing,
   kiosk,
+  cache,
 }: WidgetProps<ReportConfig>): JSX.Element {
   const cfg = React.useMemo(() => normaliseConfig(config), [config]);
-  const state = useResources(cfg.source, filters, refreshSignal, reportRefreshed);
-  useReportStale(state.staleSince);
+  const state = useResources(cfg.source, filters, refreshSignal, reportRefreshed, cache);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   // Namespaces and nodes narrow the rows. The label selector goes to the API server.
   const scope = React.useMemo(
     () => ({ namespaces: filters.namespaces, nodes: filters.nodes }),

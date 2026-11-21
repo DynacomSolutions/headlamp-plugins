@@ -21,6 +21,8 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, Prompt, useHistory, useLocation } from 'react-router-dom';
+import { writeCachedDashboard } from './cache/dashboardCache';
+import { lastGoodStore } from './cache/lastGood';
 import { BandActions, BandView } from './components/BandView';
 import { ConnectionIndicator } from './components/ConnectionIndicator';
 import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
@@ -38,6 +40,7 @@ import type { DashboardFilters, WidgetDefinition } from './contract';
 import { scalableRows, useFillRowHeight } from './fillHeight';
 import {
   isTransientError,
+  useAfterFirstData,
   useCanWrite,
   useClusterNames,
   useDashboard,
@@ -45,7 +48,9 @@ import {
   useWidgetDefinition,
   useWidgetDefinitions,
 } from './hooks';
+import { removeBootCover } from './kiosk/bootCover';
 import { enterBrowserFullscreen, KioskExitButton, KioskFrame, KioskOverlay } from './kiosk/Kiosk';
+import { useScrollMemory } from './kiosk/scrollMemory';
 import { LinkContext } from './links';
 import { createRefreshStore } from './refreshStore';
 import { useConnection } from './resilience/useConnection';
@@ -156,10 +161,15 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     wasOnline.current = link.online;
   }, [link.online, refresh]);
   const definitions = useWidgetDefinitions();
-  const namespaceOptions = useClusterNames('/api/v1/namespaces');
-  const nodeOptions = useClusterNames('/api/v1/nodes');
+  // The pick lists are for the filter fields. A kiosk without filter fields does not ask for them, and
+  // any page asks after its widgets have data.
+  const afterData = useAfterFirstData(refresh);
+  const filtersShown = !query.kiosk || !!stored?.spec.kioskShowFilters;
+  const namespaceOptions = useClusterNames('/api/v1/namespaces', afterData && filtersShown);
+  const nodeOptions = useClusterNames('/api/v1/nodes', afterData && filtersShown);
 
-  const writable = canWrite !== false && !!stored && !stored.error;
+  // A spec from the browser cache has no resourceVersion: the page saves only after the cluster answered.
+  const writable = canWrite !== false && !!stored && !stored.error && !loaded.fromCache;
   const editing = query.edit && !query.kiosk && writable;
   const spec: DashboardSpec | undefined = editing && draft ? draft : stored?.spec;
   const dirty = editing && draft !== null && draft !== stored?.spec;
@@ -282,6 +292,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     try {
       const result = await storage.save(target, next);
       loaded.set(result);
+      writeCachedDashboard(lastGoodStore(), result);
       savedDraftRef.current = draftRef.current === next;
       setDraft(d => (d === next ? null : d));
       retryRef.current = null;
@@ -424,8 +435,10 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       editing: editing && !save.saving,
       kiosk: query.kiosk,
       reportRefreshed: refresh.report,
+      cacheScope: `${storage.namespace}/${name}`,
+      reportCached: refresh.cached,
     }),
-    [filters, signal, editing, save.saving, query.kiosk, refresh]
+    [filters, signal, editing, save.saving, query.kiosk, refresh, storage.namespace, name]
   );
 
   // Fit to screen height: the grid rows of the tab stretch to fill the screen. It is off while
@@ -437,6 +450,15 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     activeTab ? scalableRows(activeTab.sections) : 0,
     `${activeTabId}|${query.kiosk}`
   );
+
+  // The kiosk has drawn (cached or fresh data, or the waiting screen): the boot cover can go.
+  React.useEffect(() => {
+    if (query.kiosk) removeBootCover();
+  }, [query.kiosk, stored, loaded.loading]);
+
+  // A kiosk keeps its scroll position across a reload (see kiosk/scrollMemory.ts).
+  const [scrollEl, setScrollEl] = React.useState<HTMLElement | null>(null);
+  useScrollMemory(scrollEl, query.kiosk ? `${storage.namespace}/${name}/${activeTabId}` : '');
 
   // The title bar is one row. A narrow bar folds the filter fields into one button (level 1), and
   // then drops the "Refreshed" text (level 2). The width unknown (a test) shows the full bar.
@@ -1066,6 +1088,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         )}
         <Box
           data-kiosk-scroll={kiosk ? '' : undefined}
+          ref={setScrollEl}
           sx={
             kiosk
               ? {

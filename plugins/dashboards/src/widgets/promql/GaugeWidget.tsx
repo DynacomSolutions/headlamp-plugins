@@ -66,6 +66,7 @@ function GaugeWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<GaugeConfig>): JSX.Element {
   const { ref, sizeRef } = useElementSize<HTMLDivElement>();
   const { ink } = useInk(kiosk);
@@ -77,8 +78,9 @@ function GaugeWidget({
     refreshSignal,
     reportRefreshed,
     widthRef: sizeRef,
+    cache,
   });
-  useReportStale(state.staleSince);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   const value = React.useMemo(() => {
     const r = state.results?.[0];
     return r

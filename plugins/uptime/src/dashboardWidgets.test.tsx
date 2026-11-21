@@ -343,3 +343,49 @@ describe('uptime.targets widget', () => {
     expect(getComputedStyle(area).overscrollBehavior).toBe('contain');
   });
 });
+
+/** A cache in memory with the shape of `WidgetCache`, for the last good data tests. */
+function memoryCache() {
+  let held: { value: unknown; at: number } | undefined;
+  return {
+    read: <T,>() => held as { value: T; at: number } | undefined,
+    write: (value: unknown, at: number = Date.now()) => {
+      held = { value: JSON.parse(JSON.stringify(value)), at };
+    },
+    peek: () => held,
+  };
+}
+
+describe('uptime.targets last good data', () => {
+  it('writes the raw answers after a fetch, and the next mount shows the checks at once with no spinner', async () => {
+    const cache = memoryCache();
+    view(<Widget {...props({}, { cache })} />);
+    await flush();
+    expect(screen.getByText(/web-1/)).toBeTruthy();
+    expect(cache.peek()).toBeDefined();
+    cleanup();
+
+    // The next load: the metrics service never answers. The checks come from the cache.
+    queryMetrics.mockImplementation(() => new Promise(() => undefined));
+    queryRange.mockImplementation(() => new Promise(() => undefined));
+    fetchRouteLists.mockImplementation(() => new Promise(() => undefined));
+    view(<Widget {...props({}, { cache })} />);
+    expect(screen.queryByLabelText('Loading uptime')).toBeNull();
+    expect(screen.getByText(/web-1/)).toBeTruthy();
+  });
+
+  it('shows a spinner when nothing is cached, and ignores a cache of another grid or shape', () => {
+    queryMetrics.mockImplementation(() => new Promise(() => undefined));
+    queryRange.mockImplementation(() => new Promise(() => undefined));
+    fetchRouteLists.mockImplementation(() => new Promise(() => undefined));
+    const other = memoryCache();
+    other.write({ key: '1x1', success: [], history: [], routes: [], routeErrors: [] });
+    view(<Widget {...props({}, { cache: other })} />);
+    expect(screen.getByLabelText('Loading uptime')).toBeTruthy();
+    cleanup();
+    const bad = memoryCache();
+    bad.write({ nonsense: true });
+    view(<Widget {...props({}, { cache: bad })} />);
+    expect(screen.getByLabelText('Loading uptime')).toBeTruthy();
+  });
+});

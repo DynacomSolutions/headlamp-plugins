@@ -181,3 +181,47 @@ describe('usage donut widget', () => {
     expect(container.querySelectorAll('ul[aria-label$=" groups"] li').length).toBeGreaterThan(0);
   });
 });
+
+/** A cache in memory with the shape of `WidgetCache`, for the last good data tests. */
+function memoryCache() {
+  let held: { value: unknown; at: number } | undefined;
+  return {
+    read: <T,>() => held as { value: T; at: number } | undefined,
+    write: (value: unknown, at: number = Date.now()) => {
+      held = { value: JSON.parse(JSON.stringify(value)), at };
+    },
+    peek: () => held,
+  };
+}
+
+describe('usage widgets last good data', () => {
+  const Component = usageSunburstWidget.Component;
+  const config = { resource: 'cpu', groupBy: 'namespace', labelKey: '' };
+
+  it('writes the rows after a fetch, and the next mount draws them at once with no spinner', async () => {
+    const cache = memoryCache();
+    view(<Component {...props(config, { cache })} />);
+    await act(async () => {});
+    expect(cache.peek()).toBeDefined();
+    cleanup();
+
+    // The next load: the metrics service never answers. The arcs come from the cache.
+    fetchUsage.mockImplementation(() => new Promise(() => undefined));
+    const { container } = view(<Component {...props(config, { cache })} />);
+    expect(screen.queryByLabelText('Loading usage')).toBeNull();
+    expect(container.querySelectorAll('[data-arc="category"]')).toHaveLength(2);
+  });
+
+  it('shows a spinner when nothing is cached, and ignores a cache of another request or shape', () => {
+    fetchUsage.mockImplementation(() => new Promise(() => undefined));
+    const other = memoryCache();
+    other.write({ key: 'another request', rows: [], windowSeconds: 1, capacity: 0, error: null });
+    view(<Component {...props(config, { cache: other })} />);
+    expect(screen.getByLabelText('Loading usage')).toBeTruthy();
+    cleanup();
+    const bad = memoryCache();
+    bad.write(['not', 'an', 'object']);
+    view(<Component {...props(config, { cache: bad })} />);
+    expect(screen.getByLabelText('Loading usage')).toBeTruthy();
+  });
+});

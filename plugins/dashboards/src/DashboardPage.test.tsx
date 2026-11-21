@@ -19,11 +19,13 @@ vi.mock('@kinvolk/headlamp-plugin/lib/CommonComponents', () => ({
   SectionBox: (p: { children: React.ReactNode }) => <div>{p.children}</div>,
 }));
 
+import { readCachedDashboard, writeCachedDashboard } from './cache/dashboardCache';
+import { lastGoodStore, resetLastGoodStore } from './cache/lastGood';
 import { DashboardPage } from './DashboardPage';
 import { getRegistry } from './registry';
 import { addTab, addWidget } from './spec/edit';
 import { emptySpec } from './spec/model';
-import { DATA_KEY } from './storage/storage';
+import { DATA_KEY, fromConfigMap } from './storage/storage';
 import { registerBuiltinWidgets } from './widgets/builtin';
 
 // jsdom has no layout, so the grid reports no size; it renders its children at its default width.
@@ -88,6 +90,9 @@ function mount(
 }
 
 beforeEach(() => {
+  // A cached spec from an earlier test would show at once and hide the loading and waiting screens.
+  localStorage.clear();
+  resetLastGoodStore();
   registerBuiltinWidgets(getRegistry());
   version = 1;
   gate = null;
@@ -418,6 +423,120 @@ describe('dashboard page', () => {
     const { container } = mount('/dashboards/ops?kiosk=1');
     expect(await screen.findByText(/not allowed to read dashboards/)).toBeTruthy();
     expect(container.ownerDocument.querySelector('[data-kiosk-waiting]')).toBeNull();
+  });
+
+  describe('last good data', () => {
+    const seedSpec = () =>
+      writeCachedDashboard(
+        lastGoodStore(),
+        fromConfigMap(
+          {
+            metadata: { name: 'ops', resourceVersion: '1' },
+            data: { [DATA_KEY]: JSON.stringify(spec) },
+          },
+          'headlamp-dashboards'
+        )
+      );
+
+    it('draws the cached dashboard at once, before the cluster answers, with no waiting screen', async () => {
+      seedSpec();
+      let release: () => void = () => undefined;
+      const hold = new Promise<void>(r => (release = r));
+      const real = request.getMockImplementation()!;
+      request.mockImplementation(async (path: string, params?: any) => {
+        if (path.startsWith('/api/v1/namespaces/headlamp-dashboards/configmaps/ops')) await hold;
+        return real(path, params);
+      });
+      const { container } = mount('/dashboards/ops?kiosk=1');
+      // Nothing was awaited: the first render has the widgets of the cached spec.
+      expect(screen.getByText('Hello header')).toBeTruthy();
+      expect(container.ownerDocument.querySelector('[data-kiosk-waiting]')).toBeNull();
+      release();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText('Hello header')).toBeTruthy();
+    });
+
+    it('draws the cached dashboard when the server is away, and does not show an error screen', async () => {
+      seedSpec();
+      request.mockImplementation(async () => {
+        throw new Error('Failed to fetch');
+      });
+      const { container } = mount('/dashboards/ops?kiosk=1');
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText('Hello header')).toBeTruthy();
+      expect(container.ownerDocument.querySelector('[data-kiosk-waiting]')).toBeNull();
+    });
+
+    it('removes the black boot cover when the kiosk has drawn', async () => {
+      const cover = document.createElement('div');
+      cover.id = 'dashboards-kiosk-boot-cover';
+      document.body.appendChild(cover);
+      mount('/dashboards/ops?kiosk=1');
+      await screen.findByText('Hello header');
+      expect(document.getElementById('dashboards-kiosk-boot-cover')).toBeNull();
+    });
+
+    it('writes the loaded dashboard to the cache for the next load', async () => {
+      mount('/dashboards/ops?kiosk=1');
+      await screen.findByText('Hello header');
+      expect(readCachedDashboard(lastGoodStore(), 'headlamp-dashboards', 'ops')?.spec.title).toBe(
+        'Ops'
+      );
+    });
+
+    it('does not allow edit mode on a cached spec: it has no resourceVersion to save with', async () => {
+      seedSpec();
+      let release: () => void = () => undefined;
+      const hold = new Promise<void>(r => (release = r));
+      const real = request.getMockImplementation()!;
+      request.mockImplementation(async (path: string, params?: any) => {
+        if (path.startsWith('/api/v1/namespaces/headlamp-dashboards/configmaps/ops')) await hold;
+        return real(path, params);
+      });
+      mount('/dashboards/ops?edit=1');
+      expect(screen.getByText('Hello header')).toBeTruthy();
+      expect(screen.queryByLabelText('Add widget')).toBeNull();
+      expect(screen.queryByRole('button', { name: /^Save/ })).toBeNull();
+      release();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      await screen.findByText('Hello header');
+    });
+
+    it('does not ask for the namespace and node pick lists in a kiosk without filter fields', async () => {
+      mount('/dashboards/ops?kiosk=1');
+      await screen.findByText('Hello header');
+      await act(async () => {
+        await new Promise(r => setTimeout(r, 30));
+      });
+      const asked = request.mock.calls.map(c => String(c[0]));
+      expect(asked.some(u => u === '/api/v1/namespaces' || u === '/api/v1/nodes')).toBe(false);
+    });
+
+    it('asks for the pick lists outside the kiosk, after the first data or a short wait', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        mount('/dashboards/ops');
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(100);
+        });
+        const early = request.mock.calls.map(c => String(c[0]));
+        expect(early.some(u => u === '/api/v1/namespaces')).toBe(false);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(6_100);
+        });
+        const late = request.mock.calls.map(c => String(c[0]));
+        expect(late.some(u => u === '/api/v1/namespaces')).toBe(true);
+        expect(late.some(u => u === '/api/v1/nodes')).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   it('hides the filter bar in kiosk mode by default and keeps it outside kiosk', async () => {

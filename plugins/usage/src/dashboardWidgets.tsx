@@ -29,6 +29,7 @@ import {
 import {
   DashboardFilters,
   registerDashboardWidget,
+  WidgetCache,
   WidgetDefinition,
   WidgetProps,
 } from './dashboardsContract';
@@ -80,10 +81,27 @@ interface Loaded {
   error: string | null;
 }
 
+/** The cached usage for this request key, or null. A value of another shape is no value. */
+export function usageFromCache(cache: WidgetCache | undefined, key: string): Loaded | null {
+  try {
+    const v = cache?.read<Loaded>()?.value;
+    if (!v || v.key !== key || !Array.isArray(v.rows)) return null;
+    return {
+      key,
+      rows: v.rows,
+      windowSeconds: Number(v.windowSeconds) || 0,
+      capacity: Number(v.capacity) || 0,
+      error: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The usage rows (and, for the sunburst, the cluster capacity) for the widget. Fetches when the
  * range, the grouping, the capacity request or the refresh signal changes. The last good data stays
- * on screen when a refresh fails.
+ * on screen when a refresh fails. With a `cache`, the first render shows the last good data at once.
  */
 export function useUsageData(
   range: DashboardFilters['range'],
@@ -91,7 +109,8 @@ export function useUsageData(
   labelKey: string,
   capacity: { resource: SunburstResource; nodes: string[] } | null,
   refreshSignal: number,
-  reportRefreshed: (at?: number) => void
+  reportRefreshed: (at?: number) => void,
+  cache?: WidgetCache
 ): {
   loading: boolean;
   error: string | null;
@@ -99,11 +118,11 @@ export function useUsageData(
   windowSeconds: number;
   capacity: number;
 } {
-  const [loaded, setLoaded] = React.useState<Loaded | null>(null);
   const usage = usageRange(range);
   const plan = planFor(groupingOf(groupBy, labelKey), []);
   const capQuery = capacity ? capacityQuery(capacity.resource, capacity.nodes) : '';
   const key = `${usage}|${plan.live}|${plan.labelKey ?? ''}|${capQuery}`;
+  const [loaded, setLoaded] = React.useState<Loaded | null>(() => usageFromCache(cache, key));
   React.useEffect(() => {
     let live = true;
     Promise.all([
@@ -118,13 +137,15 @@ export function useUsageData(
     ]).then(
       ([data, cap]) => {
         if (!live) return;
-        setLoaded({
+        const fresh: Loaded = {
           key,
           rows: data.rows,
           windowSeconds: data.coverage?.coveredSeconds ?? rangeSeconds(usage),
           capacity: cap,
           error: null,
-        });
+        };
+        setLoaded(fresh);
+        cache?.write(fresh);
         reportRefreshed(Date.now());
       },
       (e: unknown) =>
@@ -178,6 +199,7 @@ function UsageSunburstWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<UsageWidgetConfig>): JSX.Element {
   const resource: SunburstResource = config.resource === 'memory' ? 'memory' : 'cpu';
   const cap = React.useMemo(() => ({ resource, nodes: filters.nodes }), [resource, filters.nodes]);
@@ -187,7 +209,8 @@ function UsageSunburstWidget({
     config.labelKey,
     cap,
     refreshSignal,
-    reportRefreshed
+    reportRefreshed,
+    cache
   );
   const data = React.useMemo(
     () =>
@@ -245,6 +268,7 @@ function UsageDonutWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<UsageWidgetConfig>): JSX.Element {
   const theme = useTheme();
   const def = RESOURCES.find(r => r.id === config.resource) ?? RESOURCES[0];
@@ -254,7 +278,8 @@ function UsageDonutWidget({
     config.labelKey,
     null,
     refreshSignal,
-    reportRefreshed
+    reportRefreshed,
+    cache
   );
   const view = React.useMemo(() => {
     const ctx = buildContext([], []);

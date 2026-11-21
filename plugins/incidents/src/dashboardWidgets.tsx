@@ -27,7 +27,12 @@ import {
 } from './chat-data';
 import { cleanErrorText } from './chat-model';
 import { Composer, EXAMPLE_PROMPTS, MessageView, useStickToBottom } from './ChatPage';
-import { registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
+import {
+  registerDashboardWidget,
+  WidgetCache,
+  WidgetDefinition,
+  WidgetProps,
+} from './dashboardsContract';
 import { fetchAllDiagnoses, rerunDiagnosis, useSettings } from './data';
 import { IncidentHero } from './IncidentHero';
 import { IncidentRows } from './IncidentRows';
@@ -70,26 +75,45 @@ interface Fetched {
   error: string | null;
 }
 
+/** The cached diagnoses of this backend address, or null. A value of another shape is no value. */
+export function diagnosesFromCache(
+  cache: WidgetCache | undefined,
+  key: string
+): DiagnosisSummary[] | null {
+  try {
+    const v = cache?.read<{ key: string; rows: DiagnosisSummary[] }>()?.value;
+    return v && v.key === key && Array.isArray(v.rows) ? v.rows : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The diagnoses. Fetches when the settings or the refresh signal change, never on its own timer.
- * The last good data stays on screen when a refresh fails.
+ * The last good data stays on screen when a refresh fails. With a `cache`, the first render shows
+ * the last good rows at once, with no spinner, and the fetch runs in the background.
  */
 export function useDiagnosesOnSignal(
   settings: Settings,
   refreshSignal: number,
   reportRefreshed: (at?: number) => void,
   /** A number that the widget raises to fetch again now (after a re-run). */
-  reload = 0
+  reload = 0,
+  cache?: WidgetCache
 ): Fetched & { loading: boolean } {
-  const [state, setState] = React.useState<Fetched>({ rows: null, error: null });
   // A string key, so a new but equal settings object does not fetch again.
   const key = backendUrl(settings, '/api/diagnoses');
+  const [state, setState] = React.useState<Fetched>(() => ({
+    rows: diagnosesFromCache(cache, key),
+    error: null,
+  }));
   React.useEffect(() => {
     let live = true;
     fetchAllDiagnoses(settings).then(
       rows => {
         if (!live) return;
         setState({ rows, error: null });
+        cache?.write({ key, rows });
         reportRefreshed(Date.now());
       },
       (e: unknown) => live && setState(prev => ({ rows: prev.rows, error: cleanErrorText(e) }))
@@ -109,10 +133,11 @@ function IncidentListWidget({
   reportRefreshed,
   editing,
   kiosk,
+  cache,
 }: WidgetProps<IncidentListConfig>): JSX.Element {
   const settings = useSettings();
   const [reload, setReload] = React.useState(0);
-  const state = useDiagnosesOnSignal(settings, refreshSignal, reportRefreshed, reload);
+  const state = useDiagnosesOnSignal(settings, refreshSignal, reportRefreshed, reload, cache);
   const rerun = React.useCallback(
     async (d: DiagnosisSummary) => {
       await rerunDiagnosis(settings, d.id);

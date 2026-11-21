@@ -92,6 +92,7 @@ function StatWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<StatConfig>): JSX.Element {
   const { ref, sizeRef, measured } = useElementSize<HTMLDivElement>();
   const { ink, mode } = useInk(kiosk);
@@ -104,8 +105,9 @@ function StatWidget({
     reportRefreshed,
     widthRef: sizeRef,
     enabled: !config.sparkline || measured,
+    cache,
   });
-  useReportStale(state.staleSince);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   const data = React.useMemo(() => statValue(state.results, config), [state.results, config]);
   const steps = React.useMemo(() => parseThresholds(config.thresholds), [config.thresholds]);
   const level =

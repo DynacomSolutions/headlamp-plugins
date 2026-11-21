@@ -8,7 +8,7 @@ import Box from '@mui/material/Box';
 import React from 'react';
 import type { WidgetDefinition, WidgetProps } from '../../contract';
 import { useReportStale } from '../../resilience/stale';
-import { usePanel, usePanelList } from './data';
+import { useListGate, usePanel, usePanelList } from './data';
 import { sourceOf, SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
 import { AGENT_SOURCE_ID } from './sources';
 import { useSourceLookup } from './sourcesConfig';
@@ -25,10 +25,12 @@ function AlertChips({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<AlertChipsConfig>): JSX.Element | null {
   const sourceId = sourceOf(config);
   const { source } = useSourceLookup(sourceId);
-  const list = usePanelList(source, sourceId);
+  const [listOpen, settleList] = useListGate();
+  const list = usePanelList(source, sourceId, listOpen);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
   const state = usePanel(
     source,
@@ -36,9 +38,11 @@ function AlertChips({
     refreshSignal,
     minSeconds,
     reportRefreshed,
-    sourceId
+    sourceId,
+    cache
   );
-  useReportStale(state.staleSince);
+  React.useEffect(() => settleList(state), [state, settleList]);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   const tk = useTokens();
   const stats = state.panel?.stats.slice(0, 3) ?? [];
   // The page header keeps its one row of controls, so only the full screen wall shows the chips.

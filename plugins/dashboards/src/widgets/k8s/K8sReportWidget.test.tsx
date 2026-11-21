@@ -15,6 +15,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
   Router: { createRouteURL: () => '/x' },
 }));
 
+import { createLastGoodStore, StorageLike, widgetCache } from '../../cache/lastGood';
 import { defaultFilters } from '../../spec/model';
 import { DEFAULT_REPORT } from './config';
 import { fetchKinds, listPath, sortKinds } from './discovery';
@@ -320,5 +321,49 @@ describe('settings editor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Grouping' }));
     fireEvent.click(screen.getByRole('button', { name: 'Summary' }));
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ reportType: 'summary' }));
+  });
+});
+
+describe('Kubernetes report widget: last good data', () => {
+  const memory = (): StorageLike => {
+    const map = new Map<string, string>();
+    return {
+      get length() {
+        return map.size;
+      },
+      key: i => [...map.keys()][i] ?? null,
+      getItem: k => map.get(k) ?? null,
+      setItem: (k, v) => void map.set(k, v),
+      removeItem: k => void map.delete(k),
+    };
+  };
+
+  it('shows the cached rows at once, then the live list, and writes the live list back', async () => {
+    const cache = widgetCache(createLastGoodStore(memory()), 's', 'w');
+    const view = (c = cache) => (
+      <MemoryRouter>
+        <Widget
+          instanceId="w"
+          config={DEFAULT_REPORT}
+          filters={defaultFilters()}
+          refreshSignal={0}
+          reportRefreshed={vi.fn()}
+          editing={false}
+          kiosk={false}
+          cache={c}
+        />
+      </MemoryRouter>
+    );
+    const first = render(view());
+    await waitFor(() => expect(screen.getByText('a')).toBeTruthy());
+    first.unmount();
+    // The cache write is throttled, so a live list is stored once, on the first full list.
+    expect(cache.read()).toBeDefined();
+
+    // The stream never answers: only the cache can fill the table.
+    streamResults.mockImplementation(async () => () => undefined);
+    render(view());
+    expect(screen.getByText('a')).toBeTruthy();
+    expect(screen.getByText('d1')).toBeTruthy();
   });
 });

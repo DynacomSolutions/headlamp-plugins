@@ -11,6 +11,13 @@ export interface DashboardContextValue {
   editing: boolean;
   kiosk: boolean;
   reportRefreshed: (at?: number) => void;
+  /**
+   * Where this dashboard keeps the last good data of its widgets: `<namespace>/<dashboard>`.
+   * Absent: no widget cache (a test, or a page that is not a dashboard).
+   */
+  cacheScope?: string;
+  /** A widget frame tells the header the time of the cached data that its widget shows. */
+  reportCached?: (at: number) => void;
 }
 
 export const DashboardContext = React.createContext<DashboardContextValue | null>(null);

@@ -16,12 +16,16 @@ import {
 import { DashboardPage } from './DashboardPage';
 import { DashboardsListPage } from './DashboardsListPage';
 import { installEdgeBack } from './edgeBack';
+import { installBootCover } from './kiosk/bootCover';
 import { getRegistry } from './registry';
 import { Settings } from './settings';
 import { registerBuiltinWidgets } from './widgets/builtin';
 
 // A swipe right from the left edge goes Back on every page (the installed app has no Back button).
 installEdgeBack();
+
+// A dark kiosk that boots or reloads is covered in black until it has drawn, so Headlamp's own shell never flashes.
+installBootCover();
 
 // Install the global registry first, so widgets from plugins that loaded earlier are picked up.
 registerBuiltinWidgets(getRegistry());
