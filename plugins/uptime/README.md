@@ -61,7 +61,9 @@ for a kind it cannot read. The widget needs `list` on those three kinds.
 A `namespace` or `app` series label on the probes wins over the cluster. A
 check that no route serves (DNS, ICMP, external sites, raw addresses) groups
 under its own real name: the host of its `host` label, its probed address or its
-check name. There is never an "Other", "Ungrouped" or "Not in cluster" group.
+check name. A raw IP address is never a group name: the address of a node (its
+InternalIP or ExternalIP in `/api/v1/nodes`) groups under the node name, with a
+server glyph, and any other address groups under the check name. There is never an "Other", "Ungrouped" or "Not in cluster" group.
 
 Every group is listed, failing groups first, and no group folds into a "N more
 up" row. Each group is one row: the icon of the app, the worst status, the
@@ -77,18 +79,30 @@ refreshes, not on its own timer.
 
 ### Group icons
 
-The icon of a group is the real icon of its app. The route that serves a check
-names a backend Service (HTTPRoute `backendRefs`, an Ingress backend or the
-`service` of a Mapping). The widget reads the start page of that Service through
-the Kubernetes Service proxy, picks the best `<link rel="icon">` (SVG, then PNG,
-then ICO, then a touch icon), and loads it through the same proxy. The proxy
-rewrites the page links, so no icon comes from outside the cluster. A full
-`http(s)` address in a link is dropped, so the widget never calls an external
-site. A group tries up to three of its Services. The widget needs `get` on
-`services/proxy` for them. A Service is asked once per page session, and again
-after five minutes when it gave no icon. A group with no icon (a check that no
-route serves, or an app with no start page icon) shows a neutral badge with the
-first letter of its name.
+A group shows its icon from the first source that has one:
+
+1. **Node glyph.** A node group (see above) shows a plain server glyph.
+2. **Icon map.** An optional ConfigMap `uptime-icons` in the namespace
+   `headlamp-dashboards`. Each key is a group name and each value is a small
+   `data:image/svg+xml` or `data:image/png` address (at most 192 KiB). A key also
+   covers every group whose name starts with it and a `-` or `.`, so the key
+   `app` covers `app-preview` and the longest key wins. The map needs no Service
+   proxy access. A map that is absent (404) is empty. Any other read failure
+   is tried again at the next refresh.
+3. **Start page of the app.** The route that serves a check names a backend
+   Service (HTTPRoute `backendRefs`, an Ingress backend or the `service` of a
+   Mapping). The widget reads the start page of that Service through the
+   Kubernetes Service proxy, picks the best `<link rel="icon">` (SVG, then PNG,
+   then ICO, then a touch icon), and loads it through the same proxy. A full
+   `http(s)` address in a link is dropped, so the widget never calls an
+   external site. A group tries up to three of its Services. This source needs
+   `get` on `services/proxy` for them. Where the service account may not use
+   the proxy (403), the request fails quietly and the group keeps its badge.
+   A Service is asked once per page session, and again after five minutes when
+   it gave no icon.
+
+A group with no icon shows a neutral badge with the first letter of its name.
+An icon never loads from an external site.
 
 ## Where the data comes from
 

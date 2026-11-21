@@ -6,7 +6,8 @@
  * is matched with the routes (see routes.ts) and the route gives the namespace and the app. The app is the
  * `app.kubernetes.io/name` or `part-of` label of the route, and the namespace of the route when it has none.
  * A check that no route serves groups under its own real name: its host, or its check name when it has no
- * host. There is never an "Other", "Ungrouped" or "Not in cluster" bucket.
+ * host. A raw IP address is never a group name: a node address gives the node name, any other address gives the
+ * check name. There is never an "Other", "Ungrouped" or "Not in cluster" bucket.
  * The other groupings are a `group` series label, the first word of the check name and the check type.
  * `auto` takes the app when any check has one, then the namespace, then the name.
  */
@@ -16,6 +17,10 @@ import { type Backend, endpointsOf, type Placement } from './routes';
 /** The placement of each check that a route serves, by check name. */
 export type Placements = ReadonlyMap<string, Placement>;
 const NO_PLACEMENTS: Placements = new Map();
+
+/** The node name of each node address (a node's internal or external IP), see clusterApi.ts. */
+export type NodeAddresses = ReadonlyMap<string, string>;
+const NO_NODES: NodeAddresses = new Map();
 
 export type GroupBy = 'auto' | 'namespace' | 'app' | 'group' | 'name' | 'type';
 export type WidgetRange = 'dashboard' | '1h' | '6h' | '24h' | '7d' | '30d';
@@ -44,6 +49,8 @@ export interface UptimeGroup {
   checks: Check[];
   /** The worst availability of its checks per history bucket (0..1), undefined = no data. */
   history: (number | undefined)[];
+  /** True when every check of the group probes a node address, so the key is the node name. */
+  node: boolean;
 }
 
 /** The widget grid for a time range: about 60 to 96 buckets, never narrower than a minute. */
@@ -101,22 +108,38 @@ export function resolveGroupBy(
   return 'name';
 }
 
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+/** True for an IPv4 or IPv6 address written as a host. */
+export const isIpHost = (host: string): boolean =>
+  IPV4.test(host) || (host.includes(':') && /^[0-9a-f:.]+$/i.test(host));
+
+/** The node that a check probes, when its host is the address of a node. */
+export function nodeOf(check: Check, nodes: NodeAddresses = NO_NODES): string | undefined {
+  const host = endpointsOf(check)[0]?.host;
+  return host ? nodes.get(host) : undefined;
+}
+
 /**
  * The real name of a check that no grouping places: its host (the `host` label, the probed address or a
- * host-like check name), else the check name. It never gives a shared bucket.
+ * host-like check name), else the check name. A raw IP address is not a name: the address of a node gives the
+ * node name, and any other address gives the check name. It never gives a shared bucket.
  */
-export function ownName(check: Check): string {
-  return endpointsOf(check)[0]?.host || check.name;
+export function ownName(check: Check, nodes: NodeAddresses = NO_NODES): string {
+  const host = endpointsOf(check)[0]?.host;
+  if (!host) return check.name;
+  if (isIpHost(host)) return nodes.get(host) ?? check.name;
+  return host;
 }
 
 export function groupKeyOf(
   check: Check,
   groupBy: Exclude<GroupBy, 'auto'>,
-  placements: Placements = NO_PLACEMENTS
+  placements: Placements = NO_PLACEMENTS,
+  nodes: NodeAddresses = NO_NODES
 ): string {
   switch (groupBy) {
     case 'type':
-      return check.type ? check.type.toUpperCase() : ownName(check);
+      return check.type ? check.type.toUpperCase() : ownName(check, nodes);
     case 'name':
       return namePrefix(check.name);
     case 'group':
@@ -124,14 +147,14 @@ export function groupKeyOf(
         labelOf(check, 'group') ??
         placementKey(check, 'app', placements) ??
         placementKey(check, 'namespace', placements) ??
-        ownName(check)
+        ownName(check, nodes)
       );
     default:
       // The app falls back to the namespace of its route, as the cluster knows no better.
       return (
         placementKey(check, groupBy, placements) ??
         (groupBy === 'app' ? placementKey(check, 'namespace', placements) : undefined) ??
-        ownName(check)
+        ownName(check, nodes)
       );
   }
 }
@@ -168,7 +191,7 @@ const ORDER: Record<Status, number> = { down: 0, degraded: 1, unknown: 2, up: 3 
 /**
  * Group the checks. Every check lands in exactly one group, with no top-N and no "Other" group:
  * a check that the grouping cannot place groups under its own real name (see `ownName`).
- * Failing groups sort first, then by name. `onlyFailing` drops the groups that are not down or degraded.
+ * Failing groups sort first (down, then degraded, then no data), then the healthy groups, each by name. `onlyFailing` drops the groups that are not down or degraded.
  * Checks keep their order inside a group (failing first, as the page sorts them).
  */
 export function buildGroups(
@@ -176,12 +199,13 @@ export function buildGroups(
   groupBy: GroupBy,
   grid: HistoryGrid,
   onlyFailing: boolean,
-  placements: Placements = NO_PLACEMENTS
+  placements: Placements = NO_PLACEMENTS,
+  nodes: NodeAddresses = NO_NODES
 ): { groups: UptimeGroup[]; resolved: Exclude<GroupBy, 'auto'> } {
   const resolved = resolveGroupBy(groupBy, checks, placements);
   const byKey = new Map<string, Check[]>();
   for (const c of checks) {
-    const key = groupKeyOf(c, resolved, placements);
+    const key = groupKeyOf(c, resolved, placements, nodes);
     const list = byKey.get(key);
     if (list) list.push(c);
     else byKey.set(key, [c]);
@@ -192,6 +216,7 @@ export function buildGroups(
     counts: summarise(list),
     checks: list,
     history: worstHistory(list, grid.buckets),
+    node: list.every(c => nodeOf(c, nodes) === key),
   }));
   if (onlyFailing) groups = groups.filter(g => g.status === 'down' || g.status === 'degraded');
   groups.sort((a, b) => ORDER[a.status] - ORDER[b.status] || a.key.localeCompare(b.key));

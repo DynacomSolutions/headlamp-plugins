@@ -240,14 +240,19 @@ describe('groupBackends', () => {
     groupBackends({ key, checks: checks.map(chk) }, new Map(pairs)).map(b => b.name);
 
   it('uses the one Service of a group, once, and skips a route with no Service', () => {
-    expect(names('shop', ['a', 'b', 'c'], [place('a', be('web')), place('b', be('web')), place('c')])).toEqual([
-      'web',
-    ]);
+    expect(
+      names('shop', ['a', 'b', 'c'], [place('a', be('web')), place('b', be('web')), place('c')])
+    ).toEqual(['web']);
     expect(names('shop', ['zzz'], [place('a', be('web'))])).toEqual([]);
   });
   it('uses only the Services that fit the group name when the group holds several', () => {
     const checks = ['a', 'b', 'c', 'd'];
-    const pairs = [place('a', be('store-d1')), place('b', be('store-kv')), place('c', be('store')), place('d', be('other'))];
+    const pairs = [
+      place('a', be('store-d1')),
+      place('b', be('store-kv')),
+      place('c', be('store')),
+      place('d', be('other')),
+    ];
     // The same name first, then the names that start with it. An unrelated Service never gives its icon.
     expect(names('store', checks, pairs)).toEqual(['store', 'store-d1', 'store-kv']);
   });
@@ -256,5 +261,80 @@ describe('groupBackends', () => {
     const many = ['a', 'b', 'c', 'd', 'e'];
     const pairs = many.map(n => place(n, be(`app-${n}`)));
     expect(names('app', many, pairs)).toEqual(['app-a', 'app-b', 'app-c']);
+  });
+});
+
+describe('failing groups first', () => {
+  it('puts down first, then degraded, then no data, then up, with names in order inside each', () => {
+    const checks = [
+      check('b-up', 'up'),
+      check('a-up', 'up'),
+      check('d-deg', 'degraded'),
+      check('c-deg', 'degraded'),
+      check('f-down', 'down'),
+      check('e-nodata', 'unknown'),
+    ];
+    // The name grouping uses the first word, so each check here is its own group by its first word.
+    const byKey = buildGroups(
+      checks.map(c => ({ ...c, name: c.name.replace('-', '') })),
+      'name',
+      grid3,
+      false
+    ).groups.map(g => `${g.key}:${g.status}`);
+    expect(byKey).toEqual([
+      'fdown:down',
+      'cdeg:degraded',
+      'ddeg:degraded',
+      'enodata:unknown',
+      'aup:up',
+      'bup:up',
+    ]);
+  });
+});
+
+describe('a raw IP is not a group name', () => {
+  const ipCheck = (name: string, instance: string): Check => ({
+    ...check(name, 'up'),
+    instance,
+    type: 'tcp',
+  });
+  const nodes = new Map([
+    ['198.51.100.7', 'node-a'],
+    ['2001:db8::7', 'node-a'],
+  ]);
+
+  it('groups the address of a node under the node name', () => {
+    const c = ipCheck('gateway-connect-a', '198.51.100.7:47132');
+    expect(ownName(c, nodes)).toBe('node-a');
+    const { groups } = buildGroups([c], 'app', grid3, false, new Map(), nodes);
+    expect(groups.map(g => [g.key, g.node])).toEqual([['node-a', true]]);
+  });
+
+  it('groups two checks of one node together and marks the group as a node', () => {
+    const a = ipCheck('gateway-connect-a', '198.51.100.7:47132');
+    const b = ipCheck('ssh-a', '198.51.100.7:22');
+    const { groups } = buildGroups([a, b], 'app', grid3, false, new Map(), nodes);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ key: 'node-a', node: true });
+    expect(groups[0].checks).toHaveLength(2);
+  });
+
+  it('uses the check name for an address that is not a node', () => {
+    const c = ipCheck('public-dns', '203.0.113.9');
+    expect(ownName(c, nodes)).toBe('public-dns');
+    const { groups } = buildGroups([c], 'app', grid3, false, new Map(), nodes);
+    expect(groups.map(g => [g.key, g.node])).toEqual([['public-dns', false]]);
+  });
+
+  it('keeps a host name as the group name', () => {
+    expect(ownName(check('edge.example.com', 'up'), nodes)).toBe('edge.example.com');
+  });
+
+  it('never marks a group as a node when a name collision mixes in another check', () => {
+    const a = ipCheck('gateway-connect-a', '198.51.100.7:47132');
+    const other = { ...check('node-a', 'up'), instance: 'https://node-a/' };
+    const { groups } = buildGroups([a, other], 'app', grid3, false, new Map(), nodes);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].node).toBe(false);
   });
 });
