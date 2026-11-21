@@ -19,17 +19,22 @@ import {
   capOf,
   countsOf,
   formatWait,
+  groupRuns,
   joinRunners,
   orderRuns,
   progressOf,
+  splitRepo,
   STEP_GAP,
   STEP_MIN_SEGMENT,
   stepBarLayout,
   stepsOfRun,
 } from './join';
-import { ringShares, RunnersView } from './RunnersView';
+import { countsText, resetRunnerFolds, ringShares, RunnersView } from './RunnersView';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetRunnerFolds();
+});
 
 const pools = parsePanel({
   version: 1,
@@ -415,5 +420,199 @@ describe('the step bar and its label', () => {
     );
     expect(sizes).toEqual(['20', '1', '59']);
     expect(bar.getAttribute('aria-label')).toBe('80 steps: 20 done, 1 failed, 59 pending');
+  });
+});
+
+const run = (id: string, repo: string, state: string, seconds: number) => ({
+  id,
+  repo,
+  workflow: `wf-${id}`,
+  ref: 'main',
+  pool: 'pool-a',
+  state,
+  seconds,
+  jobs: [
+    {
+      id: `${id}-j`,
+      name: 'job',
+      state,
+      pool: 'pool-a',
+      seconds,
+      steps: [step('Checkout', 'done'), step('Build', 'running')],
+    },
+  ],
+});
+const grouped = parsePanel({
+  version: 1,
+  id: 'runs',
+  title: 'Runs',
+  status: 'ok',
+  summary: '',
+  runs: [
+    run('a1', 'org-b/app', 'queued', 500),
+    run('a2', 'org-a/api', 'running', 30),
+    run('a3', 'org-a/web', 'running', 200),
+    run('a4', 'org-a/web', 'running', 10),
+    run('a5', 'org-a/web', 'queued', 60),
+    run('a6', 'org-c/tool', 'running', 5),
+    run('a7', 'org-c/tool', 'running', 6),
+    run('a8', 'loose', 'queued', 1),
+  ],
+});
+
+describe('grouping by org and repo', () => {
+  it('splits the org from the repo name', () => {
+    expect(splitRepo('org/.cluster')).toEqual({ org: 'org', name: '.cluster' });
+    expect(splitRepo('org/a/b')).toEqual({ org: 'org', name: 'a/b' });
+    expect(splitRepo('loose')).toEqual({ org: 'No org', name: 'loose' });
+    expect(splitRepo('/x')).toEqual({ org: 'No org', name: '/x' });
+  });
+
+  it('counts running and queued runs and the longest time in each group', () => {
+    const groups = groupRuns(grouped.runs ?? []);
+    const a = groups.find(g => g.name === 'org-a')!;
+    expect(a).toMatchObject({ running: 3, queued: 1, longest: 200 });
+    const web = a.repos.find(r => r.name === 'web')!;
+    expect(web).toMatchObject({ key: 'org-a/web', running: 2, queued: 1, longest: 200 });
+    expect(groups.flatMap(g => g.repos.flatMap(r => r.runs))).toHaveLength(8);
+  });
+
+  it('orders orgs and repos by running count, then by longest time', () => {
+    const groups = groupRuns(grouped.runs ?? []);
+    expect(groups.map(g => g.name)).toEqual(['org-a', 'org-c', 'org-b', 'No org']);
+    expect(groups[0].repos.map(r => r.name)).toEqual(['web', 'api']);
+    const tie = groupRuns([
+      run('x1', 'o/short', 'running', 5),
+      run('x2', 'o/long', 'running', 50),
+    ] as never);
+    expect(tie[0].repos.map(r => r.name)).toEqual(['long', 'short']);
+  });
+
+  it('keeps the order of the runs inside a repo', () => {
+    const web = groupRuns(grouped.runs ?? [])[0].repos[0];
+    expect(web.runs.map(r => r.id)).toEqual(['a3', 'a4', 'a5']);
+  });
+
+  it('writes the counts as text', () => {
+    expect(countsText({ running: 2, queued: 1 })).toBe('2 running, 1 queued');
+    expect(countsText({ running: 0, queued: 3 })).toBe('3 queued');
+    expect(countsText({ running: 0, queued: 0 })).toBe('idle');
+  });
+});
+
+describe('the grouped list', () => {
+  const draw = () => view(joinRunners({ pools, queue, runs: grouped }));
+
+  it('opens every org and repo group, with the runs under them in order', () => {
+    const { container } = draw();
+    const heads = [...container.querySelectorAll('[data-group]')];
+    expect(
+      heads.map(h => `${h.getAttribute('data-group')}:${h.getAttribute('data-group-key')}`)
+    ).toEqual([
+      'org:org-a',
+      'repo:org-a/web',
+      'repo:org-a/api',
+      'org:org-c',
+      'repo:org-c/tool',
+      'org:org-b',
+      'repo:org-b/app',
+      'org:No org',
+      'repo:No org/loose',
+    ]);
+    for (const h of heads) expect(h.getAttribute('aria-expanded')).toBe('true');
+    expect(
+      [...container.querySelectorAll('[data-run]')].map(r => r.getAttribute('data-run'))
+    ).toEqual(['a3', 'a4', 'a5', 'a2', 'a7', 'a6', 'a1', 'a8']);
+    expect(container.querySelector('[data-job]')).toBeNull();
+  });
+
+  it('shows the counts and the longest time in a header', () => {
+    const { container } = draw();
+    const org = container.querySelector('[data-group="org"][data-group-key="org-a"]')!;
+    expect(org.querySelector('[data-group-running]')?.textContent).toBe('3 running');
+    expect(org.querySelector('[data-group-queued]')?.textContent).toBe('1 queued');
+    expect(org.querySelector('[data-time]')?.textContent).toBe('3m 20s');
+    const only = container.querySelector('[data-group="org"][data-group-key="org-b"]')!;
+    expect(only.querySelector('[data-group-running]')).toBeNull();
+    expect(only.querySelector('[data-group-queued]')?.textContent).toBe('1 queued');
+  });
+
+  it('does not repeat the org and repo in a run row', () => {
+    const { container } = draw();
+    const row = container.querySelector('[data-run="a3"]')!;
+    expect(row.textContent).toContain('wf-a3');
+    expect(row.textContent).toContain('main');
+    expect(row.textContent).toContain('pool-a');
+    expect(row.textContent).not.toContain('org-a');
+    expect(row.textContent).not.toContain('web');
+  });
+
+  it('indents each level further', () => {
+    const { container } = draw();
+    const pad = (sel: string) =>
+      parseFloat(getComputedStyle(container.querySelector(sel)!).paddingLeft);
+    expect(pad('[data-group="org"]')).toBe(0);
+    expect(pad('[data-group="repo"]')).toBeGreaterThan(pad('[data-group="org"]'));
+    expect(pad('[data-run="a3"]')).toBeGreaterThan(pad('[data-group="repo"]'));
+  });
+
+  it('folds a repo and an org, then opens them again', () => {
+    const { container } = draw();
+    fireEvent.click(container.querySelector('[data-group-key="org-a/web"]')!);
+    expect(container.querySelector('[data-run="a3"]')).toBeNull();
+    expect(container.querySelector('[data-run="a2"]')).not.toBeNull();
+    expect(
+      container.querySelector('[data-group-key="org-a/web"]')!.getAttribute('aria-expanded')
+    ).toBe('false');
+    fireEvent.click(container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
+    expect(container.querySelector('[data-group-key="org-a/api"]')).toBeNull();
+    expect(container.querySelector('[data-run="a2"]')).toBeNull();
+    expect(container.querySelector('[data-run="a6"]')).not.toBeNull();
+    fireEvent.click(container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
+    expect(container.querySelector('[data-run="a2"]')).not.toBeNull();
+    expect(container.querySelector('[data-run="a3"]')).toBeNull();
+  });
+
+  it('keeps a fold when the widget mounts again, and opens every group after a reload', () => {
+    const stored = JSON.stringify([window.localStorage, window.sessionStorage]);
+    const first = draw();
+    fireEvent.click(first.container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
+    first.unmount();
+    const again = draw();
+    expect(again.container.querySelector('[data-run="a3"]')).toBeNull();
+    expect(JSON.stringify([window.localStorage, window.sessionStorage])).toBe(stored);
+    again.unmount();
+    resetRunnerFolds(); // A reload starts a new page, so the module state is new.
+    expect(draw().container.querySelector('[data-run="a3"]')).not.toBeNull();
+  });
+
+  it('keeps a fold when the data refreshes', () => {
+    const next = (runs: typeof grouped) => joinRunners({ pools, queue, runs });
+    const ui = (m: ReturnType<typeof joinRunners>) => (
+      <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+        <MemoryRouter>
+          <LinkContext.Provider value={LINKS}>
+            <RunnersView model={m} sourceId="runners" editing={false} />
+          </LinkContext.Provider>
+        </MemoryRouter>
+      </ThemeProvider>
+    );
+    const r = render(ui(next(grouped)));
+    fireEvent.click(r.container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
+    r.rerender(ui(next(grouped)));
+    expect(r.container.querySelector('[data-run="a3"]')).toBeNull();
+  });
+
+  it('still opens a run to its jobs and steps inside a group', () => {
+    const { container } = draw();
+    fireEvent.click(container.querySelector('[data-run="a3"]')!);
+    expect(container.querySelectorAll('[data-job]')).toHaveLength(1);
+    fireEvent.click(container.querySelector('[data-job]')!);
+    expect(container.querySelectorAll('[data-step-list] [data-step]')).toHaveLength(2);
+  });
+
+  it('has no "more" row and no "Other" group', () => {
+    const { container } = draw();
+    expect(container.textContent).not.toMatch(/\d+ more|\bOther\b/);
   });
 });
