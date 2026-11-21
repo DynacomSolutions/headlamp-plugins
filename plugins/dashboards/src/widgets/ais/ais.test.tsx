@@ -1,5 +1,5 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, fireEvent, render } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -272,6 +272,73 @@ describe('AisView', () => {
   it('shows the summary in the footer line', () => {
     expect(view().querySelector('[data-ais-summary]')?.textContent).toBe(
       '42 sessions, 7 identities, 1 pool'
+    );
+  });
+});
+
+const consoleView = () =>
+  render(
+    wrap(
+      <AisView
+        model={model()}
+        sourceId="ais-console"
+        kiosk={false}
+        editing={false}
+        view="console"
+      />
+    )
+  ).container;
+
+describe('AisView console view', () => {
+  it('gives the pool the limits of its active member and says so', () => {
+    const g = model().groups[0];
+    expect(g.poolLimits?.map(l => l.name)).toEqual(['Weekly', 'Weekly (Fable)']);
+    expect(g.poolStatus).toBe('crit');
+    const c = consoleView();
+    const row = c.querySelector('[data-ais-row="pool:pool-one"]');
+    expect(row?.querySelectorAll('[data-lane]')).toHaveLength(2);
+    expect(row?.querySelector('[data-pool-sub]')?.textContent).toContain(
+      'Limits of active member red'
+    );
+  });
+
+  it('opens every pool by default with the members under it, the active one marked', () => {
+    const c = consoleView();
+    expect(c.querySelector('[data-pool-toggle]')?.getAttribute('aria-expanded')).toBe('true');
+    const rows = Array.from(c.querySelectorAll('[data-ais-row]')).map(r =>
+      r.getAttribute('data-ais-row')
+    );
+    expect(rows.slice(0, 4)).toEqual([
+      'pool:pool-one',
+      'anthropic/red',
+      'anthropic/blue',
+      'anthropic/violet',
+    ]);
+    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-active-chip]')).not.toBeNull();
+    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-login="crit"]')).not.toBeNull();
+  });
+
+  it('keeps identities of no pool under their real provider and never names a group Other', () => {
+    const c = consoleView();
+    const titles = Array.from(c.querySelectorAll('[data-ais-group]')).map(g => g.textContent);
+    expect(titles.join('|')).toMatch(/OpenAI/);
+    expect(c.textContent).not.toMatch(/\bother\b/i);
+    expect(c.textContent).not.toMatch(/\+\s*\d+\s*more/i);
+  });
+
+  it('draws no stat tiles and folds a pool on a click', () => {
+    const c = consoleView();
+    expect(c.querySelector('[data-stats]')).toBeNull();
+    fireEvent.click(c.querySelector('[data-pool-toggle]') as Element);
+    expect(c.querySelector('[data-ais-row="anthropic/red"]')).toBeNull();
+    expect(c.querySelector('[data-ais-row="pool:pool-one"]')).not.toBeNull();
+    fireEvent.click(c.querySelector('[data-pool-toggle]') as Element);
+    expect(c.querySelector('[data-ais-row="anthropic/red"]')).not.toBeNull();
+  });
+
+  it('names the login states in the footer line', () => {
+    expect(consoleView().querySelector('[data-ais-summary]')?.textContent).toContain(
+      'Logins: 5 logged in, 1 expiring, 1 expired'
     );
   });
 });

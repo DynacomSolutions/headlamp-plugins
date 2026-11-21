@@ -50,6 +50,13 @@ export interface AisGroup {
   members: AisIdentity[];
   /** The name of the active member of a pool. */
   active?: string;
+  /**
+   * The limits of a pool: the limits of its active member. The swap sends work through the active
+   * member, so its windows decide what the pool can do now. A pool with no active member has none.
+   */
+  poolLimits?: AisLimit[];
+  /** The worst status of the pool limits. */
+  poolStatus?: PanelStatus;
   link?: string;
 }
 
@@ -61,6 +68,8 @@ export interface AisModel {
   /** The indexes of `stats` that hold a name and not a number. */
   textTiles: number[];
   summary: string;
+  /** The login states in one line, for example "20 logged in, 1 expiring, 2 expired". Empty without login data. */
+  loginSummary: string;
   status: PanelStatus;
   identityCount: number;
 }
@@ -206,16 +215,22 @@ export function joinAis(panels: AisPanels): AisModel {
   const bySeverity = (a: Draft, b: Draft): number =>
     RANK[b.status] - RANK[a.status] || a.order - b.order;
 
-  const groups: AisGroup[] = poolOrder.map(pool => ({
-    key: `pool:${pool}`,
-    kind: 'pool',
-    title: pool,
-    members: all
+  const groups: AisGroup[] = poolOrder.map(pool => {
+    const members = all
       .filter(d => d.pool === pool)
-      .sort((a, b) => Number(b.active) - Number(a.active) || a.order - b.order),
-    active: poolActive.get(pool),
-    link: poolLink.get(pool),
-  }));
+      .sort((a, b) => Number(b.active) - Number(a.active) || a.order - b.order);
+    const active = members.find(m => m.active);
+    return {
+      key: `pool:${pool}`,
+      kind: 'pool',
+      title: pool,
+      members,
+      active: poolActive.get(pool),
+      poolLimits: active?.limits,
+      poolStatus: active?.limits.reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
+      link: poolLink.get(pool),
+    };
+  });
 
   const providerOrder: string[] = [];
   for (const d of all) {
@@ -279,12 +294,17 @@ export function joinAis(panels: AisPanels): AisModel {
   bits.push(`${all.length} identities`);
   if (poolOrder.length > 0)
     bits.push(`${poolOrder.length} ${poolOrder.length === 1 ? 'pool' : 'pools'}`);
+  const loginBits = ['Logged in', 'Expiring', 'Expired', 'Logged out']
+    .map(label => ({ label, s: statValue(panels.identities, label) }))
+    .filter(x => x.s && (x.label !== 'Logged out' || count(x.s.value) > 0))
+    .map(x => `${x.s?.value} ${x.label.toLowerCase()}`);
   return {
     groups,
     limits,
     stats,
     textTiles,
     summary: bits.join(', '),
+    loginSummary: loginBits.join(', '),
     status,
     identityCount: all.length,
   };

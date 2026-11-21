@@ -23,6 +23,7 @@ export function NodeSunburstChart({
   title,
   kiosk = false,
   hideLegend = false,
+  unit,
 }: SunburstChartProps): JSX.Element {
   const [active, setActive] = React.useState<string | null>(null);
   const [picked, setPicked] = React.useState<string | null>(null);
@@ -145,6 +146,7 @@ export function NodeSunburstChart({
         onActive={setActive}
         onPick={select}
         size={ringSize}
+        unit={unit}
       />
       {legend && (
         <Box
