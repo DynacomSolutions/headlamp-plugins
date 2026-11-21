@@ -11,12 +11,16 @@ export interface SunburstChild {
   key: string;
   label: string;
   value: number;
+  /** An optional note for the tooltip of the arc, for example where the data came from. */
+  detail?: string;
 }
 
 export interface SunburstCategory {
   key: string;
   label: string;
   value: number;
+  /** An optional note for the tooltip of the arc. */
+  detail?: string;
   children?: SunburstChild[];
 }
 
@@ -211,6 +215,8 @@ export interface NodeArcShape {
   /** The key of the category, for a category or a child arc. Empty otherwise. */
   categoryKey: string;
   categoryLabel: string;
+  /** The note of the category or child, for the tooltip. */
+  detail?: string;
   start: number;
   end: number;
   inner: number;
@@ -277,6 +283,7 @@ export function layoutNodeArcs(nodes: SunburstNode[], radius: number): NodeArcSh
         nodeLabel: node.label,
         categoryKey: c.key,
         categoryLabel: c.label,
+        detail: c.detail,
         start: cat,
         end: cend,
         inner: nodeEnd + RING_GAP / 2,
@@ -299,6 +306,7 @@ export function layoutNodeArcs(nodes: SunburstNode[], radius: number): NodeArcSh
           nodeLabel: node.label,
           categoryKey: c.key,
           categoryLabel: c.label,
+          detail: k.detail,
           start: kat,
           end: kend,
           inner: catEnd + RING_GAP / 2,

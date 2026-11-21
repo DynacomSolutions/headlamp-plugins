@@ -29,6 +29,35 @@ const row = (label: string, detail: string, value = '1h', fraction?: number) => 
 const panel = (id: string, rows: ReturnType<typeof row>[]) =>
   parsePanel({ version: 1, id, title: id, status: 'ok', summary: '', stats: [], rows });
 
+const tableRow = (pool: string, identity: string, tool: string, identitySource: string) => ({
+  pool,
+  identity,
+  tool,
+  identitySource,
+  age: '1h',
+});
+const newAgents = (rows: ReturnType<typeof tableRow>[]) =>
+  parsePanel({
+    version: 1,
+    id: 'agents',
+    title: 'Agents',
+    status: 'ok',
+    summary: '',
+    stats: [],
+    rows: [],
+    tables: [
+      {
+        title: 'Agents',
+        columns: ['pool', 'identity', 'tool', 'identitySource', 'age'].map(key => ({
+          key,
+          label: key,
+          align: 'left',
+        })),
+        rows,
+      },
+    ],
+  });
+
 const swap = panel('claude-swap', [
   row('pool-one / red', 'Active, weekly'),
   row('pool-one / blue', 'Standby, weekly'),
@@ -79,6 +108,99 @@ describe('agentsToSunburst', () => {
   });
   it('is empty for no agents', () => {
     expect(agentsToSunburst(null, null).nodes).toEqual([]);
+  });
+});
+
+describe('agentsToSunburst with the Agents table', () => {
+  const agents = newAgents([
+    tableRow('pool-one', 'blue', 'claude', 'gateway-ledger'),
+    tableRow('pool-one', 'blue', 'claude', 'gateway-ledger'),
+    tableRow('pool-one', 'blue', 'codex', 'gateway-ledger'),
+    tableRow('pool-one', 'red', 'claude', 'gateway-ledger'),
+    tableRow('', 'solo', 'claude', 'session-marker'),
+    tableRow('', 'solo', 'codex', 'config-dir'),
+    tableRow('pool-two', '', 'claude', 'unresolved'),
+    tableRow('', '', 'kimi', 'unresolved'),
+  ]);
+  const data = agentsToSunburst(agents, swap);
+  it('draws pool or Direct, then the real identity, then the tool', () => {
+    expect(data.capacity).toBe(8);
+    expect(data.nodes?.map(n => [n.label, n.used])).toEqual([
+      ['pool-one', 4],
+      [DIRECT, 2],
+      [POOL_NOT_REPORTED, 1],
+      ['pool-two', 1],
+    ]);
+    const one = data.nodes?.find(n => n.label === 'pool-one');
+    expect(one?.categories.map(c => [c.label, c.value])).toEqual([
+      ['blue', 3],
+      ['red', 1],
+    ]);
+    expect(one?.categories[0].children?.map(k => [k.label, k.value])).toEqual([
+      ['claude', 2],
+      ['codex', 1],
+    ]);
+  });
+  it('names an unresolved identity and a missing pool, and has no Other group', () => {
+    const two = data.nodes?.find(n => n.label === 'pool-two');
+    expect(two?.categories[0].label).toBe(IDENTITY_NOT_REPORTED);
+    const none = data.nodes?.find(n => n.label === POOL_NOT_REPORTED);
+    expect(none?.categories[0].label).toBe(IDENTITY_NOT_REPORTED);
+    expect(JSON.stringify(data)).not.toMatch(/other/i);
+  });
+  it('puts the identity source in the note of the identity and the tool', () => {
+    const direct = data.nodes?.find(n => n.label === DIRECT);
+    const solo = direct?.categories[0];
+    expect(solo?.detail).toMatch(/config-dir 1, session-marker 1/);
+    expect(solo?.children?.map(k => k.detail)).toEqual([
+      'identity source session-marker',
+      'identity source config-dir',
+    ]);
+  });
+  it('shows the identity source in the tooltip of the arc', () => {
+    const c = render(
+      themed(<SunburstChart data={data} title="Agents" unit="agents" format={v => String(v)} />)
+    ).container;
+    const titles = Array.from(c.querySelectorAll('path title')).map(t => t.textContent ?? '');
+    expect(titles).toContain('pool-one / blue / claude: 2 (25%), identity source gateway-ledger');
+  });
+  it('ignores the old rows when the table exists, and counts one agent for each table row', () => {
+    const both = parsePanel({
+      version: 1,
+      id: 'agents',
+      stats: [],
+      rows: [{ label: 'claude', detail: 'red', value: '1h' }],
+      tables: [
+        {
+          title: 'Agents',
+          columns: [
+            { key: 'identity', label: 'Identity' },
+            { key: 'pool', label: 'Pool' },
+          ],
+          rows: [
+            { pool: '', identity: 'blue' },
+            { pool: '', identity: 'blue' },
+          ],
+        },
+      ],
+    });
+    const d = agentsToSunburst(both, swap);
+    expect(d.capacity).toBe(2);
+    expect(d.nodes?.[0].categories.map(c => c.label)).toEqual(['blue']);
+  });
+});
+
+describe('agentsToSunburst with an older source (no table)', () => {
+  it('keeps the old mapping and adds no source note', () => {
+    const d = agentsToSunburst(
+      panel('agents', [row('claude', 'red'), row('claude', 'solo')]),
+      swap
+    );
+    expect(d.nodes?.map(n => n.label).sort()).toEqual([DIRECT, 'pool-one']);
+    expect(JSON.stringify(d)).not.toMatch(/identity source/);
+  });
+  it('falls back to the named segments for a table with no data', () => {
+    expect(agentsToSunburst(newAgents([]), swap).nodes).toEqual([]);
   });
 });
 

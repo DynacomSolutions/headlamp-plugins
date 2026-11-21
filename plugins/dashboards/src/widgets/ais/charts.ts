@@ -3,14 +3,16 @@
  * Both are pure functions of a panel, so a test can check them without a browser.
  *
  * Agents. The ring order is swap pool (or "Direct"), then the real logged-in identity, then the
- * agent. The AIS `agents` panel does not report the pool and the identity as fields yet. Its rows
- * carry the agent kind in `label` and one word in `detail`: an identity name, the name of a pool
- * identity such as `claude-pool`, or `unknown identity`. `agentPlacement` is the one place that
- * maps a row to its pool and identity. When the panel gets real `pool` and `identity` fields, only
- * this function changes. An agent that the data does not place gets a named segment, never "Other".
+ * tool. A new AIS source reports each agent in the `Agents` table of its `agents` panel (see
+ * `agents.ts`): that table gives the pool, the real identity and the identity source. An older
+ * source has no table. Its rows carry the tool in `label` and one word in `detail`: an identity
+ * name, the name of a pool identity such as `claude-pool`, or `unknown identity`. `agentPlacement`
+ * maps such an old row to its pool and identity. An agent that the data does not place gets a named
+ * segment, never "Other".
  */
 import type { PanelModel, PanelRow } from '../panels/model';
 import type { SunburstData, SunburstNode } from '../sunburst/geometry';
+import { agentTable } from './agents';
 import { splitLabel } from './join';
 
 /** The ring names for what the panel does not report. These are real states, not a catch-all. */
@@ -53,33 +55,97 @@ export function agentPlacement(row: PanelRow, members: Map<string, string>): Age
   return { pool: members.get(canon(word)) ?? DIRECT, identity: word };
 }
 
-/** The agents panel as a sunburst: pool, then identity, then agent kind. The values are counts. */
+/** One agent placed in the rings: its pool, its identity, its tool and where the identity came from. */
+interface Placed extends AgentPlacement {
+  tool: string;
+  /** The `identitySource` of the agent. Empty for an older source. */
+  source: string;
+}
+
+/** The agents of a panel, placed. The `Agents` table wins. An older panel falls back to its rows. */
+export function placeAgents(
+  agents: PanelModel | null | undefined,
+  swap: PanelModel | null | undefined
+): Placed[] {
+  const table = agentTable(agents);
+  if (table) {
+    return table.map(a => ({
+      // A direct login has no pool. An agent with neither a pool nor an identity is not placed.
+      pool: a.pool ?? (a.identity === null ? POOL_NOT_REPORTED : DIRECT),
+      identity: a.identity ?? IDENTITY_NOT_REPORTED,
+      tool: a.tool || 'agent',
+      source: a.source,
+    }));
+  }
+  const members = poolMembers(swap);
+  return (agents?.rows ?? []).map(row => ({
+    ...agentPlacement(row, members),
+    tool: row.label.trim() || 'agent',
+    source: '',
+  }));
+}
+
+/** "gateway-ledger" for one source, "gateway-ledger 3, config-dir 1" for several. Empty for none. */
+function sourceNote(sources: Map<string, number>): string | undefined {
+  const named = Array.from(sources).filter(([name]) => name !== '');
+  if (named.length === 0) return undefined;
+  const text =
+    named.length === 1
+      ? named[0][0]
+      : named
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([name, n]) => `${name} ${n}`)
+          .join(', ');
+  return `identity source ${text}`;
+}
+
+const bump = (m: Map<string, number>, k: string): void => void m.set(k, (m.get(k) ?? 0) + 1);
+
+/**
+ * The agents panel as a sunburst: pool (or "Direct"), then the real identity, then the tool. The
+ * values are counts. The tooltip of an arc names the identity source of its agents.
+ */
 export function agentsToSunburst(
   agents: PanelModel | null | undefined,
   swap: PanelModel | null | undefined
 ): SunburstData {
-  const members = poolMembers(swap);
-  // pool -> identity -> agent kind -> count, in first-seen order.
-  const tree = new Map<string, Map<string, Map<string, number>>>();
-  for (const row of agents?.rows ?? []) {
-    const { pool, identity } = agentPlacement(row, members);
-    const kind = row.label.trim() || 'agent';
-    const ids = tree.get(pool) ?? new Map<string, Map<string, number>>();
-    const kinds = ids.get(identity) ?? new Map<string, number>();
-    kinds.set(kind, (kinds.get(kind) ?? 0) + 1);
-    ids.set(identity, kinds);
-    tree.set(pool, ids);
+  interface Leaf {
+    n: number;
+    sources: Map<string, number>;
   }
-  const sum = (m: Map<string, number>): number => Array.from(m.values()).reduce((a, b) => a + b, 0);
+  // pool -> identity -> tool -> count and sources, in first-seen order.
+  const tree = new Map<string, Map<string, Map<string, Leaf>>>();
+  for (const a of placeAgents(agents, swap)) {
+    const ids = tree.get(a.pool) ?? new Map<string, Map<string, Leaf>>();
+    const tools = ids.get(a.identity) ?? new Map<string, Leaf>();
+    const leaf = tools.get(a.tool) ?? { n: 0, sources: new Map<string, number>() };
+    leaf.n += 1;
+    bump(leaf.sources, a.source);
+    tools.set(a.tool, leaf);
+    ids.set(a.identity, tools);
+    tree.set(a.pool, ids);
+  }
+  const merge = (leaves: Iterable<Leaf>): Map<string, number> => {
+    const out = new Map<string, number>();
+    for (const l of leaves) for (const [k, n] of l.sources) out.set(k, (out.get(k) ?? 0) + n);
+    return out;
+  };
+  const sum = (leaves: Iterable<Leaf>): number => {
+    let n = 0;
+    for (const l of leaves) n += l.n;
+    return n;
+  };
   const nodes: SunburstNode[] = Array.from(tree, ([pool, ids]) => {
-    const categories = Array.from(ids, ([identity, kinds]) => ({
+    const categories = Array.from(ids, ([identity, tools]) => ({
       key: identity,
       label: identity,
-      value: sum(kinds),
-      children: Array.from(kinds, ([kind, n]) => ({
-        key: `${identity}/${kind}`,
-        label: kind,
-        value: n,
+      value: sum(tools.values()),
+      detail: sourceNote(merge(tools.values())),
+      children: Array.from(tools, ([tool, leaf]) => ({
+        key: `${identity}/${tool}`,
+        label: tool,
+        value: leaf.n,
+        detail: sourceNote(leaf.sources),
       })),
     })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
     const used = categories.reduce((s, c) => s + c.value, 0);
