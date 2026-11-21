@@ -21,6 +21,34 @@ export interface PanelRowIcon {
   alt: string;
 }
 
+/** One account that an agent session used, with its turns and its tokens by type. */
+export interface PanelAgentAccount {
+  identity: string;
+  turns: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  /** ISO times as the source wrote them. Empty when absent. */
+  firstSeen: string;
+  lastSeen: string;
+}
+
+/**
+ * The agent fields of a row of the AIS `agents` panel. They are an optional v1 extension: only a row
+ * that carries them has this field. `pool` is null for a direct login. `identity` is the real login.
+ * `activeIdentity` is the account of the latest request of the session. It wins over `identity`.
+ * `identities` lists each account that the session used.
+ */
+export interface PanelAgentFields {
+  pool: string | null;
+  identity: string | null;
+  identitySource: string;
+  sessionIdentity: string | null;
+  activeIdentity: string | null;
+  identities: PanelAgentAccount[];
+}
+
 export interface PanelRow {
   label: string;
   detail: string;
@@ -39,6 +67,8 @@ export interface PanelRow {
    * and incidents widget). Only string values are kept, a bad entry is dropped, never the row.
    */
   meta?: Record<string, string>;
+  /** The pool, identity and accounts of an agent row. Absent from an older source. */
+  agent?: PanelAgentFields;
 }
 
 export interface PanelSeries {
@@ -218,6 +248,51 @@ export function parseMeta(raw: unknown): Record<string, string> | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+const nonEmpty = (v: unknown): string | null => {
+  const t = str(v).trim();
+  return t === '' ? null : t;
+};
+const count = (v: unknown): number => Math.max(0, num(v));
+
+function parseAccount(raw: unknown): PanelAgentAccount | null {
+  if (!isObject(raw)) return null;
+  const identity = nonEmpty(raw.identity);
+  if (identity === null) return null;
+  return {
+    identity,
+    turns: count(raw.turns),
+    inputTokens: count(raw.inputTokens),
+    outputTokens: count(raw.outputTokens),
+    cacheReadTokens: count(raw.cacheReadTokens),
+    cacheWriteTokens: count(raw.cacheWriteTokens),
+    firstSeen: str(raw.firstSeen, str(raw.firstTs)),
+    lastSeen: str(raw.lastSeen, str(raw.lastTs)),
+  };
+}
+
+/**
+ * The agent fields of a row, or undefined for a row that has none (an older source, or another
+ * panel). A bad `identities` entry is dropped, never the row.
+ */
+export function parseAgentFields(r: Record<string, unknown>): PanelAgentFields | undefined {
+  const has =
+    'identitySource' in r ||
+    'activeIdentity' in r ||
+    'identities' in r ||
+    ('pool' in r && 'identity' in r);
+  if (!has) return undefined;
+  return {
+    pool: nonEmpty(r.pool),
+    identity: nonEmpty(r.identity),
+    identitySource: str(r.identitySource).trim(),
+    sessionIdentity: nonEmpty(r.sessionIdentity),
+    activeIdentity: nonEmpty(r.activeIdentity),
+    identities: array(r.identities)
+      .map(parseAccount)
+      .filter((a): a is PanelAgentAccount => a !== null),
+  };
+}
+
 function parseSegment(raw: unknown, depth: number): RingSegment | null {
   if (!isObject(raw)) return null;
   const key = str(raw.key);
@@ -381,6 +456,7 @@ export function parsePanel(json: unknown): PanelModel {
           link: safeLink(r.link),
           icon: parseRowIcon(r.icon, label),
           meta: parseMeta(r.meta),
+          agent: parseAgentFields(r),
         };
       }),
     series: array(json.series)

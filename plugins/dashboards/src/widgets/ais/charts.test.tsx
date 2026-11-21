@@ -6,8 +6,10 @@ import { parsePanel } from '../panels/model';
 import { PieChart } from '../sunburst/PieChart';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import {
+  accountsNote,
   agentPlacement,
   agentsToSunburst,
+  compactTokens,
   DIRECT,
   gatewaySlices,
   IDENTITY_NOT_REPORTED,
@@ -58,6 +60,36 @@ const newAgents = (rows: ReturnType<typeof tableRow>[]) =>
     ],
   });
 
+const account = (identity: string, input: number, output = 0, cacheRead = 0, cacheWrite = 0) => ({
+  identity,
+  turns: 3,
+  inputTokens: input,
+  outputTokens: output,
+  cacheReadTokens: cacheRead,
+  cacheWriteTokens: cacheWrite,
+  firstSeen: '2026-11-22T01:00:00Z',
+  lastSeen: '2026-11-22T02:00:00Z',
+});
+/** A row of the new source: the agent fields sit on the row itself. */
+const agentRow = (fields: Record<string, unknown>, tool = 'claude') => ({
+  label: tool,
+  detail: 'x',
+  value: '1h',
+  status: 'ok',
+  tool,
+  ...fields,
+});
+const fieldPanel = (rows: ReturnType<typeof agentRow>[]) =>
+  parsePanel({
+    version: 1,
+    id: 'agents',
+    title: 'Agents',
+    status: 'ok',
+    summary: '',
+    stats: [],
+    rows,
+  });
+
 const swap = panel('claude-swap', [
   row('pool-one / red', 'Active, weekly'),
   row('pool-one / blue', 'Standby, weekly'),
@@ -80,6 +112,123 @@ describe('agentPlacement', () => {
     const a = panel('a', [row('claude', 'red'), row('codex', 'solo')]).rows;
     expect(agentPlacement(a[0], members)).toEqual({ pool: 'pool-one', identity: 'red' });
     expect(agentPlacement(a[1], members)).toEqual({ pool: DIRECT, identity: 'solo' });
+  });
+});
+
+describe('agentPlacement with the agent fields', () => {
+  const members = poolMembers(swap);
+  const place = (fields: Record<string, unknown>) =>
+    agentPlacement(fieldPanel([agentRow(fields)]).rows[0], members);
+  it('places a pool row by its pool and identity, not by the old word', () => {
+    expect(
+      place({
+        pool: 'pool-x',
+        identity: 'red',
+        identitySource: 'gateway-ledger',
+        sessionIdentity: 'claude-pool',
+      })
+    ).toEqual({ pool: 'pool-x', identity: 'red' });
+  });
+  it('places a row with a null pool in Direct', () => {
+    expect(place({ pool: null, identity: 'solo', identitySource: 'config-dir' })).toEqual({
+      pool: DIRECT,
+      identity: 'solo',
+    });
+  });
+  it('prefers activeIdentity over identity', () => {
+    expect(
+      place({
+        pool: 'pool-x',
+        identity: 'red',
+        activeIdentity: 'blue',
+        identitySource: 'gateway-session',
+        identities: [account('blue', 10), account('red', 5)],
+      })
+    ).toEqual({ pool: 'pool-x', identity: 'blue' });
+  });
+  it('names an unresolved row with no pool and no identity, never Other', () => {
+    expect(place({ pool: null, identity: null, identitySource: 'unresolved' })).toEqual({
+      pool: POOL_NOT_REPORTED,
+      identity: IDENTITY_NOT_REPORTED,
+    });
+  });
+  it('keeps the old guess for a row with no agent fields', () => {
+    const r = panel('a', [row('claude', 'red')]).rows[0];
+    expect(r.agent).toBeUndefined();
+    expect(agentPlacement(r, members)).toEqual({ pool: 'pool-one', identity: 'red' });
+  });
+});
+
+describe('agentsToSunburst with the agent fields on the rows', () => {
+  const agents = fieldPanel([
+    agentRow({ pool: 'pool-x', identity: 'red', identitySource: 'gateway-ledger' }),
+    agentRow({ pool: null, identity: 'solo', identitySource: 'config-dir' }, 'codex'),
+    agentRow({
+      pool: 'pool-x',
+      identity: 'red',
+      activeIdentity: 'blue',
+      identitySource: 'gateway-session',
+      identities: [account('blue', 700, 100, 200, 0), account('red', 200, 50, 50, 0)],
+    }),
+    agentRow({ pool: 'pool-y', identity: null, identitySource: 'unresolved' }),
+  ]);
+  const data = agentsToSunburst(agents, null);
+  it('uses pool, Direct and the active identity, with no Other group', () => {
+    expect(data.nodes?.map(n => [n.label, n.used])).toEqual([
+      ['pool-x', 2],
+      [DIRECT, 1],
+      ['pool-y', 1],
+    ]);
+    const x = data.nodes?.find(n => n.label === 'pool-x');
+    expect(x?.categories.map(c => [c.label, c.value])).toEqual([
+      ['blue', 1],
+      ['red', 1],
+    ]);
+    expect(data.nodes?.find(n => n.label === 'pool-y')?.categories[0].label).toBe(
+      IDENTITY_NOT_REPORTED
+    );
+    expect(JSON.stringify(data)).not.toMatch(/other|\+\s*\d+\s*more/i);
+  });
+  it('shows the accounts and the token split, largest first, for a multi-account session', () => {
+    const blue = data.nodes
+      ?.find(n => n.label === 'pool-x')
+      ?.categories.find(c => c.label === 'blue');
+    expect(blue?.detail).toBe('identity source gateway-session, 2 accounts: blue 1K, red 300');
+    expect(blue?.children?.[0].detail).toBe(blue?.detail);
+  });
+  it('shows no accounts note for a session with one account, and shows the unresolved source', () => {
+    const red = data.nodes
+      ?.find(n => n.label === 'pool-x')
+      ?.categories.find(c => c.label === 'red');
+    expect(red?.detail).toBe('identity source gateway-ledger');
+    const none = data.nodes?.find(n => n.label === 'pool-y')?.categories[0];
+    expect(none?.detail).toBe('identity source unresolved');
+  });
+  it('shows the accounts note in the tooltip of the arc', () => {
+    const c = render(
+      themed(<SunburstChart data={data} title="Agents" unit="agents" format={v => String(v)} />)
+    ).container;
+    const titles = Array.from(c.querySelectorAll('path title')).map(t => t.textContent ?? '');
+    expect(titles.some(t => /2 accounts: blue 1K, red 300/.test(t))).toBe(true);
+  });
+});
+
+describe('accountsNote and compactTokens', () => {
+  it('gives nothing when no agent used more than one account', () => {
+    expect(accountsNote([[], [account('a', 5)]])).toBeUndefined();
+  });
+  it('adds the accounts of several agents and sorts largest first, then by name', () => {
+    const note = accountsNote([
+      [account('b', 100), account('a', 100)],
+      [account('c', 500), account('a', 50)],
+    ]);
+    expect(note).toBe('3 accounts: c 500, a 150, b 100');
+  });
+  it('writes a short token count', () => {
+    expect(compactTokens(431)).toBe('431');
+    expect(compactTokens(12_340)).toBe('12.3K');
+    expect(compactTokens(80_800_000)).toBe('80.8M');
+    expect(compactTokens(3_100_000_000)).toBe('3.1B');
   });
 });
 
