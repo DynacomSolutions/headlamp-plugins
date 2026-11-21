@@ -7,6 +7,7 @@
  * only to a dashboard tab (see `links.tsx`).
  */
 import Box from '@mui/material/Box';
+import ButtonBase from '@mui/material/ButtonBase';
 import Tooltip from '@mui/material/Tooltip';
 import React from 'react';
 import { ScrollArea } from '../../components/ScrollArea';
@@ -204,8 +205,12 @@ function IdentityRow(props: {
   link?: string;
   editing: boolean;
   wide: boolean;
+  /** A pool row: the line under the name, a toggle in front and a heavier look. */
+  pool?: { sub: React.ReactNode; open: boolean; onToggle: () => void; count: number };
+  /** A member of a pool in the console view: drawn one step in. */
+  indent?: boolean;
 }): JSX.Element {
-  const { identity, limits, colours, link, editing, wide } = props;
+  const { identity, limits, colours, link, editing, wide, pool, indent } = props;
   const tk = useTokens();
   const height = wide ? ROW_HEIGHT.wide : ROW_HEIGHT.narrow;
   const lanes = limits
@@ -223,7 +228,7 @@ function IdentityRow(props: {
     STATUS_WORD[identity.status],
   ].join('. ');
   const name = (
-    <Box component="span" sx={{ fontSize: 15 }}>
+    <Box component="span" sx={{ fontSize: pool ? 16 : 15, fontWeight: pool ? 600 : undefined }}>
       {identity.name}
     </Box>
   );
@@ -240,15 +245,28 @@ function IdentityRow(props: {
         height,
         flex: 'none',
         minWidth: 0,
-        px: 1.5,
+        pl: indent ? 4 : 1.5,
+        pr: 1.5,
         // A login that needs attention tints the row, like a band in the other lists.
         bgcolor: loginProblem && identity.login ? tk.fill[identity.login.status] : 'transparent',
-        boxShadow: `inset 0 -1px 0 ${tk.line}`,
+        boxShadow: pool ? `inset 0 -1px 0 ${tk.line2}` : `inset 0 -1px 0 ${tk.line}`,
+        ...(indent ? { borderLeft: `2px solid ${tk.line2}`, ml: 1.5 } : {}),
       }}
     >
       <Tooltip title={`${identity.provider} / ${identity.name}`} placement="top-start">
         <Box data-ais-label sx={{ minWidth: 0, lineHeight: 1.2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+            {pool && (
+              <ButtonBase
+                data-pool-toggle
+                aria-expanded={pool.open}
+                aria-label={`${pool.open ? 'Fold' : 'Expand'} ${identity.name}`}
+                onClick={pool.onToggle}
+                sx={{ flex: 'none', fontSize: 12, width: 18, height: 18, color: tk.fg2 }}
+              >
+                {pool.open ? '\u25BE' : '\u25B8'}
+              </ButtonBase>
+            )}
             <Box
               sx={{
                 minWidth: 0,
@@ -265,6 +283,11 @@ function IdentityRow(props: {
                 name
               )}
             </Box>
+            {pool && (
+              <Box component="span" sx={{ flex: 'none', fontSize: 11.5, color: tk.fg2 }}>
+                {poolMembersText(pool.count)}
+              </Box>
+            )}
             {identity.active && (
               <Box
                 component="span"
@@ -283,7 +306,18 @@ function IdentityRow(props: {
               </Box>
             )}
           </Box>
-          <LoginLine identity={identity} />
+          {pool ? (
+            <Box
+              component="span"
+              data-pool-sub
+              title="The pool sends work through its active member, so the limits of that member decide what the pool can do now."
+              sx={{ fontSize: 11.5, color: tk.mut, whiteSpace: 'nowrap' }}
+            >
+              {pool.sub}
+            </Box>
+          ) : (
+            <LoginLine identity={identity} />
+          )}
         </Box>
       </Tooltip>
       {lanes.length > 0 ? (
@@ -336,7 +370,7 @@ function IdentityRow(props: {
         </Box>
       ) : (
         <Box data-no-limits sx={{ fontSize: 12.5, color: tk.mut }}>
-          No limit data
+          {pool ? 'No active member' : 'No limit data'}
         </Box>
       )}
       <Box
@@ -372,17 +406,43 @@ function IdentityRow(props: {
   );
 }
 
+/** The pool as an identity row: the limits of its active member, and the worst status of them. */
+function poolIdentity(group: AisGroup): AisIdentity {
+  return {
+    key: group.key,
+    name: group.title,
+    provider: 'Pool',
+    limits: group.poolLimits ?? [],
+    active: false,
+    status: group.poolStatus ?? 'ok',
+    link: group.link,
+  };
+}
+
+export type AisViewMode = 'overview' | 'console';
+
 export function AisView(props: {
   model: AisModel;
   sourceId: string;
   kiosk: boolean;
   editing: boolean;
+  /** `console` is the AIS tab: one list, a pool row with limits above its members, no stat tiles. */
+  view?: AisViewMode;
 }): JSX.Element {
   const { model, sourceId, editing } = props;
+  const consoleView = props.view === 'console';
   const tk = useTokens();
   const resolveLink = useResolveLink();
   const root = useElementSize<HTMLDivElement>();
-  const columns = root.size.width >= TWO_COLUMNS ? 2 : 1;
+  // A pool is open until the user folds it. The state belongs to the widget, not to the data.
+  const [folded, setFolded] = React.useState<ReadonlySet<string>>(new Set());
+  const toggle = (key: string): void =>
+    setFolded(prev => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  const columns = !consoleView && root.size.width >= TWO_COLUMNS ? 2 : 1;
   const wide = root.size.width >= WIDE_WIDTH;
   const wideRow = root.size.width / columns >= WIDE_ROW;
   const colours = React.useMemo(() => limitColours(model.limits, tk.mode), [model.limits, tk.mode]);
@@ -393,6 +453,7 @@ export function AisView(props: {
     <Box
       ref={root.ref}
       data-ais
+      data-ais-view={consoleView ? 'console' : 'overview'}
       sx={{
         display: 'flex',
         flexDirection: 'column',
@@ -403,7 +464,7 @@ export function AisView(props: {
         overflow: 'hidden',
       }}
     >
-      {model.stats.length > 0 && (
+      {!consoleView && model.stats.length > 0 && (
         <StatTiles stats={model.stats} width={root.size.width} textTiles={model.textTiles} />
       )}
       {model.limits.length > 0 && <Legend limits={model.limits} wide={wide} />}
@@ -419,27 +480,61 @@ export function AisView(props: {
             minWidth: 0,
           }}
         >
-          {model.groups.map(group => (
-            <React.Fragment key={group.key}>
-              <GroupHeader group={group} link={linkOf(group.link)} editing={editing} />
-              {group.members.map(identity => (
-                <IdentityRow
-                  key={identity.key}
-                  identity={identity}
-                  limits={model.limits}
-                  colours={colours}
-                  link={linkOf(identity.link)}
-                  editing={editing}
-                  wide={wideRow}
-                />
-              ))}
-            </React.Fragment>
-          ))}
+          {model.groups.map(group => {
+            const poolRow = consoleView && group.kind === 'pool';
+            const open = !folded.has(group.key);
+            return (
+              <React.Fragment key={group.key}>
+                {poolRow ? (
+                  <IdentityRow
+                    identity={poolIdentity(group)}
+                    limits={model.limits}
+                    colours={colours}
+                    link={linkOf(group.link)}
+                    editing={editing}
+                    wide={wideRow}
+                    pool={{
+                      open,
+                      onToggle: () => toggle(group.key),
+                      count: group.members.length,
+                      sub: poolSub(group),
+                    }}
+                  />
+                ) : (
+                  <GroupHeader group={group} link={linkOf(group.link)} editing={editing} />
+                )}
+                {(!poolRow || open) &&
+                  group.members.map(identity => (
+                    <IdentityRow
+                      key={identity.key}
+                      identity={identity}
+                      limits={model.limits}
+                      colours={colours}
+                      link={linkOf(identity.link)}
+                      editing={editing}
+                      wide={wideRow}
+                      indent={poolRow}
+                    />
+                  ))}
+              </React.Fragment>
+            );
+          })}
         </Box>
       </ScrollArea>
       <WidgetFooter status={model.status}>
-        <span data-ais-summary>{model.summary}</span>
+        <span data-ais-summary>
+          {consoleView && model.loginSummary !== ''
+            ? `${model.summary}. Logins: ${model.loginSummary}`
+            : model.summary}
+        </span>
       </WidgetFooter>
     </Box>
   );
 }
+
+/** The line under a pool name: why the limits on the pool row are those of one member. */
+function poolSub(group: AisGroup): string {
+  return group.active ? `Limits of active member ${group.active}` : 'No active member';
+}
+
+const poolMembersText = (n: number): string => `${n} ${n === 1 ? 'member' : 'members'}`;

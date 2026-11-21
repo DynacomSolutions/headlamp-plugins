@@ -96,6 +96,8 @@ export interface NodeRingProps {
   onPick: (id: string) => void;
   /** The side of the square in px. 0 fills the box. */
   size?: number;
+  /** What the values count, for example `agents`. A count has no capacity to fill. */
+  unit?: string;
 }
 
 export function NodeRing({
@@ -108,6 +110,7 @@ export function NodeRing({
   onActive,
   onPick,
   size = 0,
+  unit,
 }: NodeRingProps): JSX.Element {
   const theme = useTheme();
   const hatchId = React.useRef(`sb-hatch-${++patternCounter}`).current;
@@ -141,6 +144,8 @@ export function NodeRing({
   const nodeOf = (key: string): SunburstNode | undefined => nodes.find(n => n.key === key);
 
   const arcTitle = (a: NodeArcShape): string => {
+    if (a.kind === 'node' && unit)
+      return `${a.label}: ${format(a.value)} ${unit} (${percent(share(a.value))})`;
     if (a.kind === 'node') {
       const n = nodeOf(a.nodeKey);
       const own =
@@ -179,8 +184,10 @@ export function NodeRing({
   const centreValue = shownArc ? format(shownArc.value) : format(used);
   const centreSub = shownArc
     ? shownArc.kind === 'node'
-      ? `${percent(share(shownArc.value))} of capacity`
+      ? `${percent(share(shownArc.value))} of ${unit ?? 'capacity'}`
       : `${clip(shownArc.nodeLabel, 10)} · ${percent(share(shownArc.value))}`
+    : unit
+    ? unit
     : `of ${format(data.capacity)} (${percent(capacity > 0 ? Math.min(1, used / capacity) : 0)})`;
 
   const nodeLabelFits = (a: NodeArcShape): boolean => {

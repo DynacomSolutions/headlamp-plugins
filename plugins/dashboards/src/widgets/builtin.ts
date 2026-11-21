@@ -1,4 +1,5 @@
 import { WidgetStore } from '../registry';
+import { aisAgentsWidget, aisGatewayWidget } from './ais/AisChartWidgets';
 import { aisWidget } from './ais/AisWidget';
 import { clockWidget } from './ClockWidget';
 import { headerWidget } from './HeaderWidget';
@@ -15,6 +16,8 @@ export function registerBuiltinWidgets(store: WidgetStore): void {
   store.registerWidget(k8sReportWidget);
   store.registerWidget(aisWidget);
   store.registerWidget(issuesWidget);
+  store.registerWidget(aisAgentsWidget);
+  store.registerWidget(aisGatewayWidget);
   for (const w of PANEL_WIDGETS) store.registerWidget(w);
   for (const w of PROMQL_WIDGETS) store.registerWidget(w);
 }

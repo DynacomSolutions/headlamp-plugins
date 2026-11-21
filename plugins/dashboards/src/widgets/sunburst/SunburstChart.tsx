@@ -35,6 +35,11 @@ export interface SunburstChartProps {
   hideLegend?: boolean;
   /** Name the largest children under each group in the legend. Default on. */
   showChildren?: boolean;
+  /**
+   * The thing that the values count, for example `agents`. Data of a count has no capacity to
+   * fill, so the node-first chart then shows `<unit>` under the total and no "of capacity" text.
+   */
+  unit?: string;
 }
 
 const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string =>

@@ -21,6 +21,11 @@ import { joinAis } from './join';
 export interface AisConfig {
   /** The id of the AIS panel source. */
   source: string;
+  /**
+   * `overview` (default) is the compact widget with stat tiles. `console` is the AIS tab: every
+   * pool open with its members, the pool limits on the pool row, no stat tiles.
+   */
+  view?: 'overview' | 'console';
 }
 
 /** The panel ids that the AIS source serves. */
@@ -106,7 +111,13 @@ export function AisWidget({
       )}
       {!none && (
         <Box sx={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}>
-          <AisView model={model} sourceId={sourceId} kiosk={kiosk} editing={editing} />
+          <AisView
+            model={model}
+            sourceId={sourceId}
+            kiosk={kiosk}
+            editing={editing}
+            view={config.view}
+          />
         </Box>
       )}
     </Box>
@@ -114,7 +125,7 @@ export function AisWidget({
 }
 
 function AisSettings(props: WidgetSettingsProps<AisConfig>): JSX.Element {
-  // Only the source is a setting. The four panels are fixed, so there is no panel choice.
+  // The source and the view are the settings. The four panels are fixed, so there is no panel choice.
   const { config, onChange } = props;
   const sources = useSources();
   const sourceId = sourceOf(config);
@@ -127,7 +138,7 @@ function AisSettings(props: WidgetSettingsProps<AisConfig>): JSX.Element {
         label="Source"
         value={sourceId}
         helperText="The panel source that serves the limits, identities, claude-swap and agents panels."
-        onChange={e => onChange({ source: e.target.value })}
+        onChange={e => onChange({ ...config, source: e.target.value })}
       >
         {!source && (
           <MenuItem value={sourceId}>
@@ -139,6 +150,17 @@ function AisSettings(props: WidgetSettingsProps<AisConfig>): JSX.Element {
             {s.title}
           </MenuItem>
         ))}
+      </TextField>
+      <TextField
+        select
+        size="small"
+        label="View"
+        value={config.view ?? 'overview'}
+        helperText="The console view opens every pool with its members and shows the pool limits on the pool row."
+        onChange={e => onChange({ ...config, view: e.target.value as AisConfig['view'] })}
+      >
+        <MenuItem value="overview">Overview</MenuItem>
+        <MenuItem value="console">Console tab</MenuItem>
       </TextField>
     </Box>
   );
