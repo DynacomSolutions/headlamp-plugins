@@ -3,6 +3,7 @@ import {
   buildGroups,
   gridFor,
   gridLabel,
+  groupBackends,
   groupKeyOf,
   meanAvailability,
   namePrefix,
@@ -202,5 +203,58 @@ describe('time range', () => {
     expect(gridLabel(DEFAULT_GRID)).toBe('24 h');
     expect(gridLabel(gridFor('30d', ''))).toBe('30 days');
     expect(gridLabel(gridFor('7d', ''))).toBe('7 days');
+  });
+});
+
+describe('groupBackends', () => {
+  const be = (name: string) => ({ namespace: 'shop', name, port: '80' });
+  const place = (name: string, backend?: { namespace: string; name: string; port: string }) =>
+    [
+      name,
+      {
+        namespace: 'shop',
+        app: 'shop',
+        route: {
+          kind: 'httproute',
+          namespace: 'shop',
+          name,
+          host: name,
+          path: '/',
+          exact: false,
+          labels: {},
+          backend,
+        },
+      },
+    ] as const;
+  const chk = (name: string): Check => ({
+    name,
+    type: 'http',
+    instance: '',
+    policy: 'all',
+    sites: new Map(),
+    status: 'up',
+    labels: {},
+    history: [],
+  });
+  const names = (key: string, checks: string[], pairs: ReturnType<typeof place>[]) =>
+    groupBackends({ key, checks: checks.map(chk) }, new Map(pairs)).map(b => b.name);
+
+  it('uses the one Service of a group, once, and skips a route with no Service', () => {
+    expect(names('shop', ['a', 'b', 'c'], [place('a', be('web')), place('b', be('web')), place('c')])).toEqual([
+      'web',
+    ]);
+    expect(names('shop', ['zzz'], [place('a', be('web'))])).toEqual([]);
+  });
+  it('uses only the Services that fit the group name when the group holds several', () => {
+    const checks = ['a', 'b', 'c', 'd'];
+    const pairs = [place('a', be('store-d1')), place('b', be('store-kv')), place('c', be('store')), place('d', be('other'))];
+    // The same name first, then the names that start with it. An unrelated Service never gives its icon.
+    expect(names('store', checks, pairs)).toEqual(['store', 'store-d1', 'store-kv']);
+  });
+  it('gives no candidate to a namespace group of unrelated apps, and caps the list', () => {
+    expect(names('dev', ['a', 'b'], [place('a', be('blog')), place('b', be('wiki'))])).toEqual([]);
+    const many = ['a', 'b', 'c', 'd', 'e'];
+    const pairs = many.map(n => place(n, be(`app-${n}`)));
+    expect(names('app', many, pairs)).toEqual(['app-a', 'app-b', 'app-c']);
   });
 });

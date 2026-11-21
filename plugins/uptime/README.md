@@ -33,7 +33,7 @@ Settings:
 | Key | Values | Default |
 | --- | --- | --- |
 | `groupBy` | `auto`, `namespace`, `app`, `group`, `name`, `type` | `auto` |
-| `expanded` | groups open at the start | `false` |
+| `expanded` | groups open at the start (a click or Enter opens or closes one) | `false` |
 | `range` | `dashboard`, `1h`, `6h`, `24h`, `7d`, `30d` | `24h` |
 | `onlyFailing` | show only down or degraded groups | `false` |
 
@@ -64,11 +64,31 @@ under its own real name: the host of its `host` label, its probed address or its
 check name. There is never an "Other", "Ungrouped" or "Not in cluster" group.
 
 Every group is listed, failing groups first, and no group folds into a "N more
-up" row. Each group has its own history strip, and (with `expanded`, on by
-default) each check under it has its own strip. The stat tiles and the summary
+up" row. Each group is one row: the icon of the app, the worst status, the
+counts, its own history strip and the availability. Groups start collapsed
+(`expanded` off). A click, or Enter on the focused row, opens a group to show
+each of its checks with its own strip. With `expanded` on, every group starts
+open. A thin divider line under each row, the same line as the other row lists
+of the Dashboards plugin, separates the rows (a failing group is a tinted band
+and has none). The stat tiles and the summary
 line stay fixed. Only the list of groups scrolls, with a thin scrollbar and a
 soft fade at an edge that has more rows. The widget fetches when the dashboard
 refreshes, not on its own timer.
+
+### Group icons
+
+The icon of a group is the real icon of its app. The route that serves a check
+names a backend Service (HTTPRoute `backendRefs`, an Ingress backend or the
+`service` of a Mapping). The widget reads the start page of that Service through
+the Kubernetes Service proxy, picks the best `<link rel="icon">` (SVG, then PNG,
+then ICO, then a touch icon), and loads it through the same proxy. The proxy
+rewrites the page links, so no icon comes from outside the cluster. A full
+`http(s)` address in a link is dropped, so the widget never calls an external
+site. A group tries up to three of its Services. The widget needs `get` on
+`services/proxy` for them. A Service is asked once per page session, and again
+after five minutes when it gave no icon. A group with no icon (a check that no
+route serves, or an app with no start page icon) shows a neutral badge with the
+first letter of its name.
 
 ## Where the data comes from
 

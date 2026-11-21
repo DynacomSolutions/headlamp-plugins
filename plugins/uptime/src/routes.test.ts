@@ -36,10 +36,21 @@ describe('reading the route kinds', () => {
   const raw = {
     httproutes: [
       {
-        metadata: { namespace: 'shop', name: 'web', labels: { 'app.kubernetes.io/name': 'storefront' } },
+        metadata: {
+          namespace: 'shop',
+          name: 'web',
+          labels: { 'app.kubernetes.io/name': 'storefront' },
+        },
         spec: {
           hostnames: ['Web.Example.COM', '*.apps.example.com'],
-          rules: [{ matches: [{ path: { type: 'PathPrefix', value: '/api' } }, { path: { type: 'Exact', value: '/health' } }] }],
+          rules: [
+            {
+              matches: [
+                { path: { type: 'PathPrefix', value: '/api' } },
+                { path: { type: 'Exact', value: '/health' } },
+              ],
+            },
+          ],
         },
       },
       { metadata: { namespace: 'ops', name: 'bare' }, spec: { hostnames: ['ops.example.com'] } },
@@ -47,29 +58,46 @@ describe('reading the route kinds', () => {
     ingresses: [
       {
         metadata: { namespace: 'blog', name: 'ing' },
-        spec: { rules: [{ host: 'blog.example.com', http: { paths: [{ path: '/', pathType: 'Prefix' }] } }, { http: { paths: [] } }] },
+        spec: {
+          rules: [
+            { host: 'blog.example.com', http: { paths: [{ path: '/', pathType: 'Prefix' }] } },
+            { http: { paths: [] } },
+          ],
+        },
       },
     ],
     mappings: [
-      { metadata: { namespace: 'media', name: 'm' }, spec: { host: 'tv.example.com', prefix: '/live/' } },
+      {
+        metadata: { namespace: 'media', name: 'm' },
+        spec: { host: 'tv.example.com', prefix: '/live/' },
+      },
       { metadata: { namespace: 'media', name: 'm2' }, spec: { hostname: 'tv2.example.com' } },
       { metadata: { namespace: 'media', name: 'nohost' }, spec: { prefix: '/' } },
     ],
   };
   const routes = buildRoutes(raw);
   it('reads HTTPRoute hostnames and path matches, Ingress rules and Mapping hosts', () => {
-    expect(routes.filter(r => r.kind === 'httproute').map(r => `${r.host}${r.path}${r.exact ? '=' : ''}`)).toEqual([
+    expect(
+      routes.filter(r => r.kind === 'httproute').map(r => `${r.host}${r.path}${r.exact ? '=' : ''}`)
+    ).toEqual([
       'web.example.com/api',
       'web.example.com/health=',
       '*.apps.example.com/api',
       '*.apps.example.com/health=',
       'ops.example.com/',
     ]);
-    expect(routes.filter(r => r.kind === 'ingress').map(r => `${r.namespace}/${r.host}${r.path}`)).toEqual(['blog/blog.example.com/']);
-    expect(routes.filter(r => r.kind === 'mapping').map(r => `${r.host}${r.path}`)).toEqual(['tv.example.com/live/', 'tv2.example.com/']);
+    expect(
+      routes.filter(r => r.kind === 'ingress').map(r => `${r.namespace}/${r.host}${r.path}`)
+    ).toEqual(['blog/blog.example.com/']);
+    expect(routes.filter(r => r.kind === 'mapping').map(r => `${r.host}${r.path}`)).toEqual([
+      'tv.example.com/live/',
+      'tv2.example.com/',
+    ]);
   });
   it('reads the app from the name label, then part-of, else nothing', () => {
-    expect(appLabelOf({ 'app.kubernetes.io/name': 'a', 'app.kubernetes.io/part-of': 'b' })).toBe('a');
+    expect(appLabelOf({ 'app.kubernetes.io/name': 'a', 'app.kubernetes.io/part-of': 'b' })).toBe(
+      'a'
+    );
     expect(appLabelOf({ 'app.kubernetes.io/part-of': 'b' })).toBe('b');
     expect(appLabelOf({ other: 'x' })).toBe('');
     expect(appLabelOf(undefined)).toBe('');
@@ -78,14 +106,32 @@ describe('reading the route kinds', () => {
 
 describe('endpoints of a check', () => {
   it('reads a URL, a host:port address and a bare host', () => {
-    expect(parseEndpoint('https://A.example.com:8443/x/y')).toEqual({ host: 'a.example.com', port: '8443', path: '/x/y' });
-    expect(parseEndpoint('a.example.com:443')).toEqual({ host: 'a.example.com', port: '443', path: undefined });
-    expect(parseEndpoint('a.example.com.')).toEqual({ host: 'a.example.com', port: undefined, path: undefined });
+    expect(parseEndpoint('https://A.example.com:8443/x/y')).toEqual({
+      host: 'a.example.com',
+      port: '8443',
+      path: '/x/y',
+    });
+    expect(parseEndpoint('a.example.com:443')).toEqual({
+      host: 'a.example.com',
+      port: '443',
+      path: undefined,
+    });
+    expect(parseEndpoint('a.example.com.')).toEqual({
+      host: 'a.example.com',
+      port: undefined,
+      path: undefined,
+    });
     expect(parseEndpoint('')).toBeUndefined();
   });
   it('tries the host label, then the URL, then a check name that looks like a host', () => {
-    const c = check('web.example.com', 'https://url.example.com/legend', { host: 'label.example.com' });
-    expect(endpointsOf(c).map(e => e.host)).toEqual(['label.example.com', 'url.example.com', 'web.example.com']);
+    const c = check('web.example.com', 'https://url.example.com/legend', {
+      host: 'label.example.com',
+    });
+    expect(endpointsOf(c).map(e => e.host)).toEqual([
+      'label.example.com',
+      'url.example.com',
+      'web.example.com',
+    ]);
     expect(endpointsOf(c)[0].path).toBe('/legend');
     expect(endpointsOf(check('plain', '192.0.2.1:22')).map(e => e.host)).toEqual(['192.0.2.1']);
   });
@@ -112,7 +158,9 @@ describe('host matching', () => {
   it('ignores the port of the probed address', () => {
     const c = check('tls', 'web.example.com:443', {});
     expect(placeCheck(c, routes)?.namespace).toBe('exact');
-    expect(placeCheck(check('x', 'https://web.example.com:8443/'), routes)?.namespace).toBe('exact');
+    expect(placeCheck(check('x', 'https://web.example.com:8443/'), routes)?.namespace).toBe(
+      'exact'
+    );
   });
   it('uses the longest route path that covers the check path', () => {
     const paths = [
@@ -149,12 +197,20 @@ describe('host matching', () => {
 
 describe('placing checks', () => {
   const routes = [
-    route({ host: 'web.example.com', namespace: 'shop', labels: { 'app.kubernetes.io/name': 'storefront' } }),
+    route({
+      host: 'web.example.com',
+      namespace: 'shop',
+      labels: { 'app.kubernetes.io/name': 'storefront' },
+    }),
     route({ host: 'plain.example.com', namespace: 'ops' }),
   ];
   it('gives the namespace and the app, with the namespace as the app fallback', () => {
     const p = placeChecks(
-      [check('web', 'https://web.example.com/'), check('plain', 'https://plain.example.com/'), check('github', 'https://github.com/')],
+      [
+        check('web', 'https://web.example.com/'),
+        check('plain', 'https://plain.example.com/'),
+        check('github', 'https://github.com/'),
+      ],
       routes
     );
     expect(p.get('web')).toMatchObject({ namespace: 'shop', app: 'storefront' });
@@ -162,9 +218,126 @@ describe('placing checks', () => {
     expect(p.has('github')).toBe(false);
   });
   it('finds a check by its host label when the URL is not a host', () => {
-    expect(placeCheck(check('c', '192.0.2.5:9115', { host: 'web.example.com' }), routes)?.namespace).toBe('shop');
+    expect(
+      placeCheck(check('c', '192.0.2.5:9115', { host: 'web.example.com' }), routes)?.namespace
+    ).toBe('shop');
   });
   it('places nothing without routes', () => {
     expect(placeChecks([check('web', 'https://web.example.com/')], []).size).toBe(0);
+  });
+});
+
+describe('the Service behind a route', () => {
+  const raw = {
+    httproutes: [
+      {
+        metadata: { namespace: 'shop', name: 'web' },
+        spec: {
+          hostnames: ['web.example.com'],
+          rules: [
+            { matches: [{ path: { value: '/api' } }], backendRefs: [{ name: 'api', port: 8080 }] },
+            {
+              matches: [{ path: { value: '/' } }],
+              backendRefs: [{ kind: 'Service', name: 'web', port: 80, namespace: 'front' }],
+            },
+          ],
+        },
+      },
+      {
+        metadata: { namespace: 'shop', name: 'nomatch' },
+        spec: {
+          hostnames: ['plain.example.com'],
+          rules: [{ backendRefs: [{ name: 'plain', port: 80 }] }],
+        },
+      },
+      {
+        metadata: { namespace: 'shop', name: 'other-kind' },
+        spec: {
+          hostnames: ['x.example.com'],
+          rules: [{ backendRefs: [{ kind: 'Gateway', name: 'gw' }] }],
+        },
+      },
+    ],
+    ingresses: [
+      {
+        metadata: { namespace: 'blog', name: 'ing' },
+        spec: {
+          rules: [
+            {
+              host: 'blog.example.com',
+              http: {
+                paths: [
+                  { path: '/', backend: { service: { name: 'blog', port: { number: 8080 } } } },
+                ],
+              },
+            },
+            {
+              host: 'named.example.com',
+              http: {
+                paths: [
+                  { path: '/', backend: { service: { name: 'named', port: { name: 'http' } } } },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    ],
+    mappings: [
+      {
+        metadata: { namespace: 'media', name: 'a' },
+        spec: { host: 'a.example.com', service: 'tv:8989' },
+      },
+      {
+        metadata: { namespace: 'media', name: 'b' },
+        spec: { host: 'b.example.com', service: 'http://tv.other:80' },
+      },
+      {
+        metadata: { namespace: 'media', name: 'c' },
+        spec: { host: 'c.example.com', service: 'tv.other.svc:81' },
+      },
+      {
+        metadata: { namespace: 'media', name: 'd' },
+        spec: { host: 'd.example.com', service: 'https://tv.other:443' },
+      },
+      {
+        metadata: { namespace: 'media', name: 'e' },
+        spec: { host: 'e.example.com', service: 'cdn.example.org', host_redirect: true },
+      },
+      {
+        metadata: { namespace: 'media', name: 'f' },
+        spec: { host: 'f.example.com', service: 'cdn.example.org:443' },
+      },
+    ],
+  };
+  const byHost = Object.fromEntries(buildRoutes(raw).map(r => [r.host + r.path, r.backend]));
+  it('reads the backend of an HTTPRoute rule, a Ingress path and a Mapping', () => {
+    expect(byHost['web.example.com/api']).toEqual({ namespace: 'shop', name: 'api', port: '8080' });
+    expect(byHost['web.example.com/']).toEqual({ namespace: 'front', name: 'web', port: '80' });
+    expect(byHost['plain.example.com/']).toEqual({ namespace: 'shop', name: 'plain', port: '80' });
+    expect(byHost['blog.example.com/']).toEqual({ namespace: 'blog', name: 'blog', port: '8080' });
+    expect(byHost['named.example.com/']).toEqual({
+      namespace: 'blog',
+      name: 'named',
+      port: 'http',
+    });
+    expect(byHost['a.example.com/']).toEqual({
+      namespace: 'media',
+      name: 'tv',
+      port: '8989',
+      scheme: undefined,
+    });
+    expect(byHost['b.example.com/']).toMatchObject({ namespace: 'other', name: 'tv', port: '80' });
+    expect(byHost['c.example.com/']).toMatchObject({ namespace: 'other', name: 'tv', port: '81' });
+    expect(byHost['d.example.com/']).toMatchObject({
+      namespace: 'other',
+      name: 'tv',
+      scheme: 'https',
+    });
+  });
+  it('gives no backend for a Gateway ref, a redirect Mapping or an external address', () => {
+    expect(byHost['x.example.com/']).toBeUndefined();
+    expect(byHost['e.example.com/']).toBeUndefined();
+    expect(byHost['f.example.com/']).toBeUndefined();
   });
 });

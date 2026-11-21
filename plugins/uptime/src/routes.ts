@@ -12,6 +12,16 @@ import type { Check } from './model';
 
 export type RouteKind = 'httproute' | 'mapping' | 'ingress';
 
+/** The Service that a route sends traffic to. It is where the app answers, and where its icon is. */
+export interface Backend {
+  namespace: string;
+  name: string;
+  /** A port number or a port name. Without it the Service proxy uses the first port. */
+  port?: string;
+  /** `https` when the Service speaks TLS. */
+  scheme?: 'https';
+}
+
 export interface Route {
   kind: RouteKind;
   namespace: string;
@@ -23,6 +33,8 @@ export interface Route {
   /** True when the route matches only this exact path, not the path as a prefix. */
   exact: boolean;
   labels: Record<string, string>;
+  /** The Service behind the route, when the route names one. */
+  backend?: Backend;
 }
 
 /** Where a check runs: the namespace of its route, and the app label of the route (or the namespace). */
@@ -74,17 +86,38 @@ function base(kind: RouteKind, o: any) {
   };
 }
 
+/** The first Service in the backendRefs of an HTTPRoute rule. */
+function ruleBackend(rule: any, namespace: string): Backend | undefined {
+  for (const ref of asArray(rule?.backendRefs)) {
+    const kind = str(ref?.kind);
+    const name = str(ref?.name);
+    if ((kind !== '' && kind !== 'Service') || !name) continue;
+    const port = ref?.port === undefined || ref?.port === null ? '' : String(ref.port);
+    return { namespace: str(ref?.namespace) || namespace, name, port: port || undefined };
+  }
+  return undefined;
+}
+
 /** One route per host and path match of a Gateway API HTTPRoute (`spec.hostnames`, `rules[].matches[].path`). */
 export function httpRouteRoutes(o: any): Route[] {
   const hosts = asArray(o?.spec?.hostnames).map(str).filter(Boolean).map(normaliseHost);
-  const paths: { path: string; exact: boolean }[] = [];
+  const paths: { path: string; exact: boolean; backend?: Backend }[] = [];
+  const namespace = str(o?.metadata?.namespace);
   for (const rule of asArray(o?.spec?.rules)) {
+    const backend = ruleBackend(rule, namespace);
     for (const m of asArray(rule?.matches)) {
       const value = str(m?.path?.value);
-      if (value) paths.push({ path: normalisePath(value), exact: m?.path?.type === 'Exact' });
+      if (value)
+        paths.push({ path: normalisePath(value), exact: m?.path?.type === 'Exact', backend });
     }
   }
-  if (paths.length === 0) paths.push({ path: '/', exact: false });
+  if (paths.length === 0) {
+    paths.push({
+      path: '/',
+      exact: false,
+      backend: ruleBackend(asArray(o?.spec?.rules)[0], namespace),
+    });
+  }
   return hosts.flatMap(host => paths.map(p => ({ ...base('httproute', o), host, ...p })));
 }
 
@@ -95,12 +128,39 @@ export function ingressRoutes(o: any): Route[] {
     const host = normaliseHost(str(rule?.host));
     if (!host) continue;
     const paths = asArray(rule?.http?.paths);
+    const namespace = str(o?.metadata?.namespace);
     if (paths.length === 0) out.push({ ...base('ingress', o), host, path: '/', exact: false });
     for (const p of paths) {
-      out.push({ ...base('ingress', o), host, path: normalisePath(str(p?.path)), exact: p?.pathType === 'Exact' });
+      const svc = p?.backend?.service;
+      const name = str(svc?.name);
+      const port = svc?.port?.number !== undefined ? String(svc.port.number) : str(svc?.port?.name);
+      out.push({
+        ...base('ingress', o),
+        host,
+        path: normalisePath(str(p?.path)),
+        exact: p?.pathType === 'Exact',
+        backend: name ? { namespace, name, port: port || undefined } : undefined,
+      });
     }
   }
   return out;
+}
+
+/**
+ * The Service of an Emissary Mapping (`spec.service`): `name`, `name.namespace`, `name:port`, the same with an
+ * `http://` or `https://` prefix, or `name.namespace.svc[.cluster.local]`. Any other address (an external host
+ * name, an IP, a redirect target) names no Service in the cluster, so it gives undefined.
+ */
+export function mappingBackend(service: unknown, namespace: string): Backend | undefined {
+  const m = /^(?:(https?):\/\/)?([a-z0-9-]+(?:\.[a-z0-9-]+)*)(?::(\d+))?(?:\/.*)?$/i.exec(
+    str(service)
+  );
+  if (!m) return undefined;
+  const labels = m[2].toLowerCase().split('.');
+  const tail = labels.slice(2).join('.');
+  if (labels.length > 2 && tail !== 'svc' && !tail.startsWith('svc.')) return undefined;
+  const scheme = m[1]?.toLowerCase() === 'https' ? ('https' as const) : undefined;
+  return { namespace: labels[1] || namespace, name: labels[0], port: m[3] || undefined, scheme };
 }
 
 /** The route of an Emissary Mapping (`spec.host` or `spec.hostname`, `spec.prefix`). */
@@ -108,7 +168,13 @@ export function mappingRoutes(o: any): Route[] {
   const spec = o?.spec ?? {};
   const host = normaliseHost(str(spec.host) || str(spec.hostname));
   if (!host) return [];
-  return [{ ...base('mapping', o), host, path: normalisePath(str(spec.prefix)), exact: false }];
+  // A redirect Mapping sends the client away, so its `service` is a target host and not a backend.
+  const backend = spec.host_redirect
+    ? undefined
+    : mappingBackend(spec.service, str(o?.metadata?.namespace));
+  return [
+    { ...base('mapping', o), host, path: normalisePath(str(spec.prefix)), exact: false, backend },
+  ];
 }
 
 export function buildRoutes(raw: RawRoutes): Route[] {
@@ -132,7 +198,11 @@ export function parseEndpoint(value: string): Endpoint | undefined {
   try {
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) {
       const u = new URL(v);
-      return { host: normaliseHost(u.hostname), port: u.port || undefined, path: u.pathname || '/' };
+      return {
+        host: normaliseHost(u.hostname),
+        port: u.port || undefined,
+        path: u.pathname || '/',
+      };
     }
   } catch {
     return undefined;
@@ -191,9 +261,13 @@ export function matchRoute(routes: Route[], host: string, path?: string): Route 
     for (const r of routes) {
       const suffix = wildcardSuffix(r.host);
       // A wildcard covers one or more labels, never the bare domain: `*.example.com` is not `example.com`.
-      if (suffix && h.endsWith(suffix) && h.length > suffix.length && suffix.length > best) best = suffix.length;
+      if (suffix && h.endsWith(suffix) && h.length > suffix.length && suffix.length > best)
+        best = suffix.length;
     }
-    if (best > 0) pool = routes.filter(r => wildcardSuffix(r.host)?.length === best && h.endsWith(r.host.slice(1)));
+    if (best > 0)
+      pool = routes.filter(
+        r => wildcardSuffix(r.host)?.length === best && h.endsWith(r.host.slice(1))
+      );
   }
   if (pool.length === 0) return undefined;
   return [...pool].sort(
@@ -206,11 +280,18 @@ export function matchRoute(routes: Route[], host: string, path?: string): Route 
 }
 
 /** The placement of one check, from the first of its hosts that a route serves. */
-export function placeCheck(check: Pick<Check, 'name' | 'instance' | 'labels'>, routes: Route[]): Placement | undefined {
+export function placeCheck(
+  check: Pick<Check, 'name' | 'instance' | 'labels'>,
+  routes: Route[]
+): Placement | undefined {
   for (const e of endpointsOf(check)) {
     const route = matchRoute(routes, e.host, e.path);
     if (route && route.namespace) {
-      return { namespace: route.namespace, app: appLabelOf(route.labels) || route.namespace, route };
+      return {
+        namespace: route.namespace,
+        app: appLabelOf(route.labels) || route.namespace,
+        route,
+      };
     }
   }
   return undefined;
