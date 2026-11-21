@@ -12,11 +12,10 @@
  * The screen is a touch screen: no scrollbars, no focus rings or outlines, no hover states.
  * The active state shows as a change of fill, with a short transition.
  */
-import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import { createTheme, ThemeProvider, useTheme } from '@mui/material/styles';
 import React from 'react';
+import { HeaderIconButton } from '../components/HeaderIconButton';
 import { holdScreenAwakeInBrowser } from './wakeLock';
 
 /** Asks the browser for full screen, where it can; a refusal is ignored. */
@@ -80,37 +79,19 @@ export const kioskQuietSx = {
 /** Pure black, so an OLED screen switches its pixels off. */
 export const KIOSK_BLACK = '#000';
 
-/** The Exit control of the kiosk: a touch sized button, in the style of the other kiosk buttons. */
+/** The Exit control of the kiosk: a plain icon, like the full screen button. Its words are the tooltip and the label. */
 export function KioskExitButton({ onExit }: { onExit: () => void }): JSX.Element {
   return (
-    <Button
-      variant="outlined"
-      color="inherit"
+    <HeaderIconButton
+      label="Exit full screen"
+      icon="mdi:fullscreen-exit"
+      iconSize={28}
+      touch
       onClick={() => {
         exitBrowserFullscreen();
         onExit();
       }}
-      aria-label="Exit full screen"
-      startIcon={<Icon icon="mdi:fullscreen-exit" width={24} height={24} />}
-      sx={theme => ({
-        minHeight: 48,
-        minWidth: 48,
-        fontSize: 17,
-        fontWeight: 400,
-        flex: 'none',
-        whiteSpace: 'nowrap',
-        // The quiet plate of the refresh button, a thin edge, an icon in the info colour.
-        '&.MuiButton-outlined.MuiButton-outlined': {
-          bgcolor: 'action.selected',
-          border: '1px solid',
-          borderColor:
-            theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.24)',
-        },
-        '& .MuiButton-startIcon': { color: 'info.main' },
-      })}
-    >
-      Exit full screen
-    </Button>
+    />
   );
 }
 

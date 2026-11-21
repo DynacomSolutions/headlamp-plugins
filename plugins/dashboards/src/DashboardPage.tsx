@@ -12,7 +12,6 @@ import { Loader } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import IconButton from '@mui/material/IconButton';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Tab from '@mui/material/Tab';
@@ -27,7 +26,8 @@ import { BandActions, BandView } from './components/BandView';
 import { ConnectionIndicator } from './components/ConnectionIndicator';
 import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
 import { FilterBar } from './components/FilterBar';
-import { HeaderStrip } from './components/HeaderStrip';
+import { HeaderIconButton } from './components/HeaderIconButton';
+import { HeaderPart,HeaderStrip } from './components/HeaderStrip';
 import { PaletteDrawer } from './components/PaletteDrawer';
 import { RefreshControls } from './components/RefreshStatus';
 import { SectionActions, SectionView } from './components/SectionView';
@@ -466,6 +466,9 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const barWidth = useElementWidth(barEl);
   const barLevel =
     barWidth === 0 ? 0 : barWidth >= BAR_FULL_WIDTH ? 0 : barWidth >= BAR_TIGHT_WIDTH ? 1 : 2;
+  // A wide bar has three equal parts, so the clock sits in the exact middle. A narrower bar flows
+  // its controls in one wrapping row, and the clock follows the left part.
+  const centred = barWidth >= BAR_CENTRED_WIDTH;
 
   // ---- render ----
 
@@ -739,12 +742,20 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     </DashboardContext.Provider>
   );
 
-  // The header widgets, inline in the title bar. Edit mode keeps the header band under the toolbar.
-  const headerStrip = !editing && (
-    <DashboardContext.Provider value={ctx}>
-      <HeaderStrip band={spec.header} kiosk={query.kiosk} frameActions={frameActions} />
-    </DashboardContext.Provider>
-  );
+  // The header widgets, inline in the title bar, in three parts: the alert chips on the left, the
+  // clock in the middle and any other widget on the right. Edit mode keeps the header band under
+  // the toolbar.
+  const headerPart = (part: HeaderPart) =>
+    !editing && (
+      <DashboardContext.Provider value={ctx}>
+        <HeaderStrip
+          band={spec.header}
+          kiosk={query.kiosk}
+          frameActions={frameActions}
+          part={part}
+        />
+      </DashboardContext.Provider>
+    );
 
   const dialogs = (
     <>
@@ -860,12 +871,23 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           data-title-bar-level={barLevel}
           data-title-bar-sticky={!kiosk && !editing && spec.header.sticky ? '' : undefined}
           sx={{
-            display: 'flex',
-            // The bar folds its controls as it narrows (see barLevel). When they still do not fit
-            // in one row, they wrap to the next row. A control is never drawn over another one.
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            columnGap: kiosk ? 2.25 : 1,
+            ...(centred
+              ? {
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+                  // The page bar can have a second row of filters on the left. The clock and the
+                  // buttons stay level with the title, in the first row.
+                  alignItems: kiosk ? 'center' : 'start',
+                }
+              : {
+                  display: 'flex',
+                  // The bar folds its controls as it narrows (see barLevel). When they still do
+                  // not fit in one row, they wrap to the next row. A control is never drawn over
+                  // another one.
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                }),
+            columnGap: kiosk ? 3 : 2,
             rowGap: 1,
             mb: 1,
             minWidth: 0,
@@ -877,46 +899,51 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           }}
         >
           <Box
+            data-title-bar-left
             sx={{
-              minWidth: 80,
-              maxWidth: kiosk ? 'none' : barLevel >= 2 ? 150 : 240,
-              flex: '0 1 auto',
+              // A narrow bar draws the left part as part of its own wrapping row.
+              display: centred ? 'flex' : 'contents',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              columnGap: kiosk ? 3 : 2,
+              rowGap: 1,
+              minWidth: 0,
             }}
           >
-            <Typography
-              variant={kiosk ? 'h6' : 'h5'}
-              component="h1"
-              noWrap
-              sx={kiosk ? { fontSize: 26, fontWeight: 700 } : undefined}
+            <Box
+              sx={{
+                minWidth: 80,
+                maxWidth: kiosk ? 'none' : barLevel >= 2 ? 150 : 240,
+                flex: '0 1 auto',
+              }}
             >
-              {spec.title}
-            </Typography>
-            {!kiosk && barLevel < 2 && spec.description && (
               <Typography
-                variant="body2"
-                color="text.secondary"
+                variant={kiosk ? 'h6' : 'h5'}
+                component="h1"
                 noWrap
-                title={spec.description}
-                data-dashboard-description
+                sx={kiosk ? { fontSize: 26, fontWeight: 700 } : undefined}
               >
-                {spec.description}
+                {spec.title}
               </Typography>
-            )}
+              {!kiosk && barLevel < 2 && spec.description && (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  noWrap
+                  title={spec.description}
+                  data-dashboard-description
+                >
+                  {spec.description}
+                </Typography>
+              )}
+            </Box>
+            {headerPart('left')}
+            <ConnectionIndicator />
+            <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+              {(!kiosk || spec.kioskShowFilters) && filterBar}
+            </Box>
           </Box>
-          <RefreshControls
-            store={refresh}
-            seconds={seconds}
-            onSecondsChange={onSecondsChange}
-            showText={barLevel < 2}
-            showAuto={!kiosk}
-            narrow={barLevel >= 2}
-            iconSize={kiosk ? 26 : 22}
-            wall={kiosk}
-          />
-          <ConnectionIndicator />
-          <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
-            {(!kiosk || spec.kioskShowFilters) && filterBar}
-          </Box>
+          {headerPart('centre')}
           <Box
             data-title-bar-tail
             sx={{
@@ -924,11 +951,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
               flexWrap: 'wrap',
               alignItems: 'center',
               justifyContent: 'flex-end',
-              columnGap: kiosk ? 2.25 : 1,
+              columnGap: kiosk ? 3 : 2,
               rowGap: 1,
-              marginLeft: 'auto',
               minWidth: 0,
               maxWidth: '100%',
+              // The wide bar puts the tail in its right part. A narrow bar pushes it to the end.
+              ...(centred ? { justifySelf: 'end' } : { marginLeft: 'auto' }),
             }}
           >
             {!kiosk && !editing && (
@@ -949,27 +977,29 @@ function DashboardView({ name }: { name: string }): JSX.Element {
                 </span>
               </Tooltip>
             )}
-            {headerStrip}
+            {headerPart('right')}
+            <RefreshControls
+              store={refresh}
+              seconds={seconds}
+              onSecondsChange={onSecondsChange}
+              showText={barLevel < 2}
+              showAuto={!kiosk}
+              narrow={barLevel >= 2}
+              iconSize={kiosk ? 28 : 24}
+              touch={kiosk}
+            />
             {kiosk ? (
               <KioskExitButton onExit={() => replaceQuery({ kiosk: false })} />
             ) : (
-              <Tooltip title="Full screen">
-                <IconButton
-                  aria-label="Full screen"
-                  sx={{
-                    width: 40,
-                    height: 40,
-                    bgcolor: 'action.hover',
-                    '&:hover': { bgcolor: 'action.selected' },
-                  }}
-                  onClick={() => {
-                    enterBrowserFullscreen();
-                    replaceQuery({ kiosk: true, edit: false });
-                  }}
-                >
-                  <Icon icon="mdi:fullscreen" width={22} height={22} />
-                </IconButton>
-              </Tooltip>
+              <HeaderIconButton
+                label="Full screen"
+                icon="mdi:fullscreen"
+                iconSize={24}
+                onClick={() => {
+                  enterBrowserFullscreen();
+                  replaceQuery({ kiosk: true, edit: false });
+                }}
+              />
             )}
           </Box>
         </Box>
@@ -1110,6 +1140,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
 /** At this bar width (px) and above, the filter fields show in the row. Below it they fold into one button. */
 const BAR_FULL_WIDTH = 1560;
+/** At this bar width (px) and above, the bar has three equal parts and the clock is in its middle. */
+const BAR_CENTRED_WIDTH = 1280;
 /** Below this bar width (px), the "Refreshed" text goes too. */
 const BAR_TIGHT_WIDTH = 1060;
 

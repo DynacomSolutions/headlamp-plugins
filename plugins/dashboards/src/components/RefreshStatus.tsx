@@ -1,6 +1,4 @@
 /* The "Refreshed 12 s ago" text, the Refresh button and the interval select of the header. */
-import { Icon } from '@iconify/react';
-import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
@@ -9,16 +7,10 @@ import React from 'react';
 import { useNow } from '../hooks';
 import { clockTime, lastRefreshedAt, RefreshStore, relativeTime } from '../refreshStore';
 import { REFRESH_OPTIONS } from '../spec/model';
+import { HeaderIconButton } from './HeaderIconButton';
 
 /** Subscribes to the store itself, so a widget report rerenders only this text. */
-export function LastRefreshed({
-  store,
-  strong,
-}: {
-  store: RefreshStore;
-  /** Larger text in the full text colour, for the wall header. */
-  strong?: boolean;
-}): JSX.Element {
+export function LastRefreshed({ store }: { store: RefreshStore }): JSX.Element {
   const state = React.useSyncExternalStore(store.subscribe, store.getState);
   const now = useNow(1000);
   const at = lastRefreshedAt(state);
@@ -26,23 +18,15 @@ export function LastRefreshed({
     <Tooltip title={`Last refreshed ${clockTime(at)}`}>
       <Typography
         variant="caption"
-        color={strong ? 'text.primary' : 'text.secondary'}
+        color="text.secondary"
         data-last-refreshed
-        sx={{ whiteSpace: 'nowrap', ...(strong ? { fontSize: 15 } : {}) }}
+        sx={{ whiteSpace: 'nowrap' }}
       >
         Refreshed {relativeTime(at, now)}
       </Typography>
     </Tooltip>
   );
 }
-
-/** The filled round plate that the refresh and the full screen buttons share. */
-export const plateSx = {
-  width: 48,
-  height: 48,
-  bgcolor: 'action.selected',
-  '&:hover': { bgcolor: 'action.selected' },
-} as const;
 
 export function RefreshControls(props: {
   store: RefreshStore;
@@ -56,8 +40,8 @@ export function RefreshControls(props: {
   narrow?: boolean;
   /** Size of the refresh icon, in px. */
   iconSize?: number;
-  /** The wall header: a filled plate behind the refresh button and larger status text. */
-  wall?: boolean;
+  /** The wall screen is a touch screen: a larger hit area. */
+  touch?: boolean;
 }): JSX.Element {
   const {
     store,
@@ -67,20 +51,12 @@ export function RefreshControls(props: {
     showAuto = true,
     narrow,
     iconSize = 22,
-    wall,
+    touch,
   } = props;
+  // The order is the select, the small text and the icon: the icon is the last control, next to
+  // the full screen button.
   return (
     <>
-      {showText && <LastRefreshed store={store} strong={wall} />}
-      <Tooltip title="Refresh now">
-        <IconButton
-          aria-label="Refresh now"
-          onClick={() => store.trigger()}
-          sx={wall ? plateSx : undefined}
-        >
-          <Icon icon="mdi:refresh" width={iconSize} height={iconSize} />
-        </IconButton>
-      </Tooltip>
       {showAuto && (
         <TextField
           select
@@ -97,6 +73,14 @@ export function RefreshControls(props: {
           ))}
         </TextField>
       )}
+      {showText && <LastRefreshed store={store} />}
+      <HeaderIconButton
+        label="Refresh now"
+        icon="mdi:refresh"
+        iconSize={iconSize}
+        touch={touch}
+        onClick={() => store.trigger()}
+      />
     </>
   );
 }

@@ -27,9 +27,9 @@ and a header or divider.
 - **Header and footer**: a dashboard level header above, and footer below, the tab content. They show
   with every tab (see [Header, footer and tab rail](#header-footer-and-tab-rail)).
 - **Kiosk**: the Full screen button shows only the dashboard over the whole screen on a
-  black background, asks the browser for full screen and has the title, a refresh button and an Exit
-  control in one row, with the header widgets between them. It has no clock of its own: put a clock widget in
-  the header.
+  black background, asks the browser for full screen and has the title and the alert chips on the left, the
+  clock in the exact middle, and the refresh and Exit icons on the right, in one row. It has no clock of its
+  own: put a clock widget in the header.
   The styles are quiet and touch friendly. The code is adapted from the Usage plugin kiosk.
 - **Refresh**: a Refresh button, an automatic interval per dashboard (off, 10 s, 30 s, 1 min,
   5 min, 15 min) and a "Refreshed 12 s ago" text that updates on its own. Its tooltip gives the
@@ -96,9 +96,14 @@ Each dashboard has a **header** and a **footer**. Each is one section with its o
 edited like any section: drag and resize widgets, add them from the palette (choose "Header (every tab)" or
 "Footer (every tab)" as the target section), open the widget settings, duplicate, delete or move a widget to
 another section from its menu. The footer sits below the tab content. The header widgets draw inline in the
-title bar, in one compact row: the title (with the refreshed text and the refresh control), then the filters and
-views, then the header widgets, then the Full screen button (Exit full screen in the kiosk) at the far right. The
-row wraps only on a narrow screen. The widgets draw without a card or a card title, and a widget gets
+title bar in three parts. A wide bar (1280 px and more) has three equal parts, so the clock is in the exact
+middle. On the left are the title and the header widgets before the clock (the alert chips), and the filters and
+views in a second row. On the right are the header widgets after the clock, the auto refresh select, the small
+"Refreshed 12 s ago" text, the Refresh icon and the Full screen icon (Exit full screen in the kiosk) at the far
+right. The Refresh and Full screen controls are plain icons with the colour of the tab rail icons. Their words are
+the tooltip and the label. The "Refreshed" text goes only when the bar is narrow (under 1060 px). A narrower bar
+flows the same controls in one row that wraps, and the clock follows the left part. A header with no clock draws
+all its widgets on the left. The widgets draw without a card or a card title, and a widget gets
 `compact: true` in its props (the clock then shows the time over the date, at the height of the row). Header and
 footer stay when the tab changes (a clock keeps ticking, and nothing is fetched again). In edit mode the header
 shows as an editable strip under the toolbar, so you can still add, move, configure and remove its widgets.
