@@ -450,7 +450,7 @@ Draws one ring (`cpu` or `memory`, or the first ring) of a panel that has rings,
 `usage-dashboard` on the agent. It has the same source and panel settings as the panel widget.
 
 Option `groupBy` sets the first ring. `category` (the default) keeps the category first. `node` splits the
-circle by node first (hq, hq0, hq1, eu3, eu4 and so on), then category, then child. Each node is sized by its
+circle by node first (node-1, node-2 and so on), then category, then child. Each node is sized by its
 capacity, and its free capacity is a faint crosshatch on a transparent fill. It needs an agent that sends
 `nodes` for each ring. Without `nodes` the chart stays category first. To turn it on, set `"groupBy": "node"`
 in the `config` of the widget.
