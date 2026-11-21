@@ -6,8 +6,10 @@ import {
   createConnection,
   isAppAssetUrl,
   isChunkErrorMessage,
+  isOwnAppAssetUrl,
   OFFLINE_AFTER,
   ONLINE_INTERVAL_MS,
+  ownAssetPaths,
   RELOAD_KEY,
   RELOAD_MAX_IN_WINDOW,
   RELOAD_MIN_GAP_MS,
@@ -322,5 +324,35 @@ describe('the probe loop', () => {
     expect(t.conn.getState().reloadWanted).toBe('chunk');
     t.conn.stop();
     s.remove();
+  });
+});
+
+describe('scripts of this server only', () => {
+  const page = 'https://k8s.example.com/c/dynacom/dashboards/operations?kiosk=1';
+
+  it('keeps the /assets/ scripts of the same origin and drops the ones an extension adds', () => {
+    expect(
+      ownAssetPaths(
+        [
+          'https://k8s.example.com/assets/index-a1.js',
+          'chrome-extension://abcdefgh/assets/content.js',
+          'https://cdn.example.com/assets/lib.js',
+          'https://k8s.example.com/other/x.js',
+          '/assets/b2.js',
+        ],
+        page
+      )
+    ).toEqual(['/assets/b2.js', '/assets/index-a1.js']);
+  });
+
+  it('ignores a source that is not a URL', () => {
+    expect(ownAssetPaths(['http://[bad'], page)).toEqual([]);
+  });
+
+  it('counts a failed file only when this server serves it', () => {
+    expect(isOwnAppAssetUrl('https://k8s.example.com/assets/x.js', page)).toBe(true);
+    expect(isOwnAppAssetUrl('/plugins/uptime/main.js', page)).toBe(true);
+    expect(isOwnAppAssetUrl('chrome-extension://abcdefgh/assets/content.js', page)).toBe(false);
+    expect(isOwnAppAssetUrl('https://cdn.example.com/assets/lib.js', page)).toBe(false);
   });
 });
