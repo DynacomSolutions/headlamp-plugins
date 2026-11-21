@@ -246,11 +246,16 @@ function CategorySunburstChart({
             minWidth: 0,
             minHeight: 0,
             width: '100%',
+            // A row box centres its children, so stretch the list to the box height, then it scrolls.
+            alignSelf: 'stretch',
             overflowY: 'auto',
             overflowX: 'hidden',
             display: side ? 'flex' : 'grid',
             flexDirection: 'column',
-            justifyContent: 'safe center',
+            justifyContent: 'flex-start',
+            // Auto margins centre a short list and, unlike justify-content: center, never clip the top of a long one.
+            '& > li:first-of-type': { mt: 'auto' },
+            '& > li:last-of-type': { mb: 'auto' },
             gridTemplateColumns: bw >= 360 ? '1fr 1fr' : '1fr',
             alignContent: 'start',
             gap: side ? '5px' : '6px 16px',

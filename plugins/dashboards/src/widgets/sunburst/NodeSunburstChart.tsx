@@ -401,11 +401,13 @@ export function NodeSunburstChart({
             minWidth: 0,
             minHeight: 0,
             width: '100%',
+            // A row box centres its children, so stretch the list to the box height, then it scrolls.
+            alignSelf: 'stretch',
             overflowY: 'auto',
             overflowX: 'hidden',
             display: 'grid',
             gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-            alignContent: side ? 'safe center' : 'start',
+            alignContent: 'start',
             gap: `${NODE_GAP}px 16px`,
           }}
         >
