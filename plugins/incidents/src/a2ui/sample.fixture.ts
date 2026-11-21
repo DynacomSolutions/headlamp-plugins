@@ -55,10 +55,10 @@ export const sampleDiagnosis: A2uiMessage[] = [
       dataModel: {
         trail: [
           {
-            heading: '**e1** prometheus_query — check usage',
+            heading: '**e1** prometheus_query: check usage',
             summary: 'node_filesystem_avail at 4%',
           },
-          { heading: '**e2** kubectl_get — list pods (failed)', summary: 'forbidden' },
+          { heading: '**e2** kubectl_get: list pods (failed)', summary: 'forbidden' },
         ],
       },
     },
