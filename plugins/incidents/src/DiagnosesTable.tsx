@@ -12,6 +12,7 @@ import { Link as RouterLink, useHistory } from 'react-router-dom';
 import { DiagnosisSummary, severityColour, Status } from './model';
 import { RerunButton } from './RerunButton';
 import { diagnosisUrl } from './routes';
+import { CAUSE_LINES, diagnosesLayout, tableSx } from './tableLayout';
 
 const STATUS_COLOUR: Record<Status, 'default' | 'info' | 'success' | 'error'> = {
   queued: 'default',
@@ -30,6 +31,23 @@ function shortTime(iso: string): string {
 function formatTime(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+/**
+ * Confidence and source in one small line. A compact or narrow table has no columns for them, so the
+ * line sits under the likely cause and no data is lost.
+ */
+function DetailLine({ d }: { d: DiagnosisSummary }) {
+  const parts = [d.confidence ? `${d.confidence} confidence` : '', d.source].filter(Boolean);
+  if (parts.length === 0) return null;
+  return (
+    <Box
+      data-detail=""
+      sx={{ fontSize: 12, color: 'text.secondary', overflowWrap: 'anywhere', mt: 0.25 }}
+    >
+      {parts.join(', ')}
+    </Box>
+  );
 }
 
 /** Checkboxes on the rows. The Incidents page turns them on. The dashboard list does not. */
@@ -199,6 +217,7 @@ function Row({
             >
               {d.likelyCause}
             </Box>
+            <DetailLine d={d} />
           </TableCell>
           <TableCell sx={{ px: 0.5, verticalAlign: 'top' }}>
             <Chip
@@ -273,9 +292,25 @@ function Row({
               >
                 {d.likelyCause}
               </Box>
+              <DetailLine d={d} />
             </TableCell>
           ) : (
-            <TableCell sx={{ maxWidth: 480 }}>{d.likelyCause}</TableCell>
+            // A wide place: the cause wraps in the width that the short columns leave, to six lines.
+            <TableCell>
+              <Box
+                title={d.likelyCause}
+                data-cause=""
+                sx={{
+                  display: '-webkit-box',
+                  WebkitLineClamp: CAUSE_LINES,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                  overflowWrap: 'anywhere',
+                }}
+              >
+                {d.likelyCause}
+              </Box>
+            </TableCell>
           )}
           {!compact && <TableCell>{d.confidence}</TableCell>}
           {!compact && <TableCell>{d.source}</TableCell>}
@@ -300,7 +335,15 @@ export function DiagnosesTable(props: DiagnosesTableProps) {
     .concat(compact || narrow ? [] : ['Confidence', 'Source', 'Resolved'])
     .concat(props.onRerun && !compact && !narrow ? ['Actions'] : []);
   return (
-    <Table size={props.touch ? 'medium' : 'small'} stickyHeader={props.stickyHeader}>
+    <Table
+      size={props.touch ? 'medium' : 'small'}
+      stickyHeader={props.stickyHeader}
+      sx={
+        compact || narrow
+          ? undefined
+          : tableSx(diagnosesLayout({ checkbox: !!sel, detail: true, actions: !!props.onRerun }))
+      }
+    >
       <TableHead>
         <TableRow>
           {sel && (
