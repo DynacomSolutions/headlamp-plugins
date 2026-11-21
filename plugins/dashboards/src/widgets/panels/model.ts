@@ -34,6 +34,11 @@ export interface PanelRow {
    * `/api/widgets/` base, for example `icons/postgresql.svg`. A bad value drops the icon, never the row.
    */
   icon?: PanelRowIcon;
+  /**
+   * An optional v1 extension: named text fields for a widget that joins several panels (the alerts
+   * and incidents widget). Only string values are kept, a bad entry is dropped, never the row.
+   */
+  meta?: Record<string, string>;
 }
 
 export interface PanelSeries {
@@ -158,6 +163,21 @@ export function parseRowIcon(raw: unknown, label: string): PanelRowIcon | undefi
   return { src, alt: alt === '' ? label : alt };
 }
 
+const META_KEY = /^[a-z][A-Za-z0-9_]{0,23}$/;
+const META_MAX_KEYS = 16;
+const META_MAX_VALUE = 240;
+
+/** The meta fields of a row: string values under safe keys, in a limited number and length. */
+export function parseMeta(raw: unknown): Record<string, string> | undefined {
+  if (!isObject(raw)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (Object.keys(out).length >= META_MAX_KEYS) break;
+    if (META_KEY.test(k) && typeof v === 'string') out[k] = v.slice(0, META_MAX_VALUE);
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function parseSegment(raw: unknown, depth: number): RingSegment | null {
   if (!isObject(raw)) return null;
   const key = str(raw.key);
@@ -279,6 +299,7 @@ export function parsePanel(json: unknown): PanelModel {
           status: status(r.status),
           link: safeLink(r.link),
           icon: parseRowIcon(r.icon, label),
+          meta: parseMeta(r.meta),
         };
       }),
     series: array(json.series)

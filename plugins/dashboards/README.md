@@ -488,6 +488,39 @@ needed.
 - **Not available from the source**: the sessions are one total. The `agents` panel names a pool, not an
   identity, so the widget cannot show sessions for each identity.
 
+### Alerts and incidents widget (`agent.issues`)
+
+One widget for the alerts and the incidents of a panel source (default source id `agent`). It fetches
+two panels of the source (`alerts` and `incidents`) and joins them in the browser. It replaces the two
+separate panels on the Overview.
+
+- **Fixed on top**: two rows of stat tiles with one numeral size. The alert row has the critical and the
+  warning alerts that fire, and the pending alerts. The incident row has the open incidents, the incidents
+  that an agent works on (in progress, also counted as open) and the incidents resolved today.
+- **One scroll area** under them, with one row for each issue group. A group is one alert name on one
+  target, for example `KubeDeploymentDown` on `shop/web`. The alerts and the incidents of that alert are in
+  the group. A group has the severity mark, the alert name, a count badge, the state (firing, pending, open
+  or resolved), the target and an agent chip: **Agent working** (a diagnosis or an approved launch runs),
+  **Diagnosed** (with the likely cause on the next line), **Failed**, or no chip. The worst group is first
+  (severity, then state, then count). There is no "Other" group, no top N and no "+N more" row.
+- **Members and count**: the members are the alerts that fire or are pending and the incidents that are open.
+  The count is the number of members. A group with no such member shows only when an incident of it was
+  resolved today (local time of the browser). Older resolved incidents are not shown.
+- **Group key**: the agent sets `meta.group` on the rows of both panels with one function (see `issueTarget`
+  in `agent/src/widgets.ts`). The target is the first of the labels `target`, `deployment`, `statefulset`,
+  `daemonset`, `cronjob`, `job_name`, `persistentvolumeclaim` and `pod` (with the namespace in front), else
+  `node:device` or `node:mountpoint`, else the namespace, else the instance. An older agent sends no `meta`:
+  the key is then the alert name alone.
+- **Links** go only to the Incidents page of Headlamp (`/incidents/<id>` for a group with an incident) or to the
+  dashboard tab with the id `incidents`. In edit mode a row has no link.
+
+### Optional row `meta` field (v1 extension)
+
+A row may have `meta`: named text fields for a widget that joins panels. Keys match `[a-z][A-Za-z0-9_]*`
+(at most 24 characters), values are strings (at most 240 characters) and a row keeps at most 16 fields. A bad
+entry is dropped and the row stays. The alerts and incidents panels of the agent use `kind`, `group`, `target`,
+`severity`, `state`, `at`, `resolvedAt`, `id` and `agent`.
+
 ### Optional `tables` field (v1 extension)
 
 A panel may add `tables`. A source that does not send it is still valid version 1.

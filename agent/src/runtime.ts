@@ -24,7 +24,7 @@ export async function serviceGet(url: string, options: { maxBytes?: number } = {
 }
 
 function diagnosesProvider(store: DiagnosisStore): ProviderDefinition {
-  const brief = z.object({ id: z.string(), alert: z.string(), severity: z.string(), status: z.string(), createdAt: z.string(), likelyCause: z.string(), confidence: z.string(), resolved: z.boolean() });
+  const brief = z.object({ id: z.string(), alert: z.string(), severity: z.string(), status: z.string(), createdAt: z.string(), likelyCause: z.string(), confidence: z.string(), resolved: z.boolean(), resolvedAt: z.string(), labels: z.record(z.string(), z.string()) });
   return defineProvider({
     name: 'diagnoses',
     title: 'Diagnoses',
@@ -48,6 +48,8 @@ function diagnosesProvider(store: DiagnosisStore): ProviderDefinition {
               likelyCause: d.result?.likelyCause ?? d.error ?? '',
               confidence: d.result?.confidence ?? '',
               resolved: Boolean(d.resolvedAt),
+              resolvedAt: d.resolvedAt ?? '',
+              labels: d.alert.labels ?? {},
             }));
           return {
             data: { diagnoses },

@@ -35,7 +35,7 @@ const SIZE_NARROW = [28, 22, 17];
 const sizeIndex = (v: string): number => (v.length <= 3 ? 0 : v.length <= 5 ? 1 : 2);
 
 /** The numeral size of a tile row. Every tile has the size that the longest value needs. */
-export const tileSize = (stats: Stat[], narrow: boolean): number =>
+export const tileSize = (stats: ReadonlyArray<Stat>, narrow: boolean): number =>
   (narrow ? SIZE_NARROW : SIZE)[Math.max(0, ...stats.map(s => sizeIndex(s.value)))];
 
 /** The height of the tile row in px. */
@@ -51,17 +51,18 @@ export function StatTiles(props: {
   stats: Stat[];
   width: number;
   textTiles?: ReadonlyArray<number>;
+  /** Tiles that set the numeral size, when several tile rows must share one size. Default: these tiles. */
+  sizeFrom?: ReadonlyArray<Stat>;
+  /** The width share of each tile (default 1; a text tile is 2). A longer label gets a larger share. */
+  weights?: ReadonlyArray<number>;
 }): JSX.Element {
-  const { stats, width, textTiles = [] } = props;
+  const { stats, width, textTiles = [], sizeFrom, weights: shares } = props;
   const tk = useTokens();
-  const weight = (i: number): number => (textTiles.includes(i) ? 2 : 1);
+  const weight = (i: number): number => shares?.[i] ?? (textTiles.includes(i) ? 2 : 1);
   const weights = stats.reduce((n, _s, i) => n + weight(i), 0);
   const narrow = width > 0 && width / Math.max(1, weights) < NARROW;
   const worst = worstStat(stats);
-  const size = tileSize(
-    stats.filter((_s, i) => !textTiles.includes(i)),
-    narrow
-  );
+  const size = tileSize(sizeFrom ?? stats.filter((_s, i) => !textTiles.includes(i)), narrow);
   return (
     <Box
       data-stats
