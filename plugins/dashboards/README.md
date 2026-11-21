@@ -763,6 +763,7 @@ Set where the service is in the plugin settings (blank fields use the defaults):
 | `promql.table`      | One row per series of an instant query. Pick the label columns. Sortable.            |
 | `promql.breakdown`  | A pie (donut) or bars from an instant query, grouped by a label.                     |
 | `promql.matrix`     | A rows by columns matrix from an instant query, for example ping loss per node pair. |
+| `network.flow`      | A flow graph of the loss and traffic between nodes, by network, with node health.    |
 
 **Template variables.** They follow the filter bar, so one query serves every filter. An unknown
 `$name` stays as typed. Use double quotes around them.
@@ -797,6 +798,27 @@ diagonal is blank. A pair with no sample shows a dash on a hatched cell ("no dat
 fill. A value equal to a limit is not above it. A summary line stays in the widget footer: "30 pairs, 2 above
 2%, 4 no data, worst a to b 3.5%". The matrix shows every pair, scrolls when the widget is small and has no
 "+N more" row and no "Other" group.
+
+**Network flow.** `network.flow` draws one circle for each node on a fixed ring and one line for each pair
+of nodes. The colour of a line is the worst loss of the pair for the chosen network (the same limits as the
+matrix: above 0 is a warning, above 2% is critical; a triangle or a square at the middle of the line is the
+shape cue). A pair with no loss sample is a grey dashed line, never 0. The width of a line is the traffic of
+the pair, from a byte rate query, with a thin minimum. Nothing moves. A tooltip (hover, tap or keyboard)
+lists loss, round trip time and rate of each direction on each network. The chips All, Tailnet, LAN and
+Public choose the network: this is state of the widget and never changes the page URL. "All" takes the worst
+loss of every network and all the traffic. The circle of a node takes the worst drop and error share of its
+interface groups. Under the graph, a thin list shows for each node that share for the LAN NIC, the tailnet
+and the pod network, and the TCP retransmit share. The list scrolls and has no "+N more" row. The summary
+line in the footer gives the pairs with data on each network, the pairs above the critical limit and the
+worst pair. The graph follows the size of the widget (a ResizeObserver on the widget, not the window).
+
+The series (all instant queries, each one can be changed in the settings): ping loss and round trip time with
+the labels `source`, `target` and `network` (`tailnet`, `lan` or `public`); a byte rate with the same labels
+and `direction` (`rx` or `tx`, as seen from `source`); `node_uname_info` to map `instance` to the node name;
+the node exporter drop, error and packet counters for each interface group; the TCP retransmit counters. The
+default loss and round trip queries fall back to the older tailnet only series, so the widget works before
+the multi network series exist. A network with no series shows grey lines and a zero count in the summary.
+`promql.matrix` stays as it is for other dashboards.
 
 **Performance and behaviour.**
 

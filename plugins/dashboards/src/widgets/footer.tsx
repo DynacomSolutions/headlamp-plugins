@@ -18,6 +18,8 @@ export function WidgetFooter(props: {
   /** The footer element from the `footer` prop. Missing: the context value. */
   footer?: HTMLElement | null;
   dataAttr?: string;
+  /** Let a long summary use up to two lines, instead of one line cut with an ellipsis. */
+  wrap?: boolean;
 }): JSX.Element {
   const fromContext = React.useContext(FooterContext);
   const target = props.footer ?? fromContext;
@@ -29,7 +31,18 @@ export function WidgetFooter(props: {
       <StatusMark status={props.status} size={13} />
       <Box
         component="span"
-        sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        sx={
+          props.wrap
+            ? {
+                overflow: 'hidden',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+                lineHeight: 1.25,
+                py: 0.25,
+              }
+            : { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
+        }
       >
         {props.children}
       </Box>
