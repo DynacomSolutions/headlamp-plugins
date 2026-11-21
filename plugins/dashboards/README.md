@@ -482,21 +482,33 @@ and `agents`) and joins them in the browser by identity name and provider. No se
 needed.
 
 - **Fixed on top**: stat tiles for the sessions (the total of the `agents` panel), the login states
-  (logged in, expiring, expired, and logged out when it is not zero), the pools and the active member of the
-  pool, then the legend of the limit windows. They never scroll. All number tiles have one numeral size. The
-  name of the active member has the same size and gets a wider tile.
-- **One scroll area** under them. Each pool is a group header (name, member count, active member) with its
-  members under it, the active one first and marked. An identity that is in no pool goes under the real
-  name of its provider. There is no "Other" group, no top N and no "+N more" row.
-- **One row for each identity**: its name, its login state (an expired or expiring login tints the row and
-  shows a mark and a word), one lane for each limit window (5-hour, weekly, weekly for a model, monthly), its
-  worst limit and one status mark. A widget at least 1000 px wide draws the identities of a group in two columns.
-- **Narrow widget**: a widget under 560 px wide (its own width, not the window width) draws one vertical
-  list. The stat tiles sit in a grid of 3 in each row with the same numeral size. Under them one column scrolls:
-  each pool is a header with its members indented under it, then the identities of no pool under their
-  provider. Each row stacks its name, its login state and one line for each limit with a bar and its
-  percentage. There is no legend, as each line names its limit. A size of 3 columns by 15 rows fits a 1920 px
-  wall display.
+  (logged in, expiring, expired, and logged out when it is not zero), the pools and the served member of each
+  pool, then the legend. The legend gives one colour to each limit window (5-hour, weekly, weekly for a model,
+  monthly, and any other). Nothing in it scrolls. All number tiles have one numeral size.
+- **One scroll area** under them. Each pool is a line with its members under it, the served or active one
+  first. An identity that is in no pool goes under the real name of its provider. There is no "Other" group,
+  no top N and no "+N more" row.
+- **One thin line for each identity**: its name on the left, its limit windows as thin bars one above the
+  other, and at the end the highest window as a small percentage in its status colour. The colour of a bar is
+  the colour of its window in the legend, so no window name is written on a line. A login that needs
+  attention (expiring, expired) shows a small status icon before the name and tints the line. A login that is
+  fine shows nothing. A small dot after the name marks the served member of a pool, and a small ring marks
+  the registry active member. The tooltip of a line lists every window with its percentage and reset time,
+  and the login state. A widget at least 1000 px wide draws the identities of a group in two columns.
+- **Pool line, joint usage**: the pool line has two text rows, the pool name and "Pool total, N members".
+  Its bars are the joint usage of all members, in the same colours as the member bars. For each window,
+  only the members that report that window count. The joint value is the mean of the member shares (each
+  member is one equal unit of capacity). A row of the `limits` panel can give the numbers in its `meta`
+  (`used`, `limit`): when every reporting member does, the joint value is sum(used) / sum(limit) instead. A
+  `resetsAt` in `meta` gives the reset time; the pool shows the earliest one, as that window frees capacity
+  first. The status follows the member thresholds: a warning from 80 % and critical from 95 %, and the pool
+  takes the worst window. When not all members report, the line says "Pool total, N of M members report", and
+  the tooltip gives the count for each window. A member that has no data for a window of its pool shows an
+  empty dashed bar for it. The source gives no used, limit or reset values today, so the joint value is the
+  mean of the shares and no reset time shows until it does.
+- **Narrow widget**: a widget under 560 px wide (its own width, not the window width) draws the stat tiles
+  in a grid of 3 in each row. The lines are the same. A size of 3 columns by 23 rows shows every identity
+  without a scroll on a 1920 px wall display.
 - **Joins**: the login panel names an identity as `tool / name` and the limits panel as `Provider / name`.
   The tool names `claude`, `codex`, `grok`, `kimi`, `zai` and `opencode` map to their providers. A tool with
   no limits (for example `pi`) is its own group. The members of the `claude-swap` panel belong to the

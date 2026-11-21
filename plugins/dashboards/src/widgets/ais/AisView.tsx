@@ -1,14 +1,20 @@
 /*
- * Draws the AIS model (see `join.ts`): fixed stat tiles on top, a fixed legend of the limit
- * windows, then one scroll area with the groups. A group is a pool (its members under it, the active
- * one marked) or a provider (its identities that are in no pool). An identity row has its login
- * state, one lane for each limit window, and its worst limit with the status mark at the end. Every
- * row is drawn: nothing folds into a "+N more" line and no group is named "Other". A row links
- * only to a dashboard tab (see `links.tsx`).
+ * Draws the AIS model (see `join.ts`): fixed stat tiles on top, a fixed legend with one colour for
+ * each limit window, then one scroll area with the groups. A group is a pool or a provider (its
+ * identities that are in no pool). Every identity is one thin line: its name on the left (a small
+ * icon before it when the login needs attention, a small dot after it for the served or registry
+ * active member of a pool), its limit windows as thin bars stacked in the middle (the colour of a
+ * window is the colour of the legend, never written on the line), and at the end the highest limit
+ * as a small percentage in its status colour. The tooltip of a line lists every window with its
+ * percentage and reset time.
  *
- * A narrow widget (under STACK_WIDTH, measured on the widget, not on the window) draws the overview
- * as one vertical list: the stat tiles in a small grid on top, then one column in which every
- * identity row stacks its name, its login state and one line for each limit with its percentage.
+ * The pool is a line of its own with two text rows: the name and "Pool total, N members". Its bars are
+ * the joint usage of all members (see `jointLimits`). A member with no data for a window shows an
+ * empty dashed lane there. Every row is drawn: nothing folds into a "+N more" line and no group is
+ * named "Other". A row links only to a dashboard tab (see `links.tsx`).
+ *
+ * A narrow widget (under STACK_WIDTH, measured on the widget, not on the window) draws the stat
+ * tiles in a small grid on top, then one column of lines.
  */
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
@@ -22,29 +28,34 @@ import { StatTiles } from '../panels/StatTiles';
 import { STATUS_WORD, StatusMark } from '../panels/StatusMark';
 import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
-import type { AisGroup, AisIdentity, AisLimit, AisModel } from './join';
+import type { AisGroup, AisIdentity, AisJoint, AisLimit, AisModel } from './join';
 
 /** A widget at least this wide draws the status key. A row at least WIDE_ROW wide draws wide columns. */
 export const WIDE_WIDTH = 640;
 export const WIDE_ROW = 520;
 /** A widget at least this wide draws the identities of a group in two columns. */
 export const TWO_COLUMNS = 1000;
-/** An overview widget narrower than this draws one vertical list (see `isStacked`). */
+/** An overview widget narrower than this draws its stat tiles in a small grid (see `isStacked`). */
 export const STACK_WIDTH = 560;
 /** The number of stat tiles in each row of a stacked widget. */
 export const STACK_TILE_COLUMNS = 3;
-/** True when the widget is narrow: one vertical list, no legend, the limits stacked in each row. */
+/** True when the widget is narrow: the stat tiles in a grid, no status key. */
 export const isStacked = (width: number): boolean => width > 0 && width < STACK_WIDTH;
-const ROW_HEIGHT = { wide: 42, narrow: 40 };
-const GROUP_HEIGHT = 30;
-const BAR_MAX = 26;
+/** The height of an identity line and of the pool line, in px. */
+export const LINE_HEIGHT = 20;
+export const POOL_LINE_HEIGHT = 38;
+const GROUP_HEIGHT = 22;
+/** The most px of one bar, and of all the bars of a line. */
+const BAR_MAX = 6;
+const BARS_MAX = 15;
 const clamp = (f: number): number => Math.min(1, Math.max(0, f));
 const RANK = { ok: 0, unknown: 1, warn: 2, crit: 3 } as const;
 
-/** The limit that sets the note of a row: the worst status, then the largest fraction. */
+/** The limit that sets the percentage of a line: the worst status, then the largest fraction. */
 export function worstLimit(limits: ReadonlyArray<AisLimit>): AisLimit | undefined {
   let worst: AisLimit | undefined;
   for (const l of limits) {
+    if (l.fraction === undefined) continue;
     if (
       !worst ||
       RANK[l.status] > RANK[worst.status] ||
@@ -55,10 +66,55 @@ export function worstLimit(limits: ReadonlyArray<AisLimit>): AisLimit | undefine
   return worst;
 }
 
-const fullCount = (limits: ReadonlyArray<AisLimit>): number =>
-  limits.filter(l => (l.fraction ?? 0) >= 0.995).length;
-
 const LINK_STYLE: React.CSSProperties = { color: 'inherit', textDecoration: 'none' };
+
+/** A reset time for people: "2026-11-22 14:00 UTC" for a valid time, else the text as written. */
+export function formatReset(raw: string): string {
+  const at = Date.parse(raw);
+  return Number.isFinite(at)
+    ? `${new Date(at).toISOString().slice(0, 16).replace('T', ' ')} UTC`
+    : raw;
+}
+
+/** The text of a line for its tooltip and its label: the identity, its login and every window. */
+export function lineDetails(
+  identity: AisIdentity,
+  windows: ReadonlyArray<string>,
+  joint?: AisJoint
+): string[] {
+  const out: string[] = [];
+  if (joint) {
+    out.push(`${identity.name}: ${poolTotalText(joint.members)}`);
+    if (joint.reporting < joint.members)
+      out.push(`${joint.reporting} of ${joint.members} members report`);
+    for (const l of joint.limits) {
+      out.push(
+        [
+          `${l.name}: ${l.value}`,
+          l.reporting < joint.members ? `${l.reporting} of ${joint.members} members report` : '',
+          l.resetsAt ? `resets ${formatReset(l.resetsAt)}` : '',
+        ]
+          .filter(t => t !== '')
+          .join(', ')
+      );
+    }
+    return out;
+  }
+  out.push(`${identity.provider} / ${identity.name}`);
+  if (identity.login) out.push(`Login: ${identity.login.word}`);
+  for (const name of windows) {
+    const l = identity.limits.find(x => x.name === name && x.fraction !== undefined);
+    out.push(
+      l
+        ? `${name}: ${l.value}${l.resetsAt ? `, resets ${formatReset(l.resetsAt)}` : ''}`
+        : `${name}: no data`
+    );
+  }
+  return out;
+}
+
+const poolTotalText = (members: number): string =>
+  `Pool total, ${members} ${members === 1 ? 'member' : 'members'}`;
 
 function Legend(props: { limits: string[]; wide: boolean }): JSX.Element {
   const tk = useTokens();
@@ -126,10 +182,8 @@ function GroupHeader(props: {
   const { group, link, editing, stacked } = props;
   const tk = useTokens();
   const n = group.members.length;
-  const noun =
-    group.kind === 'pool' ? (n === 1 ? 'member' : 'members') : n === 1 ? 'identity' : 'identities';
   const title = (
-    <Box component="span" sx={{ fontSize: 15, fontWeight: 600 }}>
+    <Box component="span" sx={{ fontSize: 14, fontWeight: 600 }}>
       {group.title}
     </Box>
   );
@@ -142,14 +196,14 @@ function GroupHeader(props: {
       sx={{
         display: 'flex',
         alignItems: 'baseline',
-        gap: 1.25,
+        gap: 1,
         gridColumn: '1 / -1',
         flex: 'none',
         px: 1.5,
-        pt: '8px',
+        pt: '5px',
         minWidth: 0,
         ...(stacked
-          ? { flexWrap: 'wrap', columnGap: 1.25, rowGap: 0, pb: '4px' }
+          ? { flexWrap: 'wrap', columnGap: 1, rowGap: 0, pb: '2px' }
           : { height: GROUP_HEIGHT, whiteSpace: 'nowrap' }),
         boxShadow: `inset 0 -1px 0 ${tk.line2}`,
       }}
@@ -161,196 +215,166 @@ function GroupHeader(props: {
       ) : (
         title
       )}
-      {group.kind === 'pool' && (
-        <Box
-          component="span"
-          data-pool-chip
-          sx={{
-            flex: 'none',
-            fontSize: 11,
-            px: '6px',
-            borderRadius: '8px',
-            boxShadow: `inset 0 0 0 1px ${tk.line2}`,
-            color: tk.fg2,
-          }}
-        >
-          Pool
-        </Box>
-      )}
-      <Box
-        component="span"
-        sx={{
-          fontSize: 12.5,
-          color: tk.fg2,
-          minWidth: 0,
-          ...(stacked ? {} : { overflow: 'hidden', textOverflow: 'ellipsis' }),
-        }}
-      >
-        {n} {noun}
-        {group.kind === 'pool' ? poolNote(group) : ''}
+      <Box component="span" sx={{ fontSize: 12, color: tk.fg2, minWidth: 0 }}>
+        {n} {n === 1 ? 'identity' : 'identities'}
       </Box>
     </Box>
   );
 }
 
-function LoginLine(props: { identity: AisIdentity }): JSX.Element {
+/** The small marks after a name: the served member (a dot) and the registry active member (a ring). */
+function MemberMarks(props: { identity: AisIdentity }): JSX.Element {
   const { identity } = props;
   const tk = useTokens();
-  const login = identity.login;
-  if (!login) {
-    return (
-      <Box component="span" data-login="unknown" sx={{ fontSize: 11.5, color: tk.mut }}>
-        No login data
-      </Box>
-    );
-  }
-  const problem = login.status === 'warn' || login.status === 'crit';
-  return (
-    <Box
-      component="span"
-      data-login={login.status}
-      title={login.detail}
-      sx={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: '4px',
-        fontSize: 11.5,
-        color: problem ? tk.fg : tk.mut,
-      }}
-    >
-      {problem && <StatusMark status={login.status} size={10} />}
-      {login.word}
-    </Box>
-  );
-}
-
-/** The marks of a member: the served one and the registry active one. */
-function MemberChips(props: { identity: AisIdentity }): JSX.Element {
-  const { identity } = props;
-  const tk = useTokens();
+  const registryOnly = identity.active && !identity.serving;
   return (
     <>
       {identity.serving && (
         <Box
           component="span"
-          data-serving-chip
+          data-serving-mark
+          role="img"
+          aria-label="Serving"
           title="The gateway served this member last, so the agents of the pool run as this login now."
-          sx={{
-            flex: 'none',
-            fontSize: 11,
-            px: '6px',
-            borderRadius: '8px',
-            color: tk.fg,
-            bgcolor: tk.fill.ok,
-            boxShadow: `inset 0 0 0 1px ${tk.status.ok}`,
-          }}
-        >
-          Serving
-        </Box>
+          sx={{ flex: 'none', width: 7, height: 7, borderRadius: '50%', bgcolor: tk.status.ok }}
+        />
       )}
-      {/* The registry mark shows alone when no serving data exists, else only where it differs. */}
-      {identity.active && !identity.serving && (
+      {registryOnly && (
         <Box
           component="span"
-          data-active-chip
+          data-active-mark
+          role="img"
+          aria-label={identity.serving === undefined ? 'Active' : 'Registry active'}
           title={
             identity.serving === undefined
-              ? undefined
+              ? 'The registry lists this member as active.'
               : 'The registry lists this member as active, but the gateway serves another member.'
           }
           sx={{
             flex: 'none',
-            fontSize: 11,
-            px: '6px',
-            borderRadius: '8px',
-            color: tk.fg,
-            ...(identity.serving === undefined
-              ? { bgcolor: tk.fill.ok, boxShadow: `inset 0 0 0 1px ${tk.status.ok}` }
-              : { boxShadow: `inset 0 0 0 1px ${tk.line2}`, color: tk.fg2 }),
+            width: 7,
+            height: 7,
+            borderRadius: '50%',
+            boxShadow: `inset 0 0 0 1.5px ${
+              identity.serving === undefined ? tk.status.ok : tk.fg2
+            }`,
           }}
-        >
-          {identity.serving === undefined ? 'Active' : 'Registry active'}
-        </Box>
+        />
       )}
     </>
   );
 }
 
-function IdentityRow(props: {
+/** The window names to draw on a line: those of its pool first, then its own, in the display order. */
+function laneNames(
+  identity: AisIdentity,
+  order: ReadonlyArray<string>,
+  poolWindows: ReadonlyArray<string>
+): string[] {
+  const own = identity.limits.filter(l => l.fraction !== undefined).map(l => l.name);
+  return order.filter(n => own.includes(n) || poolWindows.includes(n));
+}
+
+/**
+ * One thin line: the name (with a login icon and the marks), the stacked bars and the worst
+ * percentage. The pool line is the same grid with a second text row under the name.
+ */
+function IdentityLine(props: {
   identity: AisIdentity;
-  limits: string[];
+  /** The windows to draw, in the display order. A window that the identity lacks is drawn empty. */
+  windows: string[];
   colours: ReturnType<typeof limitColours>;
   link?: string;
   editing: boolean;
   wide: boolean;
-  /** A pool row: the line under the name, a toggle in front and a heavier look. */
+  /** A pool line: the joint usage, the line under the name and a toggle in front. */
   pool?: {
-    sub: React.ReactNode;
-    detail: string;
+    joint: AisJoint;
+    sub: string;
     open: boolean;
     onToggle: () => void;
-    count: number;
   };
-  /** A member of a pool in the console view: drawn one step in. */
+  /** A member of a pool: drawn one step in. */
   indent?: boolean;
 }): JSX.Element {
-  const { identity, limits, colours, link, editing, wide, pool, indent } = props;
+  const { identity, windows, colours, link, editing, wide, pool, indent } = props;
   const tk = useTokens();
-  const height = wide ? ROW_HEIGHT.wide : ROW_HEIGHT.narrow;
-  const lanes = limits
-    .map(name => ({ name, limit: identity.limits.find(l => l.name === name) }))
-    .filter(x => x.limit && x.limit.fraction !== undefined);
+  const height = pool ? POOL_LINE_HEIGHT : LINE_HEIGHT;
   const worst = worstLimit(identity.limits);
-  const full = fullCount(identity.limits);
-  const barHeight = Math.min(BAR_MAX, height - 12);
   const laneTrack = tk.mode === 'dark' ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)';
-  const loginProblem = identity.login?.status === 'warn' || identity.login?.status === 'crit';
-  const summary = [
-    `${identity.provider} ${identity.name}`,
-    identity.login ? identity.login.word : 'no login data',
-    ...identity.limits.map(l => `${l.name}: ${l.value}`),
-    STATUS_WORD[identity.status],
-  ].join('. ');
+  const login = identity.login;
+  const loginProblem = !pool && (login?.status === 'warn' || login?.status === 'crit');
+  const details = lineDetails(identity, windows, pool?.joint);
+  const hasData = windows.some(w =>
+    identity.limits.some(l => l.name === w && l.fraction !== undefined)
+  );
+  const laneHeight = Math.max(
+    1,
+    Math.min(pool ? 5 : BAR_MAX, Math.floor(BARS_MAX / Math.max(1, windows.length)) - 1)
+  );
   const name = (
-    <Box component="span" sx={{ fontSize: pool ? 16 : 15, fontWeight: pool ? 600 : undefined }}>
+    <Box component="span" sx={{ fontSize: pool ? 14 : 13, fontWeight: pool ? 600 : undefined }}>
       {identity.name}
     </Box>
   );
   return (
-    <Box
-      data-ais-row={identity.key}
-      data-row-status={identity.status}
-      data-active={identity.active ? '' : undefined}
-      data-serving={identity.serving ? '' : undefined}
-      sx={{
-        display: 'grid',
-        gridTemplateColumns: `${wide ? 230 : 140}px minmax(40px, 1fr) ${wide ? 150 : 84}px 14px`,
-        columnGap: wide ? '16px' : '12px',
-        alignItems: 'center',
-        height,
-        flex: 'none',
-        minWidth: 0,
-        pl: indent ? 4 : 1.5,
-        pr: 1.5,
-        // A login that needs attention tints the row, like a band in the other lists.
-        bgcolor: loginProblem && identity.login ? tk.fill[identity.login.status] : 'transparent',
-        boxShadow: pool ? `inset 0 -1px 0 ${tk.line2}` : `inset 0 -1px 0 ${tk.line}`,
-        ...(indent ? { borderLeft: `2px solid ${tk.line2}`, ml: 1.5 } : {}),
-      }}
+    <Tooltip
+      placement="top-start"
+      enterDelay={250}
+      title={
+        <Box data-line-tip sx={{ fontSize: 12, lineHeight: 1.5 }}>
+          {details.map((d, i) => (
+            <div key={i}>{d}</div>
+          ))}
+        </Box>
+      }
     >
-      <Tooltip title={`${identity.provider} / ${identity.name}`} placement="top-start">
-        <Box data-ais-label sx={{ minWidth: 0, lineHeight: 1.2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+      <Box
+        data-ais-row={identity.key}
+        data-row-status={identity.status}
+        data-line
+        data-active={identity.active ? '' : undefined}
+        data-serving={identity.serving ? '' : undefined}
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: `${
+            pool ? (wide ? 250 : 200) : wide ? 200 : 128
+          }px minmax(40px, 1fr) 40px`,
+          columnGap: '10px',
+          alignItems: 'center',
+          height,
+          flex: 'none',
+          minWidth: 0,
+          pl: indent ? 3 : 1.5,
+          pr: 1.5,
+          ...(pool ? { gridColumn: '1 / -1' } : {}),
+          bgcolor: loginProblem && login ? tk.fill[login.status] : 'transparent',
+          boxShadow: pool ? `inset 0 -1px 0 ${tk.line2}` : `inset 0 -1px 0 ${tk.line}`,
+          ...(indent ? { borderLeft: `2px solid ${tk.line2}`, ml: 1.5 } : {}),
+        }}
+      >
+        <Box data-ais-label sx={{ minWidth: 0, lineHeight: 1.15 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
             {pool && (
               <ButtonBase
                 data-pool-toggle
                 aria-expanded={pool.open}
                 aria-label={`${pool.open ? 'Fold' : 'Expand'} ${identity.name}`}
                 onClick={pool.onToggle}
-                sx={{ flex: 'none', fontSize: 12, width: 18, height: 18, color: tk.fg2 }}
+                sx={{ flex: 'none', fontSize: 12, width: 16, height: 16, color: tk.fg2 }}
               >
-                {pool.open ? '\u25BE' : '\u25B8'}
+                {pool.open ? '▾' : '▸'}
               </ButtonBase>
+            )}
+            {loginProblem && login && (
+              <Box
+                component="span"
+                data-login={login.status}
+                title={`Login: ${login.word}`}
+                sx={{ display: 'inline-flex', flex: 'none' }}
+              >
+                <StatusMark status={login.status} size={11} />
+              </Box>
             )}
             <Box
               sx={{
@@ -368,20 +392,15 @@ function IdentityRow(props: {
                 name
               )}
             </Box>
-            {pool && (
-              <Box component="span" sx={{ flex: 'none', fontSize: 11.5, color: tk.fg2 }}>
-                {poolMembersText(pool.count)}
-              </Box>
-            )}
-            <MemberChips identity={identity} />
+            <MemberMarks identity={identity} />
           </Box>
-          {pool ? (
+          {pool && (
             <Box
               component="span"
               data-pool-sub
-              title={`${pool.detail}. The pool sends work through the member that it serves now, so the limits of that member decide what the pool can do now.`}
               sx={{
                 display: 'block',
+                pl: '21px',
                 fontSize: 11.5,
                 color: tk.mut,
                 whiteSpace: 'nowrap',
@@ -391,260 +410,95 @@ function IdentityRow(props: {
             >
               {pool.sub}
             </Box>
-          ) : (
-            <LoginLine identity={identity} />
           )}
         </Box>
-      </Tooltip>
-      {lanes.length > 0 ? (
+        {hasData ? (
+          <Box
+            data-bar
+            role="img"
+            aria-label={details.join('. ')}
+            sx={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 }}
+          >
+            {windows.map(lane => {
+              const limit = identity.limits.find(l => l.name === lane && l.fraction !== undefined);
+              const c = colours.get(lane);
+              const f = clamp(limit?.fraction ?? 0);
+              return (
+                <Box
+                  key={lane}
+                  data-lane={lane}
+                  data-missing={limit ? undefined : ''}
+                  sx={{
+                    height: laneHeight,
+                    position: 'relative',
+                    borderRadius: '2px',
+                    overflow: 'hidden',
+                    bgcolor: limit ? laneTrack : 'transparent',
+                    ...(limit ? {} : { boxShadow: `inset 0 0 0 1px ${tk.line2}` }),
+                  }}
+                >
+                  {limit && (
+                    <Box
+                      data-segment={lane}
+                      data-fill={limit.fraction}
+                      sx={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: f > 0 ? `max(2px, ${f * 100}%)` : 0,
+                        borderRadius: '2px',
+                        bgcolor: c?.colour,
+                        opacity: c?.opacity,
+                      }}
+                    />
+                  )}
+                </Box>
+              );
+            })}
+          </Box>
+        ) : (
+          <Box data-no-limits sx={{ fontSize: 11.5, color: tk.mut }}>
+            {pool ? 'No member reports' : 'No limit data'}
+          </Box>
+        )}
         <Box
-          data-bar
-          role="img"
-          aria-label={summary}
+          data-ais-note
+          data-ais-status
+          data-status={worst?.status ?? identity.status}
           sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            height: barHeight,
-            gap: wide ? '2px' : '1px',
-            minWidth: 0,
+            textAlign: 'right',
+            fontSize: 12.5,
+            fontVariantNumeric: 'tabular-nums',
+            whiteSpace: 'nowrap',
+            color: worst ? tk.status[worst.status] : tk.mut,
           }}
         >
-          {lanes.map(({ name: lane, limit }) => {
-            const c = colours.get(lane);
-            const f = clamp(limit?.fraction ?? 0);
-            return (
-              <Box
-                key={lane}
-                data-lane={lane}
-                title={`${lane}: ${limit?.value}`}
-                sx={{
-                  flex: '1 1 0',
-                  minHeight: '1px',
-                  position: 'relative',
-                  borderRadius: '3px',
-                  overflow: 'hidden',
-                  bgcolor: laneTrack,
-                }}
-              >
-                <Box
-                  data-segment={lane}
-                  data-fill={limit?.fraction}
-                  sx={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: f > 0 ? `max(2px, ${f * 100}%)` : 0,
-                    borderRadius: '3px',
-                    bgcolor: c?.colour,
-                    opacity: c?.opacity,
-                  }}
-                />
-              </Box>
-            );
-          })}
+          {worst?.value ?? ''}
         </Box>
-      ) : (
-        <Box data-no-limits sx={{ fontSize: 12.5, color: tk.mut }}>
-          {pool ? 'No active member' : 'No limit data'}
-        </Box>
-      )}
-      <Box
-        data-ais-note
-        sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          lineHeight: 1.15,
-          whiteSpace: 'nowrap',
-          minWidth: 0,
-        }}
-      >
-        {worst && (
-          <>
-            <Box component="span" sx={{ fontSize: 17, fontVariantNumeric: 'tabular-nums' }}>
-              {worst.value}
-            </Box>
-            <Box
-              component="span"
-              sx={{ fontSize: 11.5, color: tk.mut, overflow: 'hidden', textOverflow: 'ellipsis' }}
-            >
-              {worst.name}
-              {wide && full > 1 && ` · ${full} limits full`}
-            </Box>
-          </>
-        )}
       </Box>
-      <Box data-ais-status sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <StatusMark status={identity.status} size={13} />
-      </Box>
-    </Box>
+    </Tooltip>
   );
 }
 
-/**
- * An identity row of the vertical list: the name with its marks and status on the first line, the
- * login state under it, then one line for each limit: its name, a thin bar and its percentage. The
- * row grows with its limits, so nothing is cut off.
- */
-function StackedRow(props: {
-  identity: AisIdentity;
-  limits: string[];
-  colours: ReturnType<typeof limitColours>;
-  link?: string;
-  editing: boolean;
-  /** A member of a pool: drawn one step in, under its pool header. */
-  indent: boolean;
-}): JSX.Element {
-  const { identity, limits, colours, link, editing, indent } = props;
-  const tk = useTokens();
-  const lanes = limits
-    .map(name => ({ name, limit: identity.limits.find(l => l.name === name) }))
-    .filter(x => x.limit && x.limit.fraction !== undefined);
-  const laneTrack = tk.mode === 'dark' ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)';
-  const loginProblem = identity.login?.status === 'warn' || identity.login?.status === 'crit';
-  const summary = [
-    `${identity.provider} ${identity.name}`,
-    identity.login ? identity.login.word : 'no login data',
-    ...identity.limits.map(l => `${l.name}: ${l.value}`),
-    STATUS_WORD[identity.status],
-  ].join('. ');
-  const name = (
-    <Box component="span" sx={{ fontSize: 15 }}>
-      {identity.name}
-    </Box>
-  );
-  return (
-    <Box
-      data-ais-row={identity.key}
-      data-stacked
-      data-row-status={identity.status}
-      data-active={identity.active ? '' : undefined}
-      data-serving={identity.serving ? '' : undefined}
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '3px',
-        minWidth: 0,
-        py: '7px',
-        pl: indent ? 2.5 : 1.5,
-        pr: 1.5,
-        ...(indent ? { borderLeft: `2px solid ${tk.line2}`, ml: 1.5 } : {}),
-        bgcolor: loginProblem && identity.login ? tk.fill[identity.login.status] : 'transparent',
-        boxShadow: `inset 0 -1px 0 ${tk.line}`,
-      }}
-    >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, lineHeight: 1.2 }}>
-        <Tooltip title={`${identity.provider} / ${identity.name}`} placement="top-start">
-          <Box
-            data-ais-label
-            sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          >
-            {link && !editing ? (
-              <InternalLink to={link} style={LINK_STYLE}>
-                {name}
-              </InternalLink>
-            ) : (
-              name
-            )}
-          </Box>
-        </Tooltip>
-        <MemberChips identity={identity} />
-        <Box data-ais-status sx={{ display: 'flex', flex: 'none', ml: 'auto' }}>
-          <StatusMark status={identity.status} size={13} />
-        </Box>
-      </Box>
-      <LoginLine identity={identity} />
-      {lanes.length > 0 ? (
-        <Box
-          data-bar
-          role="img"
-          aria-label={summary}
-          sx={{ display: 'grid', gap: '3px', pt: '2px' }}
-        >
-          {lanes.map(({ name: lane, limit }) => {
-            const c = colours.get(lane);
-            const f = clamp(limit?.fraction ?? 0);
-            return (
-              <Box
-                key={lane}
-                data-lane={lane}
-                title={`${lane}: ${limit?.value}`}
-                sx={{
-                  display: 'grid',
-                  gridTemplateColumns: '96px minmax(30px, 1fr) 44px',
-                  columnGap: '8px',
-                  alignItems: 'center',
-                  fontSize: 11.5,
-                  lineHeight: 1.2,
-                }}
-              >
-                <Box
-                  component="span"
-                  sx={{
-                    color: tk.fg2,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {lane}
-                </Box>
-                <Box
-                  sx={{
-                    position: 'relative',
-                    height: 6,
-                    borderRadius: '3px',
-                    overflow: 'hidden',
-                    bgcolor: laneTrack,
-                  }}
-                >
-                  <Box
-                    data-segment={lane}
-                    data-fill={limit?.fraction}
-                    sx={{
-                      position: 'absolute',
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: f > 0 ? `max(2px, ${f * 100}%)` : 0,
-                      borderRadius: '3px',
-                      bgcolor: c?.colour,
-                      opacity: c?.opacity,
-                    }}
-                  />
-                </Box>
-                <Box
-                  component="span"
-                  data-lane-value
-                  sx={{ textAlign: 'right', fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
-                >
-                  {limit?.value}
-                </Box>
-              </Box>
-            );
-          })}
-        </Box>
-      ) : (
-        <Box data-no-limits sx={{ fontSize: 12, color: tk.mut }}>
-          No limit data
-        </Box>
-      )}
-    </Box>
-  );
-}
-
-/** The pool as an identity row: the limits of its active member, and the worst status of them. */
-function poolIdentity(group: AisGroup): AisIdentity {
+/** The pool as an identity: the joint limits of all members and the joint status. */
+function poolIdentity(group: AisGroup, joint: AisJoint): AisIdentity {
   return {
     key: group.key,
     name: group.title,
     provider: 'Pool',
-    limits: group.poolLimits ?? [],
+    limits: joint.limits,
     active: false,
-    status: group.poolStatus ?? 'ok',
+    status: joint.status,
     link: group.link,
   };
+}
+
+/** The line under a pool name: what the bars are, and how many members report. */
+export function poolSub(joint: AisJoint): string {
+  return joint.reporting < joint.members
+    ? `Pool total, ${joint.reporting} of ${joint.members} members report`
+    : poolTotalText(joint.members);
 }
 
 export type AisViewMode = 'overview' | 'console';
@@ -654,7 +508,7 @@ export function AisView(props: {
   sourceId: string;
   kiosk: boolean;
   editing: boolean;
-  /** `console` is the AIS tab: one list, a pool row with limits above its members, no stat tiles. */
+  /** `console` is the AIS tab: one list, no stat tiles. */
   view?: AisViewMode;
 }): JSX.Element {
   const { model, sourceId, editing } = props;
@@ -687,7 +541,7 @@ export function AisView(props: {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 1.25,
+        gap: 1,
         minWidth: 0,
         height: '100%',
         minHeight: 0,
@@ -702,8 +556,7 @@ export function AisView(props: {
           columns={stacked ? STACK_TILE_COLUMNS : undefined}
         />
       )}
-      {/* The stacked rows name each limit on its own line, so they need no legend. */}
-      {!stacked && model.limits.length > 0 && <Legend limits={model.limits} wide={wide} />}
+      {model.limits.length > 0 && <Legend limits={model.limits} wide={wide} />}
       <ScrollArea label="Limits by pool and identity">
         <Box
           data-ais-list
@@ -717,24 +570,24 @@ export function AisView(props: {
           }}
         >
           {model.groups.map(group => {
-            const poolRow = consoleView && group.kind === 'pool';
+            const pool = group.kind === 'pool' && group.joint ? group : undefined;
             const open = !folded.has(group.key);
+            const poolWindows = pool?.joint?.limits.map(l => l.name) ?? [];
             return (
               <React.Fragment key={group.key}>
-                {poolRow ? (
-                  <IdentityRow
-                    identity={poolIdentity(group)}
-                    limits={model.limits}
+                {pool && pool.joint ? (
+                  <IdentityLine
+                    identity={poolIdentity(pool, pool.joint)}
+                    windows={model.limits.filter(n => poolWindows.includes(n))}
                     colours={colours}
-                    link={linkOf(group.link)}
+                    link={linkOf(pool.link)}
                     editing={editing}
                     wide={wideRow}
                     pool={{
+                      joint: pool.joint,
+                      sub: poolSub(pool.joint),
                       open,
                       onToggle: () => toggle(group.key),
-                      count: group.members.length,
-                      sub: poolSub(group),
-                      detail: poolDetail(group),
                     }}
                   />
                 ) : (
@@ -745,31 +598,19 @@ export function AisView(props: {
                     stacked={stacked}
                   />
                 )}
-                {(!poolRow || open) &&
-                  group.members.map(identity =>
-                    stacked ? (
-                      <StackedRow
-                        key={identity.key}
-                        identity={identity}
-                        limits={model.limits}
-                        colours={colours}
-                        link={linkOf(identity.link)}
-                        editing={editing}
-                        indent={group.kind === 'pool'}
-                      />
-                    ) : (
-                      <IdentityRow
-                        key={identity.key}
-                        identity={identity}
-                        limits={model.limits}
-                        colours={colours}
-                        link={linkOf(identity.link)}
-                        editing={editing}
-                        wide={wideRow}
-                        indent={poolRow}
-                      />
-                    )
-                  )}
+                {(!pool || open) &&
+                  group.members.map(identity => (
+                    <IdentityLine
+                      key={identity.key}
+                      identity={identity}
+                      windows={laneNames(identity, model.limits, poolWindows)}
+                      colours={colours}
+                      link={linkOf(identity.link)}
+                      editing={editing}
+                      wide={wideRow}
+                      indent={pool !== undefined}
+                    />
+                  ))}
               </React.Fragment>
             );
           })}
@@ -785,41 +626,3 @@ export function AisView(props: {
     </Box>
   );
 }
-
-/** The names of a list in one phrase: "a", "a and b", "a, b and c". */
-const nameList = (names: string[]): string =>
-  names.length < 2
-    ? names.join('')
-    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-
-/** The end of a pool group header in the overview: who serves, and the registry mark when it differs. */
-function poolNote(group: AisGroup): string {
-  if (group.serving && group.serving.length > 0) {
-    const differs = group.active !== undefined && !group.serving.includes(group.active);
-    return `, serving ${nameList(group.serving)}${
-      differs ? `, registry active ${group.active}` : ''
-    }`;
-  }
-  return group.active ? `, active ${group.active}` : '';
-}
-
-/** The line under a pool name: who the pool serves, else why its limits are those of one member. */
-function poolSub(group: AisGroup): string {
-  if (group.serving && group.serving.length > 0) return `Serving ${nameList(group.serving)}`;
-  return group.active ? `Limits of active member ${group.active}` : 'No active member';
-}
-
-/** The full text of the pool line, for its tooltip: the serving members, their limits and the registry. */
-function poolDetail(group: AisGroup): string {
-  if (!group.serving || group.serving.length === 0) return poolSub(group);
-  const differs = group.active !== undefined && !group.serving.includes(group.active);
-  return [
-    poolSub(group),
-    group.poolLimitsOf ? `Limits of ${group.poolLimitsOf}` : '',
-    differs ? `Registry active ${group.active}` : '',
-  ]
-    .filter(t => t !== '')
-    .join('. ');
-}
-
-const poolMembersText = (n: number): string => `${n} ${n === 1 ? 'member' : 'members'}`;

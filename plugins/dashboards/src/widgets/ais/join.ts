@@ -18,6 +18,30 @@ export interface AisLimit {
   value: string;
   fraction?: number;
   status: PanelStatus;
+  /** Absolute used and limit values, when the source gives them (row meta `used` and `limit`). */
+  used?: number;
+  cap?: number;
+  /** When the window resets, as the source wrote it (row meta `resetsAt`). */
+  resetsAt?: string;
+}
+
+/** One limit window of a pool, summed over the members that report it. */
+export interface AisJointLimit extends AisLimit {
+  /** The members that report this window. */
+  reporting: number;
+  /** `absolute` when every reporting member gave used and limit values, else `share`. */
+  basis: 'share' | 'absolute';
+}
+
+/** The joint usage of a pool: one value for each limit window, over all members. */
+export interface AisJoint {
+  /** The members of the pool. */
+  members: number;
+  /** The members that report at least one window. */
+  reporting: number;
+  limits: AisJointLimit[];
+  /** The joint status: the worst of the joint windows. */
+  status: PanelStatus;
 }
 
 export interface AisLogin {
@@ -73,6 +97,8 @@ export interface AisGroup {
   poolLimitsOf?: string;
   /** The worst status of the pool limits. */
   poolStatus?: PanelStatus;
+  /** The joint usage of all members, for each limit window. */
+  joint?: AisJoint;
   link?: string;
 }
 
@@ -120,6 +146,67 @@ const PROVIDER_NAME: Record<string, string> = {
 
 const RANK: Record<PanelStatus, number> = { ok: 0, unknown: 1, warn: 2, crit: 3 };
 export const worse = (a: PanelStatus, b: PanelStatus): PanelStatus => (RANK[b] > RANK[a] ? b : a);
+
+/** The joint thresholds: the share of a window at which the pool shows a warning or is critical. */
+export const JOINT_WARN = 0.8;
+export const JOINT_CRIT = 0.95;
+export const jointStatus = (fraction: number): PanelStatus =>
+  fraction >= JOINT_CRIT ? 'crit' : fraction >= JOINT_WARN ? 'warn' : 'ok';
+
+const unit = (f: number): number => Math.min(1, Math.max(0, f));
+const percent = (f: number): string => `${Math.round(unit(f) * 100)}%`;
+
+/** The earliest valid time of a list of times as written, or undefined. */
+function earliest(times: ReadonlyArray<string | undefined>): string | undefined {
+  let best: { at: number; raw: string } | undefined;
+  for (const raw of times) {
+    if (raw === undefined) continue;
+    const at = Date.parse(raw);
+    if (Number.isFinite(at) && (!best || at < best.at)) best = { at, raw };
+  }
+  return best?.raw;
+}
+
+/**
+ * The joint usage of the members of a pool. For each window, only the members that report it count.
+ * With used and limit values on every reporting member the joint value is sum(used) / sum(limit).
+ * Else every member is one equal unit of capacity and the joint value is the mean of the shares.
+ * The reset is the earliest one of the reporting members: that window frees capacity first.
+ */
+export function jointLimits(members: ReadonlyArray<AisIdentity>): AisJoint {
+  const names: string[] = [];
+  for (const m of members)
+    for (const l of m.limits)
+      if (l.fraction !== undefined && !names.includes(l.name)) names.push(l.name);
+  const limits: AisJointLimit[] = [];
+  for (const name of orderLimits(names)) {
+    const own = members
+      .map(m => m.limits.find(l => l.name === name))
+      .filter((l): l is AisLimit => l !== undefined && l.fraction !== undefined);
+    const absolute = own.every(l => l.used !== undefined && l.cap !== undefined && l.cap > 0);
+    const fraction = absolute
+      ? unit(own.reduce((s, l) => s + (l.used ?? 0), 0) / own.reduce((s, l) => s + (l.cap ?? 0), 0))
+      : unit(own.reduce((s, l) => s + unit(l.fraction ?? 0), 0) / own.length);
+    limits.push({
+      name,
+      value: percent(fraction),
+      fraction,
+      status: jointStatus(fraction),
+      resetsAt: earliest(own.map(l => l.resetsAt)),
+      reporting: own.length,
+      basis: absolute ? 'absolute' : 'share',
+    });
+  }
+  return {
+    members: members.length,
+    reporting: members.filter(m => m.limits.some(l => l.fraction !== undefined)).length,
+    limits,
+    status:
+      limits.length === 0
+        ? 'unknown'
+        : limits.reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
+  };
+}
 
 const canon = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 const providerId = (s: string): string => LIMIT_PROVIDER[canon(s)] ?? canon(s);
@@ -182,11 +269,16 @@ export function joinAis(panels: AisPanels): AisModel {
     const { provider, name } = splitLabel(row.label);
     const d = ensure(provider, name, row.link);
     d.provider = provider || d.provider;
+    const used = Number(row.meta?.used);
+    const cap = Number(row.meta?.limit);
     d.limits.push({
       name: row.detail === '' ? 'Value' : row.detail,
       value: row.value,
       fraction: row.fraction,
       status: row.status,
+      ...(row.meta?.used !== undefined && Number.isFinite(used) ? { used } : {}),
+      ...(row.meta?.limit !== undefined && Number.isFinite(cap) ? { cap } : {}),
+      ...(row.meta?.resetsAt ? { resetsAt: row.meta.resetsAt } : {}),
     });
   }
 
@@ -271,6 +363,7 @@ export function joinAis(panels: AisPanels): AisModel {
       poolLimits: limitsOf?.limits,
       poolLimitsOf: limitsOf?.name,
       poolStatus: limitsOf?.limits.reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
+      joint: jointLimits(members),
       link: poolLink.get(pool),
     };
   });
