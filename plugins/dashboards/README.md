@@ -589,6 +589,28 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
 `state` of a run or job is `running` or `queued`. `state` of a step is `done`, `running`, `failed`, `skipped`
 or `pending`. `seconds` is the time that the run has run or waited. A bad value is dropped or replaced by a
 default, and the widget never throws on bad data.
+### HoardDB widget (`hoarddb.engines`)
+
+One widget for the engines of a HoardDB source (default source id `hoarddb`) and the nodes that run them. It
+replaces the separate engines and clusters panels on an overview. It fetches four panels of the source (`engines`,
+`clusters`, `replication` and `failback`) and joins them in the browser by engine name. No server change is needed.
+
+- **One tile for each engine**: its icon, its name and its database count under it. Tiles wrap in a grid. When they
+  do not fit, the grid scrolls. There is no "+N more" tile.
+- **A ring around the icon**: one section for each node that runs the engine, in the colours of the other status
+  marks (OK, degraded, down, unknown). A dot marks the primary. The node name, its status and "primary" show on
+  hover.
+- **Fixed under the tiles**: a legend of every node (with its worst status) and the summary line, for example
+  "5 of 5 engines healthy, 13 databases". When an engine is not healthy, the summary names the worst one.
+- **Links**: a tile links only to the dashboard tab whose id is the source id (for example `hoarddb`). With no such
+  tab, or in edit mode, a tile has no link.
+- **Joins**: the nodes of an engine come from the detail line of the `clusters` panel (`nodes a, b, c`, or
+  `primary node a`), the `failback` panel (the node of the primary) and the standby rows of the `replication` panel
+  (`engine/pod`, detail `node x`). An engine that only one panel names still gets a tile.
+- **Not available from the source**: the source has no status for each instance. A section takes the status of
+  its standby row (a PostgreSQL standby) or, when every instance of the cluster is ready, the status of the cluster.
+  When some instances are not ready and the source does not say which, the sections of that engine show "unknown"
+  and the tile shows the real engine status. The database count exists only for PostgreSQL. Other engines show "no count".
 
 ### Optional `tables` field (v1 extension)
 
