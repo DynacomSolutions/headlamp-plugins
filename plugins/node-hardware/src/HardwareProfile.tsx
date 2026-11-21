@@ -1,6 +1,7 @@
 /** "Hardware profile" section of the Node details page, built from the shared inventory snapshot. */
 import { NameValueTable, SectionBox, SimpleTable } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
 import Alert from '@mui/material/Alert';
+import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
@@ -50,6 +51,23 @@ function LinkCell({ link }: { link: LinkInfo | undefined }): JSX.Element {
   );
 }
 
+/**
+ * A hardware table keeps each cell on one line. In a narrow place (the node drawer is about 500 px
+ * wide at 1280 px) the table scrolls sideways inside its box instead of wrapping every cell.
+ */
+function ScrollTable({ children }: { children: React.ReactNode }): JSX.Element {
+  return (
+    <Box data-hw-scroll sx={{
+        maxWidth: '100%',
+        overflowX: 'auto',
+        '& table': { width: 'max-content', minWidth: '100%', tableLayout: 'auto' },
+        '& th, & td': { whiteSpace: 'nowrap', overflow: 'visible', textOverflow: 'clip' },
+      }}>
+      {children}
+    </Box>
+  );
+}
+
 function SubTitle({ children }: { children: React.ReactNode }): JSX.Element {
   return (
     <Typography variant="subtitle1" sx={{ mt: 2, mb: 0.5 }}>
@@ -94,7 +112,7 @@ function CpuTable({ p }: { p: HardwareProfile }): JSX.Element {
       {c.sockets.length === 0 ? (
         <Empty>No CPU details reported.</Empty>
       ) : (
-        <SimpleTable
+        <ScrollTable><SimpleTable
           data={c.sockets}
           columns={[
             { label: 'Socket', getter: s => s.socket },
@@ -104,7 +122,7 @@ function CpuTable({ p }: { p: HardwareProfile }): JSX.Element {
             { label: 'Max speed', getter: s => formatGhz(s.maxHz) },
             { label: 'Current speed', getter: s => formatGhz(s.currentHz) },
           ]}
-        />
+        /></ScrollTable>
       )}
     </>
   );
@@ -129,7 +147,7 @@ function MemoryTable({ p }: { p: HardwareProfile }): JSX.Element {
       {m.modules.length === 0 ? (
         <Empty>No per-slot memory details reported.</Empty>
       ) : (
-        <SimpleTable
+        <ScrollTable><SimpleTable
           data={m.modules}
           columns={[
             { label: 'Slot', getter: d => moduleLabel(d) },
@@ -150,7 +168,7 @@ function MemoryTable({ p }: { p: HardwareProfile }): JSX.Element {
             { label: 'Manufacturer', getter: d => dash(d.manufacturer) },
             { label: 'Part number', getter: d => dash(d.partNumber) },
           ]}
-        />
+        /></ScrollTable>
       )}
     </>
   );
@@ -170,7 +188,7 @@ function SlotsTable({ p }: { p: HardwareProfile }): JSX.Element {
           <Typography variant="body2" sx={{ mb: 0.5 }}>
             PCIe: {pcie.inUse} of {pcie.total} in use. {m2Summary(p)}.
           </Typography>
-          <SimpleTable
+          <ScrollTable><SimpleTable
             data={p.slots}
             columns={[
               { label: 'Slot', getter: (s: Slot) => s.designation },
@@ -182,7 +200,7 @@ function SlotsTable({ p }: { p: HardwareProfile }): JSX.Element {
               { label: 'Device', getter: (s: Slot) => (s.devices.length > 0 ? s.devices.map(deviceName).join(', ') : '-') },
               { label: 'Link', getter: (s: Slot) => (s.devices[0] ? <LinkCell link={s.devices[0].link} /> : '-') },
             ]}
-          />
+          /></ScrollTable>
         </>
       )}
     </>
@@ -202,7 +220,7 @@ function PciTable({ p }: { p: HardwareProfile }): JSX.Element | null {
           {slow} device{slow === 1 ? ' runs' : 's run'} below the maximum PCIe link width.
         </Alert>
       )}
-      <SimpleTable
+      <ScrollTable><SimpleTable
         data={p.pciDevices}
         columns={[
           { label: 'Address', getter: (d: PciDevice) => d.address },
@@ -212,7 +230,7 @@ function PciTable({ p }: { p: HardwareProfile }): JSX.Element | null {
           { label: 'Slot', getter: (d: PciDevice) => dash(d.slot) },
           { label: 'Link', getter: (d: PciDevice) => <LinkCell link={d.link} /> },
         ]}
-      />
+      /></ScrollTable>
     </>
   );
 }
@@ -224,7 +242,7 @@ function GpuTable({ p }: { p: HardwareProfile }): JSX.Element {
       {p.gpus.length === 0 ? (
         <Empty>No GPU reported.</Empty>
       ) : (
-        <SimpleTable
+        <ScrollTable><SimpleTable
           data={p.gpus}
           columns={[
             { label: 'Address', getter: g => g.address },
@@ -235,7 +253,7 @@ function GpuTable({ p }: { p: HardwareProfile }): JSX.Element {
             { label: 'Driver', getter: g => dash(g.driver) },
             { label: 'Link', getter: g => <LinkCell link={g.link} /> },
           ]}
-        />
+        /></ScrollTable>
       )}
     </>
   );
@@ -248,7 +266,7 @@ function NvmeTable({ p }: { p: HardwareProfile }): JSX.Element {
       {p.nvme.length === 0 ? (
         <Empty>No NVMe drive reported.</Empty>
       ) : (
-        <SimpleTable
+        <ScrollTable><SimpleTable
           data={p.nvme}
           columns={[
             { label: 'Device', getter: n => n.device },
@@ -258,7 +276,7 @@ function NvmeTable({ p }: { p: HardwareProfile }): JSX.Element {
             { label: 'Address', getter: n => dash(n.address) },
             { label: 'Link', getter: n => <LinkCell link={n.link} /> },
           ]}
-        />
+        /></ScrollTable>
       )}
     </>
   );
