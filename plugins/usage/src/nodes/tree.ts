@@ -71,13 +71,15 @@ export const CATEGORIES: { id: string; label: string }[] = [
   { id: 'k8s', label: 'Kubernetes' },
   { id: 't3', label: 'T3 Code' },
   { id: 'herdr', label: 'Herdr' },
-  { id: 'other', label: 'Scopes with no role' },
   { id: 'system', label: 'System' },
 ];
 
-/** The filter id of a top-level arc: an orchestrator this list does not know counts as other. */
+/**
+ * The filter id of a top-level arc. It is the arc key. An orchestrator or scope the list does
+ * not know has no filter entry of its own, so a category filter hides it (there is no catch-all).
+ */
 export function categoryId(key: string): string {
-  return CATEGORIES.some(c => c.id === key) ? key : 'other';
+  return key;
 }
 
 const UNKNOWN_PROJECT = 'Unknown project';
@@ -427,6 +429,7 @@ function orchestrator(
 
   // Scopes with no role: role-less scopes, and role-less sub-slices of an agents slice that hold no
   // agent scopes (a builds slice, say). A sub-slice that holds agents is drawn as its projects.
+  // Each one is its own arc under the orchestrator, with its own name. There is no bucket.
   const holdsAgents = new Set(agents.flatMap(a => ancestors(a, byName)));
   const others = own.filter(
     u =>
@@ -437,14 +440,7 @@ function orchestrator(
           !holdsAgents.has(u.name) &&
           ancestors(u, byName).some(a => sliceNames.has(a))))
   );
-  const otherItems = unitForest(others, `${name}/other`, 'thread', byName, r);
-  const otherNodes = otherItems.length
-    ? [
-        node(`${name}/other`, 'Scopes with no role', 'project', sum(otherItems), otherItems, {
-          icon: { kind: 'mdi', name: 'folder' },
-        }),
-      ]
-    : [];
+  const otherNodes = unitForest(others, name, 'thread', byName, r);
 
   // Role-less scopes outside every agents and control unit are not in either total yet.
   const outside = others
@@ -465,20 +461,18 @@ function orchestrator(
   );
 }
 
-/** Role-less scopes that belong to no orchestrator. */
-function otherScopes(units: AgentUnit[], r: Resource): SunNode | null {
-  const items = units
+/** Role-less scopes that belong to no orchestrator: one category each, named after the scope. */
+function looseScopes(units: AgentUnit[], r: Resource): SunNode[] {
+  return units
     .filter(u => !u.orchestrator && u.kind === 'scope' && noRole(u))
     .map(u => {
-      const key = `other/${u.name}`;
-      return node(key, unitLabel(u.name), 'thread', unitValue(u, r), procNodes(u.procs, key, r));
+      const key = `scope:${u.name}`;
+      return node(key, unitLabel(u.name), 'category', unitValue(u, r), procNodes(u.procs, key, r), {
+        icon: { kind: 'mdi', name: 'folder' },
+      });
     })
     .filter(n => n.value > 0)
     .sort(byValue);
-  if (items.length === 0) return null;
-  return node('other', 'Scopes with no role', 'category', sum(items), items, {
-    icon: { kind: 'mdi', name: 'folder' },
-  });
 }
 
 /**
@@ -588,8 +582,7 @@ export function buildNodeTree(
       const n = orchestrator(o.name, o.title, agents.units, r, iconSrc);
       if (n) cats.push(n);
     }
-    const other = otherScopes(agents.units, r);
-    if (other) cats.push(other);
+    cats.push(...looseScopes(agents.units, r));
   }
   const attributed = sum(cats);
   if (used !== null) {

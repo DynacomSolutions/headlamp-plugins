@@ -117,6 +117,32 @@ export function idOf(n: { label: string; command?: string }): string {
 }
 
 /**
+ * Makes the names of sibling arcs unique. Siblings that share a name (two namespaces with the
+ * same display-name annotation, say) each show `name (id)`, with their own real id. A name that
+ * is already unique stays as it is. Ids that are equal too cannot be told apart, so they stay.
+ * Returns one name per entry, in the same order.
+ */
+export function uniqueNames(entries: { name: string; id: string }[]): string[] {
+  const count = new Map<string, number>();
+  for (const e of entries) count.set(e.name, (count.get(e.name) ?? 0) + 1);
+  return entries.map(e =>
+    (count.get(e.name) ?? 0) > 1 && e.id !== e.name ? `${e.name} (${e.id})` : e.name
+  );
+}
+
+/** Kinds whose repeated names are normal (a process may run many times): left alone. */
+const REPEATABLE: ReadonlySet<SunNode['kind']> = new Set(['process', 'unused']);
+
+function disambiguate(n: SunNode): void {
+  const kids = n.children.filter(c => !REPEATABLE.has(c.kind));
+  const names = uniqueNames(kids.map(c => ({ name: nameOf(c), id: idOf(c) })));
+  kids.forEach((c, i) => {
+    if (names[i] !== nameOf(c)) c.displayName = names[i];
+  });
+  n.children.forEach(disambiguate);
+}
+
+/**
  * Sets `displayName` on every arc of a tree by its kind. `label` stays the raw id. The overrides
  * match an arc's raw id, its key, or (for a process) its program, and win over everything.
  */
@@ -136,4 +162,5 @@ export function applyNames(root: SunNode, ctx: NameContext): void {
     n.children.forEach(c => walk(c, here));
   };
   walk(root, '');
+  disambiguate(root);
 }

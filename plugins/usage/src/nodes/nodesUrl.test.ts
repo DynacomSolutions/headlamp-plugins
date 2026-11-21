@@ -65,9 +65,9 @@ describe('nodesUrl', () => {
   });
 
   it('omits the category filter when every category is selected', () => {
-    const all = ['k8s', 't3', 'herdr', 'other', 'system'];
+    const all = ['k8s', 't3', 'herdr', 'system'];
     expect(serialiseNodesUrl({ ...defaultNodesUrl(), cats: all })).toBe('');
-    expect(parseNodesUrl('?cats=k8s,t3,herdr,other,system').cats).toEqual([]);
+    expect(parseNodesUrl('?cats=k8s,t3,herdr,system').cats).toEqual([]);
   });
 
   it('drops unknown categories and ignores unknown params', () => {

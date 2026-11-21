@@ -183,3 +183,47 @@ describe('usage_dashboard tool', () => {
     expect(summary).toBe('No usage data.');
   });
 });
+
+describe('usage_dashboard labels', () => {
+  const CATCH_ALL = /^(other|others|misc|rest|remaining|scopes with no role)$/i;
+  type Item = { key: string; label: string; value: number; children?: Item[] };
+  const all = (items: Item[]): Item[] => items.flatMap(i => [i, ...all(i.children ?? [])]);
+
+  it('gives namespaces with one display name unique, real labels', async () => {
+    const fx = usageFixture();
+    const names = ['team-a-billing', 'team-a-search', 'team-a-web'];
+    const items = names.map(name => ({ metadata: { name, annotations: { 'app.kubernetes.io/display-name': 'Team A Apps' } } }));
+    const kube = { list: async () => ({ info: {}, items, truncated: false }) } as never;
+    // Rename three fixture namespaces to the colliding ones through the pod series.
+    const prom = fx.context().prom;
+    const renamed = {
+      query: async (q: string) =>
+        (await prom.query(q)).map(s =>
+          s.metric.namespace === 'shop' ? { ...s, metric: { ...s.metric, namespace: 'team-a-billing' } }
+          : s.metric.namespace === 'web' ? { ...s, metric: { ...s.metric, namespace: 'team-a-web' } }
+          : s.metric.namespace === 'search' ? { ...s, metric: { ...s.metric, namespace: 'team-a-search' } }
+          : s),
+    } as never;
+    const { data } = await run(fx.context({ kube, prom: renamed }));
+    for (const ring of data.rings) {
+      const k8s = ring.segments.find(s => s.key === 'k8s')!;
+      const labels = k8s.children!.map(c => c.label);
+      expect(new Set(labels).size).toBe(labels.length);
+      expect(labels).toEqual(expect.arrayContaining(['Team A Apps (team-a-billing)', 'Team A Apps (team-a-search)', 'Team A Apps (team-a-web)']));
+      for (const n of ring.nodes!) {
+        const kids = n.segments.find(s => s.key === 'k8s')!.children!.map(c => c.label);
+        expect(new Set(kids).size).toBe(kids.length);
+      }
+    }
+  });
+
+  it('has no catch-all key or label in any ring', async () => {
+    const { data } = await run();
+    const segs = data.rings.flatMap(r => [...r.segments, ...r.nodes!.flatMap(n => n.segments)]);
+    for (const i of all(segs)) {
+      expect(i.key.endsWith('/other')).toBe(false);
+      expect(i.key).not.toBe('other');
+      expect(i.label).not.toMatch(CATCH_ALL);
+    }
+  });
+});

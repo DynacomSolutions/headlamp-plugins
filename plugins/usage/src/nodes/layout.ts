@@ -70,7 +70,7 @@ export function shade(base: string, depth: number, index: number): string {
 const NODE_BASE: Record<Mode, string> = { light: '#8a919a', dark: '#6b7280' };
 
 /** Fixed palette slots, so a category keeps its colour whichever other categories are present. */
-const CATEGORY_SLOT: Record<string, number> = { k8s: 0, t3: 1, herdr: 2, other: 3, system: 5 };
+const CATEGORY_SLOT: Record<string, number> = { k8s: 0, t3: 1, herdr: 2, system: 5 };
 const FREE_SLOTS = [4, 6, 7, 8, 9, 10, 11, 12];
 
 /** The colour of a top-level category, from its key alone (unknown keys hash to a free slot). */
