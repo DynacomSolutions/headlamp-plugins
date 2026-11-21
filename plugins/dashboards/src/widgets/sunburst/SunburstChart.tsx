@@ -8,8 +8,8 @@
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
 import { useTheme } from '@mui/material/styles';
-import Typography from '@mui/material/Typography';
 import React from 'react';
+import { useElementSize } from '../promql/useElementSize';
 import {
   arcPath,
   ArcShape,
@@ -43,6 +43,8 @@ export interface SunburstChartProps {
   kiosk?: boolean;
   /** Hide the legend (the chart then fills its box). */
   hideLegend?: boolean;
+  /** Name the largest children under each group in the legend. Default on. */
+  showChildren?: boolean;
 }
 
 const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string =>
@@ -54,12 +56,14 @@ export function SunburstChart({
   title,
   kiosk = false,
   hideLegend = false,
+  showChildren = true,
 }: SunburstChartProps): JSX.Element {
   const theme = useTheme();
   const mode = theme.palette.mode === 'dark' ? 'dark' : 'light';
   const [active, setActive] = React.useState<string | null>(null);
   const [picked, setPicked] = React.useState<string | null>(null);
 
+  const box = useElementSize<HTMLDivElement>();
   const arcs = React.useMemo(() => layoutArcs(data, RADIUS), [data]);
   // Colours follow the category key, not its size, so a refresh never repaints a category.
   const colourIndex = React.useMemo(() => {
@@ -115,119 +119,128 @@ export function SunburstChart({
       : percent(scale > 0 ? shownArc.value / scale : 0)
     : `of ${format(data.capacity)} (${percent(usedShare(data))})`;
 
+  // The legend sits beside the ring in a wide box and under it in a narrow one. The ring never
+  // takes more than 60 % of the short side, so the legend keeps room for its numbers.
+  const bw = box.size.width;
+  const bh = box.size.height;
+  const side = bw > 0 && bh > 0 && bw / bh > 1.15;
+  const sorted = [...data.categories]
+    .filter(c => c.value > 0)
+    .sort((a, b) => b.value - a.value || a.key.localeCompare(b.key));
+  const legend = !hideLegend && sorted.length > 0;
+  const ringSize = !legend
+    ? Math.min(bw, bh)
+    : side
+    ? Math.min(bh, bw * 0.55)
+    : Math.min(bw, bh * 0.6);
+  const legendHeight = side ? bh : bh - ringSize;
+  const perColumn = side ? sorted.length : Math.ceil(sorted.length / 2);
+  const kidsShown = showChildren
+    ? Math.max(0, Math.min(4, Math.floor((legendHeight - perColumn * 38) / (perColumn * 14))))
+    : 0;
+  const number = (v: number): string => format(v).split(' ')[0];
+
   return (
     <Box
+      ref={box.ref}
       data-sunburst
       sx={{
         display: 'flex',
-        flexDirection: 'column',
+        flexDirection: side ? 'row' : 'column',
         alignItems: 'center',
-        gap: 1,
+        gap: 1.25,
         height: '100%',
         minHeight: 0,
         width: '100%',
-        containerType: 'size',
       }}
     >
-      <Box
-        sx={{
-          flex: '1 1 0',
-          minHeight: 0,
-          width: '100%',
-          display: 'flex',
-          justifyContent: 'center',
+      <svg
+        role="img"
+        aria-label={summary}
+        viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
+        style={{
+          width: ringSize > 0 ? Math.round(ringSize) : '100%',
+          height: ringSize > 0 ? Math.round(ringSize) : '100%',
+          flex: 'none',
+          display: 'block',
+          touchAction: 'manipulation',
         }}
       >
-        <svg
-          role="img"
-          aria-label={summary}
-          viewBox={`${-VIEW / 2} ${-VIEW / 2} ${VIEW} ${VIEW}`}
-          style={{
-            height: '100%',
-            maxWidth: '100%',
-            aspectRatio: '1 / 1',
-            display: 'block',
-            touchAction: 'manipulation',
-          }}
+        <path d={trackPath(RADIUS)} fill={track} fillRule="evenodd" data-sunburst-track />
+        {arcs.map(a => {
+          const id = arcId(a);
+          const dim =
+            shown !== null && shown !== id && !(shownArc && a.categoryKey === shownArc.categoryKey);
+          const d = arcPath(a.inner, a.outer, a.start, a.end);
+          if (!d) return null;
+          const common = {
+            d,
+            fill: shade(a),
+            fillOpacity: dim ? 0.35 : 1,
+            fillRule: 'evenodd' as const,
+            stroke: surface,
+            strokeWidth: 0.75,
+            'data-arc': a.level === 1 ? 'category' : 'child',
+            'data-key': a.key,
+            onClick: () => select(id),
+            style: { cursor: 'pointer', outline: 'none' },
+            ...hoverProps(id),
+          };
+          return a.level === 1 ? (
+            <path
+              key={id}
+              {...common}
+              role="button"
+              tabIndex={0}
+              aria-label={`${a.label}, ${format(a.value)}`}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  select(id);
+                }
+              }}
+              onFocus={kiosk ? undefined : () => setActive(id)}
+              onBlur={kiosk ? undefined : () => setActive(null)}
+            >
+              <title>{`${a.label}: ${format(a.value)}`}</title>
+            </path>
+          ) : (
+            <path key={id} {...common} role="img" aria-label={`${a.label}, ${format(a.value)}`}>
+              <title>{`${a.label}: ${format(a.value)}`}</title>
+            </path>
+          );
+        })}
+        <g
+          data-sunburst-centre
+          style={{ pointerEvents: 'none' }}
+          textAnchor="middle"
+          fill={theme.palette.text.primary}
         >
-          <path d={trackPath(RADIUS)} fill={track} fillRule="evenodd" data-sunburst-track />
-          {arcs.map(a => {
-            const id = arcId(a);
-            const dim =
-              shown !== null &&
-              shown !== id &&
-              !(shownArc && a.categoryKey === shownArc.categoryKey);
-            const d = arcPath(a.inner, a.outer, a.start, a.end);
-            if (!d) return null;
-            const common = {
-              d,
-              fill: shade(a),
-              fillOpacity: dim ? 0.35 : 1,
-              fillRule: 'evenodd' as const,
-              stroke: surface,
-              strokeWidth: 0.75,
-              'data-arc': a.level === 1 ? 'category' : 'child',
-              'data-key': a.key,
-              onClick: () => select(id),
-              style: { cursor: 'pointer', outline: 'none' },
-              ...hoverProps(id),
-            };
-            return a.level === 1 ? (
-              <path
-                key={id}
-                {...common}
-                role="button"
-                tabIndex={0}
-                aria-label={`${a.label}, ${format(a.value)}`}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    select(id);
-                  }
-                }}
-                onFocus={kiosk ? undefined : () => setActive(id)}
-                onBlur={kiosk ? undefined : () => setActive(null)}
-              >
-                <title>{`${a.label}: ${format(a.value)}`}</title>
-              </path>
-            ) : (
-              <path key={id} {...common} role="img" aria-label={`${a.label}, ${format(a.value)}`}>
-                <title>{`${a.label}: ${format(a.value)}`}</title>
-              </path>
-            );
-          })}
-          <g
-            data-sunburst-centre
-            style={{ pointerEvents: 'none' }}
-            textAnchor="middle"
-            fill={theme.palette.text.primary}
+          <text
+            y={-14}
+            fontSize={fitCentreText(centreLabel, 9.5, -17, RADIUS)}
+            fill={theme.palette.text.secondary}
           >
-            <text
-              y={-8}
-              fontSize={fitCentreText(centreLabel, 8.5, -11, RADIUS)}
-              fill={theme.palette.text.secondary}
-            >
-              {centreLabel}
-            </text>
-            <text
-              y={6}
-              fontSize={fitCentreText(centreValue, 13, 1, RADIUS, true)}
-              fontWeight={600}
-              style={{ fontVariantNumeric: 'tabular-nums' }}
-            >
-              {centreValue}
-            </text>
-            <text
-              y={17}
-              fontSize={fitCentreText(centreSub, 7.5, 14, RADIUS)}
-              fill={theme.palette.text.secondary}
-            >
-              {centreSub}
-            </text>
-          </g>
-        </svg>
-      </Box>
-      {!hideLegend && data.categories.length > 0 && (
+            {centreLabel}
+          </text>
+          <text
+            y={8}
+            fontSize={fitCentreText(centreValue, 22, 3, RADIUS, true)}
+            fontWeight={600}
+            style={{ fontVariantNumeric: 'tabular-nums' }}
+          >
+            {centreValue}
+          </text>
+          <text
+            y={22}
+            fontSize={fitCentreText(centreSub, 8, 20, RADIUS)}
+            fill={theme.palette.text.secondary}
+          >
+            {centreSub}
+          </text>
+        </g>
+      </svg>
+      {legend && (
         <Box
           component="ul"
           aria-label={`${title} groups`}
@@ -235,64 +248,135 @@ export function SunburstChart({
             listStyle: 'none',
             m: 0,
             p: 0,
+            flex: '1 1 0',
+            minWidth: 0,
+            minHeight: 0,
             width: '100%',
-            flex: '0 1 auto',
-            maxHeight: '38%',
-            overflowY: kiosk ? 'hidden' : 'auto',
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '2px 12px',
+            overflow: 'hidden',
+            display: side ? 'flex' : 'grid',
+            flexDirection: 'column',
             justifyContent: 'center',
+            gridTemplateColumns: '1fr 1fr',
+            alignContent: 'start',
+            gap: side ? '5px' : '6px 16px',
           }}
         >
-          {[...data.categories]
-            .filter(c => c.value > 0)
-            .sort((a, b) => b.value - a.value || a.key.localeCompare(b.key))
-            .map(c => {
-              const id = arcId({ level: 1, categoryKey: c.key, key: c.key });
-              return (
-                <li key={c.key}>
-                  <ButtonBase
-                    onClick={() => select(id)}
-                    {...hoverProps(id)}
-                    title={`${c.label}: ${format(c.value)}`}
-                    focusRipple={false}
-                    disableRipple={kiosk}
+          {sorted.map(c => {
+            const id = arcId({ level: 1, categoryKey: c.key, key: c.key });
+            const kids = [...(c.children ?? [])]
+              .filter(k => k.value > 0)
+              .sort((a, b) => b.value - a.value);
+            return (
+              <li key={c.key} data-legend-group={c.key}>
+                <ButtonBase
+                  onClick={() => select(id)}
+                  {...hoverProps(id)}
+                  title={`${c.label}: ${format(c.value)}`}
+                  focusRipple={false}
+                  disableRipple={kiosk}
+                  sx={{
+                    display: 'flex',
+                    width: '100%',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: 12.5,
+                    textAlign: 'left',
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                    pb: '2px',
+                    outline: 'none',
+                    '&.Mui-focusVisible': { outline: kiosk ? 'none' : undefined },
+                  }}
+                >
+                  <Box
+                    component="span"
                     sx={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 0.75,
-                      py: 0.25,
-                      px: 0.5,
-                      borderRadius: 0.5,
-                      outline: 'none',
-                      '&.Mui-focusVisible': { outline: kiosk ? 'none' : undefined },
+                      width: 8,
+                      height: 8,
+                      borderRadius: '1px',
+                      flex: 'none',
+                      bgcolor: baseColour(c.key),
+                    }}
+                  />
+                  <Box
+                    component="span"
+                    sx={{
+                      flex: 1,
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
                     }}
                   >
-                    <Box
-                      component="span"
-                      sx={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: '2px',
-                        flex: 'none',
-                        bgcolor: baseColour(c.key),
-                      }}
-                    />
-                    <Typography variant="caption" noWrap sx={{ maxWidth: 140 }}>
-                      {c.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ whiteSpace: 'nowrap' }}
-                    >
-                      {percent(scale > 0 ? c.value / scale : 0)}
-                    </Typography>
-                  </ButtonBase>
-                </li>
-              );
-            })}
+                    {c.label}
+                  </Box>
+                  <Box
+                    component="span"
+                    sx={{
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {format(c.value)}
+                  </Box>
+                  <Box
+                    component="span"
+                    sx={{
+                      color: 'text.secondary',
+                      minWidth: 34,
+                      textAlign: 'right',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}
+                  >
+                    {percent(scale > 0 ? c.value / scale : 0)}
+                  </Box>
+                </ButtonBase>
+                {kidsShown > 0 && kids.length > 0 && (
+                  <Box component="ul" sx={{ listStyle: 'none', m: '2px 0 0 14px', p: 0 }}>
+                    {kids.slice(0, kidsShown).map(k => (
+                      <Box
+                        component="li"
+                        key={k.key}
+                        data-legend-child={k.key}
+                        sx={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: 1,
+                          fontSize: 11,
+                          lineHeight: '14px',
+                          color: 'text.secondary',
+                        }}
+                      >
+                        <Box
+                          component="span"
+                          sx={{
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            minWidth: 0,
+                          }}
+                        >
+                          {k.label}
+                        </Box>
+                        <Box component="span" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+                          {number(k.value)}
+                        </Box>
+                      </Box>
+                    ))}
+                    {kids.length > kidsShown && (
+                      <Box
+                        component="li"
+                        sx={{ fontSize: 11, lineHeight: '14px', color: 'text.disabled' }}
+                      >
+                        +{kids.length - kidsShown} more in the ring
+                      </Box>
+                    )}
+                  </Box>
+                )}
+              </li>
+            );
+          })}
         </Box>
       )}
     </Box>

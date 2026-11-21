@@ -107,8 +107,8 @@ describe('layoutArcs', () => {
     expect(arcs.map(a => a.key)).toEqual(['c']);
   });
   it('has a centre hole large enough for the centre text', () => {
-    expect(CENTRE).toBe(0.36);
-    expect(layoutArcs(data, 100)[0].inner).toBeCloseTo(36);
+    expect(CENTRE).toBe(0.5);
+    expect(layoutArcs(data, 100)[0].inner).toBeCloseTo(50);
     expect(Math.max(...layoutArcs(data, 100).map(a => a.outer))).toBe(100);
   });
 });
@@ -155,8 +155,8 @@ describe('fitCentreText', () => {
     );
   });
   it('gives less room on a line far from the middle, and never goes below a floor', () => {
-    expect(fitCentreText('abcdefghijklmnop', 9, 14, R)).toBeLessThan(
-      fitCentreText('abcdefghijklmnop', 9, 0, R)
+    expect(fitCentreText('abcdefghijklmnopqrstuv', 9, 14, R)).toBeLessThan(
+      fitCentreText('abcdefghijklmnopqrstuv', 9, 0, R)
     );
     expect(fitCentreText('x'.repeat(200), 9, 0, R)).toBe(3);
   });
