@@ -11,6 +11,7 @@ import IconButton from '@mui/material/IconButton';
 import ListItemText from '@mui/material/ListItemText';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
+import Popover from '@mui/material/Popover';
 import TextField from '@mui/material/TextField';
 import React from 'react';
 import type { DashboardFilters, TimeRange } from '../contract';
@@ -38,10 +39,22 @@ export interface FilterBarProps {
   onSaveView?: (name: string) => void;
   onDeleteView?: (id: string) => void;
   onReset: () => void;
+  /**
+   * Collapse the namespace, node and label selector fields into one "Filters" button that opens
+   * them in a popover, for a title bar that has no room for them in the row. The time range and
+   * the views stay in the row.
+   */
+  compact?: boolean;
+  /** Less room still: the range and the views button get narrower. */
+  tight?: boolean;
 }
 
-function LabelSelectorField(props: { value: string; onCommit: (v: string) => void }): JSX.Element {
-  const { value, onCommit } = props;
+function LabelSelectorField(props: {
+  value: string;
+  onCommit: (v: string) => void;
+  fullWidth?: boolean;
+}): JSX.Element {
+  const { value, onCommit, fullWidth } = props;
   // A local draft: the filter applies on Enter or blur, not on each key, so widgets do not refetch
   // per keystroke. The parent gives it `key={value}`, so a committed change resets the draft.
   const [draft, setDraft] = React.useState(value);
@@ -55,7 +68,7 @@ function LabelSelectorField(props: { value: string; onCommit: (v: string) => voi
       onChange={e => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={e => e.key === 'Enter' && commit()}
-      sx={{ minWidth: 150 }}
+      sx={fullWidth ? { width: '100%' } : { minWidth: 150 }}
     />
   );
 }
@@ -72,18 +85,17 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
     onSaveView,
     onDeleteView,
     onReset,
+    compact,
+    tight,
   } = props;
   const [menu, setMenu] = React.useState<HTMLElement | null>(null);
+  const [pop, setPop] = React.useState<HTMLElement | null>(null);
   const [naming, setNaming] = React.useState(false);
   const [name, setName] = React.useState('');
   const current = views.find(v => v.id === activeView);
 
-  return (
-    <Box
-      role="search"
-      aria-label="Dashboard filters"
-      sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}
-    >
+  const fieldsNode = (
+    <>
       <Autocomplete
         multiple
         freeSolo
@@ -98,7 +110,7 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
             placeholder={filters.namespaces.length ? '' : 'All'}
           />
         )}
-        sx={{ minWidth: 150, maxWidth: 300, flex: '1 1 160px' }}
+        sx={compact ? { width: '100%' } : { minWidth: 150, maxWidth: 300, flex: '1 1 160px' }}
       />
       <Autocomplete
         multiple
@@ -110,20 +122,69 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
         renderInput={p => (
           <TextField {...p} label="Nodes" placeholder={filters.nodes.length ? '' : 'All'} />
         )}
-        sx={{ minWidth: 150, maxWidth: 300, flex: '1 1 160px' }}
+        sx={compact ? { width: '100%' } : { minWidth: 150, maxWidth: 300, flex: '1 1 160px' }}
       />
       <LabelSelectorField
         key={filters.labelSelector}
         value={filters.labelSelector}
         onCommit={v => onChange({ ...filters, labelSelector: v })}
+        fullWidth={compact}
       />
+    </>
+  );
+  const active =
+    filters.namespaces.length + filters.nodes.length + (filters.labelSelector.trim() ? 1 : 0);
+
+  return (
+    <Box
+      role="search"
+      aria-label="Dashboard filters"
+      sx={{
+        display: 'flex',
+        flexWrap: compact ? 'nowrap' : 'wrap',
+        alignItems: 'center',
+        gap: 1,
+        minWidth: 0,
+      }}
+    >
+      {compact ? (
+        <>
+          <Button
+            size="small"
+            variant="outlined"
+            aria-haspopup="dialog"
+            data-filters-button
+            startIcon={<Icon icon="mdi:filter-variant" width={18} height={18} />}
+            endIcon={<Icon icon="mdi:chevron-down" width={18} height={18} />}
+            onClick={e => setPop(e.currentTarget)}
+            sx={{ flex: 'none', whiteSpace: 'nowrap' }}
+          >
+            {active ? `Filters (${active})` : 'Filters'}
+          </Button>
+          <Popover
+            anchorEl={pop}
+            open={!!pop}
+            onClose={() => setPop(null)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          >
+            <Box
+              data-filters-popover
+              sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, p: 2, width: 320 }}
+            >
+              {fieldsNode}
+            </Box>
+          </Popover>
+        </>
+      ) : (
+        fieldsNode
+      )}
       <TextField
         select
         size="small"
         label="Time range"
         value={filters.range}
         onChange={e => onChange({ ...filters, range: e.target.value as TimeRange })}
-        sx={{ minWidth: 150 }}
+        sx={{ minWidth: tight ? 124 : compact ? 140 : 150, flex: 'none' }}
       >
         {TIME_RANGES.map(r => (
           <MenuItem key={r} value={r}>
@@ -138,6 +199,7 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
         startIcon={<Icon icon="mdi:bookmark-outline" width={18} height={18} />}
         endIcon={<Icon icon="mdi:chevron-down" width={18} height={18} />}
         onClick={e => setMenu(e.currentTarget)}
+        sx={{ flex: 'none', whiteSpace: 'nowrap', maxWidth: tight ? 120 : 180 }}
       >
         {current ? current.name : 'Views'}
       </Button>

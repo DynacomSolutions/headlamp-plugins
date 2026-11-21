@@ -27,7 +27,7 @@ import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
 import { FilterBar } from './components/FilterBar';
 import { HeaderStrip } from './components/HeaderStrip';
 import { PaletteDrawer } from './components/PaletteDrawer';
-import { LastRefreshed, RefreshControls } from './components/RefreshStatus';
+import { RefreshControls } from './components/RefreshStatus';
 import { SectionActions, SectionView } from './components/SectionView';
 import { TabsActions, TabsDialog } from './components/TabsDialog';
 import { FrameActions } from './components/WidgetFrame';
@@ -44,7 +44,7 @@ import {
   useWidgetDefinition,
   useWidgetDefinitions,
 } from './hooks';
-import { enterBrowserFullscreen, KioskOverlay } from './kiosk/Kiosk';
+import { enterBrowserFullscreen, KioskExitButton, KioskFrame, KioskOverlay } from './kiosk/Kiosk';
 import { createRefreshStore } from './refreshStore';
 import { useConnection } from './resilience/useConnection';
 import {
@@ -419,6 +419,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     `${activeTabId}|${query.kiosk}`
   );
 
+  // The title bar is one row. A narrow bar folds the filter fields into one button (level 1), and
+  // then drops the "Refreshed" text (level 2). The width unknown (a test) shows the full bar.
+  const [barEl, barRef] = React.useState<HTMLDivElement | null>(null);
+  const barWidth = useElementWidth(barEl);
+  const barLevel =
+    barWidth === 0 ? 0 : barWidth >= BAR_FULL_WIDTH ? 0 : barWidth >= BAR_TIGHT_WIDTH ? 1 : 2;
+
   // ---- render ----
 
   // A kiosk never shows an error screen for a server that is only away: it waits and the load retries.
@@ -533,6 +540,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           : undefined
       }
       onReset={() => replaceQuery({ view: '', filters: spec.filters })}
+      compact={barLevel >= 1}
+      tight={barLevel >= 2}
     />
   );
 
@@ -768,67 +777,41 @@ function DashboardView({ name }: { name: string }): JSX.Element {
     </>
   );
 
-  if (query.kiosk) {
-    return (
-      <KioskOverlay
-        onExit={() => replaceQuery({ kiosk: false })}
-        bar={
-          <Box
-            data-title-bar
-            sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1.5 }}
-          >
-            <Typography variant="h6" component="h1" sx={{ mr: 1 }}>
-              {spec.title}
-            </Typography>
-            <LastRefreshed store={refresh} />
-            <IconButton aria-label="Refresh now" onClick={() => refresh.trigger()}>
-              <Icon icon="mdi:refresh" width={26} height={26} />
-            </IconButton>
-            <ConnectionIndicator />
-            {spec.kioskShowFilters && filterBar}
-            <Box sx={{ flex: 1 }} />
-            {headerStrip}
-          </Box>
-        }
-      >
-        <Box
-          data-kiosk-scroll
-          sx={{
-            flex: 1,
-            minHeight: 0,
-            overflowY: 'auto',
-            scrollbarWidth: 'none',
-            '&::-webkit-scrollbar': { display: 'none' },
-          }}
-        >
-          {content}
-        </Box>
-      </KioskOverlay>
-    );
-  }
-
+  const kiosk = query.kiosk;
+  // One tree for the page and the full screen view. Only styles change between the two, so
+  // every widget keeps its state and its data when the page enters or leaves full screen.
   return (
-    <Box data-dashboard-page sx={{ p: 2 }}>
+    <KioskFrame active={kiosk} onExit={() => replaceQuery({ kiosk: false })}>
       {dialogs}
       <Box
+        ref={barRef}
         data-title-bar
-        data-title-bar-sticky={!editing && spec.header.sticky ? '' : undefined}
+        data-title-bar-level={barLevel}
+        data-title-bar-sticky={!kiosk && !editing && spec.header.sticky ? '' : undefined}
         sx={{
           display: 'flex',
-          flexWrap: 'wrap',
+          // One row. Below the full width the bar folds its controls (see barLevel) and never wraps.
+          flexWrap: barLevel >= 1 ? 'nowrap' : 'wrap',
           alignItems: 'center',
-          gap: 1,
+          gap: kiosk ? 1.5 : 1,
           mb: 1,
-          ...(!editing && spec.header.sticky
+          minWidth: 0,
+          ...(!kiosk && !editing && spec.header.sticky
             ? { position: 'sticky', top: 0, zIndex: 4, bgcolor: 'background.default' }
             : {}),
         }}
       >
-        <Box sx={{ minWidth: 100, maxWidth: 240, flex: '0 1 auto' }}>
-          <Typography variant="h5" component="h1" noWrap>
+        <Box
+          sx={{
+            minWidth: 80,
+            maxWidth: kiosk ? 'none' : barLevel >= 2 ? 150 : 240,
+            flex: '0 1 auto',
+          }}
+        >
+          <Typography variant={kiosk ? 'h6' : 'h5'} component="h1" noWrap>
             {spec.title}
           </Typography>
-          {spec.description && (
+          {!kiosk && barLevel < 2 && spec.description && (
             <Typography
               variant="body2"
               color="text.secondary"
@@ -840,10 +823,20 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             </Typography>
           )}
         </Box>
-        <RefreshControls store={refresh} seconds={seconds} onSecondsChange={onSecondsChange} />
+        <RefreshControls
+          store={refresh}
+          seconds={seconds}
+          onSecondsChange={onSecondsChange}
+          showText={barLevel < 2}
+          showAuto={!kiosk}
+          narrow={barLevel >= 2}
+          iconSize={kiosk ? 26 : 22}
+        />
         <ConnectionIndicator />
-        <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>{filterBar}</Box>
-        {!editing && (
+        <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+          {(!kiosk || spec.kioskShowFilters) && filterBar}
+        </Box>
+        {!kiosk && !editing && (
           <Tooltip
             title={
               writable ? 'Edit this dashboard' : 'You have read-only access to dashboards here'
@@ -862,25 +855,29 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           </Tooltip>
         )}
         {headerStrip}
-        <Tooltip title="Full screen">
-          <IconButton
-            aria-label="Full screen"
-            onClick={() => {
-              enterBrowserFullscreen();
-              replaceQuery({ kiosk: true, edit: false });
-            }}
-          >
-            <Icon icon="mdi:fullscreen" width={22} height={22} />
-          </IconButton>
-        </Tooltip>
+        {kiosk ? (
+          <KioskExitButton onExit={() => replaceQuery({ kiosk: false })} />
+        ) : (
+          <Tooltip title="Full screen">
+            <IconButton
+              aria-label="Full screen"
+              onClick={() => {
+                enterBrowserFullscreen();
+                replaceQuery({ kiosk: true, edit: false });
+              }}
+            >
+              <Icon icon="mdi:fullscreen" width={22} height={22} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
-      {canWrite === false && (
+      {!kiosk && canWrite === false && (
         <Alert severity="info" sx={{ mb: 1 }}>
           You have read-only access to dashboards in the namespace "{storage.namespace}". You can
           view them but not change them.
         </Alert>
       )}
-      {stored.migrated && !editing && (
+      {!kiosk && stored.migrated && !editing && (
         <Alert severity="info" sx={{ mb: 1 }}>
           This dashboard was saved with an older format. It is upgraded when you save it.
         </Alert>
@@ -960,7 +957,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           </Button>
         </Box>
       )}
-      {save.conflict && (
+      {!kiosk && save.conflict && (
         <Alert
           severity="warning"
           sx={{ mb: 1 }}
@@ -978,7 +975,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           {save.error}
         </Alert>
       )}
-      {save.error && !save.conflict && (
+      {!kiosk && save.error && !save.conflict && (
         <Alert
           severity="error"
           sx={{ mb: 1 }}
@@ -987,9 +984,45 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           {save.error}
         </Alert>
       )}
-      {content}
-    </Box>
+      <Box
+        data-kiosk-scroll={kiosk ? '' : undefined}
+        sx={
+          kiosk
+            ? {
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                scrollbarWidth: 'none',
+                '&::-webkit-scrollbar': { display: 'none' },
+              }
+            : undefined
+        }
+      >
+        {content}
+      </Box>
+    </KioskFrame>
   );
+}
+
+/** At this bar width (px) and above, the filter fields show in the row. Below it they fold into one button. */
+const BAR_FULL_WIDTH = 1560;
+/** Below this bar width (px), the "Refreshed" text goes too. */
+const BAR_TIGHT_WIDTH = 1060;
+
+/** The width of an element, in px, kept up to date with a ResizeObserver. 0 until it is known. */
+function useElementWidth(el: HTMLElement | null): number {
+  const [width, setWidth] = React.useState(0);
+  React.useLayoutEffect(() => {
+    if (!el || typeof ResizeObserver !== 'function') return undefined;
+    setWidth(Math.round(el.getBoundingClientRect().width));
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width;
+      if (w !== undefined) setWidth(Math.round(w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el]);
+  return width;
 }
 
 /** Width of the compact left tab rail, in px. */

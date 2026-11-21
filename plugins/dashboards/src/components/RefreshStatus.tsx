@@ -33,30 +33,48 @@ export function RefreshControls(props: {
   store: RefreshStore;
   seconds: number;
   onSecondsChange: (s: number) => void;
+  /** Show the "Refreshed 12 s ago" text. A narrow title bar leaves it out. */
+  showText?: boolean;
+  /** Show the auto refresh select. The kiosk has none. */
+  showAuto?: boolean;
+  /** A narrow bar: a smaller auto refresh select. */
+  narrow?: boolean;
+  /** Size of the refresh icon, in px. */
+  iconSize?: number;
 }): JSX.Element {
-  const { store, seconds, onSecondsChange } = props;
+  const {
+    store,
+    seconds,
+    onSecondsChange,
+    showText = true,
+    showAuto = true,
+    narrow,
+    iconSize = 22,
+  } = props;
   return (
     <>
-      <LastRefreshed store={store} />
+      {showText && <LastRefreshed store={store} />}
       <Tooltip title="Refresh now">
         <IconButton aria-label="Refresh now" onClick={() => store.trigger()}>
-          <Icon icon="mdi:refresh" width={22} height={22} />
+          <Icon icon="mdi:refresh" width={iconSize} height={iconSize} />
         </IconButton>
       </Tooltip>
-      <TextField
-        select
-        size="small"
-        label="Auto refresh"
-        value={seconds}
-        onChange={e => onSecondsChange(Number(e.target.value))}
-        sx={{ minWidth: 120 }}
-      >
-        {REFRESH_OPTIONS.map(o => (
-          <MenuItem key={o.seconds} value={o.seconds}>
-            {o.label}
-          </MenuItem>
-        ))}
-      </TextField>
+      {showAuto && (
+        <TextField
+          select
+          size="small"
+          label="Auto refresh"
+          value={seconds}
+          onChange={e => onSecondsChange(Number(e.target.value))}
+          sx={{ minWidth: narrow ? 96 : 120, flex: 'none' }}
+        >
+          {REFRESH_OPTIONS.map(o => (
+            <MenuItem key={o.seconds} value={o.seconds}>
+              {o.label}
+            </MenuItem>
+          ))}
+        </TextField>
+      )}
     </>
   );
 }

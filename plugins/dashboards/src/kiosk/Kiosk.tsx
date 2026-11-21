@@ -79,19 +79,32 @@ export const kioskQuietSx = {
 /** Pure black, so an OLED screen switches its pixels off. */
 export const KIOSK_BLACK = '#000';
 
-export function KioskOverlay(props: {
-  onExit: () => void;
-  /** The filters bar, left of the Exit control. Leave it out to place the Exit control yourself. */
-  bar?: React.ReactNode;
-  /** The content; a function receives the Exit control, to place it in its own top bar. */
-  children: React.ReactNode | ((exit: React.ReactNode) => React.ReactNode);
-}): JSX.Element {
-  const { onExit, bar, children } = props;
+/** The Exit control of the kiosk: a touch sized button, in the style of the other kiosk buttons. */
+export function KioskExitButton({ onExit }: { onExit: () => void }): JSX.Element {
+  return (
+    <Button
+      variant="outlined"
+      color="inherit"
+      onClick={() => {
+        exitBrowserFullscreen();
+        onExit();
+      }}
+      aria-label="Exit full screen"
+      startIcon={<Icon icon="mdi:fullscreen-exit" width={24} height={24} />}
+      sx={{ minHeight: 48, minWidth: 48, fontSize: 16, flex: 'none', whiteSpace: 'nowrap' }}
+    >
+      Exit full screen
+    </Button>
+  );
+}
+
+/** The theme of the kiosk: no ripple, and pure black surfaces in a dark theme. */
+function useKioskTheme() {
   const outer = useTheme();
   const dark = outer.palette.mode === 'dark';
   // In a dark theme everything inside paints black where it used the grey surfaces: the overlay,
   // the centre discs and the arc gaps of the charts. A light theme stays as it is.
-  const theme = React.useMemo(
+  return React.useMemo(
     () =>
       createTheme(outer, {
         // No ripple: a tap changes the fill, with a short transition.
@@ -100,10 +113,14 @@ export function KioskOverlay(props: {
       }),
     [dark, outer]
   );
+}
+
+/** Esc, and the end of a real browser full screen, leave the kiosk. Listens only while `active`. */
+function useKioskExit(active: boolean, onExit: () => void): void {
   const exit = React.useRef(onExit);
   exit.current = onExit;
-
   React.useEffect(() => {
+    if (!active) return undefined;
     // Only a real full screen to not full screen change leaves the kiosk.
     let wasFullscreen = !!document.fullscreenElement;
     const onChange = () => {
@@ -123,25 +140,66 @@ export function KioskOverlay(props: {
       document.removeEventListener('fullscreenchange', onChange);
       document.removeEventListener('keydown', onKey);
     };
-  }, []);
+  }, [active]);
+}
 
-  const leave = () => {
-    exitBrowserFullscreen();
-    onExit();
-  };
-
-  const exitButton = (
-    <Button
-      variant="outlined"
-      color="inherit"
-      onClick={leave}
-      aria-label="Exit full screen"
-      startIcon={<Icon icon="mdi:fullscreen-exit" width={24} height={24} />}
-      sx={{ minHeight: 48, minWidth: 48, fontSize: 16, flex: 'none' }}
-    >
-      Exit full screen
-    </Button>
+/**
+ * One frame for the page and for the kiosk. It is the same element in both modes, so what is
+ * inside it (every widget) is never unmounted when the page enters or leaves full screen: no
+ * remount, no new fetch, no spinner. `active` only changes the styles and the theme.
+ */
+export function KioskFrame(props: {
+  active: boolean;
+  onExit: () => void;
+  children: React.ReactNode;
+}): JSX.Element {
+  const { active, onExit, children } = props;
+  const outer = useTheme();
+  const kioskTheme = useKioskTheme();
+  useKioskExit(active, onExit);
+  return (
+    <ThemeProvider theme={active ? kioskTheme : outer}>
+      <Box
+        data-kiosk-overlay={active ? '' : undefined}
+        data-dashboard-page={active ? undefined : ''}
+        sx={theme =>
+          active
+            ? {
+                position: 'fixed',
+                inset: 0,
+                // Above Headlamp's app bar and drawer, and above dialogs and tooltips.
+                zIndex: theme.zIndex.tooltip + 100,
+                bgcolor: 'background.default',
+                color: 'text.primary',
+                // The layout fits the screen, so nothing but the content scrolls.
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                p: 1.5,
+                boxSizing: 'border-box',
+                ...kioskQuietSx,
+              }
+            : { p: 2 }
+        }
+      >
+        {children}
+      </Box>
+    </ThemeProvider>
   );
+}
+
+export function KioskOverlay(props: {
+  onExit: () => void;
+  /** The filters bar, left of the Exit control. Leave it out to place the Exit control yourself. */
+  bar?: React.ReactNode;
+  /** The content; a function receives the Exit control, to place it in its own top bar. */
+  children: React.ReactNode | ((exit: React.ReactNode) => React.ReactNode);
+}): JSX.Element {
+  const { onExit, bar, children } = props;
+  const theme = useKioskTheme();
+  useKioskExit(true, onExit);
+
+  const exitButton = <KioskExitButton onExit={onExit} />;
   const inline = typeof children === 'function';
 
   return (
