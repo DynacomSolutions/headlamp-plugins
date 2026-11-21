@@ -250,6 +250,20 @@ export class ModelClient {
   }
 }
 
+/**
+ * One line for a failed Responses stream: the event type, the HTTP status and the error code when
+ * the upstream sends them, then its message. The upstream puts the error in `response.error`, in
+ * `error` or at the top of the event, so all three are read. With no message, the raw event shows.
+ */
+export function describeStreamFailure(event: any): string {
+  const err = [event?.response?.error, event?.error, event].find(e => e && typeof e === 'object' && (e.message || e.code)) ?? {};
+  const message = typeof err.message === 'string' ? err.message : '';
+  const code = [err.code, err.type].find(c => typeof c === 'string' && c && c !== event?.type);
+  const status = event?.status ?? event?.status_code ?? err.status ?? err.status_code;
+  const head = [String(event?.type ?? 'error'), typeof status === 'number' ? String(status) : '', code ? `(${code})` : ''].filter(Boolean).join(' ');
+  return `Model stream failed: ${head}: ${message || JSON.stringify(event)}`.slice(0, 600);
+}
+
 /** The final response object from a Responses stream (SSE, with or without a content-type) or from a plain JSON body. */
 function parseResponses(text: string): Completion {
   let response: any;
@@ -273,7 +287,7 @@ function parseResponses(text: string): Completion {
       }
       if (event.type === 'response.completed' || event.type === 'response.incomplete') response = event.response;
       else if (event.type === 'response.failed' || event.type === 'error') {
-        throw new Error(`Model stream failed: ${String(event.response?.error?.message ?? event.message ?? 'unknown error').slice(0, 300)}`);
+        throw new Error(describeStreamFailure(event));
       } else if (event.type === 'response.output_item.done' && event.item) items.push(event.item);
     }
   }
