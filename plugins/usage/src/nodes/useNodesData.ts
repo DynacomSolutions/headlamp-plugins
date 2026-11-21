@@ -106,7 +106,7 @@ export interface ManualRefresh {
 }
 
 export function useNodesData(manual?: ManualRefresh): NodesData {
-  const backends = useNodesSettings().agentBackends;
+  const { agentBackends: backends, runnerPoolPrefix } = useNodesSettings();
   const [data, setData] = React.useState<NodesData>({
     metrics: [],
     agents: new Map(),
@@ -134,7 +134,7 @@ export function useNodesData(manual?: ManualRefresh): NodesData {
       busy = true;
       try {
         const [metrics, agentResult] = await Promise.allSettled([
-          fetchNodeMetrics(),
+          fetchNodeMetrics(runnerPoolPrefix),
           fetchAgentHosts(list),
         ]);
         if (cancelled) return;
@@ -173,7 +173,7 @@ export function useNodesData(manual?: ManualRefresh): NodesData {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [key, polling, signal]);
+  }, [key, polling, signal, runnerPoolPrefix]);
 
   return data;
 }

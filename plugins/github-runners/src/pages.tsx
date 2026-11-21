@@ -36,16 +36,16 @@ import {
   workflowName,
   workflowUrl,
 } from './model';
-import { PoolFilter } from './runwarden';
-import { RUNWARDEN_STALE_AFTER_S } from './runwarden';
+import { PoolFilter } from './pool';
+import { POOL_STALE_AFTER_S } from './pool';
 import {
-  RunWardenCapacity,
-  RunWardenHistory,
-  RunWardenLink,
-  RunWardenNotice,
-  RunWardenOverview,
-  RunWardenRunners,
-} from './runwarden-view';
+  PoolCapacity,
+  PoolHistory,
+  PoolLink,
+  PoolNotice,
+  PoolOverview,
+  PoolRunners,
+} from './pool-view';
 import type { Job, NodeStatus, Raw } from './types';
 
 type HLStatus = 'success' | 'warning' | 'error' | '';
@@ -667,8 +667,8 @@ export function GitHubRunnersPage() {
     setView({ [key]: list.includes(v) ? list.filter(x => x !== v) : [...list, v] });
 
   const { status, remote } = board;
-  const rwOn = board.dataSource === 'runwarden';
-  const rw = board.runwarden.board;
+  const rwOn = board.dataSource === 'pool';
+  const rw = board.pool.board;
   const generated = rwOn && rw ? rw.generatedAt || status.generated_at : remote.status ? remote.status.generated_at : status.generated_at;
   const remoteAge = rwOn
     ? rw?.generatedAt
@@ -677,14 +677,14 @@ export function GitHubRunnersPage() {
     : remote.status
     ? ageSeconds(remote.status.generated_at)
     : null;
-  const stale = remoteAge !== null && remoteAge > (rwOn ? RUNWARDEN_STALE_AFTER_S : STALE_AFTER_S);
+  const stale = remoteAge !== null && remoteAge > (rwOn ? POOL_STALE_AFTER_S : STALE_AFTER_S);
   const poolFilter: PoolFilter = { pools: setSel, nodes: nodeSel, terms: filters.terms };
   const nodeChips = rwOn ? (rw?.nodes ?? []).map(n => ({ id: n.name, label: n.name })) : status.nodes.map(n => ({ id: n.id, label: n.display_name }));
   const setChips = rwOn ? (rw?.pools ?? []).map(p => p.name) : status.scale_sets.map(x => x.name);
   const sourceLabel = rwOn
     ? 'Runner service'
-    : board.runwarden.state === 'off'
-    ? 'ARC feed (runner service is off)'
+    : board.pool.state === 'off'
+    ? 'ARC feed (runner service is off or not set)'
     : 'ARC feed (runner service is not reachable)';
   const arcOnlyTab = tab === 'scalesets' || tab === 'listeners';
 
@@ -703,9 +703,9 @@ export function GitHubRunnersPage() {
             data-source={rwOn ? 'service' : 'arc'}
           />
         </Tooltip>
-        {rwOn && <RunWardenLink board={board} />}
+        {rwOn && <PoolLink board={board} />}
       </Box>
-      <RunWardenNotice board={board} />
+      <PoolNotice board={board} />
       {!rwOn &&
         board.errors.map(e => (
           <Alert key={e} severity="error" sx={{ mb: 1 }}>
@@ -753,7 +753,7 @@ export function GitHubRunnersPage() {
             />
           </>
         )}
-        {(board.loading || board.runwarden.state === 'loading') && <CircularProgress size={20} />}
+        {(board.loading || board.pool.state === 'loading') && <CircularProgress size={20} />}
       </Box>
       <Box display="flex" gap={1} flexWrap="wrap" alignItems="center" mb={1}>
         <TextField
@@ -801,10 +801,10 @@ export function GitHubRunnersPage() {
       </Tabs>
       {rwOn ? (
         <>
-          {(tab === 'overview' || arcOnlyTab) && <RunWardenOverview board={board} filter={poolFilter} />}
-          {tab === 'capacity' && <RunWardenCapacity board={board} filter={poolFilter} />}
-          {tab === 'runners' && <RunWardenRunners board={board} filter={poolFilter} />}
-          {tab === 'history' && <RunWardenHistory board={board} filter={poolFilter} />}
+          {(tab === 'overview' || arcOnlyTab) && <PoolOverview board={board} filter={poolFilter} />}
+          {tab === 'capacity' && <PoolCapacity board={board} filter={poolFilter} />}
+          {tab === 'runners' && <PoolRunners board={board} filter={poolFilter} />}
+          {tab === 'history' && <PoolHistory board={board} filter={poolFilter} />}
         </>
       ) : (
         <>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildRunWarden,
+  buildPoolBoard,
   countPairs,
   filterNodes,
   filterPools,
@@ -16,7 +16,7 @@ import {
   ratio,
   resolveSource,
   safeLink,
-} from './runwarden';
+} from './pool';
 
 const panel = (id: string, rows: any[], extra: Record<string, unknown> = {}) => ({
   version: 1,
@@ -56,24 +56,37 @@ const runners = parsePanel(
 )!;
 
 describe('source and paths', () => {
-  it('uses generic defaults and builds service proxy paths', () => {
-    const s = resolveSource({});
-    expect(s).toMatchObject({ mode: 'auto', namespace: 'runwarden', service: 'runwarden-widgets', port: '80', problem: null });
-    expect(listPath(s)).toBe('/api/v1/namespaces/runwarden/services/runwarden-widgets:80/proxy/api/widgets');
+  it('has no default namespace or service, only a default port', () => {
+    expect(resolveSource({})).toMatchObject({
+      mode: 'auto',
+      namespace: '',
+      service: '',
+      port: '80',
+      configured: false,
+      problem: null,
+    });
+    expect(resolveSource({ poolNamespace: 'ci' }).configured).toBe(false);
+    expect(resolveSource({ poolMode: 'on' }).problem).toMatch(/Set the runner service/);
+  });
+  it('builds service proxy paths', () => {
+    const s = resolveSource({ poolNamespace: 'ci', poolService: 'widgets' });
+    expect(s.configured).toBe(true);
+    expect(listPath(s)).toBe('/api/v1/namespaces/ci/services/widgets:80/proxy/api/widgets');
     expect(panelPath(s, 'job-times')).toBe(
-      '/api/v1/namespaces/runwarden/services/runwarden-widgets:80/proxy/api/widgets/job-times'
+      '/api/v1/namespaces/ci/services/widgets:80/proxy/api/widgets/job-times'
     );
   });
   it('takes settings over defaults and reads the mode', () => {
-    const s = resolveSource({ runwardenMode: 'ON', runwardenNamespace: 'ci', runwardenService: 'rw', runwardenPort: 'http' });
+    const s = resolveSource({ poolMode: 'ON', poolNamespace: 'ci', poolService: 'rw', poolPort: 'http' });
     expect(s).toMatchObject({ mode: 'on', namespace: 'ci', service: 'rw', port: 'http' });
-    expect(resolveSource({ runwardenMode: 'off' }).mode).toBe('off');
-    expect(resolveSource({ runwardenMode: 'nonsense' }).mode).toBe('auto');
+    expect(resolveSource({ poolMode: 'off' }).mode).toBe('off');
+    expect(resolveSource({ poolMode: 'nonsense' }).mode).toBe('auto');
   });
   it('rejects names that could change the proxy path', () => {
-    expect(resolveSource({ runwardenNamespace: '../x' }).problem).toMatch(/namespace/);
-    expect(resolveSource({ runwardenService: 'a/b' }).problem).toMatch(/service/);
-    expect(resolveSource({ runwardenPort: '80/x' }).problem).toMatch(/port/);
+    const ok = { poolNamespace: 'ci', poolService: 'svc' };
+    expect(resolveSource({ ...ok, poolNamespace: '../x' }).problem).toMatch(/namespace/);
+    expect(resolveSource({ ...ok, poolService: 'a/b' }).problem).toMatch(/service/);
+    expect(resolveSource({ ...ok, poolPort: '80/x' }).problem).toMatch(/port/);
   });
 });
 
@@ -185,9 +198,9 @@ describe('nodes', () => {
   });
 });
 
-describe('buildRunWarden', () => {
+describe('buildPoolBoard', () => {
   it('collects the headline stats and the oldest timestamp', () => {
-    const b = buildRunWarden({ pools, runners });
+    const b = buildPoolBoard({ pools, runners });
     expect(b.headline.map(h => [h.label, h.value])).toEqual([
       ['Running jobs', '32'],
       ['Queued jobs', '46'],
@@ -197,7 +210,7 @@ describe('buildRunWarden', () => {
     expect(filterPools(b.pools, { pools: [], nodes: [], terms: ['pool-b'] })).toHaveLength(1);
   });
   it('does not fail on no panels', () => {
-    const b = buildRunWarden({});
+    const b = buildPoolBoard({});
     expect(b.pools).toEqual([]);
     expect(b.headline).toEqual([]);
     expect(b.generatedAt).toBe('');

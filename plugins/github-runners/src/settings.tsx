@@ -7,8 +7,9 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { getJson, useConfig } from './data';
+import { migrateKeys } from './legacy-keys';
 import { DEFAULT_STRIP_SUFFIXES } from './model';
-import { listPath, resolveSource } from './runwarden';
+import { listPath, resolveSource } from './pool';
 import type { PluginConfig } from './types';
 
 type TestState =
@@ -18,7 +19,7 @@ type TestState =
   | { state: 'error'; message: string };
 
 /** The Test button: asks the runner service for its panel list, as the Dashboards sources do. */
-function RunWardenTest({ cfg }: { cfg: PluginConfig }) {
+function PoolServiceTest({ cfg }: { cfg: PluginConfig }) {
   const [result, setResult] = React.useState<TestState>({ state: 'idle' });
   const source = resolveSource(cfg);
   const run = () => {
@@ -37,7 +38,7 @@ function RunWardenTest({ cfg }: { cfg: PluginConfig }) {
       <Button
         size="small"
         variant="outlined"
-        disabled={source.problem !== null || result.state === 'running'}
+        disabled={!source.configured || source.problem !== null || result.state === 'running'}
         onClick={run}
       >
         Test
@@ -68,7 +69,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
   const { data, onDataChange } = props;
   const cfg = useConfig();
   const set = (key: keyof PluginConfig) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    onDataChange?.({ ...((data || {}) as PluginConfig), [key]: e.target.value });
+    onDataChange?.({ ...migrateKeys((data || {}) as PluginConfig), [key]: e.target.value });
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={640}>
       <Typography variant="h6" component="h2">
@@ -77,14 +78,14 @@ export function Settings(props: PluginSettingsDetailsProps) {
       <Typography variant="body2">
         The page reads the runner service when it can. The runner service serves its widget panels on a Kubernetes
         Service. The browser reaches it through the Kubernetes API service proxy, so Kubernetes
-        permissions apply (the get verb on services/proxy there). A blank field uses the default.
+        permissions apply (the get verb on services/proxy there). Set the namespace and the name of the Service. With either one blank, the page makes no request to the runner service and uses the ARC feed.
       </Typography>
       <TextField
         select
         label="Runner service"
         helperText="Auto uses the runner service and falls back to the ARC feed when it does not answer. On uses the runner service only. Off uses the ARC feed only."
-        value={['on', 'off'].includes(cfg.runwardenMode || '') ? cfg.runwardenMode : 'auto'}
-        onChange={set('runwardenMode')}
+        value={['on', 'off'].includes(cfg.poolMode || '') ? cfg.poolMode : 'auto'}
+        onChange={set('poolMode')}
         fullWidth
       >
         <MenuItem value="auto">Auto (fall back to the ARC feed)</MenuItem>
@@ -94,28 +95,26 @@ export function Settings(props: PluginSettingsDetailsProps) {
       <TextField
         label="Runner service namespace"
         helperText="Namespace of the runner service widgets Service."
-        value={cfg.runwardenNamespace || ''}
-        onChange={set('runwardenNamespace')}
-        placeholder="Built-in default"
+        value={cfg.poolNamespace || ''}
+        onChange={set('poolNamespace')}
         fullWidth
       />
       <TextField
         label="Runner service name"
         helperText="Name of the Service that serves /api/widgets."
-        value={cfg.runwardenService || ''}
-        onChange={set('runwardenService')}
-        placeholder="Built-in default"
+        value={cfg.poolService || ''}
+        onChange={set('poolService')}
         fullWidth
       />
       <TextField
         label="Runner service port"
-        helperText="Service port number or name."
-        value={cfg.runwardenPort || ''}
-        onChange={set('runwardenPort')}
-        placeholder="Built-in default"
+        helperText="Service port number or name. Blank uses 80."
+        value={cfg.poolPort || ''}
+        onChange={set('poolPort')}
+        placeholder="80"
         fullWidth
       />
-      <RunWardenTest cfg={cfg} />
+      <PoolServiceTest cfg={cfg} />
       <Typography variant="h6" component="h2">
         ARC feed (fallback)
       </Typography>

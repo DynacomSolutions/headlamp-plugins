@@ -1,4 +1,4 @@
-/** What RunWarden says about one runner pod, from its pod labels and its job info series. */
+/** What the runner pool says about one runner pod, from its pod labels and its job info series. */
 export interface RunnerInfo {
   /** Tenant label `Owner.Repo` as given, '' when the pod has none (a warm pod). */
   tenant: string;
@@ -6,7 +6,7 @@ export interface RunnerInfo {
   pool: string;
   /** Pod role: runner, warm or job. */
   role: string;
-  /** Job info, present only when RunWarden reports a job for the pod. */
+  /** Job info, present only when the runner pool reports a job for the pod. */
   job?: {
     owner: string;
     repo: string;
@@ -23,7 +23,7 @@ export interface PodUsage {
   container: string;
   cpuCores: number;
   memBytes: number;
-  /** Set on pods RunWarden manages. */
+  /** Set on pods the runner pool manages. */
   runner?: RunnerInfo;
 }
 

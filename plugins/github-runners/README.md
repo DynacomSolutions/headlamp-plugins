@@ -23,7 +23,7 @@ for that Service. The browser holds no token for the runner service.
 | Setting | Meaning |
 | --- | --- |
 | Runner service | `Auto` (default) uses the runner service and falls back to the ARC feed when it does not answer. `On` uses the runner service only. `Off` uses the ARC feed only. |
-| Runner service namespace / name / port | Where the widgets Service is. A blank field uses the built-in default. |
+| Runner service namespace / name / port | Where the widgets Service is (keys `poolNamespace`, `poolService`, `poolPort`; the mode key is `poolMode`). The namespace and the name have no default: with either one blank the page sends no request to the runner service. A blank port uses 80. Settings saved under older key names are still read. |
 
 The settings page has a **Test** button. It asks the Service for its panel list
 and shows how many panels it found, as the Dashboards panel sources do. The

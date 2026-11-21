@@ -44,7 +44,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
       />
       <TextField
         label="Display names"
-        helperText="One id=Name per line, for example runwarden-runners=Runwarden. The id is a namespace, pod, container or arc key. It overrides every guessed name."
+        helperText="One id=Name per line, for example my-runners=My runners. The id is a namespace, pod, container or arc key. It overrides every guessed name."
         multiline
         minRows={3}
         value={
@@ -55,6 +55,13 @@ export function Settings(props: PluginSettingsDetailsProps) {
                 .join('\n')
         }
         onChange={e => set('displayNames', e.target.value)}
+        fullWidth
+      />
+      <TextField
+        label="Runner pool prefix"
+        helperText="Optional. The word that starts the metric and label names of your runner pool service, for example a prefix of acme reads acme_runner_job_info and the pod labels acme.io/tenant, acme.io/pool and acme.io/role. Blank: the runner rings are off and no query goes out for them."
+        value={(data as any)?.runnerPoolPrefix ?? ''}
+        onChange={e => set('runnerPoolPrefix', e.target.value)}
         fullWidth
       />
     </Box>

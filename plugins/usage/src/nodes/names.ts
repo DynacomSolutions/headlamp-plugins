@@ -34,7 +34,6 @@ const KNOWN_IDS: Record<string, string> = {
 
 /** Casing of single words. */
 const KNOWN_WORDS: Record<string, string> = {
-  runwarden: 'Runwarden',
   victoriametrics: 'VictoriaMetrics',
   argocd: 'ArgoCD',
   cloudnativepg: 'CloudNativePG',

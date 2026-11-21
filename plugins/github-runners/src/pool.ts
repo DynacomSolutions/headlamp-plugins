@@ -55,16 +55,18 @@ export const PANEL_IDS = [
 ] as const;
 export type PanelId = (typeof PANEL_IDS)[number];
 
-/** Generic defaults. The settings or a deployment defaults.json override them. */
-export const DEFAULT_RUNWARDEN = { namespace: 'runwarden', service: 'runwarden-widgets', port: '80' };
+/** Default Service port. The namespace and the Service name have no default: the user sets them. */
+export const DEFAULT_PORT = '80';
 
-export type RunWardenMode = 'auto' | 'on' | 'off';
+export type PoolMode = 'auto' | 'on' | 'off';
 
-export interface RunWardenSource {
-  mode: RunWardenMode;
+export interface PoolSource {
+  mode: PoolMode;
   namespace: string;
   service: string;
   port: string;
+  /** True when both the namespace and the Service name are set. With no Service, no request goes out. */
+  configured: boolean;
   /** Set when a field is not a valid Kubernetes name or port. The source is then unusable. */
   problem: string | null;
 }
@@ -74,29 +76,32 @@ const PORT = /^([0-9]{1,5}|[a-z0-9]([-a-z0-9]{0,13}[a-z0-9])?)$/;
 
 const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
-/** The effective runner service source: stored settings over the generic defaults. */
-export function resolveSource(cfg: PluginConfig): RunWardenSource {
-  const raw = text(cfg.runwardenMode).toLowerCase();
-  const mode: RunWardenMode = raw === 'on' || raw === 'off' ? raw : 'auto';
-  const namespace = text(cfg.runwardenNamespace) || DEFAULT_RUNWARDEN.namespace;
-  const service = text(cfg.runwardenService) || DEFAULT_RUNWARDEN.service;
-  const port = text(cfg.runwardenPort) || DEFAULT_RUNWARDEN.port;
+/** The effective runner service source, from the settings. */
+export function resolveSource(cfg: PluginConfig): PoolSource {
+  const raw = text(cfg.poolMode).toLowerCase();
+  const mode: PoolMode = raw === 'on' || raw === 'off' ? raw : 'auto';
+  const namespace = text(cfg.poolNamespace);
+  const service = text(cfg.poolService);
+  const port = text(cfg.poolPort) || DEFAULT_PORT;
+  const configured = namespace !== '' && service !== '';
   let problem: string | null = null;
-  if (!DNS_LABEL.test(namespace)) problem = 'The namespace is not a valid Kubernetes name.';
+  if (!configured) {
+    if (mode === 'on') problem = 'Set the runner service namespace and name.';
+  } else if (!DNS_LABEL.test(namespace)) problem = 'The namespace is not a valid Kubernetes name.';
   else if (!DNS_LABEL.test(service)) problem = 'The service is not a valid Kubernetes name.';
   else if (!PORT.test(port)) problem = 'The port must be a number or a port name.';
-  return { mode, namespace, service, port, problem };
+  return { mode, namespace, service, port, configured, problem };
 }
 
 /** Path of the Kubernetes API service proxy for one runner service path (such as `/api/widgets`). */
-export function proxyPath(src: RunWardenSource, path: string): string {
+export function proxyPath(src: PoolSource, path: string): string {
   const e = encodeURIComponent;
   const tail = path.startsWith('/') ? path : `/${path}`;
   return `/api/v1/namespaces/${e(src.namespace)}/services/${e(src.service)}:${e(src.port)}/proxy${tail}`;
 }
 
-export const listPath = (src: RunWardenSource): string => proxyPath(src, '/api/widgets');
-export const panelPath = (src: RunWardenSource, id: string): string =>
+export const listPath = (src: PoolSource): string => proxyPath(src, '/api/widgets');
+export const panelPath = (src: PoolSource, id: string): string =>
   proxyPath(src, `/api/widgets/${encodeURIComponent(id)}`);
 
 /* ------------------------------------------------------------ validation */
@@ -377,7 +382,7 @@ export function mapMachines(panel: Panel | null): Machine[] {
 
 export type Panels = Partial<Record<PanelId, Panel>>;
 
-export interface RunWardenBoard {
+export interface PoolBoard {
   pools: Pool[];
   queue: QueueEntry[];
   jobTimes: JobTimes[];
@@ -397,7 +402,7 @@ const pick = (panel: Panel | undefined, label: string, as?: string): PanelStat[]
   return s ? [{ ...s, label: as ?? s.label }] : [];
 };
 
-export function buildRunWarden(panels: Panels): RunWardenBoard {
+export function buildPoolBoard(panels: Panels): PoolBoard {
   const headline: PanelStat[] = [
     ...pick(panels.pools, 'Running', 'Running jobs'),
     ...pick(panels.pools, 'Queued', 'Queued jobs'),
@@ -458,4 +463,4 @@ export const filterNodes = (rows: NodeLoad[], f: PoolFilter): NodeLoad[] =>
   rows.filter(r => (!f.nodes.length || f.nodes.includes(r.name)) && matchesTerms(f.terms, r.name));
 
 /** Panels refresh every 30 to 60 seconds, so older data than this is flagged stale. */
-export const RUNWARDEN_STALE_AFTER_S = 300;
+export const POOL_STALE_AFTER_S = 300;

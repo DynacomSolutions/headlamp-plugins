@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MetricSample } from '../metrics';
-import { assembleNodeMetrics, NODE_QUERIES, type QueryKey } from './queries';
+import { assembleNodeMetrics, NODE_QUERIES, type QueryKey,runnerQueries } from './queries';
 
 const s = (labels: Record<string, string>, v: number): MetricSample => ({
   metric: labels,
@@ -140,24 +140,24 @@ describe('assembleNodeMetrics system series', () => {
   });
 });
 
-describe('RunWarden runner info', () => {
+describe('Runner pool runner info', () => {
   const pod = (namespace: string, name: string) => ({ node: 'n1', namespace, pod: name, container: 'runner' });
   const base = {
     kubeCpuCapacity: [s({ node: 'n1' }, 4)],
     podCpu: [
-      s(pod('runwarden-runners', 'rw-a'), 1),
-      s(pod('runwarden-runners', 'rw-b'), 1),
+      s(pod('acme-runners', 'rw-a'), 1),
+      s(pod('acme-runners', 'rw-b'), 1),
       s(pod('other', 'x'), 1),
     ],
   };
   const labels = [
     s(
       {
-        namespace: 'runwarden-runners',
+        namespace: 'acme-runners',
         pod: 'rw-a',
-        label_runwarden_io_tenant: 'ExampleOrg..dotrepo',
-        label_runwarden_io_pool: 'rw-linux',
-        label_runwarden_io_role: 'runner',
+        label_acme_io_tenant: 'ExampleOrg..dotrepo',
+        label_acme_io_pool: 'rw-linux',
+        label_acme_io_role: 'runner',
       },
       1
     ),
@@ -165,7 +165,7 @@ describe('RunWarden runner info', () => {
   const jobs = [
     s(
       {
-        namespace: 'runwarden-runners',
+        namespace: 'acme-runners',
         pod: 'rw-a',
         owner: 'ExampleOrg',
         repo: '.dotrepo',
@@ -180,15 +180,26 @@ describe('RunWarden runner info', () => {
   ];
 
   it('queries pod labels and job info', () => {
-    expect(NODE_QUERIES.runnerLabels).toContain('label_runwarden_io_managed_by="runwarden"');
-    expect(NODE_QUERIES.runnerJobs).toContain('runwarden_runner_job_info');
+    const q = runnerQueries('acme');
+    expect(q.runnerLabels).toContain('label_acme_io_managed_by="acme"');
+    expect(q.runnerJobs).toContain('acme_runner_job_info');
     // The scrape renames the runner's pod and job labels. The query copies them back.
-    expect(NODE_QUERIES.runnerJobs).toContain('"pod", "$1", "exported_pod"');
-    expect(NODE_QUERIES.runnerJobs).toContain('"job", "$1", "exported_job"');
+    expect(q.runnerJobs).toContain('"pod", "$1", "exported_pod"');
+    expect(q.runnerJobs).toContain('"job", "$1", "exported_job"');
+    // A dash in the prefix is an underscore in metric and label names.
+    expect(runnerQueries('my-pool').runnerJobs).toContain('my_pool_runner_job_info');
+  });
+
+  it('has no runner pool query without a prefix, or with an unsafe one', () => {
+    for (const prefix of [undefined, '', '  ', 'a"b', 'a b}']) {
+      expect(runnerQueries(prefix)).toEqual({ runnerLabels: '', runnerJobs: '' });
+    }
+    expect(NODE_QUERIES.runnerLabels).toBe('');
+    expect(NODE_QUERIES.runnerJobs).toBe('');
   });
 
   it('attaches labels and job info to pods', () => {
-    const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels, runnerJobs: jobs }));
+    const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels, runnerJobs: jobs }), 'acme');
     const a = n.pods.find(p => p.pod === 'rw-a');
     expect(a?.runner).toEqual({
       tenant: 'ExampleOrg..dotrepo',
@@ -208,7 +219,7 @@ describe('RunWarden runner info', () => {
   });
 
   it('treats an empty job result as no job info', () => {
-    const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels }));
+    const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels }), 'acme');
     const a = n.pods.find(p => p.pod === 'rw-a');
     expect(a?.runner?.job).toBeUndefined();
     expect(a?.runner?.pool).toBe('rw-linux');

@@ -180,12 +180,15 @@ describe('resolveNodesSettings', () => {
       agentBackends: ['a', 'b'],
       idleSeconds: 30,
       displayNames: {},
+      runnerPoolPrefix: '',
     });
     expect(resolveNodesSettings({ displayNames: 'a=A' }).displayNames).toEqual({ a: 'A' });
   });
   it('falls back to defaults', () => {
     expect(resolveNodesSettings(undefined)).toEqual(DEFAULT_NODES_SETTINGS);
     expect(resolveNodesSettings({ agentBackends: [' x '] }).agentBackends).toEqual(['x']);
+    expect(resolveNodesSettings({ runnerPoolPrefix: ' acme ' }).runnerPoolPrefix).toBe('acme');
+    expect(resolveNodesSettings({ runnerPoolPrefix: 'a b"' }).runnerPoolPrefix).toBe('');
   });
 });
 

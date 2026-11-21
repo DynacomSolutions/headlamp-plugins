@@ -783,8 +783,8 @@ describe('system breakdown', () => {
   });
 });
 
-describe('RunWarden runner hierarchy', () => {
-  const NS = 'runwarden-runners';
+describe('Runner pool runner hierarchy', () => {
+  const NS = 'acme-runners';
   const pod = (name: string, mem: number, runner?: RunnerInfo): NodeMetrics['pods'][number] => ({
     namespace: NS,
     pod: name,
@@ -868,7 +868,7 @@ describe('RunWarden runner hierarchy', () => {
     expect(ns.children[0].children[0].children[0].label).toBe('rw-w');
   });
 
-  it('keeps pod and container for a pod with no RunWarden data', () => {
+  it('keeps pod and container for a pod with no Runner pool data', () => {
     const ns = nsNode([pod('plain', 1)]);
     expect(ns.children[0].kind).toBe('pod');
     expect(ns.children[0].key).toBe(`k8s/ns:${NS}/pod:plain`);
