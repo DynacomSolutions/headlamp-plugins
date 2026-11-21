@@ -345,7 +345,7 @@ async function alerts(d: PanelDeps): Promise<PanelBody> {
   }));
   return {
     status: critical > 0 ? 'crit' : firing.length > 0 ? 'warn' : 'ok',
-    summary: all.length === 0 ? 'No alerts' : `${critical} critical, ${warning} other firing, ${pending} pending`,
+    summary: all.length === 0 ? 'No alerts' : `${critical} critical, ${warning} warning, ${pending} pending`,
     stats: [stat('Critical', critical, critical ? 'crit' : 'ok'), stat('Warning', warning, warning ? 'warn' : 'ok'), stat('Pending', pending, pending ? 'unknown' : 'ok')],
     rows: sortRows(rows),
   };

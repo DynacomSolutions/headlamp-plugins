@@ -250,6 +250,12 @@ function CategorySunburstChart({
             alignSelf: 'stretch',
             overflowY: 'auto',
             overflowX: 'hidden',
+            // A thin scrollbar always shows that there are more groups. The wheel never scrolls the page.
+            overscrollBehavior: 'contain',
+            touchAction: 'pan-y',
+            scrollbarWidth: 'thin',
+            '&::-webkit-scrollbar': { width: 6 },
+            '&::-webkit-scrollbar-thumb': { borderRadius: 3, background: 'rgba(128,128,128,0.6)' },
             display: side ? 'flex' : 'grid',
             flexDirection: 'column',
             justifyContent: 'flex-start',

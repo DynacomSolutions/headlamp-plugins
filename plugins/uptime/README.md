@@ -56,12 +56,19 @@ for a kind it cannot read. The widget needs `list` on those three kinds.
 | `group` | a `group` series label |
 | `name` | the first word of the check name (up to the first dot or dash) |
 | `type` | the check type |
-| `auto` | `namespace` when any check has one, then `app`, then `name` |
+| `auto` | `app` when any check has one, then `namespace`, then `name` |
 
 A `namespace` or `app` series label on the probes wins over the cluster. A
-check that no route serves (DNS, ICMP, external sites, raw addresses) goes in
-"Not in cluster", one group per check type, for example "Not in cluster · DNS".
-The widget fetches when the dashboard refreshes, not on its own timer.
+check that no route serves (DNS, ICMP, external sites, raw addresses) groups
+under its own real name: the host of its `host` label, its probed address or its
+check name. There is never an "Other", "Ungrouped" or "Not in cluster" group.
+
+Every group is listed, failing groups first, and no group folds into a "N more
+up" row. Each group has its own history strip, and (with `expanded`, on by
+default) each check under it has its own strip. The stat tiles and the summary
+line stay fixed. Only the list of groups scrolls, with a thin scrollbar and a
+soft fade at an edge that has more rows. The widget fetches when the dashboard
+refreshes, not on its own timer.
 
 ## Where the data comes from
 

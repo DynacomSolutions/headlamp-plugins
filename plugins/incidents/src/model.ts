@@ -181,9 +181,20 @@ export function filterDiagnoses(
   );
 }
 
+/** The real name of a severity that is neither critical nor warning: `info`, `none`, and so on. */
+export function severityName(severity: string): string {
+  const s = severity.trim().toLowerCase();
+  return s === '' ? 'unrated' : s;
+}
+
 export interface IncidentSummaryCounts {
   total: number;
   bySeverity: Record<'critical' | 'warning' | 'other', number>;
+  /**
+   * The incidents that are neither critical nor warning, counted by their own severity name. A
+   * dashboard shows these names, never one shared "other" count. Most numerous first, then by name.
+   */
+  lower: Array<{ name: string; n: number }>;
   byStatus: Record<Status, number>;
   resolved: number;
 }
@@ -192,13 +203,21 @@ export function summariseDiagnoses(list: DiagnosisSummary[]): IncidentSummaryCou
   const counts: IncidentSummaryCounts = {
     total: list.length,
     bySeverity: { critical: 0, warning: 0, other: 0 },
+    lower: [],
     byStatus: { queued: 0, running: 0, done: 0, failed: 0 },
     resolved: 0,
   };
+  const lower = new Map<string, number>();
   for (const d of list) {
-    counts.bySeverity[severityGroup(d.severity)] += 1;
+    const group = severityGroup(d.severity);
+    counts.bySeverity[group] += 1;
+    if (group === 'other')
+      lower.set(severityName(d.severity), (lower.get(severityName(d.severity)) ?? 0) + 1);
     counts.byStatus[d.status] += 1;
     if (d.resolved) counts.resolved += 1;
   }
+  counts.lower = [...lower.entries()]
+    .map(([name, n]) => ({ name, n }))
+    .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
   return counts;
 }

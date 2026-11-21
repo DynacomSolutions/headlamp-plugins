@@ -3,7 +3,7 @@ import React from 'react';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../contract';
 import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
-import { kioskBox, Notice, useColourBook, useInk } from './common';
+import { kioskBox, Notice, thinScroll, useColourBook, useInk } from './common';
 import { Group, groupSamples, parseVector } from './mapping';
 import { QueryEditor } from './QueryEditor';
 import { slicePath } from './scale';
@@ -152,6 +152,7 @@ function Donut(props: {
           // top, so a long legend scrolls from its first row.
           alignSelf: 'stretch',
           overflow: 'auto',
+          ...thinScroll,
           fontSize: 12,
           // A clean bottom edge: the last visible row fades out, and the padding lets the final row
           // scroll clear of the fade.

@@ -897,7 +897,7 @@ describe('agent tree', () => {
     ]);
   });
 
-  it('groups non-agent scopes as Other scopes and sorts Unknown project last', () => {
+  it('groups non-agent scopes as Scopes with no role and sorts Unknown project last', () => {
     const extra = parseState({
       ...raw,
       units: [
@@ -915,7 +915,7 @@ describe('agent tree', () => {
       'Alpha',
       'Beta',
       'Unknown project',
-      'Other scopes',
+      'Scopes with no role',
     ]);
     const i = rows.findIndex(r => r.key === 'p:t3:#other');
     expect(shape(rows.slice(i, i + 2))).toEqual(['p:t3:#other|2|1|L', 'u:run-p1.scope|3|10|L']);

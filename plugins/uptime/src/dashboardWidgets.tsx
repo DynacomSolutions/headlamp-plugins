@@ -1,8 +1,11 @@
 /*
  * The widget that the Uptime plugin adds to the Dashboards plugin, through the cross-plugin
  * `window.headlampDashboards` contract (see dashboardsContract.ts):
- *   uptime.targets  Every check grouped by one key (namespace and app come from the cluster routes). A group header shows the worst status, the counts
- *                   and the worst history line of its checks. A group expands to every check line.
+ *   uptime.targets  Every check grouped by one key (app and namespace come from the cluster routes). A group header shows the worst status, the counts
+ *                   and the worst history line of its checks. A group expands to every check line, each with its own
+ *                   history line. Every group is listed, failing groups first: no group folds into one summary row, and
+ *                   a check that no route serves groups under its own host, never under "Other".
+ *                   The stat tiles and the summary line stay fixed. Only the list of groups scrolls.
  * The lines are the history strip of the Uptime page, with the same colours. The widget fetches when
  * the time range or the dashboard refresh signal changes, never on its own timer or on a layout drag.
  * Dashboard filters: the time range (when the widget range is "dashboard") and the namespaces (for
@@ -26,7 +29,6 @@ import {
   RANGE_VALUES,
   UptimeGroup,
   WidgetRange,
-  worstHistory,
 } from './groups';
 import { HistoryStrip } from './HistoryStrip';
 import { PROBE_JOB, queryMetrics, queryRange } from './metrics';
@@ -43,10 +45,11 @@ import {
 } from './model';
 import { fetchRouteLists } from './routeApi';
 import { buildRoutes, placeChecks, Route } from './routes';
+import { ScrollArea } from './ScrollArea';
 
 export interface UptimeWidgetConfig {
   groupBy: GroupBy;
-  /** Whether the groups start expanded. */
+  /** Whether the groups start expanded (default: yes, so every check shows with its own strip). */
   expanded: boolean;
   range: WidgetRange;
   /** Show only the groups that are down or degraded. */
@@ -55,7 +58,7 @@ export interface UptimeWidgetConfig {
 
 const DEFAULT_CONFIG: UptimeWidgetConfig = {
   groupBy: 'auto',
-  expanded: false,
+  expanded: true,
   range: '24h',
   onlyFailing: false,
 };
@@ -311,7 +314,17 @@ function FooterLine(props: {
   children: React.ReactNode;
 }): JSX.Element {
   const line = (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, fontSize: 13 }}>
+    <Box
+      data-widget-summary=""
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        minWidth: 0,
+        fontSize: 13,
+        pt: props.footer ? 0 : 0.75,
+      }}
+    >
       <Mark status={props.status} size={13} />
       <Box
         component="span"
@@ -567,103 +580,6 @@ function GroupBlock(props: {
   );
 }
 
-/**
- * The groups that are up fold into one row: "N more up, worst of each period" with its own history
- * strip, the worst of every period over all of them. A tap opens the list of those groups.
- */
-function FoldedUp(props: {
-  groups: UptimeGroup[];
-  grid: HistoryGrid;
-  startSec: number;
-  open: boolean;
-  onToggle: () => void;
-  kiosk: boolean;
-}): JSX.Element {
-  const { groups, grid, startSec, open, onToggle, kiosk } = props;
-  const { fill } = useHues();
-  const checks = React.useMemo(() => groups.flatMap(g => g.checks), [groups]);
-  const history = React.useMemo(() => worstHistory(checks, grid.buckets), [checks, grid.buckets]);
-  const text = `${groups.length} more up, worst of each period`;
-  return (
-    <Box
-      component="button"
-      type="button"
-      data-uptime-fold
-      onClick={onToggle}
-      aria-expanded={open}
-      sx={{
-        display: 'grid',
-        gridTemplateColumns: ROW_COLUMNS,
-        alignItems: 'center',
-        columnGap: 1,
-        width: '100%',
-        minHeight: kiosk ? 48 : 36,
-        px: 1,
-        ...NARROW_ROW,
-        border: 0,
-        borderRadius: 0,
-        background: fill('up'),
-        color: 'inherit',
-        font: 'inherit',
-        textAlign: 'left',
-        cursor: 'pointer',
-        touchAction: 'manipulation',
-        WebkitTapHighlightColor: 'transparent',
-      }}
-    >
-      <Box
-        component="span"
-        aria-hidden
-        sx={{
-          display: 'inline-block',
-          textAlign: 'center',
-          transform: open ? 'rotate(90deg)' : 'none',
-          transition: 'transform 120ms',
-          [NARROW]: { gridArea: 'lead', alignSelf: 'start', pt: 0.25 },
-        }}
-      >
-        ›
-      </Box>
-      <StatusChip status="up" />
-      <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'name' } }}>
-        <Typography
-          variant="body2"
-          title={text}
-          sx={{
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            [NARROW]: { whiteSpace: 'normal' },
-          }}
-        >
-          {text}
-        </Typography>
-        <Typography variant="caption" color="text.secondary" component="div">
-          {checks.length} checks
-        </Typography>
-      </Box>
-      <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'strip', pr: 1 } }}>
-        <HistoryStrip
-          history={history}
-          startSec={startSec}
-          stepSec={grid.stepSec}
-          label={`${text}: the worst of ${checks.length} checks per period over ${gridLabel(grid)}`}
-          height={kiosk ? 22 : 18}
-          minWidth={64}
-          tooltips="native"
-        />
-      </Box>
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ textAlign: 'right', pl: 1, [NARROW]: { gridArea: 'pct', alignSelf: 'start' } }}
-      >
-        {formatPercent(meanAvailability(history))}
-      </Typography>
-    </Box>
-  );
-}
-
 function UptimeTargetsWidget({
   config,
   filters,
@@ -725,24 +641,23 @@ function UptimeTargetsWidget({
   );
 }
 
-/** The widget scrolls by itself. In the kiosk it scrolls by touch, with no visible scrollbar. */
+/**
+ * The widget frame inside the card: a column that fills the height. The tiles and the summary stay
+ * fixed, and only the list of groups scrolls (see `ScrollArea`).
+ */
 function Scroller(props: { kiosk: boolean; children: React.ReactNode }): JSX.Element {
   return (
     <Box
-      data-uptime-scroll
+      data-uptime-root
       sx={{
         height: '100%',
         minWidth: 0,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
         // The rows fold into two lines when the widget is narrow (see NARROW).
         containerType: 'inline-size',
         containerName: 'uptime',
-        overflowY: 'auto',
-        overscrollBehavior: 'contain',
-        touchAction: 'pan-y',
-        WebkitOverflowScrolling: 'touch',
-        ...(props.kiosk
-          ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }
-          : {}),
       }}
     >
       {props.children}
@@ -766,7 +681,6 @@ function TargetGroups(props: {
   checks: Check[];
 }): JSX.Element {
   const { groups, grid, expandedByDefault, kiosk } = props;
-  const [foldOpen, setFoldOpen] = React.useState(false);
   // The groups the user flipped away from the default.
   const [flipped, setFlipped] = React.useState<ReadonlySet<string>>(new Set());
   const toggle = (key: string) =>
@@ -783,12 +697,7 @@ function TargetGroups(props: {
     for (const ch of props.checks) c[ch.status] += 1;
     return c;
   }, [props.checks]);
-  // Groups that need attention come first as bands. The groups that are up fold into one row when
-  // some group needs attention. All groups up: they list as they are.
-  const attention = groups.filter(g => g.status !== 'up');
-  const upGroups = groups.filter(g => g.status === 'up');
-  const fold = attention.length > 0 && upGroups.length > 0;
-  const listed = fold ? attention : groups;
+  // Every group is listed. The groups that need attention come first (see `buildGroups`).
   const renderGroup = (g: UptimeGroup) => (
     <GroupBlock
       key={g.key}
@@ -802,46 +711,36 @@ function TargetGroups(props: {
   );
   const summaryStatus: Status =
     counts.down > 0 ? 'down' : counts.degraded > 0 ? 'degraded' : counts.up > 0 ? 'up' : 'unknown';
+  const showList = !props.failed && props.total > 0;
   return (
-    <Box>
-      {props.error && (
-        <Alert severity={props.failed ? 'error' : 'warning'} sx={{ mb: 1 }}>
-          {props.failed
-            ? `Could not read probe results: ${props.error}`
-            : `Refresh failed, showing the last data: ${props.error}`}
-        </Alert>
-      )}
-      {props.routeErrors.length > 0 && !props.failed && (
-        <Alert severity="warning" sx={{ mb: 1 }}>
-          Could not list routes, so some checks may show as not in the cluster:{' '}
-          {props.routeErrors.join('; ')}
-        </Alert>
-      )}
-      {!props.failed && props.total === 0 && (
-        <Alert severity="info">
-          No probe results. The scrape job "{PROBE_JOB}" has no probe_success series yet.
-        </Alert>
-      )}
-      {!props.failed && props.total > 0 && (
+    <>
+      <Box sx={{ flex: 'none' }}>
+        {props.error && (
+          <Alert severity={props.failed ? 'error' : 'warning'} sx={{ mb: 1 }}>
+            {props.failed
+              ? `Could not read probe results: ${props.error}`
+              : `Refresh failed, showing the last data: ${props.error}`}
+          </Alert>
+        )}
+        {props.routeErrors.length > 0 && !props.failed && (
+          <Alert severity="warning" sx={{ mb: 1 }}>
+            Could not list routes, so some checks may show under their own host name:{' '}
+            {props.routeErrors.join('; ')}
+          </Alert>
+        )}
+        {!props.failed && props.total === 0 && (
+          <Alert severity="info">
+            No probe results. The scrape job "{PROBE_JOB}" has no probe_success series yet.
+          </Alert>
+        )}
+        {showList && <UptimeTiles counts={counts} />}
+      </Box>
+      {showList && (
         <>
-          <UptimeTiles counts={counts} />
           {groups.length === 0 && props.onlyFailing && (
             <Alert severity="success">No group is failing.</Alert>
           )}
-          {listed.map(renderGroup)}
-          {fold && (
-            <>
-              <FoldedUp
-                groups={upGroups}
-                grid={grid}
-                startSec={startSec}
-                open={foldOpen}
-                onToggle={() => setFoldOpen(o => !o)}
-                kiosk={kiosk}
-              />
-              {foldOpen && upGroups.map(renderGroup)}
-            </>
-          )}
+          <ScrollArea label="Uptime groups">{groups.map(renderGroup)}</ScrollArea>
           <FooterLine footer={props.footer} status={summaryStatus}>
             {counts.up} up, {counts.degraded} degraded, {counts.down} down, {counts.unknown} no
             data. {groups.length} groups by {props.resolved}, {failingGroups} failing, last{' '}
@@ -849,7 +748,7 @@ function TargetGroups(props: {
           </FooterLine>
         </>
       )}
-    </Box>
+    </>
   );
 }
 
@@ -868,7 +767,7 @@ export const uptimeTargetsWidget: WidgetDefinition<UptimeWidgetConfig> = {
       key: 'groupBy',
       label: 'Group by',
       type: 'select',
-      help: 'Namespace and app come from the cluster: the host of a check is matched with the HTTPRoutes, Ingresses and Mappings. Checks no route serves show under "Not in cluster", split by type. Automatic uses the namespace, then the app, then the first word of the check name.',
+      help: 'Namespace and app come from the cluster: the host of a check is matched with the HTTPRoutes, Ingresses and Mappings. The app is the app label of the route, else its namespace. A check that no route serves groups under its own host name, never under "Other". Automatic uses the app, then the namespace, then the first word of the check name.',
       options: [
         { value: 'auto', label: 'Automatic' },
         { value: 'namespace', label: 'Namespace' },
@@ -894,7 +793,8 @@ export const uptimeTargetsWidget: WidgetDefinition<UptimeWidgetConfig> = {
     },
     { key: 'onlyFailing', label: 'Only failing groups', type: 'boolean' },
   ],
-  selfScroll: true,
+  // The tiles and the summary stay fixed, and the widget scrolls only its list of groups.
+  selfScroll: false,
   Component: UptimeTargetsWidget,
 };
 

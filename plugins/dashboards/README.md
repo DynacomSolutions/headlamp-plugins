@@ -269,10 +269,12 @@ Rules for a widget:
   (moving or resizing) never changes these props. The frame is memoised, so the widget is not
   rerendered by another widget's drag.
 - Call `reportRefreshed()` after each fetch. It is stable, so it is safe in an effect dependency list.
-- Fill the card: use `height: 100%`. Set `selfScroll: true` for lists and tables. The user can
-  override it per widget.
-- Do not rely on hover (the kiosk is a touch screen). When `kiosk` is true, avoid scrollbars and
-  focus rings. When `editing` is true, disable links that leave the page.
+- Fill the card: use `height: 100%`. Keep the title, stat tiles, legend and summary fixed and scroll only the
+  rows, in one scroll area (`src/components/ScrollArea.tsx`: a thin always-visible scrollbar, an edge fade,
+  touch scroll, and the wheel never scrolls the page). Never fold rows into a "+N more" line.
+  Set `selfScroll: true` only for a widget that scrolls as a whole. The user can override it per widget.
+- Do not rely on hover (the kiosk is a touch screen). When `kiosk` is true, show no focus rings and keep
+  the thin scrollbar. When `editing` is true, disable links that leave the page.
 - A widget that throws shows an error in its own card and leaves the rest alone.
 - A dashboard that uses a type nobody registered shows a placeholder card ("The plugin that supplies
   this widget is not installed") and keeps its settings.
@@ -492,8 +494,8 @@ palette (Okabe-Ito, with lighter hues for dark mode and the kiosk). Rules:
 
 ### Kiosk
 
-The widgets use theme colours only, so they follow the black kiosk background. The kiosk has no scrollbars,
-no focus rings and no hover. The legend and the donut do not scroll in the kiosk.
+The widgets use theme colours only, so they follow the black kiosk background. The kiosk has no focus rings
+and no hover. The legend lists every group and scrolls, with a thin scrollbar that also shows in the kiosk.
 
 ## Kubernetes reports
 
@@ -530,7 +532,7 @@ and a live preview that uses the real cluster data.
   Updates are coalesced. The streams restart only when the kind, the namespaces, the label selector or the
   refresh signal changes, so moving a widget never refetches. The grouping is a memoised pure model in
   `src/widgets/k8s/model.ts`.
-- **Kiosk**: the widget uses the black background, larger rows and no scrollbars.
+- **Kiosk**: the widget uses the black background, larger rows and a thin scrollbar on every scrolling list.
 
 Users need `list` (and `watch`) access to the chosen kind. A refused list shows a message in the widget.
 
@@ -590,7 +592,7 @@ the steps as "or less". A status always shows an icon and a word, so colour is n
 - In the breakdown every group is its own slice or bar at its real size. There is no "Other" group and no
   top-N. After eight groups the colours are generated, and the list names every group with its value and
   share.
-- The kiosk (black background) uses light ink, no scrollbars and no focus rings.
+- The kiosk (black background) uses light ink, a thin scrollbar on scrolling lists and no focus rings.
 
 Each widget settings dialog has a multiline query editor and a **Run** button. The preview is an
 instant query with no filters, so it shows every namespace and node.

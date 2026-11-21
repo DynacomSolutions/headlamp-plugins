@@ -1,6 +1,7 @@
 /*
  * The head of the incident list on a dashboard: the critical count in very large type, then the
- * warning and other counts, and the failed analyses at the right. The status counts follow in one
+ * warning counts and one count for each other severity by its own name (such as info), and the
+ * failed analyses at the right. The status counts follow in one
  * quiet line. Every count has a shape and a word, never colour alone.
  */
 import Box from '@mui/material/Box';
@@ -66,7 +67,9 @@ export function IncidentHero({ counts }: { counts: IncidentSummaryCounts }): JSX
       >
         <Count n={counts.bySeverity.critical} label="critical" severity="critical" big />
         <Count n={counts.bySeverity.warning} label="warning" severity="warning" />
-        <Count n={counts.bySeverity.other} label="other" />
+        {counts.lower.map(l => (
+          <Count key={l.name} n={l.n} label={l.name} />
+        ))}
         <Box sx={{ ml: 'auto' }}>
           <Count n={s.failed} label="failed analyses" alert />
         </Box>

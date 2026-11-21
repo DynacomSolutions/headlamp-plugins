@@ -178,8 +178,12 @@ export function GridTable(props: {
         overflow: 'auto',
         color: colors.text,
         fontSize: kiosk ? '1rem' : '0.8125rem',
-        // A touch screen has no use for scrollbars, but it still scrolls.
-        ...(kiosk ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } } : {}),
+        // A thin scrollbar always shows that there are more rows. The wheel never scrolls the page.
+        overscrollBehavior: 'contain',
+        touchAction: 'pan-x pan-y',
+        scrollbarWidth: 'thin',
+        '&::-webkit-scrollbar': { width: 6, height: 6 },
+        '&::-webkit-scrollbar-thumb': { borderRadius: 3, background: 'rgba(128,128,128,0.55)' },
       }}
     >
       <Box sx={{ minWidth }}>
@@ -218,31 +222,47 @@ export function GridTable(props: {
                 key={c.id}
                 role="columnheader"
                 aria-sort={active ? (sort?.dir === 'asc' ? 'ascending' : 'descending') : undefined}
+                // A click on the cell itself sorts too (the button inside gets its own click).
+                onClick={
+                  c.sortable && onSort
+                    ? e => {
+                        if (e.target === e.currentTarget) onSort(c.id);
+                      }
+                    : undefined
+                }
                 sx={{
-                  px: 1.25,
+                  // The cell fills its slot, so a click anywhere in the heading cell sorts.
+                  alignSelf: 'stretch',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: c.numeric ? 'flex-end' : 'flex-start',
+                  px: c.sortable && onSort ? 0 : 1.25,
                   overflow: 'hidden',
                   whiteSpace: 'nowrap',
                   textAlign: c.numeric ? 'right' : 'left',
                   ...(ci === 0 ? stickyCell(false, true) : {}),
-                  ...(ci === 0 && stickyFirst
-                    ? { alignSelf: 'stretch', display: 'flex', alignItems: 'center' }
-                    : {}),
                 }}
               >
                 {c.sortable && onSort ? (
                   <Box
                     component="button"
                     type="button"
+                    data-sort-cell={c.id}
                     onClick={() => onSort(c.id)}
                     sx={{
                       all: 'unset',
+                      boxSizing: 'border-box',
                       cursor: 'pointer',
-                      display: 'inline-flex',
+                      display: 'flex',
+                      flex: 1,
+                      minWidth: 0,
+                      alignSelf: 'stretch',
                       gap: 0.5,
                       alignItems: 'center',
-                      maxWidth: '100%',
+                      justifyContent: c.numeric ? 'flex-end' : 'flex-start',
+                      px: 1.25,
                       color: active ? colors.text : 'inherit',
-                      '&:focus-visible': { outline: `2px solid ${colors.link}` },
+                      '&:focus-visible': { outline: `2px solid ${colors.link}`, outlineOffset: -2 },
                     }}
                   >
                     {content}

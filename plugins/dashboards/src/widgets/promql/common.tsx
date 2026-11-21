@@ -56,13 +56,25 @@ export function Notice(props: {
   );
 }
 
-/** Style that keeps the kiosk quiet: no focus ring, no scrollbar. */
+/**
+ * A scrolling list shows that there is more: a thin scrollbar that is always visible (also in the
+ * kiosk). It scrolls by touch, and the wheel never scrolls the page.
+ */
+export const thinScroll = {
+  overscrollBehavior: 'contain',
+  touchAction: 'pan-y',
+  WebkitOverflowScrolling: 'touch',
+  scrollbarWidth: 'thin',
+  scrollbarColor: 'rgba(128,128,128,0.6) transparent',
+  '&::-webkit-scrollbar': { width: 6, height: 6 },
+  '&::-webkit-scrollbar-thumb': { borderRadius: 3, background: 'rgba(128,128,128,0.6)' },
+} as const;
+
+/** Style that keeps the kiosk quiet: no focus ring. The thin scrollbar stays. */
 export const kioskBox = (kiosk: boolean) =>
   kiosk
     ? ({
         '& *:focus, & *:focus-visible': { outline: 'none' },
-        scrollbarWidth: 'none',
-        '&::-webkit-scrollbar, & *::-webkit-scrollbar': { display: 'none' },
         WebkitTapHighlightColor: 'transparent',
       } as const)
     : {};

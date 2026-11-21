@@ -376,7 +376,7 @@ describe('buildNodeTree with nested backend units', () => {
     const t3 = find(t.root, 't3')!;
     expect(keys(t3)).toEqual(['t3/control', 't3/p:p', 't3/other']);
     const other = find(t3, 't3/other')!;
-    expect(other.label).toBe('Other scopes');
+    expect(other.label).toBe('Scopes with no role');
     expect(other.children.map(c => [c.key, c.value])).toEqual([
       ['t3/other/u:app-t3code-agents-builds.slice', 32 * GB],
       ['t3/other/u:run-1.scope', 0.5 * GB],

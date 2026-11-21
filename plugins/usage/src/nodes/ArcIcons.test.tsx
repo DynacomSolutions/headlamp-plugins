@@ -86,7 +86,7 @@ describe('arc icons', () => {
         n('a', 3, 'category', { kind: 'mdi', name: 'kubernetes' }),
         n('b', 3, 'category', { kind: 'mdi', name: 'cog' }),
         n('c', 2, 'category', { kind: 'mdi', name: 'robot' }),
-      ].map((x, i) => ({ ...x, label: ['Kubernetes control plane', 'System services', 'Other scopes'][i] }))),
+      ].map((x, i) => ({ ...x, label: ['Kubernetes control plane', 'System services', 'Scopes with no role'][i] }))),
     };
     for (const size of [260, 420, 600]) {
       const { container, unmount } = render(<Sunburst tree={long} resource="cpu" focus={[]} size={size} />);

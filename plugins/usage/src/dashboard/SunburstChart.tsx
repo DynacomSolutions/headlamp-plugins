@@ -96,11 +96,8 @@ export function SunburstChart({
     data.categories.length === 0
       ? `${title}: no usage`
       : `${title}: ${format(used)} of ${format(data.capacity)} used. ${data.categories
-          .slice(0, 5)
           .map(c => `${c.label} ${percent(scale > 0 ? c.value / scale : 0)}`)
-          .join(', ')}${
-          data.categories.length > 5 ? `, and ${data.categories.length - 5} more` : ''
-        }`;
+          .join(', ')}`;
 
   const track = theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
   const surface = theme.palette.background.paper;
@@ -240,7 +237,13 @@ export function SunburstChart({
             width: '100%',
             flex: '0 1 auto',
             maxHeight: '38%',
-            overflowY: kiosk ? 'hidden' : 'auto',
+            // Every group is listed. A long legend scrolls (also in the kiosk), with a thin scrollbar.
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+            touchAction: 'pan-y',
+            scrollbarWidth: 'thin',
+            '&::-webkit-scrollbar': { width: 6 },
+            '&::-webkit-scrollbar-thumb': { borderRadius: 3, background: 'rgba(128,128,128,0.6)' },
             display: 'flex',
             flexWrap: 'wrap',
             gap: '2px 12px',

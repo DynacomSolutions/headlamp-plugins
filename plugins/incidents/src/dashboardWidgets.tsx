@@ -41,6 +41,7 @@ import {
   summariseDiagnoses,
 } from './model';
 import { ModelPicker } from './ModelPicker';
+import { ScrollArea } from './ScrollArea';
 import {
   getSelectedIncident,
   registerChatWidget,
@@ -49,12 +50,15 @@ import {
   useSelectedIncident,
 } from './selection';
 
-/** A scroll area that scrolls by touch with no visible scrollbar in the kiosk. */
-const scrollSx = (kiosk: boolean) => ({
+/** A scroll area that scrolls by touch, with a thin scrollbar that always shows (also in the kiosk). */
+const scrollSx = () => ({
   overflowY: 'auto' as const,
   overscrollBehavior: 'contain' as const,
   touchAction: 'pan-y' as const,
-  ...(kiosk ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } } : {}),
+  scrollbarWidth: 'thin' as const,
+  scrollbarColor: 'rgba(128,128,128,0.6) transparent',
+  '&::-webkit-scrollbar': { width: 6 },
+  '&::-webkit-scrollbar-thumb': { borderRadius: 3, background: 'rgba(128,128,128,0.6)' },
 });
 
 /* ---------- incidents.list ---------- */
@@ -140,7 +144,7 @@ function IncidentListWidget({
           </Alert>
         )}
       </Box>
-      <Box data-incident-list-scroll sx={{ flex: '1 1 0', minHeight: 0, ...scrollSx(kiosk) }}>
+      <ScrollArea label="Incidents">
         {state.loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
             <CircularProgress size={24} aria-label="Loading" />
@@ -161,7 +165,7 @@ function IncidentListWidget({
             onRerun={editing ? undefined : rerun}
           />
         )}
-      </Box>
+      </ScrollArea>
     </Box>
   );
 }
@@ -197,7 +201,7 @@ export const incidentListWidget: WidgetDefinition<IncidentListConfig> = {
         { value: 'all', label: 'All' },
         { value: 'critical', label: 'Critical' },
         { value: 'warning', label: 'Warning' },
-        { value: 'other', label: 'Other' },
+        { value: 'other', label: 'Info, none and unrated' },
       ],
     },
     {
@@ -344,7 +348,7 @@ function IncidentChatWidget({
       <Box
         ref={scroll.ref}
         onScroll={scroll.onScroll}
-        sx={{ flex: '1 1 0', minHeight: 0, ...scrollSx(kiosk), pr: kiosk ? 0 : 0.5 }}
+        sx={{ flex: '1 1 0', minHeight: 0, ...scrollSx(), pr: kiosk ? 0 : 0.5 }}
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: '100%' }}>
           {chatId && chat.loading && !chat.data && <CircularProgress aria-label="Loading" />}
