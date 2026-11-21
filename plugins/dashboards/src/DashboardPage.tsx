@@ -29,6 +29,7 @@ import { HeaderStrip } from './components/HeaderStrip';
 import { PaletteDrawer } from './components/PaletteDrawer';
 import { RefreshControls } from './components/RefreshStatus';
 import { SectionActions, SectionView } from './components/SectionView';
+import { TabBadge } from './components/TabBadge';
 import { TabsActions, TabsDialog } from './components/TabsDialog';
 import { FrameActions } from './components/WidgetFrame';
 import { WidgetSettingsDialog, WidgetSettingsResult } from './components/WidgetSettingsDialog';
@@ -557,6 +558,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         mr: left ? 1 : 0,
         // The compact rail is narrow: an icon with its label under it.
         width: compact ? COMPACT_RAIL_WIDTH : undefined,
+        ...(compact ? { borderRight: 1, borderColor: 'divider' } : {}),
         minWidth: left && !compact ? 160 : undefined,
       }}
     >
@@ -566,6 +568,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         variant="scrollable"
         scrollButtons="auto"
         aria-label="Dashboard tabs"
+        TabIndicatorProps={compact ? { sx: { display: 'none' } } : undefined}
         onChange={(_e, id: string) => goTab(id)}
       >
         {spec.tabs.map(t => (
@@ -575,21 +578,45 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             label={compact ? <RailLabel text={t.label} /> : t.label}
             title={compact ? t.label : undefined}
             aria-label={compact ? t.label : undefined}
-            icon={<Icon icon={t.icon} width={compact ? 24 : 20} height={compact ? 24 : 20} />}
+            icon={
+              <Box component="span" sx={{ position: 'relative', display: 'inline-flex' }}>
+                <Icon icon={t.icon} width={compact ? 22 : 20} height={compact ? 22 : 20} />
+                {t.badge && <TabBadge badge={t.badge} refreshSignal={signal} inline={!compact} />}
+              </Box>
+            }
             iconPosition={compact ? 'top' : 'start'}
             sx={
               compact
                 ? {
                     minHeight: 64,
+                    maxHeight: 72,
                     width: '100%',
                     minWidth: 0,
                     maxWidth: 'none',
                     px: 0.5,
                     py: 1,
+                    borderRadius: '4px',
                     textTransform: 'none',
-                    fontSize: '0.6875rem',
+                    fontSize: '0.71875rem',
                     lineHeight: 1.2,
+                    color: 'text.secondary',
+                    position: 'relative',
                     '& .MuiTab-iconWrapper': { mb: 0.5, mr: 0 },
+                    // The active tab: a soft fill and a 3 px bar on the left edge.
+                    '&.Mui-selected': {
+                      color: 'text.primary',
+                      bgcolor: 'action.selected',
+                      '&::before': {
+                        content: '""',
+                        position: 'absolute',
+                        left: 0,
+                        top: 8,
+                        bottom: 8,
+                        width: 3,
+                        borderRadius: '0 2px 2px 0',
+                        bgcolor: 'info.main',
+                      },
+                    },
                   }
                 : {
                     minHeight: 48,
@@ -1026,7 +1053,7 @@ function useElementWidth(el: HTMLElement | null): number {
 }
 
 /** Width of the compact left tab rail, in px. */
-const COMPACT_RAIL_WIDTH = 80;
+const COMPACT_RAIL_WIDTH = 96;
 
 /** The label under the icon of a compact tab: at most two lines, long words break. */
 function RailLabel({ text }: { text: string }): JSX.Element {

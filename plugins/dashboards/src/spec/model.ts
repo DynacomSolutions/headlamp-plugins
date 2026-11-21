@@ -95,7 +95,19 @@ export interface Tab {
   icon: string;
   /** Overrides the dashboard's `fitHeight` for this tab. Missing means follow the dashboard. */
   fitHeight?: boolean;
+  /**
+   * A count on the tab in the rail, from a panel of a panel source (for example the open incidents).
+   * Without `stat` the count is the leading number of the panel summary. With `stat` it is the value
+   * of the stat with that label. A count of 0 shows nothing.
+   */
+  badge?: TabBadge;
   sections: Section[];
+}
+
+export interface TabBadge {
+  source: string;
+  panel: string;
+  stat?: string;
 }
 
 export interface SavedView {
@@ -372,6 +384,15 @@ function normaliseBand(raw: unknown, key: BandKey): Band {
   };
 }
 
+function parseBadge(raw: unknown): TabBadge | undefined {
+  if (!isObject(raw)) return undefined;
+  const source = str(raw.source).trim();
+  const panel = str(raw.panel).trim();
+  if (source === '' || panel === '') return undefined;
+  const stat = str(raw.stat).trim();
+  return { source, panel, ...(stat !== '' ? { stat } : {}) };
+}
+
 function normaliseTab(raw: unknown, taken: string[]): Tab | null {
   if (!isObject(raw)) return null;
   const sections = uniqueIds(
@@ -389,6 +410,8 @@ function normaliseTab(raw: unknown, taken: string[]): Tab | null {
     sections: sections.length > 0 ? sections : [emptySection('Main')],
   };
   if (typeof raw.fitHeight === 'boolean') tab.fitHeight = raw.fitHeight;
+  const badge = parseBadge(raw.badge);
+  if (badge) tab.badge = badge;
   return tab;
 }
 

@@ -372,7 +372,7 @@ describe('left tab rail', () => {
     expect(r.getAttribute('data-tab-rail')).toBe('compact');
     const width = parseInt(getComputedStyle(r).width, 10);
     expect(width).toBeGreaterThanOrEqual(72);
-    expect(width).toBeLessThanOrEqual(88);
+    expect(width).toBeLessThanOrEqual(96);
     const tab = within(r).getByRole('tab', { name: 'Nodes' });
     // The icon first, the label under it.
     expect(getComputedStyle(tab).flexDirection).toBe('column');
