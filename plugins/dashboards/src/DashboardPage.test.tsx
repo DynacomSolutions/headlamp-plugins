@@ -175,6 +175,53 @@ describe('dashboard page', () => {
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
   });
 
+  it('keeps every widget mounted when the page enters and leaves full screen', async () => {
+    let mounts = 0;
+    let unmounts = 0;
+    const Probe = () => {
+      React.useEffect(() => {
+        mounts += 1;
+        return () => {
+          unmounts += 1;
+        };
+      }, []);
+      return <span>probe widget</span>;
+    };
+    getRegistry().registerWidget({
+      type: 'test.probe',
+      title: 'Probe',
+      description: 'Counts its mounts.',
+      icon: 'mdi:flask',
+      category: 'Test',
+      defaultSize: { w: 3, h: 3 },
+      minSize: { w: 1, h: 1 },
+      defaultConfig: {},
+      Component: Probe,
+    } as any);
+    spec = addWidget(
+      spec,
+      spec.tabs[0].id,
+      spec.tabs[0].sections[0].id,
+      'test.probe',
+      { w: 3, h: 3 },
+      {}
+    ).spec;
+    mount('/dashboards/ops');
+    await screen.findByText('probe widget');
+    expect(mounts).toBe(1);
+    fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?kiosk=1')
+    );
+    await screen.findByRole('button', { name: 'Exit full screen' });
+    fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' }));
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
+    await screen.findByRole('button', { name: 'Full screen' });
+    expect(screen.getByText('probe widget')).toBeTruthy();
+    expect(mounts).toBe(1);
+    expect(unmounts).toBe(0);
+  });
+
   it('waits in a kiosk when the server is away at the start, with no error screen, and loads by itself', async () => {
     const real = request.getMockImplementation()!;
     let up = false;

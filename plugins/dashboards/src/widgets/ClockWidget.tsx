@@ -16,11 +16,33 @@ import {
 } from './clockFormat';
 import { SettingsForm } from './SettingsForm';
 
-const SIZES: Record<ClockConfig['size'], { time: string; date: string }> = {
-  small: { time: 'clamp(1.2rem, 14cqmin, 2.2rem)', date: 'clamp(0.7rem, 5cqmin, 1rem)' },
-  medium: { time: 'clamp(1.8rem, 22cqmin, 3.6rem)', date: 'clamp(0.8rem, 7cqmin, 1.3rem)' },
-  large: { time: 'clamp(2.4rem, 32cqmin, 6rem)', date: 'clamp(0.9rem, 9cqmin, 1.8rem)' },
-  xlarge: { time: 'clamp(3rem, 46cqmin, 10rem)', date: 'clamp(1rem, 12cqmin, 2.6rem)' },
+// The sizes also follow the height of the box (cqh), so a short widget shrinks the digits instead of
+// cutting them. The time takes at most 40% of the height, the date and the zone 18% each.
+/** A box shorter than this (px) shows the time only. */
+const SHORT_BOX = 72;
+const SHORT = `@container (max-height: ${SHORT_BOX}px)`;
+const fit = (size: string, share: number) => `min(${size}, ${share}cqh)`;
+const SIZES: Record<ClockConfig['size'], { time: string; timeMax: string; date: string }> = {
+  small: {
+    time: fit('clamp(1.2rem, 14cqmin, 2.2rem)', 48),
+    timeMax: 'clamp(1.2rem, 14cqmin, 2.2rem)',
+    date: fit('clamp(0.7rem, 5cqmin, 1rem)', 14),
+  },
+  medium: {
+    time: fit('clamp(1.8rem, 22cqmin, 3.6rem)', 48),
+    timeMax: 'clamp(1.8rem, 22cqmin, 3.6rem)',
+    date: fit('clamp(0.8rem, 7cqmin, 1.3rem)', 14),
+  },
+  large: {
+    time: fit('clamp(2.4rem, 32cqmin, 6rem)', 48),
+    timeMax: 'clamp(2.4rem, 32cqmin, 6rem)',
+    date: fit('clamp(0.9rem, 9cqmin, 1.8rem)', 14),
+  },
+  xlarge: {
+    time: fit('clamp(3rem, 46cqmin, 10rem)', 48),
+    timeMax: 'clamp(3rem, 46cqmin, 10rem)',
+    date: fit('clamp(1rem, 12cqmin, 2.6rem)', 14),
+  },
 };
 
 /** The current time, ticking on each second or minute boundary with one timer at a time. */
@@ -108,7 +130,8 @@ export function ClockView(props: {
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        justifyContent: 'center',
+        // `safe`: a box too short for the text keeps the top of the digits, never cuts it.
+        justifyContent: 'safe center',
         textAlign: 'center',
         overflow: 'hidden',
       }}
@@ -122,6 +145,7 @@ export function ClockView(props: {
             fontWeight: 600,
             lineHeight: 1.05,
             fontVariantNumeric: 'tabular-nums',
+            [SHORT]: { fontSize: `min(${size.timeMax}, 70cqh)` },
           }}
         >
           {time}
@@ -132,7 +156,7 @@ export function ClockView(props: {
           component="div"
           data-clock-date
           color="text.secondary"
-          sx={{ fontSize: size.date }}
+          sx={{ fontSize: size.date, [SHORT]: { display: 'none' } }}
         >
           {date}
         </Typography>
@@ -142,7 +166,7 @@ export function ClockView(props: {
           component="div"
           data-clock-zone
           color="text.secondary"
-          sx={{ fontSize: size.date, opacity: 0.8 }}
+          sx={{ fontSize: size.date, opacity: 0.8, [SHORT]: { display: 'none' } }}
         >
           {config.timeZone === LOCAL_ZONE ? 'Local time' : config.timeZone}
         </Typography>
