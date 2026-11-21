@@ -1,6 +1,16 @@
 import { ApiProxy, ConfigStore, K8s } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
 import {
+  buildFromMetrics,
+  metricsConfigured,
+  MetricsInput,
+  parseVector,
+  QUERIES,
+  QueryId,
+  queryPath,
+  resolveMetricsSource,
+} from './metrics';
+import {
   buildLocalStatus,
   historyUrlFor,
   isHistory,
@@ -119,23 +129,31 @@ export interface Remote {
   configured: boolean;
 }
 
-/** Poll the optional scanner endpoint (status.json / history.json). */
+/**
+ * Poll the optional scanner data. A status endpoint (status.json / history.json) wins when it is
+ * set. Otherwise, when a metrics service is set, the scanner's samples are read from it.
+ */
 export function useRemote(cfg: PluginConfig): Remote {
+  const statusUrl = cfg.statusUrl || '';
+  const metricsOn = !statusUrl && metricsConfigured(cfg);
   const [state, setState] = React.useState<Remote>({
     status: null,
     history: null,
     error: null,
-    configured: !!cfg.statusUrl,
+    configured: !!statusUrl || metricsOn,
   });
-  const statusUrl = cfg.statusUrl || '';
   const historyUrl = historyUrlFor(cfg);
+  const metrics = React.useMemo(
+    () => resolveMetricsSource(cfg),
+    [cfg.metricsNamespace, cfg.metricsService, cfg.metricsPort]
+  );
   React.useEffect(() => {
-    if (!statusUrl) {
+    if (!statusUrl && !metricsOn) {
       setState({ status: null, history: null, error: null, configured: false });
       return;
     }
     let alive = true;
-    const load = async () => {
+    const loadEndpoint = async () => {
       const [s, h] = await Promise.allSettled([
         getJson(statusUrl),
         historyUrl ? getJson(historyUrl) : Promise.resolve(null),
@@ -154,13 +172,47 @@ export function useRemote(cfg: PluginConfig): Remote {
             : 'Endpoint did not return a status document',
       }));
     };
+    const loadMetrics = async () => {
+      if (metrics.problem) {
+        setState({ status: null, history: null, error: metrics.problem, configured: true });
+        return;
+      }
+      const ids = Object.keys(QUERIES) as QueryId[];
+      const results = await Promise.allSettled(ids.map(id => getJson(queryPath(metrics, QUERIES[id]))));
+      if (!alive) return;
+      const failed = results.find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+      const input = {} as MetricsInput;
+      let bad = false;
+      ids.forEach((id, i) => {
+        const r = results[i];
+        const vector = r.status === 'fulfilled' ? parseVector(r.value) : null;
+        if (vector) input[id] = vector;
+        else bad = true;
+      });
+      if (failed || bad) {
+        setState(prev => ({
+          ...prev,
+          configured: true,
+          error: failed ? String((failed.reason as Error)?.message || failed.reason) : 'The metrics service did not return a result',
+        }));
+        return;
+      }
+      const built = buildFromMetrics(input);
+      setState(prev => ({
+        configured: true,
+        status: built ? built.status : null,
+        history: built ? built.history : prev.history,
+        error: built ? null : 'No scan in the last few minutes',
+      }));
+    };
+    const load = statusUrl ? loadEndpoint : loadMetrics;
     load();
     const t = setInterval(load, POLL_MS);
     return () => {
       alive = false;
       clearInterval(t);
     };
-  }, [statusUrl, historyUrl]);
+  }, [statusUrl, historyUrl, metricsOn, metrics]);
   return state;
 }
 

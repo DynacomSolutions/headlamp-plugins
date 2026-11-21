@@ -113,16 +113,42 @@ workflow run, with the jobs as rows. Idle runners are not listed.
 - Everything starts expanded. Search and the node and scale-set filters apply
   to the job rows. Expand state is not kept in the URL.
 
-## Optional: status endpoint (enrichment and history)
+## Optional: scanner data (enrichment and history)
 
 Everything above works from Kubernetes objects alone. To add GitHub-side detail
 (exact job URLs and status, org runners registered outside the cluster) and job
-history, point the plugin at a JSON endpoint serving a scanner's
-`status.json` (and `history.json`). Configure it in Headlamp under
-Settings, Plugins, GitHub Runners:
+history, give the plugin scanner data. There are two ways. Configure either in
+Headlamp under Settings, Plugins, GitHub Runners.
+
+1. **Metrics service (preferred).** The scanner pushes its result to a
+   Prometheus-compatible store (such as VictoriaMetrics) after each scan. The
+   plugin reads it back with instant queries through the Kubernetes API service
+   proxy, so Kubernetes permissions apply (the `get` verb on `services/proxy` for
+   that Service). Setting the service turns it on. A blank namespace or port uses
+   the default (`monitoring`, `8428`).
+2. **JSON status endpoint.** A URL that serves a scanner's `status.json` (and
+   `history.json`). It wins over the metrics service when both are set.
+
+Series the scanner writes (the value of an `*_info` series is the scan time in
+seconds; text fields are labels):
+
+| Series | Labels |
+| --- | --- |
+| `gh_runner_node_info` | `node`, `display_name`, `kind`, `os`, `ready`, `state`, `state_reason`, `best_effort`, `description` |
+| `gh_runner_job_info` | `key`, `node`, `name`, `repository`, `workflow`, `workflow_ref`, `run_id`, `job_id`, `numeric_job_id`, `url`, `run_url`, `runner_name`, `scale_set`, `status`, `conclusion`, `started_at`, `completed_at` |
+| `gh_runner_starting_info` | `node`, `name`, `runner_name`, `scale_set`, `phase`, `started_at` |
+| `gh_runner_scale_set_info` | `scale_set`, `organisation`, `phase` |
+| `gh_runner_scale_set_runners` | `scale_set`, `field` (`min`, `max`, `current`, `pending`, `running`); the value is the count |
+
+The page keeps the newest row per node, job or scale set, so a changed label
+(state, status, phase) shows once. A job is live while its last sample is from
+the newest scan. After that it is a finished job: its completion time is its
+last sample, and the series lifetime in the store is the history (14 days, at most
+2000 jobs).
 
 | Setting | Meaning |
 | --- | --- |
+| Metrics namespace / service / port | Where the store's Service is. The service has no default: set it to turn the metrics source on. Namespace and port default to `monitoring` and `8428` |
 | Status endpoint | Either a same-cluster path, fetched through the Kubernetes API (for example `/api/v1/namespaces/NS/services/NAME:PORT/proxy/data/status.json`), or an absolute URL such as `https://status.example.com/data/status.json` |
 | History endpoint | Defaults to the status URL with `status.json` replaced by `history.json` |
 | External worker API group / version | Optional CRD group serving `externalworkers` (a builder registered outside the cluster). Empty disables |
@@ -158,14 +184,14 @@ Expected schema (all fields are optional except those listed):
 
 To preconfigure every browser, ship a `defaults.json` next to `main.js` in the
 plugin directory (for example written by an initContainer). It uses the same keys
-as the settings (`statusUrl`, `historyUrl`, `externalWorkerGroup`,
+as the settings (`metricsNamespace`, `metricsService`, `metricsPort`, `statusUrl`, `historyUrl`, `externalWorkerGroup`,
 `externalWorkerVersion`, `nodeAliases`, `poolRepos`, `policyPreferredNodes`,
 `policySpillNodes`, `policyRepoCap`, `policyRepoCaps`, `projectStripPrefixes`,
 `projectStripSuffixes`); non-empty values a user saves in the
 settings override it.
 
 Data older than 180 seconds is flagged stale. Kubernetes data stays the source
-of truth for what exists; the endpoint only overlays detail.
+of truth for what exists; the scanner data only overlays detail.
 
 ## Access needed
 

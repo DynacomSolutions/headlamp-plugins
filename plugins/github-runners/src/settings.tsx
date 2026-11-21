@@ -121,8 +121,38 @@ export function Settings(props: PluginSettingsDetailsProps) {
       </Typography>
       <Typography variant="body2">
         Everything works from Kubernetes objects alone. The optional fields below add GitHub-side
-        detail and history from a JSON status endpoint (the scanner&apos;s status.json /
-        history.json). The browser never holds a GitHub token; the endpoint does the API calls.
+        detail and history from the scanner. The scanner pushes its result to a Prometheus-compatible
+        store (such as VictoriaMetrics), and the page reads it back through the Kubernetes API service
+        proxy (the get verb on services/proxy there). The browser never holds a GitHub token.
+        A blank field uses the default. Setting the service turns the metrics source on.
+      </Typography>
+      <TextField
+        label="Metrics namespace"
+        helperText="Namespace of the metrics Service. Default monitoring."
+        value={cfg.metricsNamespace || ''}
+        onChange={set('metricsNamespace')}
+        placeholder="monitoring"
+        fullWidth
+      />
+      <TextField
+        label="Metrics service"
+        helperText="Name of the metrics Service, for example victoria-metrics. Empty turns the metrics source off."
+        value={cfg.metricsService || ''}
+        onChange={set('metricsService')}
+        placeholder="victoria-metrics"
+        fullWidth
+      />
+      <TextField
+        label="Metrics port"
+        helperText="Port number or name of the metrics Service. Default 8428."
+        value={cfg.metricsPort || ''}
+        onChange={set('metricsPort')}
+        placeholder="8428"
+        fullWidth
+      />
+      <Typography variant="body2">
+        As an alternative, a JSON status endpoint (a scanner&apos;s status.json and history.json).
+        It wins over the metrics source when both are set.
       </Typography>
       <TextField
         label="Status endpoint"
