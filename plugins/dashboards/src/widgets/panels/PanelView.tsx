@@ -6,6 +6,7 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { useResolveLink } from '../../links';
 import { WidgetFooter } from '../footer';
 import { useElementSize } from '../promql/useElementSize';
 import { SunburstChart } from '../sunburst/SunburstChart';
@@ -106,6 +107,14 @@ export function PanelView({
   source,
 }: PanelViewProps): JSX.Element {
   const seriesColour = useSeriesColours();
+  // Every row link goes to a Headlamp route or is dropped. This is the one place that decides it.
+  const resolveLink = useResolveLink();
+  const sourceId = source?.id;
+  const panelId = panel.id;
+  const rows = React.useMemo(
+    () => panel.rows.map(r => ({ ...r, link: resolveLink(r.link, { panelId, sourceId }) })),
+    [panel.rows, resolveLink, panelId, sourceId]
+  );
   const root = useElementSize<HTMLDivElement>();
   const rowsBox = useElementSize<HTMLDivElement>();
   // The rows fit the height of the widget (and show "+N more") when the list is the last block
@@ -195,21 +204,21 @@ export function PanelView({
             ))}
           </Box>
         ))}
-      {panel.rows.length > 0 && display.rowLayout === 'grouped-bars' && (
-        <PanelBars rows={panel.rows} kiosk={kiosk} editing={editing} source={source} />
+      {rows.length > 0 && display.rowLayout === 'grouped-bars' && (
+        <PanelBars rows={rows} kiosk={kiosk} editing={editing} source={source} />
       )}
-      {panel.rows.length > 0 && display.rowLayout === 'stacked-lanes' && (
+      {rows.length > 0 && display.rowLayout === 'stacked-lanes' && (
         <Box sx={fitted ? { flex: '1 1 0', minHeight: 0, overflow: 'hidden' } : { minWidth: 0 }}>
-          <PanelLanes rows={panel.rows} kiosk={kiosk} editing={editing} source={source} />
+          <PanelLanes rows={rows} kiosk={kiosk} editing={editing} source={source} />
         </Box>
       )}
-      {panel.rows.length > 0 && display.rowLayout === 'list' && (
+      {rows.length > 0 && display.rowLayout === 'list' && (
         <Box
           ref={rowsBox.ref}
           sx={fitted ? { flex: '1 1 0', minHeight: 0, overflow: 'hidden' } : { minWidth: 0 }}
         >
           <RowList
-            rows={panel.rows}
+            rows={rows}
             okWord={okWordOf(panel.id)}
             height={fitted ? rowsBox.size.height : 0}
             width={rowsBox.size.width}

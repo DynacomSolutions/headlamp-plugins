@@ -57,6 +57,20 @@ when they have their default value.
 
 A filter key in the URL overrides the saved view, even with an empty value.
 
+### Links and swipes stay inside Headlamp
+
+The app can run as an installed web app with no browser bar, so no widget link leaves Headlamp.
+
+- A widget link goes to a Headlamp route: a dashboard, a dashboard tab or a Headlamp page. It is a history push, so Back
+  returns to the dashboard. `{cluster}` in a path becomes the current cluster.
+- A panel row with an `http` or `https` link goes to the tab of the dashboard whose id is the panel id, else the source id
+  (for example `ais-console`, `hoarddb`, `uptime`). With no such tab the row has no link. A note shows an address on
+  another host as text.
+- A swipe right that starts in the left edge (24 px) goes Back, on every Headlamp page, with a hint that follows the
+  finger. A swipe left or right on the tab area of a dashboard shows the next or the previous tab (one history entry each).
+  A swipe is ignored on a text field, in a sideways scroll area (a wide table), with a text selection, with two fingers
+  and in edit mode. Mark an element `data-no-swipe` to keep a swipe for it. Alt+Left still works on a desktop.
+
 ## Header, footer and tab rail
 
 ### Header and footer
@@ -262,7 +276,7 @@ Rules for a widget:
 | Type | Settings |
 | --- | --- |
 | `core.clock` | Hours, minutes and seconds on or off, 12 or 24 hour, date on or off, a date format (preset or custom), time zone, size, zone name |
-| `core.note` | Markdown text (no raw HTML, no images, only web, mail and path links), alignment |
+| `core.note` | Markdown text (no raw HTML, no images, only path links), alignment |
 | `core.header` | Header text, subtitle, header or line or both, size, alignment |
 
 The date format uses these letters: `yyyy`, `yy` (year), `MMMM`, `MMM`, `MM`, `M` (month),
@@ -384,7 +398,7 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   reloads. This includes the cluster sources.
 - **What it draws**: the status and summary, the stats as tiles, the rows as a table (a fraction bar and a link
   when the row has them), the series as sparklines, the rings as sunbursts and the tables. A status is a shape and a
-  word, never colour alone. A link must be a web or path link: other schemes are dropped. Links are off in edit mode.
+  word, never colour alone. A link goes to a Headlamp route only (see Links and swipes above). Links are off in edit mode.
 - **Row icons**: a row may have `icon: { src, alt }`. `src` is a path relative to the source's `/api/widgets/`
   base, for example `icons/postgresql.svg` (for a service source that is the service proxy path, for a URL source
   it is relative to the base URL). `alt` is the kind, for example `PostgreSQL`, and defaults to the row label. A

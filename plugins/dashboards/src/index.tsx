@@ -15,9 +15,13 @@ import {
 } from '@kinvolk/headlamp-plugin/lib';
 import { DashboardPage } from './DashboardPage';
 import { DashboardsListPage } from './DashboardsListPage';
+import { installEdgeBack } from './edgeBack';
 import { getRegistry } from './registry';
 import { Settings } from './settings';
 import { registerBuiltinWidgets } from './widgets/builtin';
+
+// A swipe right from the left edge goes Back on every page (the installed app has no Back button).
+installEdgeBack();
 
 // Install the global registry first, so widgets from plugins that loaded earlier are picked up.
 registerBuiltinWidgets(getRegistry());

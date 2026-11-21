@@ -11,7 +11,7 @@
 import Box from '@mui/material/Box';
 import Tooltip from '@mui/material/Tooltip';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { InternalLink } from '../../links';
 import { useElementSize } from '../promql/useElementSize';
 import { limitColours } from './limitColours';
 import type { PanelRow } from './model';
@@ -76,14 +76,10 @@ function Account(props: { group: RowGroup; account: string; editing: boolean }):
   const { group, account, editing } = props;
   const link = group.link;
   if (!link || editing) return <>{account}</>;
-  return link.startsWith('/') ? (
-    <RouterLink to={link} style={LINK_STYLE}>
+  return (
+    <InternalLink to={link} style={LINK_STYLE}>
       {account}
-    </RouterLink>
-  ) : (
-    <a href={link} target="_blank" rel="noopener noreferrer" style={LINK_STYLE}>
-      {account}
-    </a>
+    </InternalLink>
   );
 }
 
