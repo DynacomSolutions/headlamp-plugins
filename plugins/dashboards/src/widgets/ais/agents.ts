@@ -9,7 +9,7 @@
  *
  * The count of agents lives here, so the sunburst and the Sessions tile use one number.
  */
-import type { PanelModel, PanelTable } from '../panels/model';
+import type { PanelAgentAccount, PanelModel, PanelTable } from '../panels/model';
 
 /** One running agent, as the `Agents` table reports it. */
 export interface AgentRecord {
@@ -18,6 +18,8 @@ export interface AgentRecord {
   /** The real login now, or null when the source could not resolve it. */
   identity: string | null;
   tool: string;
+  /** Each account that the session used, newest first. Empty when the source gives no split. */
+  accounts: PanelAgentAccount[];
   /** Where the identity came from, for example `gateway-ledger`. Empty when not reported. */
   source: string;
   age: string;
@@ -38,16 +40,34 @@ function findTable(panel: PanelModel | null | undefined): PanelTable | undefined
 const text = (v: string | number | undefined): string => (v === undefined ? '' : String(v).trim());
 
 /**
- * The agents of the `Agents` table, or null when the panel has no such table (an older source).
- * An empty table is an empty list: the source said that no agent runs.
+ * The agents of the panel, or null for an older source. A row that carries the agent fields is the
+ * best record: it has the active account and the account split, which a table cell cannot hold. Else
+ * the `Agents` table gives the records. An empty table is an empty list: the source said that no
+ * agent runs.
  */
 export function agentTable(panel: PanelModel | null | undefined): AgentRecord[] | null {
+  const withFields = (panel?.rows ?? []).filter(r => r.agent !== undefined);
+  if (withFields.length > 0) {
+    return withFields.map(r => {
+      const a = r.agent!;
+      return {
+        pool: a.pool,
+        // The active account wins over the identity that the console resolved.
+        identity: a.activeIdentity ?? a.identity,
+        tool: r.label.trim(),
+        accounts: a.identities,
+        source: a.identitySource,
+        age: r.value.trim(),
+      };
+    });
+  }
   const table = findTable(panel);
   if (!table) return null;
   return table.rows.map(r => ({
     pool: text(r.pool) || null,
     identity: text(r.identity) || null,
     tool: text(r.tool),
+    accounts: [],
     source: text(r.identitySource),
     age: text(r.age),
   }));
@@ -72,18 +92,18 @@ export function agentCount(panel: PanelModel | null | undefined): number {
   return panel.stats.reduce((n, s) => n + count(s.value), 0);
 }
 
-/** The source that makes a member the one that a gateway-routed pool serves now. */
-export const GATEWAY_SOURCE = 'gateway-ledger';
+/** The sources that make a member the one that a gateway-routed pool serves now. */
+export const GATEWAY_SOURCES = ['gateway-ledger', 'gateway-session'];
 
 /**
  * For each pool (by name), the members that the gateway served last, as the agents table says. Only
- * a record with the source `gateway-ledger` counts: a plain pool follows its registry active member,
+ * a record with the source `gateway-ledger` or `gateway-session` counts: a plain pool follows its registry active member,
  * and that member already carries the Active mark. The names keep the first-seen order.
  */
 export function servingByPool(panel: PanelModel | null | undefined): Map<string, string[]> {
   const out = new Map<string, string[]>();
   for (const a of agentTable(panel) ?? []) {
-    if (a.source !== GATEWAY_SOURCE || a.pool === null || a.identity === null) continue;
+    if (!GATEWAY_SOURCES.includes(a.source) || a.pool === null || a.identity === null) continue;
     const names = out.get(a.pool) ?? [];
     if (!names.includes(a.identity)) names.push(a.identity);
     out.set(a.pool, names);

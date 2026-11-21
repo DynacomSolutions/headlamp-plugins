@@ -56,7 +56,14 @@ describe('agentTable', () => {
   it('reads the records of the Agents table', () => {
     const t = agentTable(newPanel([rec('pool-x', 'red', 'claude', 'gateway-ledger')]));
     expect(t).toEqual([
-      { pool: 'pool-x', identity: 'red', tool: 'claude', source: 'gateway-ledger', age: '1h 2m' },
+      {
+        pool: 'pool-x',
+        identity: 'red',
+        tool: 'claude',
+        accounts: [],
+        source: 'gateway-ledger',
+        age: '1h 2m',
+      },
     ]);
   });
   it('turns an empty pool or identity into null', () => {
@@ -69,6 +76,59 @@ describe('agentTable', () => {
   });
   it('is an empty list for an empty table: the source said that no agent runs', () => {
     expect(agentTable(newPanel([], false))).toEqual([]);
+  });
+});
+
+describe('agentTable with the agent fields on the rows', () => {
+  const rowPanel = parsePanel({
+    version: 1,
+    id: 'agents',
+    stats: [],
+    rows: [
+      {
+        label: 'claude',
+        detail: 'pool-x / red',
+        value: '2h',
+        status: 'ok',
+        pool: 'pool-x',
+        identity: 'red',
+        activeIdentity: 'blue',
+        identitySource: 'gateway-session',
+        identities: [
+          {
+            identity: 'blue',
+            turns: 4,
+            inputTokens: 10,
+            outputTokens: 2,
+            cacheReadTokens: 1,
+            cacheWriteTokens: 0,
+          },
+          { identity: '', turns: 1 },
+          'bad',
+        ],
+      },
+      {
+        label: 'codex',
+        detail: 'solo',
+        value: '1h',
+        status: 'ok',
+        pool: null,
+        identity: 'solo',
+        identitySource: 'config-dir',
+      },
+    ],
+    tables: [{ title: 'Agents', columns: COLUMNS, rows: [rec('x', 'table', 'claude', 'x')] }],
+  });
+  it('reads the rows before the table, takes the active identity and drops a bad account', () => {
+    const t = agentTable(rowPanel);
+    expect(t?.map(a => [a.pool, a.identity, a.tool, a.source, a.age, a.accounts.length])).toEqual([
+      ['pool-x', 'blue', 'claude', 'gateway-session', '2h', 1],
+      [null, 'solo', 'codex', 'config-dir', '1h', 0],
+    ]);
+    expect(t?.[0].accounts[0]).toMatchObject({ identity: 'blue', turns: 4, inputTokens: 10 });
+  });
+  it('lists a gateway-session member as served by its pool', () => {
+    expect(Array.from(servingByPool(rowPanel))).toEqual([['pool-x', ['blue']]]);
   });
 });
 

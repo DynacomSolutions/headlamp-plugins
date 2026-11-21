@@ -3,14 +3,14 @@
  * Both are pure functions of a panel, so a test can check them without a browser.
  *
  * Agents. The ring order is swap pool (or "Direct"), then the real logged-in identity, then the
- * tool. A new AIS source reports each agent in the `Agents` table of its `agents` panel (see
- * `agents.ts`): that table gives the pool, the real identity and the identity source. An older
- * source has no table. Its rows carry the tool in `label` and one word in `detail`: an identity
- * name, the name of a pool identity such as `claude-pool`, or `unknown identity`. `agentPlacement`
- * maps such an old row to its pool and identity. An agent that the data does not place gets a named
- * segment, never "Other".
+ * tool. A new AIS source reports each agent with the fields `pool` (null for a direct login),
+ * `identity`, `identitySource` and, for a gateway session, `activeIdentity` and `identities` (see
+ * `agents.ts`). The active account wins over `identity`. An older source has none of these fields.
+ * Its rows carry the tool in `label` and one word in `detail`: an identity name, the name of a pool
+ * identity such as `claude-pool`, or `unknown identity`. `agentPlacement` maps such an old row to
+ * its pool and identity. An agent that the data does not place gets a named segment, never "Other".
  */
-import type { PanelModel, PanelRow } from '../panels/model';
+import type { PanelAgentAccount, PanelModel, PanelRow } from '../panels/model';
 import type { SunburstData, SunburstNode } from '../sunburst/geometry';
 import { agentTable } from './agents';
 import { splitLabel } from './join';
@@ -40,6 +40,8 @@ export function poolMembers(swap: PanelModel | null | undefined): Map<string, st
 
 /**
  * The pool and the identity of one agent row.
+ * - A row with the agent fields: the pool (null is "Direct") and `activeIdentity` or else `identity`.
+ *   The rules below apply only to a row without these fields.
  * - `unknown identity` (or an empty word): neither is reported.
  * - A word that ends in `-pool` names the pool identity that the agent runs under. The pool is
  *   known. The member that the pool swapped in is not reported.
@@ -47,6 +49,15 @@ export function poolMembers(swap: PanelModel | null | undefined): Map<string, st
  *   a direct login.
  */
 export function agentPlacement(row: PanelRow, members: Map<string, string>): AgentPlacement {
+  const fields = row.agent;
+  if (fields) {
+    // The new fields are the truth: a null pool is a direct login. Neither pool nor identity: not placed.
+    const identity = fields.activeIdentity ?? fields.identity;
+    return {
+      pool: fields.pool ?? (identity === null ? POOL_NOT_REPORTED : DIRECT),
+      identity: identity ?? IDENTITY_NOT_REPORTED,
+    };
+  }
   const word = row.detail.trim();
   if (word === '' || /^unknown identity$/i.test(word)) {
     return { pool: POOL_NOT_REPORTED, identity: IDENTITY_NOT_REPORTED };
@@ -60,6 +71,8 @@ interface Placed extends AgentPlacement {
   tool: string;
   /** The `identitySource` of the agent. Empty for an older source. */
   source: string;
+  /** Each account of the session. Empty for an older source. */
+  accounts: PanelAgentAccount[];
 }
 
 /** The agents of a panel, placed. The `Agents` table wins. An older panel falls back to its rows. */
@@ -75,6 +88,7 @@ export function placeAgents(
       identity: a.identity ?? IDENTITY_NOT_REPORTED,
       tool: a.tool || 'agent',
       source: a.source,
+      accounts: a.accounts,
     }));
   }
   const members = poolMembers(swap);
@@ -82,6 +96,7 @@ export function placeAgents(
     ...agentPlacement(row, members),
     tool: row.label.trim() || 'agent',
     source: '',
+    accounts: [],
   }));
 }
 
@@ -99,11 +114,59 @@ function sourceNote(sources: Map<string, number>): string | undefined {
   return `identity source ${text}`;
 }
 
+/** All tokens of one account: input, output and both cache kinds. */
+export const accountTokens = (a: PanelAgentAccount): number =>
+  a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
+
+/** A token count as short text: "431", "12.3K", "80.8M", "3.1B". */
+export function compactTokens(n: number): string {
+  const units: Array<[number, string]> = [
+    [1e12, 'T'],
+    [1e9, 'B'],
+    [1e6, 'M'],
+    [1e3, 'K'],
+  ];
+  for (const [size, unit] of units) {
+    if (n >= size) {
+      const v = n / size;
+      return `${v >= 100 ? Math.round(v) : Math.round(v * 10) / 10}${unit}`;
+    }
+  }
+  return String(Math.round(n));
+}
+
+/**
+ * The accounts note of the agents in one arc: "2 accounts: red 1.2M, blue 300K". It counts only the
+ * agents whose session used more than one account. The accounts add up over these agents and come
+ * largest first (a tie goes to the name). Undefined when no agent used more than one account.
+ */
+export function accountsNote(lists: PanelAgentAccount[][]): string | undefined {
+  const total = new Map<string, number>();
+  for (const accounts of lists) {
+    if (accounts.length < 2) continue;
+    for (const a of accounts)
+      total.set(a.identity, (total.get(a.identity) ?? 0) + accountTokens(a));
+  }
+  if (total.size === 0) return undefined;
+  const split = Array.from(total)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, tokens]) => `${name} ${compactTokens(tokens)}`)
+    .join(', ');
+  return `${total.size} accounts: ${split}`;
+}
+
+/** The parts of a tooltip note, joined. Undefined when there is no part. */
+const joinNotes = (...parts: Array<string | undefined>): string | undefined => {
+  const kept = parts.filter((p): p is string => p !== undefined && p !== '');
+  return kept.length > 0 ? kept.join(', ') : undefined;
+};
+
 const bump = (m: Map<string, number>, k: string): void => void m.set(k, (m.get(k) ?? 0) + 1);
 
 /**
  * The agents panel as a sunburst: pool (or "Direct"), then the real identity, then the tool. The
- * values are counts. The tooltip of an arc names the identity source of its agents.
+ * values are counts. The tooltip of an arc names the identity source of its agents. It also gives the
+ * token split per account for agents whose session used more than one account.
  */
 export function agentsToSunburst(
   agents: PanelModel | null | undefined,
@@ -112,14 +175,16 @@ export function agentsToSunburst(
   interface Leaf {
     n: number;
     sources: Map<string, number>;
+    accounts: PanelAgentAccount[][];
   }
   // pool -> identity -> tool -> count and sources, in first-seen order.
   const tree = new Map<string, Map<string, Map<string, Leaf>>>();
   for (const a of placeAgents(agents, swap)) {
     const ids = tree.get(a.pool) ?? new Map<string, Map<string, Leaf>>();
     const tools = ids.get(a.identity) ?? new Map<string, Leaf>();
-    const leaf = tools.get(a.tool) ?? { n: 0, sources: new Map<string, number>() };
+    const leaf = tools.get(a.tool) ?? { n: 0, sources: new Map<string, number>(), accounts: [] };
     leaf.n += 1;
+    leaf.accounts.push(a.accounts);
     bump(leaf.sources, a.source);
     tools.set(a.tool, leaf);
     ids.set(a.identity, tools);
@@ -130,6 +195,8 @@ export function agentsToSunburst(
     for (const l of leaves) for (const [k, n] of l.sources) out.set(k, (out.get(k) ?? 0) + n);
     return out;
   };
+  const lists = (leaves: Iterable<Leaf>): PanelAgentAccount[][] =>
+    Array.from(leaves).flatMap(l => l.accounts);
   const sum = (leaves: Iterable<Leaf>): number => {
     let n = 0;
     for (const l of leaves) n += l.n;
@@ -140,12 +207,12 @@ export function agentsToSunburst(
       key: identity,
       label: identity,
       value: sum(tools.values()),
-      detail: sourceNote(merge(tools.values())),
+      detail: joinNotes(sourceNote(merge(tools.values())), accountsNote(lists(tools.values()))),
       children: Array.from(tools, ([tool, leaf]) => ({
         key: `${identity}/${tool}`,
         label: tool,
         value: leaf.n,
-        detail: sourceNote(leaf.sources),
+        detail: joinNotes(sourceNote(leaf.sources), accountsNote(leaf.accounts)),
       })),
     })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
     const used = categories.reduce((s, c) => s + c.value, 0);
