@@ -13,7 +13,7 @@ import { useTheme } from '@mui/material/styles';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { InternalLink } from '../../links';
 import { INK, KIOSK_INK } from '../promql/palette';
 import { limitColours } from './limitColours';
 import type { PanelRow } from './model';
@@ -29,14 +29,10 @@ function GroupLabel(props: { group: RowGroup; editing: boolean }): JSX.Element {
   const { group, editing } = props;
   const link = group.link;
   if (!link || editing) return <>{group.label}</>;
-  return link.startsWith('/') ? (
-    <RouterLink to={link} style={{ color: 'inherit' }}>
+  return (
+    <InternalLink to={link} style={{ color: 'inherit' }}>
       {group.label}
-    </RouterLink>
-  ) : (
-    <a href={link} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>
-      {group.label}
-    </a>
+    </InternalLink>
   );
 }
 

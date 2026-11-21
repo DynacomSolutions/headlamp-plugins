@@ -46,6 +46,7 @@ import {
   useWidgetDefinitions,
 } from './hooks';
 import { enterBrowserFullscreen, KioskExitButton, KioskFrame, KioskOverlay } from './kiosk/Kiosk';
+import { LinkContext } from './links';
 import { createRefreshStore } from './refreshStore';
 import { useConnection } from './resilience/useConnection';
 import {
@@ -88,6 +89,7 @@ import {
   resolveFilters,
   serialiseQuery,
 } from './urlState';
+import { useTabSwipe } from './useTabSwipe';
 import { ensureClusterSources } from './widgets/panels/clusterSources';
 import { transportFor } from './widgets/panels/sourcesConfig';
 
@@ -221,8 +223,24 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   const base = pathBase(location.pathname);
   const listPath = buildPath({ name: '', tab: '' }, base);
+  // Each tab change is a history push, so Back returns to the tab before. The query stays.
   const goTab = (id: string) =>
     history.push({ pathname: buildPath({ name, tab: id }, base), search: location.search });
+  const tabIds = React.useMemo(() => spec?.tabs.map(t => t.id) ?? [], [spec?.tabs]);
+  const linkTargets = React.useMemo(
+    () => ({ base, dashboard: name, tabs: tabIds }),
+    [base, name, tabIds]
+  );
+  const activeIndex = Math.max(0, tabIds.indexOf(tabParam));
+  const [swipeArea, setSwipeArea] = React.useState<HTMLElement | null>(null);
+  useTabSwipe(swipeArea, {
+    enabled: !editing && tabIds.length > 1,
+    canStep: step => tabIds[activeIndex + step] !== undefined,
+    onStep: step => {
+      const next = tabIds[activeIndex + step];
+      if (next !== undefined) goTab(next);
+    },
+  });
 
   // ---- refresh ----
 
@@ -681,6 +699,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         {/* View mode draws the header widgets inline in the title bar. */}
         {editing && bandView('header')}
         <Box
+          ref={setSwipeArea}
+          data-tab-area
           sx={{
             display: 'flex',
             flexDirection: left ? 'row' : 'column',
@@ -808,240 +828,242 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   // One tree for the page and the full screen view. Only styles change between the two, so
   // every widget keeps its state and its data when the page enters or leaves full screen.
   return (
-    <KioskFrame active={kiosk} onExit={() => replaceQuery({ kiosk: false })}>
-      {dialogs}
-      <Box
-        ref={barRef}
-        data-title-bar
-        data-title-bar-level={barLevel}
-        data-title-bar-sticky={!kiosk && !editing && spec.header.sticky ? '' : undefined}
-        sx={{
-          display: 'flex',
-          // One row. Below the full width the bar folds its controls (see barLevel) and never wraps.
-          flexWrap: barLevel >= 1 ? 'nowrap' : 'wrap',
-          alignItems: 'center',
-          gap: kiosk ? 2.25 : 1,
-          mb: 1,
-          minWidth: 0,
-          // The wall header sits straight on the page background: no fill, edge or side padding.
-          ...(kiosk ? { minHeight: 68 } : {}),
-          ...(!kiosk && !editing && spec.header.sticky
-            ? { position: 'sticky', top: 0, zIndex: 4, bgcolor: 'background.default' }
-            : {}),
-        }}
-      >
+    <LinkContext.Provider value={linkTargets}>
+      <KioskFrame active={kiosk} onExit={() => replaceQuery({ kiosk: false })}>
+        {dialogs}
         <Box
-          sx={{
-            minWidth: 80,
-            maxWidth: kiosk ? 'none' : barLevel >= 2 ? 150 : 240,
-            flex: '0 1 auto',
-          }}
-        >
-          <Typography
-            variant={kiosk ? 'h6' : 'h5'}
-            component="h1"
-            noWrap
-            sx={kiosk ? { fontSize: 26, fontWeight: 700 } : undefined}
-          >
-            {spec.title}
-          </Typography>
-          {!kiosk && barLevel < 2 && spec.description && (
-            <Typography
-              variant="body2"
-              color="text.secondary"
-              noWrap
-              title={spec.description}
-              data-dashboard-description
-            >
-              {spec.description}
-            </Typography>
-          )}
-        </Box>
-        <RefreshControls
-          store={refresh}
-          seconds={seconds}
-          onSecondsChange={onSecondsChange}
-          showText={barLevel < 2}
-          showAuto={!kiosk}
-          narrow={barLevel >= 2}
-          iconSize={kiosk ? 26 : 22}
-          wall={kiosk}
-        />
-        <ConnectionIndicator />
-        <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
-          {(!kiosk || spec.kioskShowFilters) && filterBar}
-        </Box>
-        {!kiosk && !editing && (
-          <Tooltip
-            title={
-              writable ? 'Edit this dashboard' : 'You have read-only access to dashboards here'
-            }
-          >
-            <span>
-              <Button
-                variant="outlined"
-                disabled={!writable}
-                startIcon={<Icon icon="mdi:pencil-outline" width={18} height={18} />}
-                onClick={() => setEdit(true)}
-              >
-                Edit
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-        {headerStrip}
-        {kiosk ? (
-          <KioskExitButton onExit={() => replaceQuery({ kiosk: false })} />
-        ) : (
-          <Tooltip title="Full screen">
-            <IconButton
-              aria-label="Full screen"
-              sx={{
-                width: 40,
-                height: 40,
-                bgcolor: 'action.hover',
-                '&:hover': { bgcolor: 'action.selected' },
-              }}
-              onClick={() => {
-                enterBrowserFullscreen();
-                replaceQuery({ kiosk: true, edit: false });
-              }}
-            >
-              <Icon icon="mdi:fullscreen" width={22} height={22} />
-            </IconButton>
-          </Tooltip>
-        )}
-      </Box>
-      {!kiosk && canWrite === false && (
-        <Alert severity="info" sx={{ mb: 1 }}>
-          You have read-only access to dashboards in the namespace "{storage.namespace}". You can
-          view them but not change them.
-        </Alert>
-      )}
-      {!kiosk && stored.migrated && !editing && (
-        <Alert severity="info" sx={{ mb: 1 }}>
-          This dashboard was saved with an older format. It is upgraded when you save it.
-        </Alert>
-      )}
-      {editing && (
-        <Box
-          role="toolbar"
-          aria-label="Edit tools"
+          ref={barRef}
+          data-title-bar
+          data-title-bar-level={barLevel}
+          data-title-bar-sticky={!kiosk && !editing && spec.header.sticky ? '' : undefined}
           sx={{
             display: 'flex',
-            flexWrap: 'wrap',
+            // One row. Below the full width the bar folds its controls (see barLevel) and never wraps.
+            flexWrap: barLevel >= 1 ? 'nowrap' : 'wrap',
             alignItems: 'center',
-            gap: 1,
+            gap: kiosk ? 2.25 : 1,
             mb: 1,
-            p: 1,
-            border: '1px solid',
-            borderColor: 'divider',
-            borderRadius: 1,
+            minWidth: 0,
+            // The wall header sits straight on the page background: no fill, edge or side padding.
+            ...(kiosk ? { minHeight: 68 } : {}),
+            ...(!kiosk && !editing && spec.header.sticky
+              ? { position: 'sticky', top: 0, zIndex: 4, bgcolor: 'background.default' }
+              : {}),
           }}
         >
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<Icon icon="mdi:plus" width={18} height={18} />}
-            onClick={() => setPaletteOpen(true)}
-          >
-            Add widget
-          </Button>
-          <Button
-            size="small"
-            startIcon={<Icon icon="mdi:view-agenda" width={18} height={18} />}
-            onClick={() => edit(s => addSection(s, activeTabId, 'New section'))}
-          >
-            Add section
-          </Button>
-          <Button
-            size="small"
-            startIcon={<Icon icon="mdi:view-grid-outline" width={18} height={18} />}
-            onClick={() => setTabsOpen(true)}
-          >
-            Tabs
-          </Button>
-          <Button
-            size="small"
-            startIcon={<Icon icon="mdi:cog-outline" width={18} height={18} />}
-            onClick={() => setSettingsOpen(true)}
-          >
-            Dashboard settings
-          </Button>
-          <Box sx={{ flex: 1 }} />
-          {dirty && (
-            <Typography variant="caption" color="warning.main" role="status">
-              Unsaved changes
-            </Typography>
-          )}
-          <Button
-            size="small"
-            onClick={() =>
-              dirty && !window.confirm('Discard your changes?') ? undefined : setEdit(false)
-            }
-          >
-            {dirty ? 'Discard and close' : 'Close'}
-          </Button>
-          <Button size="small" disabled={!dirty || save.saving} onClick={discard}>
-            Revert
-          </Button>
-          <Button
-            size="small"
-            variant="contained"
-            disabled={!dirty || save.saving}
-            onClick={async () => {
-              // Stay in edit mode when the draft changed while the save ran.
-              if (draft && (await saveDraft(draft)) && savedDraftRef.current) setEdit(false);
+          <Box
+            sx={{
+              minWidth: 80,
+              maxWidth: kiosk ? 'none' : barLevel >= 2 ? 150 : 240,
+              flex: '0 1 auto',
             }}
           >
-            {save.saving ? 'Saving…' : 'Save'}
-          </Button>
+            <Typography
+              variant={kiosk ? 'h6' : 'h5'}
+              component="h1"
+              noWrap
+              sx={kiosk ? { fontSize: 26, fontWeight: 700 } : undefined}
+            >
+              {spec.title}
+            </Typography>
+            {!kiosk && barLevel < 2 && spec.description && (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                noWrap
+                title={spec.description}
+                data-dashboard-description
+              >
+                {spec.description}
+              </Typography>
+            )}
+          </Box>
+          <RefreshControls
+            store={refresh}
+            seconds={seconds}
+            onSecondsChange={onSecondsChange}
+            showText={barLevel < 2}
+            showAuto={!kiosk}
+            narrow={barLevel >= 2}
+            iconSize={kiosk ? 26 : 22}
+            wall={kiosk}
+          />
+          <ConnectionIndicator />
+          <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+            {(!kiosk || spec.kioskShowFilters) && filterBar}
+          </Box>
+          {!kiosk && !editing && (
+            <Tooltip
+              title={
+                writable ? 'Edit this dashboard' : 'You have read-only access to dashboards here'
+              }
+            >
+              <span>
+                <Button
+                  variant="outlined"
+                  disabled={!writable}
+                  startIcon={<Icon icon="mdi:pencil-outline" width={18} height={18} />}
+                  onClick={() => setEdit(true)}
+                >
+                  Edit
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+          {headerStrip}
+          {kiosk ? (
+            <KioskExitButton onExit={() => replaceQuery({ kiosk: false })} />
+          ) : (
+            <Tooltip title="Full screen">
+              <IconButton
+                aria-label="Full screen"
+                sx={{
+                  width: 40,
+                  height: 40,
+                  bgcolor: 'action.hover',
+                  '&:hover': { bgcolor: 'action.selected' },
+                }}
+                onClick={() => {
+                  enterBrowserFullscreen();
+                  replaceQuery({ kiosk: true, edit: false });
+                }}
+              >
+                <Icon icon="mdi:fullscreen" width={22} height={22} />
+              </IconButton>
+            </Tooltip>
+          )}
         </Box>
-      )}
-      {!kiosk && save.conflict && (
-        <Alert
-          severity="warning"
-          sx={{ mb: 1 }}
-          action={
-            <>
-              <Button color="inherit" size="small" onClick={reloadLatest}>
-                Reload and discard my changes
-              </Button>
-              <Button color="inherit" size="small" onClick={overwrite}>
-                Overwrite with my changes
-              </Button>
-            </>
+        {!kiosk && canWrite === false && (
+          <Alert severity="info" sx={{ mb: 1 }}>
+            You have read-only access to dashboards in the namespace "{storage.namespace}". You can
+            view them but not change them.
+          </Alert>
+        )}
+        {!kiosk && stored.migrated && !editing && (
+          <Alert severity="info" sx={{ mb: 1 }}>
+            This dashboard was saved with an older format. It is upgraded when you save it.
+          </Alert>
+        )}
+        {editing && (
+          <Box
+            role="toolbar"
+            aria-label="Edit tools"
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 1,
+              mb: 1,
+              p: 1,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+            }}
+          >
+            <Button
+              size="small"
+              variant="contained"
+              startIcon={<Icon icon="mdi:plus" width={18} height={18} />}
+              onClick={() => setPaletteOpen(true)}
+            >
+              Add widget
+            </Button>
+            <Button
+              size="small"
+              startIcon={<Icon icon="mdi:view-agenda" width={18} height={18} />}
+              onClick={() => edit(s => addSection(s, activeTabId, 'New section'))}
+            >
+              Add section
+            </Button>
+            <Button
+              size="small"
+              startIcon={<Icon icon="mdi:view-grid-outline" width={18} height={18} />}
+              onClick={() => setTabsOpen(true)}
+            >
+              Tabs
+            </Button>
+            <Button
+              size="small"
+              startIcon={<Icon icon="mdi:cog-outline" width={18} height={18} />}
+              onClick={() => setSettingsOpen(true)}
+            >
+              Dashboard settings
+            </Button>
+            <Box sx={{ flex: 1 }} />
+            {dirty && (
+              <Typography variant="caption" color="warning.main" role="status">
+                Unsaved changes
+              </Typography>
+            )}
+            <Button
+              size="small"
+              onClick={() =>
+                dirty && !window.confirm('Discard your changes?') ? undefined : setEdit(false)
+              }
+            >
+              {dirty ? 'Discard and close' : 'Close'}
+            </Button>
+            <Button size="small" disabled={!dirty || save.saving} onClick={discard}>
+              Revert
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={!dirty || save.saving}
+              onClick={async () => {
+                // Stay in edit mode when the draft changed while the save ran.
+                if (draft && (await saveDraft(draft)) && savedDraftRef.current) setEdit(false);
+              }}
+            >
+              {save.saving ? 'Saving…' : 'Save'}
+            </Button>
+          </Box>
+        )}
+        {!kiosk && save.conflict && (
+          <Alert
+            severity="warning"
+            sx={{ mb: 1 }}
+            action={
+              <>
+                <Button color="inherit" size="small" onClick={reloadLatest}>
+                  Reload and discard my changes
+                </Button>
+                <Button color="inherit" size="small" onClick={overwrite}>
+                  Overwrite with my changes
+                </Button>
+              </>
+            }
+          >
+            {save.error}
+          </Alert>
+        )}
+        {!kiosk && save.error && !save.conflict && (
+          <Alert
+            severity="error"
+            sx={{ mb: 1 }}
+            onClose={() => setSave(s => ({ ...s, error: undefined }))}
+          >
+            {save.error}
+          </Alert>
+        )}
+        <Box
+          data-kiosk-scroll={kiosk ? '' : undefined}
+          sx={
+            kiosk
+              ? {
+                  flex: 1,
+                  minHeight: 0,
+                  overflowY: 'auto',
+                  scrollbarWidth: 'none',
+                  '&::-webkit-scrollbar': { display: 'none' },
+                }
+              : undefined
           }
         >
-          {save.error}
-        </Alert>
-      )}
-      {!kiosk && save.error && !save.conflict && (
-        <Alert
-          severity="error"
-          sx={{ mb: 1 }}
-          onClose={() => setSave(s => ({ ...s, error: undefined }))}
-        >
-          {save.error}
-        </Alert>
-      )}
-      <Box
-        data-kiosk-scroll={kiosk ? '' : undefined}
-        sx={
-          kiosk
-            ? {
-                flex: 1,
-                minHeight: 0,
-                overflowY: 'auto',
-                scrollbarWidth: 'none',
-                '&::-webkit-scrollbar': { display: 'none' },
-              }
-            : undefined
-        }
-      >
-        {content}
-      </Box>
-    </KioskFrame>
+          {content}
+        </Box>
+      </KioskFrame>
+    </LinkContext.Provider>
   );
 }
 

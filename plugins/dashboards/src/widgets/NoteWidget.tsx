@@ -3,8 +3,10 @@ import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import ReactMarkdown, { Components } from 'react-markdown';
+import { Link as RouterLink } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../contract';
+import { isAppPath, useResolveLink } from '../links';
 import { SettingsForm } from './SettingsForm';
 
 export interface NoteConfig {
@@ -12,23 +14,25 @@ export interface NoteConfig {
   align: 'left' | 'center' | 'right';
 }
 
-/** Only web and mail links are followed. A `javascript:` or `data:` link is shown as text. */
+/** A note link stays inside Headlamp: only a path is followed. Any other address is shown as text. */
 export function safeHref(url: string | undefined): string | undefined {
-  if (!url) return undefined;
-  return /^(https?:|mailto:|\/|#)/i.test(url.trim()) ? url : undefined;
+  return isAppPath(url?.trim()) ? url?.trim() : undefined;
+}
+
+function NoteLink(props: { href?: string; children?: React.ReactNode }): JSX.Element {
+  const resolve = useResolveLink();
+  const to = resolve(safeHref(props.href));
+  return to ? (
+    <Link component={RouterLink} to={to}>
+      {props.children}
+    </Link>
+  ) : (
+    <span>{props.children}</span>
+  );
 }
 
 const COMPONENTS: Components = {
-  a: ({ href, children }) => {
-    const safe = safeHref(href);
-    return safe ? (
-      <Link href={safe} target="_blank" rel="noopener noreferrer">
-        {children}
-      </Link>
-    ) : (
-      <span>{children}</span>
-    );
-  },
+  a: ({ href, children }) => <NoteLink href={href}>{children}</NoteLink>,
   h1: ({ children }) => (
     <Typography variant="h5" component="h2" gutterBottom>
       {children}

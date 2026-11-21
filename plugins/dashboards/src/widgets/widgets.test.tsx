@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@iconify/react', () => ({ Icon: (p: { icon: string }) => <i data-icon={p.icon} /> }));
@@ -81,28 +82,34 @@ describe('clock widget', () => {
 describe('note widget', () => {
   it('renders Markdown and does not run HTML', () => {
     const { container } = render(
-      <NoteView
-        config={{
-          markdown:
-            '# Title\n\n**bold** <script>x</script> [ok](https://example.com) [bad](javascript:alert(1))',
-          align: 'left',
-        }}
-      />
+      <MemoryRouter>
+        <NoteView
+          config={{
+            markdown:
+              '# Title\n\n**bold** <script>x</script> [ok](/dashboards/ops/hoarddb) [web](https://example.com) [bad](javascript:alert(1))',
+            align: 'left',
+          }}
+        />
+      </MemoryRouter>
     );
     expect(container.querySelector('h2')?.textContent).toBe('Title');
     expect(container.querySelector('strong')?.textContent).toBe('bold');
     expect(container.querySelector('script')).toBeNull();
+    // Only the path is a link. The web address and the script address are plain text.
     const links = Array.from(container.querySelectorAll('a'));
-    expect(links.map(a => a.getAttribute('href'))).toEqual(['https://example.com']);
+    expect(links.map(a => a.getAttribute('href'))).toEqual(['/dashboards/ops/hoarddb']);
+    expect(links.some(a => a.getAttribute('target') === '_blank')).toBe(false);
+    expect(container.textContent).toContain('web');
   });
   it('shows a hint for an empty note', () => {
     const { container } = render(<NoteView config={{ markdown: '  ', align: 'left' }} />);
     expect(container.textContent).toMatch(/Empty note/);
   });
-  it('allows web, mail, path and fragment links only', () => {
-    expect(safeHref('https://a.example.com')).toBeDefined();
-    expect(safeHref('mailto:a@example.com')).toBeDefined();
+  it('follows paths inside Headlamp only', () => {
     expect(safeHref('/dashboards')).toBeDefined();
+    expect(safeHref('https://a.example.com')).toBeUndefined();
+    expect(safeHref('mailto:a@example.com')).toBeUndefined();
+    expect(safeHref('//a.example.com')).toBeUndefined();
     expect(safeHref('javascript:alert(1)')).toBeUndefined();
     expect(safeHref('data:text/html,x')).toBeUndefined();
     expect(safeHref(undefined)).toBeUndefined();

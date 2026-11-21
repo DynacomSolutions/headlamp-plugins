@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
-import { MemoryRouter, Route, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, useHistory, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@iconify/react', () => ({ Icon: (p: { icon: string }) => <i data-icon={p.icon} /> }));
@@ -50,6 +50,30 @@ const Where = () => {
   return <div data-testid="where">{l.pathname + l.search}</div>;
 };
 
+const router = { history: null as ReturnType<typeof useHistory> | null };
+const Hist = () => {
+  router.history = useHistory();
+  return null;
+};
+
+/** jsdom has no Touch, so a plain event carries the touch lists. */
+function touch(type: string, x: number, y: number, t: number, target: EventTarget) {
+  const e = new Event(type, { bubbles: true });
+  const list = [{ clientX: x, clientY: y }];
+  Object.defineProperty(e, 'touches', { value: type === 'touchend' ? [] : list });
+  Object.defineProperty(e, 'changedTouches', { value: list });
+  Object.defineProperty(e, 'timeStamp', { value: t });
+  act(() => {
+    target.dispatchEvent(e);
+  });
+}
+
+function swipe(target: EventTarget, fromX: number, toX: number, y = 300) {
+  touch('touchstart', fromX, y, 0, target);
+  touch('touchmove', (fromX + toX) / 2, y + 4, 60, target);
+  touch('touchend', toX, y + 6, 120, target);
+}
+
 function mount(
   url: string,
   getUserConfirmation?: (message: string, callback: (ok: boolean) => void) => void
@@ -58,6 +82,7 @@ function mount(
     <MemoryRouter initialEntries={[url]} getUserConfirmation={getUserConfirmation}>
       <Route path="/dashboards/:name/:tab?" component={DashboardPage} />
       <Where />
+      <Hist />
     </MemoryRouter>
   );
 }
@@ -107,6 +132,75 @@ describe('dashboard page', () => {
       expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes')
     );
     expect(screen.queryByText('Hello header')).toBeNull();
+  });
+
+  it('pushes a history entry for each tab change, so Back restores the tab before', async () => {
+    mount('/dashboards/ops?kiosk=0&range=24h');
+    await screen.findByText('Hello header');
+    fireEvent.click(screen.getByRole('tab', { name: /Nodes/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe(
+        '/dashboards/ops/nodes?kiosk=0&range=24h'
+      )
+    );
+    act(() => router.history?.goBack());
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?kiosk=0&range=24h')
+    );
+    expect(await screen.findByText('Hello header')).toBeTruthy();
+  });
+
+  it('moves to the next and the previous tab with a swipe on the tab area, one history entry each', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Hello header');
+    const area = document.querySelector('[data-tab-area]') as HTMLElement;
+    // The first tab has no previous tab.
+    swipe(area, 100, 260);
+    expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops');
+    // A swipe to the left shows the next tab.
+    swipe(area, 260, 100);
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes')
+    );
+    // The last tab has no next tab.
+    swipe(area, 260, 100);
+    expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes');
+    // A swipe to the right shows the previous tab.
+    swipe(area, 100, 260);
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/overview')
+    );
+    // Back goes through the swipes: nodes, then the first entry.
+    act(() => router.history?.goBack());
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes')
+    );
+    act(() => router.history?.goBack());
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
+  });
+
+  it('leaves a swipe on a sideways scroll area, a short swipe and a swipe in edit mode alone', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Hello header');
+    const area = document.querySelector('[data-tab-area]') as HTMLElement;
+    // A short swipe does nothing.
+    swipe(area, 200, 160);
+    expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops');
+    // A wide table keeps the swipe for its own scroll.
+    const wide = document.createElement('div');
+    wide.style.overflowX = 'auto';
+    Object.defineProperty(wide, 'scrollWidth', { value: 900, configurable: true });
+    Object.defineProperty(wide, 'clientWidth', { value: 300, configurable: true });
+    area.appendChild(wide);
+    swipe(wide, 260, 100);
+    expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops');
+    wide.remove();
+    // The swipe belongs to the drag of widgets in edit mode.
+    cleanup();
+    mount('/dashboards/ops?edit=1');
+    await screen.findByRole('toolbar', { name: 'Edit tools' });
+    swipe(document.querySelector('[data-tab-area]') as HTMLElement, 260, 100);
+    expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops?edit=1');
   });
 
   it('enters edit mode from the query string, with the edit toolbar', async () => {

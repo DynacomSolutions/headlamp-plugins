@@ -9,7 +9,7 @@
  */
 import Box from '@mui/material/Box';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { InternalLink } from '../../links';
 import type { PanelRow, PanelStatus } from './model';
 import { RowIcon } from './RowIcon';
 import type { PanelSource } from './sources';
@@ -26,14 +26,10 @@ export function Label(props: { row: PanelRow; editing: boolean }): JSX.Element {
   const { row, editing } = props;
   const link = row.link;
   if (!link || editing) return <>{row.label}</>;
-  return link.startsWith('/') ? (
-    <RouterLink to={link} style={LINK_STYLE}>
+  return (
+    <InternalLink to={link} style={LINK_STYLE}>
       {row.label}
-    </RouterLink>
-  ) : (
-    <a href={link} target="_blank" rel="noopener noreferrer" style={LINK_STYLE}>
-      {row.label}
-    </a>
+    </InternalLink>
   );
 }
 
