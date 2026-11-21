@@ -112,22 +112,41 @@ describe('node order of a pair', () => {
     capacity: 100,
     categories: [],
     nodes: [
-      node('n:hq0', 'hq0', 50, 10),
-      node('n:eu2', 'eu2', 30, 5),
-      node('n:eu10', 'eu10', 2, 1),
+      node('n:worker-3', 'worker-3', 50, 10),
+      node('n:worker-2', 'worker-2', 30, 5),
+      node('n:worker-10', 'worker-10', 2, 1),
     ],
   };
   const b = {
     capacity: 100,
     categories: [],
-    nodes: [node('n:eu2', 'eu2', 40, 5), node('n:hq1', 'hq1', 60, 5), node('n:hq0', 'hq0', 8, 4)],
+    nodes: [
+      node('n:worker-2', 'worker-2', 40, 5),
+      node('n:worker-4', 'worker-4', 60, 5),
+      node('n:worker-3', 'worker-3', 8, 4),
+    ],
   };
   it('is one order by name for both rings and the legend, whatever the size or the chart', () => {
     const order = pairOrder(a, b);
-    expect(order.map(o => o.label)).toEqual(['eu2', 'eu10', 'hq0', 'hq1']);
-    expect(inOrder(a, order).nodes!.map(n => n.label)).toEqual(['eu2', 'eu10', 'hq0', 'hq1']);
-    expect(inOrder(b, order).nodes!.map(n => n.label)).toEqual(['eu2', 'eu10', 'hq0', 'hq1']);
-    expect(pairNodes(a, b).map(n => n.label)).toEqual(['eu2', 'eu10', 'hq0', 'hq1']);
+    expect(order.map(o => o.label)).toEqual(['worker-2', 'worker-3', 'worker-4', 'worker-10']);
+    expect(inOrder(a, order).nodes!.map(n => n.label)).toEqual([
+      'worker-2',
+      'worker-3',
+      'worker-4',
+      'worker-10',
+    ]);
+    expect(inOrder(b, order).nodes!.map(n => n.label)).toEqual([
+      'worker-2',
+      'worker-3',
+      'worker-4',
+      'worker-10',
+    ]);
+    expect(pairNodes(a, b).map(n => n.label)).toEqual([
+      'worker-2',
+      'worker-3',
+      'worker-4',
+      'worker-10',
+    ]);
   });
   it('draws the same node at the same angle start order in both rings, with an arc for every legend node', () => {
     const { container } = render(
@@ -148,7 +167,7 @@ describe('node order of a pair', () => {
     expect(keys('CPU')).toEqual(legend);
     expect(keys('Memory')).toEqual(legend);
     // The node that only one ring has still has an arc in the other ring.
-    expect(legend).toContain('n:hq1');
+    expect(legend).toContain('n:worker-4');
   });
 });
 
