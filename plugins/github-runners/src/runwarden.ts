@@ -1,5 +1,5 @@
 /*
- * RunWarden data source. RunWarden serves the widget panel API (PanelModel v1)
+ * Runner service data source. The runner service serves the widget panel API (PanelModel v1)
  * on a Service. This module is pure (no React, no network): it validates the
  * panels, builds the service-proxy paths and maps the panels to the shapes the
  * GitHub Runners page shows. Panel rows carry their numbers as text in `detail`
@@ -74,7 +74,7 @@ const PORT = /^([0-9]{1,5}|[a-z0-9]([-a-z0-9]{0,13}[a-z0-9])?)$/;
 
 const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 
-/** The effective RunWarden source: stored settings over the generic defaults. */
+/** The effective runner service source: stored settings over the generic defaults. */
 export function resolveSource(cfg: PluginConfig): RunWardenSource {
   const raw = text(cfg.runwardenMode).toLowerCase();
   const mode: RunWardenMode = raw === 'on' || raw === 'off' ? raw : 'auto';
@@ -88,7 +88,7 @@ export function resolveSource(cfg: PluginConfig): RunWardenSource {
   return { mode, namespace, service, port, problem };
 }
 
-/** Path of the Kubernetes API service proxy for one RunWarden path (such as `/api/widgets`). */
+/** Path of the Kubernetes API service proxy for one runner service path (such as `/api/widgets`). */
 export function proxyPath(src: RunWardenSource, path: string): string {
   const e = encodeURIComponent;
   const tail = path.startsWith('/') ? path : `/${path}`;

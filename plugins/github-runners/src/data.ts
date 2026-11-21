@@ -262,7 +262,7 @@ export interface RunWardenData {
 
 const reasonOf = (e: unknown): string => String((e as Error)?.message || e);
 
-/** Poll the RunWarden panels through the Kubernetes service proxy. Off when the mode is off. */
+/** Poll the runner service panels through the Kubernetes service proxy. Off when the mode is off. */
 export function useRunWarden(cfg: PluginConfig): RunWardenData {
   const source = React.useMemo(
     () => resolveSource(cfg),
@@ -332,7 +332,7 @@ export function useRunWarden(cfg: PluginConfig): RunWardenData {
 
 export interface Board {
   cfg: PluginConfig;
-  /** Where the numbers come from. RunWarden when it answers, otherwise the ARC feed and Kubernetes. */
+  /** Where the numbers come from. The runner service when it answers, otherwise the ARC feed and Kubernetes. */
   dataSource: 'runwarden' | 'arc';
   runwarden: RunWardenData;
   loading: boolean;
@@ -358,7 +358,7 @@ export function useBoard(): Board {
   const workers = useExternalWorkers(cfg);
   const remote = useRemote(cfg);
   const runwarden = useRunWarden(cfg);
-  // Auto: RunWarden while it loads or works, the ARC path once it fails. On: RunWarden only. Off: ARC only.
+  // Auto: the runner service while it loads or works, the ARC path once it fails. On: the runner service only. Off: ARC only.
   const dataSource: 'runwarden' | 'arc' =
     runwarden.state === 'off' || (runwarden.source.mode === 'auto' && runwarden.state === 'error')
       ? 'arc'

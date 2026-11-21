@@ -3,31 +3,31 @@
 A [Headlamp](https://headlamp.dev/) plugin for CI runners. It adds a **GitHub
 Runners** sidebar entry. It has two data sources:
 
-1. **RunWarden** (first choice). The page reads the RunWarden widget panels.
+1. **Runner service** (first choice). The page reads the widget panels of a runner
+   service.
 2. **ARC feed** (fallback). The page reads
    [Actions Runner Controller](https://github.com/actions/actions-runner-controller)
    (ARC, `actions.github.com/v1alpha1`) objects and an optional status endpoint.
 
 A chip beside the title shows which source is in use.
 
-## RunWarden source
+## Runner service source
 
-RunWarden serves the widget panel API (PanelModel v1) on a Kubernetes Service:
+The runner service serves the widget panel API (PanelModel v1) on a Kubernetes Service:
 `GET /api/widgets` and `GET /api/widgets/<id>`. The browser reaches it through
 the Kubernetes API service proxy
 (`/api/v1/namespaces/NS/services/NAME:PORT/proxy/api/widgets/<id>`), so Kubernetes
 permissions apply. The signed-in user needs the `get` verb on `services/proxy`
-for that Service. The browser holds no token for RunWarden.
+for that Service. The browser holds no token for the runner service.
 
 | Setting | Meaning |
 | --- | --- |
-| RunWarden | `Auto` (default) uses RunWarden and falls back to the ARC feed when it does not answer. `On` uses RunWarden only. `Off` uses the ARC feed only. |
-| RunWarden namespace / service / port | Where the widgets Service is. Defaults: `runwarden`, `runwarden-widgets`, `80`. A blank field uses the default. |
+| Runner service | `Auto` (default) uses the runner service and falls back to the ARC feed when it does not answer. `On` uses the runner service only. `Off` uses the ARC feed only. |
+| Runner service namespace / name / port | Where the widgets Service is. A blank field uses the built-in default. |
 
 The settings page has a **Test** button. It asks the Service for its panel list
 and shows how many panels it found, as the Dashboards panel sources do. The
-keys for `defaults.json` are `runwardenMode`, `runwardenNamespace`,
-`runwardenService` and `runwardenPort`.
+keys for `defaults.json` are in `src/types.ts`.
 
 | Panel | Shown on |
 | --- | --- |
@@ -47,12 +47,12 @@ five minutes are flagged stale. The ARC-only tabs (Scale sets, Listeners) show
 only with the ARC feed.
 
 The page then reads no ARC objects for its numbers. It still watches them in the
-background, so the ARC tabs are ready if RunWarden stops answering.
+background, so the ARC tabs are ready if the runner service stops answering.
 
 ## ARC feed (fallback)
 
-The sections below describe the ARC feed. The page uses it when RunWarden is
-`Off`, or in `Auto` mode when RunWarden does not answer.
+The sections below describe the ARC feed. The page uses it when the runner service is
+`Off`, or in `Auto` mode when the runner service does not answer.
 
 ## What the ARC feed shows
 
