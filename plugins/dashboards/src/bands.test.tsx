@@ -20,6 +20,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib/CommonComponents', () => ({
   SectionBox: (p: { children: React.ReactNode }) => <div>{p.children}</div>,
 }));
 
+import { HeaderPart,headerWidgets } from './components/HeaderStrip';
 import { DashboardPage } from './DashboardPage';
 import { getRegistry } from './registry';
 import { addTab, addWidget } from './spec/edit';
@@ -262,24 +263,26 @@ describe('one row header', () => {
     expect(document.querySelectorAll('[data-band="header"]')).toHaveLength(1);
     order(
       within(bar).getByRole('heading', { name: 'Ops' }),
-      bar.querySelector('[data-last-refreshed]'),
       within(bar).getByRole('search'),
       header.querySelector('[data-clock-widget]'),
+      bar.querySelector('[data-last-refreshed]'),
+      within(bar).getByRole('button', { name: 'Refresh now' }),
       within(bar).getByRole('button', { name: 'Full screen' })
     );
     // The row sits above the tabs and the content.
     order(bar, screen.getByText('Overview body'));
   });
 
-  it('does the same in the kiosk: title, filters, clock, then Exit full screen', async () => {
+  it('does the same in the kiosk: title, clock, then Refresh and Exit full screen', async () => {
     const { container } = mount('/dashboards/ops?kiosk=1');
     await screen.findByText('Overview body');
     const overlay = container.ownerDocument.querySelector('[data-kiosk-overlay]') as HTMLElement;
     const header = band('header')!;
     order(
       within(overlay).getByRole('heading', { name: 'Ops' }),
-      overlay.querySelector('[data-last-refreshed]'),
       header.querySelector('[data-clock-widget]'),
+      overlay.querySelector('[data-last-refreshed]'),
+      within(overlay).getByRole('button', { name: 'Refresh now' }),
       within(overlay).getByRole('button', { name: 'Exit full screen' })
     );
     // The bar and the exit button share one flex row, and the header is in that row.
@@ -320,16 +323,47 @@ describe('one row header', () => {
     expect(within(band('header')!).getByLabelText(/^More actions for /)).toBeTruthy();
   });
 
-  it('draws the full screen buttons in the page style, never as a solid contained button', async () => {
-    mount('/dashboards/ops');
-    await screen.findByText('Overview body');
-    expect(screen.getByRole('button', { name: 'Full screen' }).className).not.toMatch(/contained/);
-    cleanup();
-    mount('/dashboards/ops?kiosk=1');
-    await screen.findByText('Overview body');
-    const exit = screen.getByRole('button', { name: 'Exit full screen' });
-    expect(exit.className).toMatch(/MuiButton-outlined/);
-    expect(exit.className).not.toMatch(/MuiButton-contained/);
+  it('draws the full screen and refresh buttons as plain icons with the words in the tooltip', async () => {
+    for (const url of ['/dashboards/ops', '/dashboards/ops?kiosk=1']) {
+      mount(url);
+      await screen.findByText('Overview body');
+      const names = url.includes('kiosk')
+        ? ['Refresh now', 'Exit full screen']
+        : ['Refresh now', 'Full screen'];
+      for (const name of names) {
+        const btn = screen.getByRole('button', { name });
+        // No text, an icon, no filled plate, no edge.
+        expect(btn.textContent).toBe('');
+        expect(btn.querySelector('[data-icon]')).not.toBeNull();
+        expect(btn.className).toMatch(/MuiIconButton/);
+        expect(btn.className).not.toMatch(/MuiButton-(outlined|contained)/);
+        const css = getComputedStyle(btn);
+        expect(['', 'transparent', 'rgba(0, 0, 0, 0)']).toContain(css.backgroundColor);
+        expect(parseInt(css.borderWidth || '0', 10) || 0).toBe(0);
+      }
+      cleanup();
+    }
+  });
+
+  it('puts the alert chips left, the clock in the middle and the rest right', () => {
+    const w = (id: string, type: string, x: number) =>
+      ({ id, type, title: '', config: {}, x, y: 0, w: 3, h: 3 } as any);
+    const band = (widgets: any[]) =>
+      ({ show: 'both', sticky: true, section: { id: '@header', widgets } } as any);
+    const b = band([
+      w('c', 'core.clock', 6),
+      w('b', 'agent.alert-chips', 0),
+      w('a', 'core.header', 10),
+    ]);
+    const ids = (part: HeaderPart) => headerWidgets(b, part).map(x => x.id);
+    expect(ids('left')).toEqual(['b']);
+    expect(ids('centre')).toEqual(['c']);
+    expect(ids('right')).toEqual(['a']);
+    // With no clock, every widget stays on the left.
+    const none = band([w('b', 'agent.alert-chips', 0), w('a', 'core.header', 10)]);
+    expect(headerWidgets(none, 'left').map(x => x.id)).toEqual(['b', 'a']);
+    expect(headerWidgets(none, 'centre')).toEqual([]);
+    expect(headerWidgets(none, 'right')).toEqual([]);
   });
 });
 

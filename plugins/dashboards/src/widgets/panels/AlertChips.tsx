@@ -1,8 +1,9 @@
 /*
  * The alert chips of the dashboard header (`agent.alert-chips`): the first three stats of a panel
  * (for example the critical, warning and pending alerts) as large chips. Each chip has a status
- * shape, a number and a word, never colour alone. Only the full screen wall shows them. A critical or warning chip has a tint and an edge
- * in its status colour. The widget draws without a card and fits the header row.
+ * shape, a number and a word, never colour alone. The page and the full screen wall both show
+ * them. A critical or warning chip has a tint and an edge in its status colour. The widget draws
+ * without a card and fits the header row.
  */
 import Box from '@mui/material/Box';
 import React from 'react';
@@ -24,7 +25,6 @@ function AlertChips({
   config,
   refreshSignal,
   reportRefreshed,
-  kiosk,
   cache,
 }: WidgetProps<AlertChipsConfig>): JSX.Element | null {
   const sourceId = sourceOf(config);
@@ -45,8 +45,7 @@ function AlertChips({
   useReportStale(state.staleSince, !!state.cached && !state.error);
   const tk = useTokens();
   const stats = state.panel?.stats.slice(0, 3) ?? [];
-  // The page header keeps its one row of controls, so only the full screen wall shows the chips.
-  if (!kiosk || stats.length === 0) return null;
+  if (stats.length === 0) return null;
   return (
     <Box
       data-alert-chips
@@ -54,7 +53,7 @@ function AlertChips({
         display: 'flex',
         gap: 1.25,
         flex: 'none',
-        // Under 1500 px the header keeps its one row: the chips give way.
+        // Under 1500 px the chips give way, so a narrow header keeps its room.
         '@media (max-width: 1499.95px)': { display: 'none' },
       }}
     >

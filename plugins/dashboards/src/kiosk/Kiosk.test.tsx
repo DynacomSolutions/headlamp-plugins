@@ -31,7 +31,8 @@ describe('KioskOverlay', () => {
     expect(getByText('bar')).not.toBeNull();
     expect(getByText('charts')).not.toBeNull();
     const exit = getByRole('button', { name: 'Exit full screen' });
-    expect(exit.textContent).toContain('Exit full screen');
+    // A plain icon: the words are the label and the tooltip, not text on the button.
+    expect(exit.textContent).toBe('');
     expect(exit.querySelector('[data-icon]')).not.toBeNull();
   });
 

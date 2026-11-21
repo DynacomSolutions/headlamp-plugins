@@ -231,7 +231,18 @@ describe('dashboard page', () => {
         await screen.findByText('Hello header');
         const bar = document.querySelector('[data-title-bar]') as HTMLElement;
         expect(bar.getAttribute('data-title-bar-level')).toBe(level);
-        expect(getComputedStyle(bar).flexWrap).toBe('wrap');
+        // A wide bar has three parts, so the clock is in the middle. Each side wraps its own
+        // controls. A narrower bar is one wrapping row.
+        if (Number(level) < 2 && width >= 1280) {
+          expect(getComputedStyle(bar).display).toBe('grid');
+          expect(getComputedStyle(bar).gridTemplateColumns).toBe(
+            'minmax(0, 1fr) auto minmax(0, 1fr)'
+          );
+          const left = bar.querySelector('[data-title-bar-left]') as HTMLElement;
+          expect(getComputedStyle(left).flexWrap).toBe('wrap');
+        } else {
+          expect(getComputedStyle(bar).flexWrap).toBe('wrap');
+        }
         // The filter row wraps too, and the Edit button, the header widgets and the full screen
         // button stay together at the end of the bar.
         expect(getComputedStyle(bar.querySelector('[role="search"]') as HTMLElement).flexWrap).toBe(
