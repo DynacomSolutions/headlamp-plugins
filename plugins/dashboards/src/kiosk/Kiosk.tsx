@@ -17,6 +17,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import { createTheme, ThemeProvider, useTheme } from '@mui/material/styles';
 import React from 'react';
+import { holdScreenAwakeInBrowser } from './wakeLock';
 
 /** Asks the browser for full screen, where it can; a refusal is ignored. */
 export function enterBrowserFullscreen(): void {
@@ -158,6 +159,11 @@ function useKioskExit(active: boolean, onExit: () => void): void {
   }, [active]);
 }
 
+/** Keeps the screen on while the kiosk shows, so the system does not dim it to black. */
+function useKioskAwake(active: boolean): void {
+  React.useEffect(() => (active ? holdScreenAwakeInBrowser() : undefined), [active]);
+}
+
 /**
  * One frame for the page and for the kiosk. It is the same element in both modes, so what is
  * inside it (every widget) is never unmounted when the page enters or leaves full screen: no
@@ -172,6 +178,7 @@ export function KioskFrame(props: {
   const outer = useTheme();
   const kioskTheme = useKioskTheme();
   useKioskExit(active, onExit);
+  useKioskAwake(active);
   return (
     <ThemeProvider theme={active ? kioskTheme : outer}>
       <Box
@@ -213,6 +220,7 @@ export function KioskOverlay(props: {
   const { onExit, bar, children } = props;
   const theme = useKioskTheme();
   useKioskExit(true, onExit);
+  useKioskAwake(true);
 
   const exitButton = <KioskExitButton onExit={onExit} />;
   const inline = typeof children === 'function';

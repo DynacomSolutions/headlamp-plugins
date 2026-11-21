@@ -139,6 +139,12 @@ on the page, with no manual reload:
   caught. The kiosk reloads once the server answers.
 - **No reload loop.** At most three reloads in ten minutes, at least 30 s apart, counted in `sessionStorage`.
   Only a kiosk reloads. A normal page is never reloaded, because someone may be editing.
+- **Own scripts only.** The probe and the chunk check count only the scripts that this server serves. A script that a
+  browser extension adds to the page (for example a `chrome-extension://` address) does not make the page look old.
+- **Screen stays on.** A kiosk asks the browser for a screen wake lock (`navigator.wakeLock`, needs https). Without it
+  the operating system dims a screen with no touch input and turns it off, which looks like a random black screen. The
+  browser then also pauses the page timers, so the data stops. The lock is asked for again each time the page shows,
+  and a refusal is retried every minute. The code is in `src/kiosk/wakeLock.ts`.
 
 The code is in `src/resilience/` (`connection.ts`, `backoff.ts`, `stale.tsx`) and `src/components/ConnectionIndicator.tsx`.
 

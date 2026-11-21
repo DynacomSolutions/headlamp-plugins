@@ -82,6 +82,34 @@ export function isAppAssetUrl(url: string): boolean {
   return /\/(assets|plugins|static-plugins)\//.test(url);
 }
 
+/**
+ * The `/assets/` script paths that this page loaded from its own server. A script that a browser
+ * extension adds (a chrome-extension:// address, often with an /assets/ path) is not one of them:
+ * counted, it made the page look old, and a kiosk reloaded in a loop.
+ */
+export function ownAssetPaths(srcs: string[], pageUrl: string): string[] {
+  const origin = new URL(pageUrl).origin;
+  const out = new Set<string>();
+  for (const src of srcs) {
+    try {
+      const u = new URL(src, pageUrl);
+      if (u.origin === origin && u.pathname.includes('/assets/')) out.add(u.pathname);
+    } catch {
+      // A source that is not a URL is not a file of this server.
+    }
+  }
+  return [...out].sort();
+}
+
+/** True when a file at this address belongs to this server and to the app (see isAppAssetUrl). */
+export function isOwnAppAssetUrl(url: string, pageUrl: string): boolean {
+  try {
+    return new URL(url, pageUrl).origin === new URL(pageUrl).origin && isAppAssetUrl(url);
+  } catch {
+    return false;
+  }
+}
+
 export interface Connection {
   getState(): ConnectionState;
   subscribe(l: () => void): () => void;
@@ -258,7 +286,7 @@ export function installChunkListeners(onFailure: () => void): () => void {
   const onError = (e: Event) => {
     const t = e.target as (HTMLElement & { src?: string; href?: string }) | null;
     if (t && t !== (window as unknown) && (t.tagName === 'SCRIPT' || t.tagName === 'LINK')) {
-      if (isAppAssetUrl(String(t.src ?? t.href ?? ''))) onFailure();
+      if (isOwnAppAssetUrl(String(t.src ?? t.href ?? ''), window.location.href)) onFailure();
       return;
     }
     if (isChunkErrorMessage((e as ErrorEvent).message)) onFailure();
@@ -300,10 +328,10 @@ export function getConnection(): Connection {
         return b === '/' ? '' : b.replace(/\/$/, '');
       },
       pageAssets: () =>
-        [...document.querySelectorAll('script[src]')]
-          .map(s => new URL((s as HTMLScriptElement).src, window.location.href).pathname)
-          .filter(p => p.includes('/assets/'))
-          .sort(),
+        ownAssetPaths(
+          [...document.querySelectorAll('script[src]')].map(s => (s as HTMLScriptElement).src),
+          window.location.href
+        ),
       pluginName: 'dashboards',
       random: Math.random,
     });
