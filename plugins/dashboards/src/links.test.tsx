@@ -46,18 +46,18 @@ describe('resolveLink', () => {
   const MAPPING: Array<[string, { sourceId?: string; panelId?: string }, string]> = [
     // AIS rows go to the AIS Console tab.
     [
-      'https://ais.dynacom.dev/limits',
+      'https://ais.example.com/limits',
       { sourceId: 'ais-console', panelId: 'limits' },
       'ais-console',
     ],
     [
-      'https://ais.dynacom.dev/auth',
+      'https://ais.example.com/auth',
       { sourceId: 'ais-console', panelId: 'identities' },
       'ais-console',
     ],
     // HoardDB rows go to the HoardDB tab.
     [
-      'https://hoarddb.dynacom.dev/engines/pg-shared',
+      'https://hoarddb.example.com/engines/pg-shared',
       { sourceId: 'hoarddb', panelId: 'engines' },
       'hoarddb',
     ],
@@ -71,7 +71,7 @@ describe('resolveLink', () => {
 
   it('gives no link for an address with no matching tab', () => {
     expect(
-      resolveLink('https://runwarden.dynacom.dev/overview', TARGETS, {
+      resolveLink('https://runwarden.example.com/overview', TARGETS, {
         sourceId: 'runwarden',
         panelId: 'pools',
       })
@@ -89,7 +89,7 @@ describe('resolveLink', () => {
       'javascript:alert(1)',
       'mailto:a@example.com',
       'data:text/html,x',
-      'ais.dynacom.dev',
+      'ais.example.com',
       '',
       undefined,
       42,
@@ -113,7 +113,7 @@ describe('InternalLink', () => {
   it('renders no anchor for an address on another host', () => {
     const { container } = render(
       <MemoryRouter>
-        <InternalLink to="https://ais.dynacom.dev/limits">AIS</InternalLink>
+        <InternalLink to="https://ais.example.com/limits">AIS</InternalLink>
       </MemoryRouter>
     );
     expect(container.querySelector('a')).toBeNull();
@@ -179,20 +179,20 @@ const LAYOUTS: RowLayout[] = ['list', 'grouped-bars', 'stacked-lanes'];
 
 describe('panel row links', () => {
   it.each(LAYOUTS)('an https row link never renders as a link to that host (%s)', layout => {
-    const { container } = view('limits', 'https://ais.dynacom.dev/limits', layout, 'ais-console');
+    const { container } = view('limits', 'https://ais.example.com/limits', layout, 'ais-console');
     const anchors = Array.from(container.querySelectorAll('a'));
     expect(anchors.length).toBeGreaterThan(0);
     for (const a of anchors) {
       expect(a.getAttribute('href')).toBe('/c/main/dashboards/operations/ais-console');
       expect(a.getAttribute('target')).toBeNull();
     }
-    expect(container.innerHTML).not.toContain('ais.dynacom.dev');
+    expect(container.innerHTML).not.toContain('ais.example.com');
   });
 
   it.each(LAYOUTS)('an https row link with no matching tab shows no link (%s)', layout => {
     const { container } = view(
       'pools',
-      'https://runwarden.dynacom.dev/overview',
+      'https://runwarden.example.com/overview',
       layout,
       'runwarden'
     );
@@ -203,7 +203,7 @@ describe('panel row links', () => {
   it('shows no link at all outside a dashboard', () => {
     const { container } = view(
       'limits',
-      'https://ais.dynacom.dev/limits',
+      'https://ais.example.com/limits',
       'list',
       'ais-console',
       null
@@ -219,7 +219,7 @@ describe('panel row links', () => {
   it('follows a link with a history push, so Back returns to the dashboard', () => {
     const { container } = view(
       'hoarddb-engines',
-      'https://hoarddb.dynacom.dev/engines',
+      'https://hoarddb.example.com/engines',
       'list',
       'hoarddb'
     );
