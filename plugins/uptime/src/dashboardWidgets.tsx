@@ -1,8 +1,9 @@
 /*
  * The widget that the Uptime plugin adds to the Dashboards plugin, through the cross-plugin
  * `window.headlampDashboards` contract (see dashboardsContract.ts):
- *   uptime.targets  Every check grouped by one key (app and namespace come from the cluster routes). A group header shows the worst status, the counts
- *                   and the worst history line of its checks. A group expands to every check line, each with its own
+ *   uptime.targets  Every check grouped by one key (app and namespace come from the cluster routes). A group header shows the icon of the app,
+ *                   the worst status, the counts and the worst history line of its checks. A group starts collapsed and expands
+ *                   (click or Enter) to every check line, each with its own
  *                   history line. Every group is listed, failing groups first: no group folds into one summary row, and
  *                   a check that no route serves groups under its own host, never under "Other".
  *                   The stat tiles and the summary line stay fixed. Only the list of groups scrolls.
@@ -24,6 +25,7 @@ import {
   WidgetDefinition,
   WidgetProps,
 } from './dashboardsContract';
+import { GroupIcon, useGroupIcons } from './GroupIcon';
 import {
   buildGroups,
   gridFor,
@@ -54,7 +56,7 @@ import { ScrollArea } from './ScrollArea';
 
 export interface UptimeWidgetConfig {
   groupBy: GroupBy;
-  /** Whether the groups start expanded (default: yes, so every check shows with its own strip). */
+  /** Whether the groups start expanded (default: no, one row per group, a click opens its checks). */
   expanded: boolean;
   range: WidgetRange;
   /** Show only the groups that are down or degraded. */
@@ -63,7 +65,7 @@ export interface UptimeWidgetConfig {
 
 const DEFAULT_CONFIG: UptimeWidgetConfig = {
   groupBy: 'auto',
-  expanded: true,
+  expanded: false,
   range: '24h',
   onlyFailing: false,
 };
@@ -226,7 +228,10 @@ export function useUptimeChecks(
           error: null,
           cached: false,
         });
-        cache?.write({ key, success, history, routes, routeErrors: lists.errors } satisfies CachedChecks, at);
+        cache?.write(
+          { key, success, history, routes, routeErrors: lists.errors } satisfies CachedChecks,
+          at
+        );
         reportRefreshed(at);
       },
       (e: unknown) =>
@@ -286,7 +291,9 @@ function useHues() {
           hue[status],
           dark ? (status === 'down' ? 0.18 : 0.16) : status === 'down' ? 0.12 : 0.13
         );
-  return { hue, fill, dark };
+  // The thin divider under a row: the same line as the row lists of the Dashboards plugin (`tokens.line`).
+  const line = dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
+  return { hue, fill, dark, line };
 }
 
 /** The status shape: circle up, triangle degraded, square down, ring no data. Never colour alone. */
@@ -399,9 +406,12 @@ function FooterLine(props: {
 function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; kiosk: boolean }) {
   const { check, grid, startSec, kiosk } = props;
   const mean = formatPercent(meanAvailability(check.history));
+  const { line } = useHues();
   return (
     <Box
+      data-uptime-row="check"
       sx={{
+        boxShadow: `inset 0 -1px 0 ${line}`,
         display: 'grid',
         gridTemplateColumns: ROW_COLUMNS,
         alignItems: 'center',
@@ -516,10 +526,11 @@ function GroupBlock(props: {
   expanded: boolean;
   onToggle: () => void;
   kiosk: boolean;
+  icon?: string;
 }): JSX.Element {
-  const { group, grid, startSec, expanded, onToggle, kiosk } = props;
+  const { group, grid, startSec, expanded, onToggle, kiosk, icon } = props;
   const bodyId = React.useId();
-  const { fill } = useHues();
+  const { fill, line, dark } = useHues();
   // A group that needs attention is a tinted band with square corners. A group that is up has none.
   const band = group.status !== 'up';
   return (
@@ -527,6 +538,7 @@ function GroupBlock(props: {
       <Box
         component="button"
         type="button"
+        data-uptime-row="group"
         onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={bodyId}
@@ -542,6 +554,8 @@ function GroupBlock(props: {
           border: 0,
           borderRadius: 0,
           background: band ? fill(group.status) : 'transparent',
+          // The same divider as the other row lists: none under a tinted band, whose tint ends the row.
+          boxShadow: band ? 'none' : `inset 0 -1px 0 ${line}`,
           color: 'inherit',
           font: 'inherit',
           textAlign: 'left',
@@ -571,41 +585,52 @@ function GroupBlock(props: {
           ›
         </Box>
         <StatusChip status={group.status} />
-        <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'name' } }}>
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, minWidth: 0 }}>
-            <Box
-              sx={{ display: 'none', [NARROW]: { display: 'inline-flex' }, alignSelf: 'center' }}
-            >
-              <Dot status={group.status} />
+        <Box
+          sx={{
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            [NARROW]: { gridArea: 'name' },
+          }}
+        >
+          <GroupIcon name={group.key} url={icon} dark={dark} />
+          <Box sx={{ minWidth: 0, flex: '1 1 0' }}>
+            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, minWidth: 0 }}>
+              <Box
+                sx={{ display: 'none', [NARROW]: { display: 'inline-flex' }, alignSelf: 'center' }}
+              >
+                <Dot status={group.status} />
+              </Box>
+              <Typography
+                variant="body2"
+                title={group.key}
+                sx={{
+                  fontWeight: 600,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  [NARROW]: { whiteSpace: 'normal', overflowWrap: 'anywhere' },
+                }}
+              >
+                {group.key}
+              </Typography>
             </Box>
             <Typography
-              variant="body2"
-              title={group.key}
+              variant="caption"
+              color="text.secondary"
+              component="div"
               sx={{
-                fontWeight: 600,
-                minWidth: 0,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
-                [NARROW]: { whiteSpace: 'normal', overflowWrap: 'anywhere' },
+                [NARROW]: { whiteSpace: 'normal' },
               }}
             >
-              {group.key}
+              {countsText(group)}
             </Typography>
           </Box>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            component="div"
-            sx={{
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              [NARROW]: { whiteSpace: 'normal' },
-            }}
-          >
-            {countsText(group)}
-          </Typography>
         </Box>
         <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'strip', pr: 1 } }}>
           <HistoryStrip
@@ -672,6 +697,7 @@ function UptimeTargetsWidget({
     () => buildGroups(visible, settings.groupBy, grid, settings.onlyFailing, placements),
     [visible, settings.groupBy, grid, settings.onlyFailing, placements]
   );
+  const icons = useGroupIcons(groups, placements);
   // `key` resets the toggles when the default changes, so no effect syncs them.
   return (
     <Scroller kiosk={kiosk}>
@@ -683,6 +709,7 @@ function UptimeTargetsWidget({
         <TargetGroups
           key={`${settings.expanded}`}
           groups={groups}
+          icons={icons}
           resolved={resolved}
           total={visible.length}
           grid={grid}
@@ -727,6 +754,7 @@ function Scroller(props: { kiosk: boolean; children: React.ReactNode }): JSX.Ele
 
 function TargetGroups(props: {
   groups: UptimeGroup[];
+  icons: ReadonlyMap<string, string>;
   resolved: string;
   total: number;
   grid: HistoryGrid;
@@ -767,6 +795,7 @@ function TargetGroups(props: {
       expanded={expandedByDefault !== flipped.has(g.key)}
       onToggle={() => toggle(g.key)}
       kiosk={kiosk}
+      icon={props.icons.get(g.key)}
     />
   );
   const summaryStatus: Status =
@@ -837,7 +866,11 @@ export const uptimeTargetsWidget: WidgetDefinition<UptimeWidgetConfig> = {
         { value: 'type', label: 'Check type' },
       ],
     },
-    { key: 'expanded', label: 'Groups expanded by default', type: 'boolean' },
+    {
+      key: 'expanded',
+      label: 'Groups expanded by default (off: one row per group)',
+      type: 'boolean',
+    },
     {
       key: 'range',
       label: 'Time range',

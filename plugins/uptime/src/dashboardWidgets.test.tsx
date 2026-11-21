@@ -91,7 +91,7 @@ describe('uptime.targets definition', () => {
     ]);
     expect(uptimeTargetsWidget.defaultConfig).toEqual({
       groupBy: 'auto',
-      expanded: true,
+      expanded: false,
       range: '24h',
       onlyFailing: false,
     });
@@ -211,7 +211,7 @@ describe('uptime.targets widget', () => {
   });
 
   it('gives each group its own strip and each check its own strip', async () => {
-    view(<Widget {...props({})} />);
+    view(<Widget {...props({ expanded: true })} />);
     await flush();
     expect(screen.getByLabelText(/^web: Down, the worst of 2 checks/).children.length).toBe(96);
     expect(screen.getByLabelText(/^db: Up, the worst of 1 checks/).children.length).toBe(96);
@@ -231,14 +231,54 @@ describe('uptime.targets widget', () => {
     expect(screen.queryByText('web-1')).toBeNull();
   });
 
-  it('starts expanded by default, and a toggle flips from that', async () => {
+  it('starts collapsed by default: one row per group, failing first, with no check line', async () => {
     view(<Widget {...props({})} />);
+    await flush();
+    const headers = screen.getAllByRole('button');
+    expect(headers.map(h => h.getAttribute('aria-expanded'))).toEqual(['false', 'false']);
+    expect(headers[0].textContent).toContain('web');
+    expect(screen.queryByText('web-1')).toBeNull();
+    expect(document.querySelector('[data-uptime-row="check"]')).toBeNull();
+    // A click opens the group and keeps the others closed. Another click closes it.
+    fireEvent.click(headers[0]);
+    expect(screen.getByText('web-1')).toBeTruthy();
+    expect(screen.getAllByRole('button')[1].getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(screen.getAllByRole('button')[0]);
+    expect(screen.queryByText('web-1')).toBeNull();
+  });
+
+  it('opens every group when the setting says so, and a toggle flips from that', async () => {
+    view(<Widget {...props({ expanded: true })} />);
     await flush();
     expect(screen.getByText('web-1')).toBeTruthy();
     expect(screen.getByText('web-2')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button')[0]);
     expect(screen.queryByText('web-1')).toBeNull();
     expect(screen.getAllByRole('button')[1].getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('draws the shared row divider under a group that is up and under every check line', async () => {
+    view(<Widget {...props({ expanded: true })} />);
+    await flush();
+    const line = 'inset 0 -1px 0 rgba(255,255,255,0.12)';
+    const [down, up] = screen.getAllByRole('button');
+    // A tinted band (a failing group) has no line. A group that is up has one.
+    expect(getComputedStyle(down).boxShadow).toBe('none');
+    expect(getComputedStyle(up).boxShadow).toBe(line);
+    const checks = document.querySelectorAll('[data-uptime-row="check"]');
+    expect(checks.length).toBe(3);
+    checks.forEach(c => expect(getComputedStyle(c).boxShadow).toBe(line));
+  });
+
+  it('shows an initial badge for a group that has no icon, never a broken image', async () => {
+    view(<Widget {...props({})} />);
+    await flush();
+    const icons = document.querySelectorAll('[data-uptime-icon]');
+    expect(icons.length).toBe(2);
+    icons.forEach(i => expect(i.getAttribute('data-uptime-icon')).toBe('initial'));
+    expect(icons[0].textContent).toBe('W');
+    expect(icons[1].textContent).toBe('D');
+    expect(document.querySelector('img')).toBeNull();
   });
 
   it('only failing hides the groups that are up', async () => {
@@ -359,7 +399,7 @@ function memoryCache() {
 describe('uptime.targets last good data', () => {
   it('writes the raw answers after a fetch, and the next mount shows the checks at once with no spinner', async () => {
     const cache = memoryCache();
-    view(<Widget {...props({}, { cache })} />);
+    view(<Widget {...props({ expanded: true }, { cache })} />);
     await flush();
     expect(screen.getByText(/web-1/)).toBeTruthy();
     expect(cache.peek()).toBeDefined();
@@ -369,7 +409,7 @@ describe('uptime.targets last good data', () => {
     queryMetrics.mockImplementation(() => new Promise(() => undefined));
     queryRange.mockImplementation(() => new Promise(() => undefined));
     fetchRouteLists.mockImplementation(() => new Promise(() => undefined));
-    view(<Widget {...props({}, { cache })} />);
+    view(<Widget {...props({ expanded: true }, { cache })} />);
     expect(screen.queryByLabelText('Loading uptime')).toBeNull();
     expect(screen.getByText(/web-1/)).toBeTruthy();
   });

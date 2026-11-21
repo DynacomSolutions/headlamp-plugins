@@ -11,7 +11,7 @@
  * `auto` takes the app when any check has one, then the namespace, then the name.
  */
 import { Check, CountSummary, HistoryGrid, Status, summarise } from './model';
-import { endpointsOf, type Placement } from './routes';
+import { type Backend, endpointsOf, type Placement } from './routes';
 
 /** The placement of each check that a route serves, by check name. */
 export type Placements = ReadonlyMap<string, Placement>;
@@ -196,4 +196,47 @@ export function buildGroups(
   if (onlyFailing) groups = groups.filter(g => g.status === 'down' || g.status === 'degraded');
   groups.sort((a, b) => ORDER[a.status] - ORDER[b.status] || a.key.localeCompare(b.key));
   return { groups, resolved };
+}
+
+/** How many Services of one group are tried for an icon. */
+export const ICON_CANDIDATES = 3;
+
+const keyOf = (b: Backend): string => `${b.namespace}/${b.scheme ?? ''}${b.name}:${b.port ?? ''}`;
+
+/** How well a Service name fits a group name: 0 same name, 1 one starts with the other plus a dash, 2 no fit. */
+function nameFit(service: string, group: string): number {
+  const s = service.toLowerCase();
+  const g = group.toLowerCase();
+  if (s === g) return 0;
+  return s.startsWith(`${g}-`) || g.startsWith(`${s}-`) ? 1 : 2;
+}
+
+/**
+ * The Services that can give a group its icon, best first. These are the backends of the routes that serve its
+ * checks, once each. A group with one Service uses it. A group with several Services (a namespace that holds
+ * unrelated apps) uses only the Services whose name fits the group name, the same name first, because the icon
+ * of an unrelated app would mislead. With no fit, the group has no candidate and shows its initial badge.
+ */
+export function groupBackends(
+  group: Pick<UptimeGroup, 'key' | 'checks'>,
+  placements: Placements
+): Backend[] {
+  const seen = new Set<string>();
+  const all: Backend[] = [];
+  for (const c of group.checks) {
+    const b = placements.get(c.name)?.route.backend;
+    if (!b || seen.has(keyOf(b))) continue;
+    seen.add(keyOf(b));
+    all.push(b);
+  }
+  const services = new Set(all.map(b => `${b.namespace}/${b.name}`));
+  const pool =
+    services.size <= 1
+      ? all
+      : all
+          .map((b, i) => ({ b, i, fit: nameFit(b.name, group.key) }))
+          .filter(x => x.fit < 2)
+          .sort((a, c) => a.fit - c.fit || a.i - c.i)
+          .map(x => x.b);
+  return pool.slice(0, ICON_CANDIDATES);
 }
