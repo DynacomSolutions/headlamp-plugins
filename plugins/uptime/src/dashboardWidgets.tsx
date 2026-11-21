@@ -14,11 +14,7 @@ import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import {
-  registerDashboardWidget,
-  WidgetDefinition,
-  WidgetProps,
-} from './dashboardsContract';
+import { registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
 import {
   buildGroups,
   gridFor,
@@ -101,6 +97,22 @@ const STATUS_DOT: Record<Status, string> = {
  * checks start and end at the same place: marker, status, name, history line, availability.
  */
 const ROW_COLUMNS = '16px 76px minmax(0, 38%) minmax(64px, 1fr) 56px';
+
+/**
+ * A narrow widget (3 grid columns on a small screen) has no room for five columns in one line. The
+ * container query folds each line into two: the name and the availability, then the history line
+ * under the name. The name wraps, so it stays readable, and the history line ends before the
+ * availability column with a gap. The status chip becomes a dot before the name.
+ */
+const NARROW = '@container uptime (max-width: 459px)';
+const NARROW_ROW = {
+  [NARROW]: {
+    gridTemplateColumns: '16px minmax(0, 1fr) auto',
+    gridTemplateAreas: '"lead name pct" "lead strip strip"',
+    rowGap: 0.5,
+    py: 0.5,
+  },
+} as const;
 
 const EMPTY_ROUTES: Route[] = [];
 
@@ -220,29 +232,66 @@ function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; k
         px: 1,
         minHeight: kiosk ? 36 : 28,
         minWidth: 0,
+        ...NARROW_ROW,
       }}
     >
-      <span />
-      <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          gridColumn: '2',
+          [NARROW]: { gridColumn: 'auto', gridArea: 'lead' },
+        }}
+      >
         <Dot status={check.status} />
       </Box>
       <Typography
         variant="body2"
-        noWrap
         title={check.instance ? `${check.name}: ${check.instance}` : check.name}
+        sx={{
+          gridColumn: '3',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          [NARROW]: {
+            gridColumn: 'auto',
+            gridArea: 'name',
+            whiteSpace: 'normal',
+            overflowWrap: 'anywhere',
+          },
+        }}
       >
         {check.name}
       </Typography>
-      <HistoryStrip
-        history={check.history}
-        startSec={startSec}
-        stepSec={grid.stepSec}
-        label={`${check.name}: ${STATUS_LABEL[check.status]}, availability ${mean} over ${gridLabel(grid)}`}
-        height={kiosk ? 16 : 14}
-        minWidth={64}
-        tooltips="native"
-      />
-      <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right' }}>
+      <Box
+        sx={{
+          gridColumn: '4',
+          minWidth: 0,
+          [NARROW]: { gridColumn: 'auto', gridArea: 'strip', pr: 1 },
+        }}
+      >
+        <HistoryStrip
+          history={check.history}
+          startSec={startSec}
+          stepSec={grid.stepSec}
+          label={`${check.name}: ${
+            STATUS_LABEL[check.status]
+          }, availability ${mean} over ${gridLabel(grid)}`}
+          height={kiosk ? 16 : 14}
+          minWidth={64}
+          tooltips="native"
+        />
+      </Box>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          gridColumn: '5',
+          textAlign: 'right',
+          pl: 1,
+          [NARROW]: { gridColumn: 'auto', gridArea: 'pct' },
+        }}
+      >
         {mean}
       </Typography>
     </Box>
@@ -284,6 +333,7 @@ function GroupBlock(props: {
           width: '100%',
           minHeight: kiosk ? 48 : 36,
           px: 1,
+          ...NARROW_ROW,
           border: 0,
           borderRadius: 1,
           background: 'transparent',
@@ -310,6 +360,7 @@ function GroupBlock(props: {
             textAlign: 'center',
             transform: expanded ? 'rotate(90deg)' : 'none',
             transition: 'transform 120ms',
+            [NARROW]: { gridArea: 'lead', alignSelf: 'start', pt: 0.25 },
           }}
         >
           ›
@@ -318,26 +369,62 @@ function GroupBlock(props: {
           size="small"
           label={STATUS_LABEL[group.status]}
           color={STATUS_CHIP[group.status]}
-          sx={{ width: '100%' }}
+          sx={{ width: '100%', [NARROW]: { display: 'none' } }}
         />
-        <Box sx={{ minWidth: 0 }}>
-          <Typography variant="body2" noWrap sx={{ fontWeight: 600 }} title={group.key}>
-            {group.key}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" noWrap component="div">
+        <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'name' } }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, minWidth: 0 }}>
+            <Box
+              sx={{ display: 'none', [NARROW]: { display: 'inline-flex' }, alignSelf: 'center' }}
+            >
+              <Dot status={group.status} />
+            </Box>
+            <Typography
+              variant="body2"
+              title={group.key}
+              sx={{
+                fontWeight: 600,
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                [NARROW]: { whiteSpace: 'normal', overflowWrap: 'anywhere' },
+              }}
+            >
+              {group.key}
+            </Typography>
+          </Box>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            component="div"
+            sx={{
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              [NARROW]: { whiteSpace: 'normal' },
+            }}
+          >
             {countsText(group)}
           </Typography>
         </Box>
-        <HistoryStrip
-          history={group.history}
-          startSec={startSec}
-          stepSec={grid.stepSec}
-          label={`${group.key}: ${STATUS_LABEL[group.status]}, the worst of ${group.checks.length} checks per period over ${gridLabel(grid)}`}
-          height={kiosk ? 22 : 18}
-          minWidth={64}
-          tooltips="native"
-        />
-        <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right' }}>
+        <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'strip', pr: 1 } }}>
+          <HistoryStrip
+            history={group.history}
+            startSec={startSec}
+            stepSec={grid.stepSec}
+            label={`${group.key}: ${STATUS_LABEL[group.status]}, the worst of ${
+              group.checks.length
+            } checks per period over ${gridLabel(grid)}`}
+            height={kiosk ? 22 : 18}
+            minWidth={64}
+            tooltips="native"
+          />
+        </Box>
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ textAlign: 'right', pl: 1, [NARROW]: { gridArea: 'pct', alignSelf: 'start' } }}
+        >
           {formatPercent(meanAvailability(group.history))}
         </Typography>
       </Box>
@@ -418,11 +505,16 @@ function Scroller(props: { kiosk: boolean; children: React.ReactNode }): JSX.Ele
       sx={{
         height: '100%',
         minWidth: 0,
+        // The rows fold into two lines when the widget is narrow (see NARROW).
+        containerType: 'inline-size',
+        containerName: 'uptime',
         overflowY: 'auto',
         overscrollBehavior: 'contain',
         touchAction: 'pan-y',
         WebkitOverflowScrolling: 'touch',
-        ...(props.kiosk ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } } : {}),
+        ...(props.kiosk
+          ? { scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }
+          : {}),
       }}
     >
       {props.children}
@@ -466,17 +558,25 @@ function TargetGroups(props: {
       )}
       {props.routeErrors.length > 0 && !props.failed && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          Could not list routes, so some checks may show as not in the cluster: {props.routeErrors.join('; ')}
+          Could not list routes, so some checks may show as not in the cluster:{' '}
+          {props.routeErrors.join('; ')}
         </Alert>
       )}
       {!props.failed && props.total === 0 && (
-        <Alert severity="info">No probe results. The scrape job "{PROBE_JOB}" has no probe_success series yet.</Alert>
+        <Alert severity="info">
+          No probe results. The scrape job "{PROBE_JOB}" has no probe_success series yet.
+        </Alert>
       )}
       {!props.failed && props.total > 0 && (
         <>
-          <Typography variant="caption" color="text.secondary" component="div" sx={{ px: 1, pb: 0.5 }}>
-            {groups.length} groups by {props.resolved} · {props.total} checks · {failingGroups} failing · last{' '}
-            {gridLabel(grid)}
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            component="div"
+            sx={{ px: 1, pb: 0.5 }}
+          >
+            {groups.length} groups by {props.resolved} · {props.total} checks · {failingGroups}{' '}
+            failing · last {gridLabel(grid)}
           </Typography>
           {groups.length === 0 && props.onlyFailing && (
             <Alert severity="success">No group is failing.</Alert>
