@@ -1,5 +1,6 @@
 import { breakdownWidget } from './BreakdownWidget';
 import { gaugeWidget } from './GaugeWidget';
+import { matrixWidget } from './MatrixWidget';
 import { statWidget } from './StatWidget';
 import { tableWidget } from './TableWidget';
 import { timeSeriesWidget } from './TimeSeriesWidget';
@@ -11,4 +12,5 @@ export const PROMQL_WIDGETS = [
   gaugeWidget,
   tableWidget,
   breakdownWidget,
+  matrixWidget,
 ];
