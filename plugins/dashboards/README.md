@@ -450,6 +450,32 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
 - **States**: a spinner while the first load runs, an error card with a short reason, a hint when no panel is
   chosen (a spinner while the cluster sources load), an error card when the source is not configured and a hint when the panel has nothing to show.
 
+### AIS widget (`ais.limits`)
+
+One widget for the limits, the pools, the identities and the sessions of an AIS source (default
+source id `ais-console`). It fetches four panels of the source (`limits`, `identities`, `claude-swap`
+and `agents`) and joins them in the browser by identity name and provider. No server change is
+needed.
+
+- **Fixed on top**: stat tiles for the sessions (the total of the `agents` panel), the login states
+  (logged in, expiring, expired, and logged out when it is not zero), the pools and the active member of the
+  pool, then the legend of the limit windows. They never scroll. All number tiles have one numeral size. The
+  name of the active member has the same size and gets a wider tile.
+- **One scroll area** under them. Each pool is a group header (name, member count, active member) with its
+  members under it, the active one first and marked. An identity that is in no pool goes under the real
+  name of its provider. There is no "Other" group, no top N and no "+N more" row.
+- **One row for each identity**: its name, its login state (an expired or expiring login tints the row and
+  shows a mark and a word), one lane for each limit window (5-hour, weekly, weekly for a model, monthly), its
+  worst limit and one status mark. A widget at least 1000 px wide draws the identities of a group in two columns.
+- **Joins**: the login panel names an identity as `tool / name` and the limits panel as `Provider / name`.
+  The tool names `claude`, `codex`, `grok`, `kimi`, `zai` and `opencode` map to their providers. A tool with
+  no limits (for example `pi`) is its own group. The members of the `claude-swap` panel belong to the
+  Anthropic provider. A member with no limit row of its own shows the weekly value of the pool panel.
+- **Links** go only to the dashboard tab whose id is the source id (for example `ais-console`). With no such
+  tab, or in edit mode, a row has no link.
+- **Not available from the source**: the sessions are one total. The `agents` panel names a pool, not an
+  identity, so the widget cannot show sessions for each identity.
+
 ### Optional `tables` field (v1 extension)
 
 A panel may add `tables`. A source that does not send it is still valid version 1.

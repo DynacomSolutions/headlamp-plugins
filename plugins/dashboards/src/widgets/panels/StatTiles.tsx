@@ -41,12 +41,27 @@ export const tileSize = (stats: Stat[], narrow: boolean): number =>
 /** The height of the tile row in px. */
 export const TILES_HEIGHT = 68;
 
-export function StatTiles(props: { stats: Stat[]; width: number }): JSX.Element {
-  const { stats, width } = props;
+/**
+ * `textTiles` are the indexes of tiles whose value is a name, not a number (for example the active
+ * member of a pool). A text tile gets twice the width, keeps the numeral size of the number tiles
+ * (it does not shrink them) and cuts a name that is too long with an ellipsis. The full name is in
+ * its tooltip.
+ */
+export function StatTiles(props: {
+  stats: Stat[];
+  width: number;
+  textTiles?: ReadonlyArray<number>;
+}): JSX.Element {
+  const { stats, width, textTiles = [] } = props;
   const tk = useTokens();
-  const narrow = width > 0 && width / Math.max(1, stats.length) < NARROW;
+  const weight = (i: number): number => (textTiles.includes(i) ? 2 : 1);
+  const weights = stats.reduce((n, _s, i) => n + weight(i), 0);
+  const narrow = width > 0 && width / Math.max(1, weights) < NARROW;
   const worst = worstStat(stats);
-  const size = tileSize(stats, narrow);
+  const size = tileSize(
+    stats.filter((_s, i) => !textTiles.includes(i)),
+    narrow
+  );
   return (
     <Box
       data-stats
@@ -67,12 +82,14 @@ export function StatTiles(props: { stats: Stat[]; width: number }): JSX.Element 
             key={`${s.label}-${i}`}
             data-stat
             data-stat-worst={isWorst ? '' : undefined}
-            sx={{ flex: '1 1 0', minWidth: 0 }}
+            sx={{ flex: `${weight(i)} 1 0`, minWidth: 0 }}
           >
             <Box
               component="div"
+              title={textTiles.includes(i) ? s.value : undefined}
               sx={{
                 fontSize: size,
+                ...(textTiles.includes(i) ? { overflow: 'hidden', textOverflow: 'ellipsis' } : {}),
                 lineHeight: 1.05,
                 letterSpacing: '-0.01em',
                 whiteSpace: 'nowrap',
