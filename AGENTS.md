@@ -20,6 +20,7 @@ Use generic placeholders: `example.com`, `my-org/my-repo`, `worker-1`,
 | gitleaks (pinned in `.pre-commit-config.yaml`) | pre-commit, pre-push, CI | secret scan |
 | `scripts/check-identifiers.sh` | pre-commit, pre-push, CI | private IPs, `*.local`/`*.internal`, non-example emails |
 | private deny-list | locally if configured; always in CI | every regex in an **untracked** deny-list |
+| `scripts/check-bundle.sh` | CI (after each plugin build), release | the deny-list over built bundles, defaults files and file names |
 
 The deny-list lives in `.identifiers-denylist` (gitignored) or at the path in
 `$IDENTIFIERS_DENYLIST`. One case-insensitive regex per line. It holds the real

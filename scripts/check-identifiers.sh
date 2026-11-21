@@ -15,9 +15,13 @@
 # Output policy: matches are reported as file:line only. Neither the pattern
 # nor the matched text is ever printed, so CI logs cannot leak identifiers.
 #
-# Usage: check-identifiers.sh [--all] [--require-denylist] [FILE...]
+# The deny-list also runs over the file names and paths of the scanned files.
+#
+# Usage: check-identifiers.sh [--all] [--require-denylist] [--denylist-only] [FILE...]
 #   --all               scan every tracked + untracked-unignored file
 #   --require-denylist  fail if no deny-list is found (default: warn)
+#   --denylist-only     run only the deny-list check. Use it for built bundles, which
+#                       carry third-party code that the generic checks would flag.
 # A line containing the marker "identifiers-allow" is exempt from the generic
 # checks (use sparingly, e.g. in documentation of the rules themselves).
 set -uo pipefail
@@ -27,11 +31,13 @@ cd "$root" || exit 2
 
 all=0
 require=0
+generic=1
 files=()
 for arg in "$@"; do
   case "$arg" in
     --all) all=1 ;;
     --require-denylist) require=1 ;;
+    --denylist-only) generic=0 ;;
     *) files+=("$arg") ;;
   esac
 done
@@ -68,6 +74,7 @@ ip_re='(?<![0-9.])(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.
 host_re='(?<![A-Za-z0-9_$.-])[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.(local|internal|lan|home\.arpa)(?![A-Za-z0-9_-])'
 mail_re='[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}'
 
+if [ "$generic" = 1 ]; then
 out=$(grep -HInP --color=never "$ip_re" -- "${scan[@]}" 2>/dev/null | grep -v "$allow")
 report "private/internal IP address" "$out"
 
@@ -87,6 +94,7 @@ out=$(grep -HInoP --color=never "$mail_re" -- "${mail_scan[@]}" 2>/dev/null \
   | grep -v "$allow" \
   | grep -viE '@example\.(com|org|net)$|noreply|no-reply|^[^:]+:[0-9]+:git@github\.com$')
 report "email address (only @example.com or noreply allowed)" "$out"
+fi
 
 denylist="${IDENTIFIERS_DENYLIST:-$root/.identifiers-denylist}"
 if [ -f "$denylist" ]; then
@@ -96,6 +104,8 @@ if [ -f "$denylist" ]; then
   if [ -s "$patterns" ]; then
         out=$(grep -HInif "$patterns" --color=never -- "${scan[@]}" 2>/dev/null | grep -v '"integrity"' | cut -d: -f1,2)
     report "deny-listed identifier" "$out"
+    out=$(printf '%s\n' "${scan[@]}" | grep -iE -f "$patterns" 2>/dev/null)
+    [ -z "$out" ] || report "deny-listed identifier in a file name" "$(printf '%s\n' "$out" | sed 's/$/:0/')"
   fi
 else
   msg="identifier-check: no deny-list at $denylist (private check skipped)"
