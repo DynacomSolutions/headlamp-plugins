@@ -69,6 +69,7 @@ jobs:
         working-directory: .
         env:
           IDENTIFIERS_DENYLIST: ${{ secrets.IDENTIFIERS_DENYLIST }}
+          IDENTIFIERS_DENYLIST_EXTRA: ${{ secrets.IDENTIFIERS_DENYLIST_EXTRA }}
         run: |
           unpack="$(mktemp -d)"
           tar -xzf plugins/${{ matrix.plugin }}/release-assets/*.tar.gz -C "$unpack"

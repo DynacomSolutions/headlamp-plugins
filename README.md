@@ -299,7 +299,7 @@ Enforced by deterministic checks:
 - **gitleaks** (pinned rev) on commit, push and in CI.
 - **`scripts/check-identifiers.sh`** fails on private IPs, `*.local` /
   `*.internal` names, and emails other than `@example.com` / `noreply`.
-- **`scripts/check-bundle.sh`** runs the deny-list over each built plugin and
+- **`scripts/check-bundle.sh`** runs the deny-list (the union of the two repository secrets `IDENTIFIERS_DENYLIST` and `IDENTIFIERS_DENYLIST_EXTRA`) over each built plugin and
   its release archive, including file names, so a name cannot reach a bundle.
 - A **private deny-list** (`.identifiers-denylist`, gitignored, or the path in
   `$IDENTIFIERS_DENYLIST`) with one regex per line for real domains and names.
