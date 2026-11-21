@@ -15,9 +15,17 @@ import { parsePanel } from './model';
 import { fitLaneRows, fullCount, PanelLanes, worstSegment } from './PanelLanes';
 import { DEFAULT_DISPLAY, displayOf, PanelView } from './PanelView';
 import { groupRows } from './rowGroups';
-import { isInformative, MORE_HEIGHT, planRows, ROW_GAP, ROW_HEIGHT } from './RowList';
+import {
+  isInformative,
+  MORE_HEIGHT,
+  planRows,
+  ROW_GAP,
+  ROW_HEIGHT,
+  VALUE_FONT_SIZE,
+  VALUE_FONT_WEIGHT,
+} from './RowList';
 import { niceMax } from './SeriesPlot';
-import { worstStat } from './StatTiles';
+import { tileSize, worstStat } from './StatTiles';
 import { bySeverity } from './tokens';
 
 afterEach(cleanup);
@@ -126,6 +134,57 @@ describe('row list', () => {
     );
     expect(container.querySelectorAll('[data-row]')).toHaveLength(1);
     expect(container.querySelector('[data-rows-fold]')?.textContent).toBe('2 more up');
+  });
+  it('gives every row value one size and weight, whatever the text or the status', () => {
+    const look = (rows: { label: string; value: string; status: string }[]): string[] => {
+      const { container, unmount } = view(
+        <PanelView
+          kiosk
+          editing={false}
+          panel={panel({
+            id: 'pools',
+            rows: rows.map(r => ({ ...r, detail: '' })),
+          })}
+        />
+      );
+      const values = Array.from(container.querySelectorAll('[data-row-value]'));
+      expect(values.length).toBe(rows.length);
+      const out = values.map(v => {
+        const c = getComputedStyle(v);
+        return `${c.fontSize}/${c.fontWeight}/${c.fontVariantNumeric}`;
+      });
+      unmount();
+      return out;
+    };
+    // Healthy rows fold when a row needs attention, so draw the two groups apart.
+    const healthy = look([
+      { label: 'a', value: '5/200', status: 'ok' },
+      { label: 'b', value: '33/200', status: 'ok' },
+      { label: 'c', value: '2m 7s', status: 'ok' },
+      { label: 'd', value: '13 dbs', status: 'ok' },
+    ]);
+    const attention = look([
+      { label: 'e', value: '-', status: 'warn' },
+      { label: 'f', value: 'open', status: 'crit' },
+      { label: 'g', value: '100%', status: 'unknown' },
+      { label: 'h', value: '4/4 members', status: 'crit' },
+    ]);
+    const all = [...healthy, ...attention];
+    expect(new Set(all).size).toBe(1);
+    expect(all[0]).toBe(`${VALUE_FONT_SIZE}px/${VALUE_FONT_WEIGHT}/tabular-nums`);
+  });
+  it('gives every stat tile of a row one numeral size', () => {
+    const stats = [
+      { label: 'Queued', value: '5', status: 'ok' as const },
+      { label: 'Oldest', value: '2m 7s', status: 'ok' as const },
+    ];
+    expect(tileSize(stats, false)).toBe(tileSize([stats[1]], false));
+    const { container } = view(<PanelView kiosk editing={false} panel={panel({ stats })} />);
+    const sizes = Array.from(container.querySelectorAll('[data-stat] > div:first-child')).map(
+      v => getComputedStyle(v).fontSize
+    );
+    expect(sizes).toHaveLength(2);
+    expect(new Set(sizes).size).toBe(1);
   });
   it('gives every number of the summary line one size', () => {
     const { container } = view(

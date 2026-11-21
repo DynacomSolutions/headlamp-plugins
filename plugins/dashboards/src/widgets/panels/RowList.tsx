@@ -1,6 +1,6 @@
 /*
  * The rows of a panel as status bands. A row that needs attention (warning, critical or unknown)
- * is a tinted band with a label, a detail line and a large value. When bands exist, the healthy
+ * is a tinted band with a label, a detail line and a value. When bands exist, the healthy
  * rows fold into one line such as "95 more up", so the few rows that matter come first. A panel
  * with only healthy rows lists them. A bar shows only where the fraction tells something. The bands
  * and the folded line have square corners, so the bottom of the list is a straight edge. When the
@@ -40,6 +40,10 @@ export function Label(props: { row: PanelRow; editing: boolean }): JSX.Element {
 /** A bar tells something when the row is not full or not fine. A full row that is fine is noise. */
 export const isInformative = (r: PanelRow): boolean =>
   r.fraction !== undefined && (r.fraction < 0.995 || r.status !== 'ok');
+
+/** The size and weight of the value at the end of every row. */
+export const VALUE_FONT_SIZE = 18;
+export const VALUE_FONT_WEIGHT = 400;
 
 export const ROW_HEIGHT = 52;
 export const ROW_GAP = 6;
@@ -141,7 +145,6 @@ export function RowList(props: {
     >
       {plan.items.map((r, i) => {
         const band = r.status !== 'ok';
-        const big = r.value.length <= 5;
         return (
           <Box
             key={`${r.label}-${i}`}
@@ -205,12 +208,16 @@ export function RowList(props: {
               <Box sx={{ width: 80, flex: 'none' }}>{isInformative(r) && <Bar row={r} />}</Box>
             )}
             <Box
+              data-row-value
               sx={{
                 flex: 'none',
                 textAlign: 'right',
                 whiteSpace: 'nowrap',
                 fontVariantNumeric: 'tabular-nums',
-                fontSize: big ? 22 : 15,
+                // One size and weight for every value in every list. It never follows the
+                // status, the rank or the length of the text.
+                fontSize: VALUE_FONT_SIZE,
+                fontWeight: VALUE_FONT_WEIGHT,
                 lineHeight: 1,
               }}
             >
