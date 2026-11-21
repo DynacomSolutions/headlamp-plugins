@@ -23,6 +23,7 @@ import {
   COLS,
   GRID_MARGIN,
   isEditableBreakpoint,
+  layoutForColumns,
   layoutPositions,
   otherSectionAt,
   pointerOf,
@@ -171,8 +172,15 @@ function SectionViewImpl(props: SectionViewProps): JSX.Element {
 
   // The layout is derived from the widgets. Positions come from the saved spec.
   const layout = React.useMemo(() => toLayout(section.widgets, limitsOf), [section.widgets]);
+  // A narrow grid gets its own flowed layout (see layoutForColumns), never the 12 column one.
   const layouts = React.useMemo(
-    () => ({ lg: layout, md: layout, sm: layout, xs: layout, xxs: layout }),
+    () => ({
+      lg: layout,
+      md: layout,
+      sm: layoutForColumns(layout, COLS.sm),
+      xs: layoutForColumns(layout, COLS.xs),
+      xxs: layoutForColumns(layout, COLS.xxs),
+    }),
     [layout]
   );
 

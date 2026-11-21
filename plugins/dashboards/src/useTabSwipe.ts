@@ -9,6 +9,20 @@ import React from 'react';
 import { blocksSwipe, SwipeTracker } from './swipe';
 import { showSwipeHint, SwipeHint } from './swipeHint';
 
+/**
+ * Styles for the tab area of a dashboard on a touch screen. A sideways drag must not pan the whole
+ * page (a browser pan of about 45 px) or chain its scroll to a parent, so the area takes vertical
+ * pans only. The tab swipe reads the sideways drag itself. A wide table keeps its own sideways
+ * scroll: it sets `touch-action: pan-x pan-y` again.
+ */
+export const SIDEWAYS_SCROLL_SELECTOR = '& [data-table], & [role="table"]';
+
+export const TAB_AREA_TOUCH = {
+  touchAction: 'pan-y',
+  overscrollBehaviorX: 'none',
+  [SIDEWAYS_SCROLL_SELECTOR]: { touchAction: 'pan-x pan-y', overscrollBehaviorX: 'contain' },
+} as const;
+
 export interface TabSwipeOptions {
   /** Off while a dashboard is edited, because dragging a widget uses touch too. */
   enabled: boolean;

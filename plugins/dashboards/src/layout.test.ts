@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   breakpointFor,
   isEditableBreakpoint,
+  layoutForColumns,
   layoutPositions,
   otherSectionAt,
   pointerOf,
@@ -69,5 +70,75 @@ describe('layout helpers', () => {
     expect(otherSectionAt({ x: 0, y: 0 }, 's1', doc)).toBe('s2');
     expect(otherSectionAt({ x: 0, y: 0 }, 's2', doc)).toBeNull();
     expect(otherSectionAt({ x: 0, y: 0 }, 's1', {} as Document)).toBeNull();
+  });
+});
+
+describe('layout for fewer columns', () => {
+  // The AIS Console tab of the live dashboard: 3 widgets on the first row and 3 on the second.
+  const ais = toLayout(
+    [
+      w('limits', 0, 0, 6, 14),
+      w('agents', 6, 0, 3, 14),
+      w('gateway', 9, 0, 3, 14),
+      w('identities', 0, 14, 4, 9),
+      w('swap', 4, 14, 4, 9),
+      w('spend', 8, 14, 4, 9),
+    ],
+    () => undefined
+  );
+
+  const gaps = (layout: ReadonlyArray<{ x: number; y: number; w: number }>) => {
+    // A row has a gap at the left when no widget starts at column 0 on it.
+    const rows = new Map<number, number[]>();
+    for (const l of layout) rows.set(l.y, [...(rows.get(l.y) ?? []), l.x]);
+    return [...rows.values()].filter(xs => !xs.includes(0)).length;
+  };
+
+  it('keeps the 12 column layout as it is', () => {
+    expect(layoutForColumns(ais, 12)).toEqual(ais);
+  });
+
+  it('flows the widgets in reading order on 6 columns, with no blank column at the left', () => {
+    const l = layoutForColumns(ais, 6);
+    expect(l.map(i => i.i)).toEqual(ais.map(i => i.i));
+    for (const i of l) {
+      expect(i.x).toBeGreaterThanOrEqual(0);
+      expect(i.x + i.w).toBeLessThanOrEqual(6);
+      expect(i.w).toBeGreaterThanOrEqual(3);
+    }
+    expect(gaps(l)).toBe(0);
+    // Two widgets across, three rows.
+    expect(l.map(i => [i.x, i.y])).toEqual([
+      [0, 0],
+      [3, 0],
+      [0, 14],
+      [3, 14],
+      [0, 28],
+      [3, 28],
+    ]);
+    // Nothing overlaps.
+    for (const a of l)
+      for (const b of l)
+        if (a !== b)
+          expect(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h).toBe(
+            false
+          );
+  });
+
+  it('gives every widget the full width on 2 columns, in one stack', () => {
+    const l = layoutForColumns(ais, 2);
+    expect(l.every(i => i.x === 0 && i.w === 2)).toBe(true);
+    expect(l.map(i => i.y)).toEqual([0, 14, 28, 42, 51, 60]);
+  });
+
+  it('respects a minimum width and does not change the saved layout', () => {
+    const saved = toLayout([w('a', 0, 0, 2, 4, 'wide'), w('b', 2, 0, 2, 4)], t =>
+      t === 'wide' ? { minSize: { w: 5, h: 1 } } : undefined
+    );
+    const copy = JSON.stringify(saved);
+    const l = layoutForColumns(saved, 6);
+    expect(l[0].w).toBe(5);
+    expect(l[1]).toMatchObject({ x: 0, y: 4 });
+    expect(JSON.stringify(saved)).toBe(copy);
   });
 });

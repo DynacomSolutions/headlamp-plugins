@@ -46,7 +46,9 @@ export function isAppPath(v: unknown): v is string {
 
 /**
  * The Headlamp path for a link, or undefined when the link has no place inside Headlamp.
- * - A path (`/c/{cluster}/uptime`) stays a path. The `{cluster}` placeholder becomes the current cluster.
+ * - A path (`/c/{cluster}/nodes`) stays a path. The `{cluster}` placeholder becomes the current cluster.
+ *   A path to a page that is also a tab of this dashboard, for example `/c/{cluster}/uptime` on an
+ *   uptime row, opens that tab.
  * - An `http` or `https` link maps to the tab that has the id of the panel, or else of the source.
  * - Anything else (`javascript:`, `mailto:`, `//host`) gives undefined.
  */
@@ -58,13 +60,42 @@ export function resolveLink(
   if (typeof raw !== 'string') return undefined;
   const v = raw.trim();
   if (isAppPath(v)) {
-    if (!v.includes(CLUSTER_PLACEHOLDER)) return v;
-    const cluster = targets?.base.startsWith('/c/') ? targets.base.slice(3) : '';
-    return cluster ? v.split(CLUSTER_PLACEHOLDER).join(cluster) : undefined;
+    let path = v;
+    if (v.includes(CLUSTER_PLACEHOLDER)) {
+      const cluster = targets?.base.startsWith('/c/') ? targets.base.slice(3) : '';
+      if (!cluster) return undefined;
+      path = v.split(CLUSTER_PLACEHOLDER).join(cluster);
+    }
+    // A link to a Headlamp page that the dashboard has as a tab (the Uptime page, the Incidents
+    // page) opens that tab instead, so the user stays on the dashboard.
+    const tab = targets && tabOfPage(path, origin, targets.tabs);
+    return tab && targets ? buildPath({ name: targets.dashboard, tab }, targets.base) : path;
   }
   if (!/^https?:\/\//i.test(v) || !targets) return undefined;
-  const tab = [origin.panelId, origin.sourceId].find(id => !!id && targets.tabs.includes(id));
+  const tab = originTab(origin, targets.tabs);
   return tab ? buildPath({ name: targets.dashboard, tab }, targets.base) : undefined;
+}
+
+/** The tab with the id of the panel, or else of the source. */
+function originTab(origin: LinkOrigin, tabs: ReadonlyArray<string>): string | undefined {
+  return [origin.panelId, origin.sourceId].find(id => !!id && tabs.includes(id));
+}
+
+/**
+ * The tab for a path to a Headlamp page, `/c/<cluster>/<page>` or `/<page>`. The page name must be
+ * the id of a tab, and the tab must also be the one of the panel or of the source that holds the
+ * link. A link to a page with more path, such as `/c/main/nodes/a`, keeps its path.
+ */
+function tabOfPage(
+  path: string,
+  origin: LinkOrigin,
+  tabs: ReadonlyArray<string>
+): string | undefined {
+  const parts = path.split(/[?#]/)[0].split('/').filter(Boolean);
+  const page = parts[0] === 'c' ? parts.slice(2) : parts;
+  if (page.length !== 1) return undefined;
+  const tab = originTab(origin, tabs);
+  return tab !== undefined && tab === page[0] ? tab : undefined;
 }
 
 /** `resolveLink` with the targets of the dashboard that is on screen. */

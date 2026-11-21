@@ -41,4 +41,12 @@ describe('filter bar', () => {
     expect(screen.getByLabelText('Nodes')).toBeTruthy();
     expect(screen.getByLabelText('Label selector')).toBeTruthy();
   });
+
+  it('wraps its controls onto the next row at every width, also when compact', () => {
+    for (const props of [{}, { compact: true }, { compact: true, tight: true }]) {
+      const { unmount } = render(<FilterBar {...base} {...props} />);
+      expect(getComputedStyle(screen.getByRole('search')).flexWrap).toBe('wrap');
+      unmount();
+    }
+  });
 });

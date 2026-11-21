@@ -141,7 +141,7 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
       aria-label="Dashboard filters"
       sx={{
         display: 'flex',
-        flexWrap: compact ? 'nowrap' : 'wrap',
+        flexWrap: 'wrap',
         alignItems: 'center',
         gap: 1,
         minWidth: 0,
