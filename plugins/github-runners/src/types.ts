@@ -108,4 +108,12 @@ export interface PluginConfig {
   runwardenNamespace?: string;
   runwardenService?: string;
   runwardenPort?: string;
+  /**
+   * Scanner data from a Prometheus-compatible store (for example VictoriaMetrics), read through
+   * the Kubernetes API service proxy. On when a service name is set. A status endpoint, if set,
+   * wins over it.
+   */
+  metricsNamespace?: string;
+  metricsService?: string;
+  metricsPort?: string;
 }

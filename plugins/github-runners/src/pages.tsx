@@ -613,8 +613,9 @@ function HistoryView({ board, filters }: { board: Board; filters: Filters }) {
   if (!remote.configured) {
     return (
       <Alert severity="info">
-        Job history needs the optional status endpoint. Set it in this plugin&apos;s settings
-        (Settings, Plugins, GitHub Runners). Everything else works without it.
+        Job history needs the optional scanner data, from a metrics service or a status endpoint.
+        Set one in this plugin&apos;s settings (Settings, Plugins, GitHub Runners). Everything
+        else works without it.
       </Alert>
     );
   }
@@ -719,12 +720,12 @@ export function GitHubRunnersPage() {
       )}
       {!rwOn && hasConfig && remote.error && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          Status endpoint unavailable ({remote.error}). Showing Kubernetes data only.
+          Scanner data unavailable ({remote.error}). Showing Kubernetes data only.
         </Alert>
       )}
       {stale && (
         <Alert severity="warning" sx={{ mb: 1 }}>
-          {rwOn ? 'RunWarden' : 'Status endpoint'} data is stale ({ago(remoteAge as number)}).
+          {rwOn ? 'RunWarden' : 'Scanner'} data is stale ({ago(remoteAge as number)}).
         </Alert>
       )}
       <Box display="flex" gap={4} flexWrap="wrap" mb={2}>
