@@ -190,7 +190,7 @@ keeps its query.
   so they are not fetched from the internet. Unknown ones get a generic icon.
   (A project icon of kind lucide set by the backend is still looked up by
   Iconify.)
-- **Runner pool rings (optional):** the **Runner pool prefix** setting (`runnerPoolPrefix`) turns on the extra runner rings. It is the word that starts the metric and label names of your runner pool service. Blank: off, and no query for it goes out.
+- **Runner pool rings (optional):** the **Runner pool prefix** setting (`runnerPoolPrefix`) turns on the extra runner rings. It is the word that starts the metric and label names of your runner pool service. Blank: off, and no query for it goes out. A `defaults.json` next to `main.js` can preset it.
 - **Names:** arcs, the centre, the breadcrumb and the list show a friendly
   name, for example `my-runners` as "My runners". The details card shows
   that name as its title and the raw id under it. A name comes from, in order:
