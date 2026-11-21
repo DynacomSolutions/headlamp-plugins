@@ -108,6 +108,12 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - name: Private identifiers in the built bundle
+        working-directory: .
+        env:
+          IDENTIFIERS_DENYLIST: ${{ secrets.IDENTIFIERS_DENYLIST }}
+          IDENTIFIERS_DENYLIST_EXTRA: ${{ secrets.IDENTIFIERS_DENYLIST_EXTRA }}
+        run: scripts/check-bundle.sh plugins/${{ matrix.plugin }}/dist
   agent:
     # The agent layer (agent/): MCP server, plugin data providers, diagnosis agent. Plugin
     # providers (plugins/*/agent/) are bundled into it, so it runs on every change.

@@ -103,7 +103,7 @@ export interface PluginConfig {
   policyRepoCaps?: string;
   projectStripPrefixes?: string;
   projectStripSuffixes?: string;
-  /** Runner service data source: auto (default), on or off. Old key names are read through legacy-keys.ts. */
+  /** Runner service data source: auto (default), on or off. */
   poolMode?: string;
   poolNamespace?: string;
   poolService?: string;

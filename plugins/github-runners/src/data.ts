@@ -1,6 +1,5 @@
 import { ApiProxy, ConfigStore, K8s } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
-import { migrateKeys } from './legacy-keys';
 import {
   buildFromMetrics,
   metricsConfigured,
@@ -64,9 +63,8 @@ export function useConfig(): PluginConfig {
     };
   }, []);
   return React.useMemo(() => {
-    // Old key names are moved to the new ones in each layer first, so a stored value wins over a default.
-    const out: PluginConfig = { ...migrateKeys(defaults) };
-    for (const [k, v] of Object.entries(migrateKeys(stored))) if (v) (out as Record<string, unknown>)[k] = v;
+    const out: PluginConfig = { ...defaults };
+    for (const [k, v] of Object.entries(stored)) if (v) (out as Record<string, unknown>)[k] = v;
     return out;
   }, [defaults, stored]);
 }

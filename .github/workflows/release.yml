@@ -65,6 +65,15 @@ jobs:
           grep -qx "${{ matrix.plugin }}/main.js" <<< "$listing"
           grep -qx "${{ matrix.plugin }}/package.json" <<< "$listing"
           if [ "${{ matrix.plugin }}" = alerting ]; then grep -qx "alerting/sw.js" <<< "$listing"; fi
+      - name: Private identifiers in the release archive
+        working-directory: .
+        env:
+          IDENTIFIERS_DENYLIST: ${{ secrets.IDENTIFIERS_DENYLIST }}
+          IDENTIFIERS_DENYLIST_EXTRA: ${{ secrets.IDENTIFIERS_DENYLIST_EXTRA }}
+        run: |
+          unpack="$(mktemp -d)"
+          tar -xzf plugins/${{ matrix.plugin }}/release-assets/*.tar.gz -C "$unpack"
+          scripts/check-bundle.sh "$unpack"
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.plugin }}

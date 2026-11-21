@@ -7,7 +7,6 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { getJson, useConfig } from './data';
-import { migrateKeys } from './legacy-keys';
 import { DEFAULT_STRIP_SUFFIXES } from './model';
 import { listPath, resolveSource } from './pool';
 import type { PluginConfig } from './types';
@@ -69,7 +68,7 @@ export function Settings(props: PluginSettingsDetailsProps) {
   const { data, onDataChange } = props;
   const cfg = useConfig();
   const set = (key: keyof PluginConfig) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    onDataChange?.({ ...migrateKeys((data || {}) as PluginConfig), [key]: e.target.value });
+    onDataChange?.({ ...((data || {}) as PluginConfig), [key]: e.target.value });
   return (
     <Box display="flex" flexDirection="column" gap={2} maxWidth={640}>
       <Typography variant="h6" component="h2">
