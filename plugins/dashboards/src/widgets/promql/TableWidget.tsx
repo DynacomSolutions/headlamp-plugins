@@ -7,6 +7,7 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import React from 'react';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../contract';
+import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { parseBlocks, QueryBlock } from './blocks';
 import { kioskBox, Notice, useInk } from './common';
@@ -80,6 +81,7 @@ function TableWidget({
     reportRefreshed,
     widthRef: sizeRef,
   });
+  useReportStale(state.staleSince);
   const [sort, setSort] = React.useState<SortState | null>(null);
 
   const samples = React.useMemo(
@@ -112,7 +114,7 @@ function TableWidget({
           : 'desc',
     });
 
-  if (state.error) return <Notice kind="error">{state.error}</Notice>;
+  if (state.error && !state.results) return <Notice kind="error">{state.error}</Notice>;
   if (blocks.length === 0) return <Notice kind="empty">Set a query in the widget settings.</Notice>;
   if (!samples) return <Notice kind="wait">Loading...</Notice>;
   if (rows.length === 0) return <Notice kind="empty">The query returned no data.</Notice>;

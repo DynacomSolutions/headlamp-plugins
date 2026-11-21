@@ -15,6 +15,7 @@ import type {
   WidgetProps,
   WidgetSettingsProps,
 } from '../../contract';
+import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { usePanel, usePanelList } from './data';
 import { sourceOf, SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
@@ -50,6 +51,8 @@ export function PanelWidget({
     reportRefreshed,
     sourceId
   );
+  // A failed refresh keeps the last panel. The card then says since when the data is old.
+  useReportStale(state.staleSince);
 
   if (!config.panel) {
     return (
@@ -69,7 +72,7 @@ export function PanelWidget({
   }
   return (
     <Box sx={{ height: '100%', minWidth: 0 }}>
-      {state.error && (
+      {state.error && !(kiosk && state.panel) && (
         <Alert severity={state.panel ? 'warning' : 'error'} sx={{ mb: 1 }}>
           {state.panel
             ? `Refresh failed, showing the last data: ${state.error}`

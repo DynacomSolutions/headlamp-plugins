@@ -5,6 +5,7 @@
  */
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
+import { backoffDelay } from '../../resilience/backoff';
 import { mayFetch, PanelInfo, PanelModel, parsePanel, parsePanelList } from './model';
 import { listUrl, PanelSource, panelUrl, sourceKey } from './sources';
 
@@ -227,12 +228,20 @@ export interface PanelState {
   loading: boolean;
   error: string | null;
   panel: PanelModel | null;
+  /** Epoch ms of the last good answer, set only while a refresh fails and the old panel stays on screen. */
+  staleSince?: number;
 }
+
+/** The first retry after a failed fetch, and the longest wait between retries. */
+export const RETRY_BASE_MS = 2_000;
+export const RETRY_CAP_MS = 60_000;
 
 /**
  * Fetches one panel when its address or the dashboard's refresh signal changes. A refresh signal
  * that comes sooner than `minSeconds` after the last fetch is ignored. The last good panel stays
- * on screen while a refresh runs and when a refresh fails.
+ * on screen while a refresh runs and when a refresh fails. A failed fetch tries again by itself,
+ * after 2 s, 4 s, 8 s and so on up to 60 s, so a widget recovers after an outage even when the
+ * dashboard has no automatic refresh.
  */
 export function usePanel(
   source: PanelSource | undefined,
@@ -247,12 +256,18 @@ export function usePanel(
     url: string;
     panel: PanelModel | null;
     error: string | null;
+    okAt: number;
   } | null>(null);
   const last = React.useRef<{ url: string; at: number } | null>(null);
   const minRef = React.useRef(minSeconds);
   minRef.current = minSeconds;
+  const [retry, setRetry] = React.useState(0);
+  const failures = React.useRef(0);
+  const retryTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  React.useEffect(() => () => clearTimeout(retryTimer.current), []);
   React.useEffect(() => {
     if (!url || !source) return undefined;
+    clearTimeout(retryTimer.current);
     const now = Date.now();
     const sameUrl = last.current?.url === url;
     if (sameUrl && !mayFetch(last.current ? last.current.at : null, now, minRef.current))
@@ -261,26 +276,39 @@ export function usePanel(
     fetchPanel(source, id, minRef.current).then(
       panel => {
         if (!live) return;
-        setState({ url, panel, error: null });
+        failures.current = 0;
+        setState({ url, panel, error: null, okAt: Date.now() });
         // Only a finished fetch starts the minimum wait, so a cancelled run does not block the next.
         last.current = { url, at: Date.now() };
         reportRefreshed(Date.now());
       },
-      e =>
-        live &&
-        setState(prev => ({ url, panel: prev?.url === url ? prev.panel : null, error: reason(e) }))
+      e => {
+        if (!live) return;
+        setState(prev => ({
+          url,
+          panel: prev?.url === url ? prev.panel : null,
+          error: reason(e),
+          okAt: prev?.url === url ? prev.okAt : 0,
+        }));
+        failures.current += 1;
+        retryTimer.current = setTimeout(
+          () => setRetry(n => n + 1),
+          backoffDelay(failures.current, RETRY_BASE_MS, RETRY_CAP_MS, 0.2)
+        );
+      }
     );
     return () => {
       live = false;
     };
     // `source` is covered by `url`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [url, refreshSignal, reportRefreshed]);
+  }, [url, refreshSignal, reportRefreshed, retry]);
   if (!source && id) return { loading: false, error: missing(sourceId), panel: null };
   const current = state?.url === url ? state : null;
   return {
     loading: url !== '' && current === null,
     error: current?.error ?? null,
     panel: current?.panel ?? null,
+    staleSince: current?.error && current.panel && current.okAt ? current.okAt : undefined,
   };
 }

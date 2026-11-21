@@ -1,6 +1,7 @@
 import Box from '@mui/material/Box';
 import React from 'react';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../contract';
+import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { kioskBox, Notice, useInk } from './common';
 import { LevelBadge } from './LevelBadge';
@@ -104,6 +105,7 @@ function StatWidget({
     widthRef: sizeRef,
     enabled: !config.sparkline || measured,
   });
+  useReportStale(state.staleSince);
   const data = React.useMemo(() => statValue(state.results, config), [state.results, config]);
   const steps = React.useMemo(() => parseThresholds(config.thresholds), [config.thresholds]);
   const level =
@@ -112,7 +114,7 @@ function StatWidget({
   const unit = UNIT_OPTIONS.some(o => o.value === config.unit) ? config.unit : 'plain';
 
   let body: React.ReactNode;
-  if (state.error) body = <Notice kind="error">{state.error}</Notice>;
+  if (state.error && !state.results) body = <Notice kind="error">{state.error}</Notice>;
   else if (queries[0] === '')
     body = <Notice kind="empty">Set a query in the widget settings.</Notice>;
   else if (!data) body = <Notice kind="wait">Loading...</Notice>;
