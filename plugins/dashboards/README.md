@@ -521,6 +521,20 @@ capacity, and its free capacity is a faint crosshatch on a transparent fill. It 
 `nodes` for each ring. Without `nodes` the chart stays category first. To turn it on, set `"groupBy": "node"`
 in the `config` of the widget.
 
+### Agent usage pair (`agent.usage-pair`)
+
+Draws two rings of one panel (by default `cpu` and `memory` of `usage-dashboard` on the agent) as two
+node-first sunbursts side by side with ONE shared legend. It has the same source and panel settings as the
+panel widget, and it keeps the last good panel (the `cache` of the widget) like the other panel widgets.
+It is sized for 6 columns and 8 rows (`w` 6, `h` 8). Options: `first` and `second` set the two rings.
+
+- The same node and the same category have the same colour in both rings and in the legend.
+- The legend lists the node, then its categories, then its free capacity (faint crosshatch). Each row has one
+  value for each ring, in two columns of equal width. A group that only one ring has shows a dash in the other.
+- The legend stays in place and scrolls inside itself when it is long. There is no "+N more" row and no "Other" group.
+- A hover on a legend row or on an arc shows the same group in both rings. In kiosk mode a tap selects instead.
+- Without per-node data from the agent, the widget draws two category-first charts, each with its own legend.
+
 ### The sunburst component
 
 `src/widgets/sunburst/SunburstChart.tsx` is a reusable two-level sunburst: the inner ring has one arc per
