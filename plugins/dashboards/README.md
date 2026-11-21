@@ -488,6 +488,70 @@ needed.
 - **Not available from the source**: the sessions are one total. The `agents` panel names a pool, not an
   identity, so the widget cannot show sessions for each identity.
 
+### Runner widget (`runners.overview`)
+
+One widget for the pools, the queue and the running workflow runs of a runner source. It fetches the `pools`
+and `queue` panels of the source, and the `runs` panel when the source lists it. The `runs` panel is optional.
+
+- **Fixed on top**: five stat tiles (running, queued, free, pools, oldest wait) with one numeral size. Then one
+  ring for each pool: the blue arc is the running slots, the amber arc is the queued jobs and the crosshatch is
+  the free capacity. The icon is in the ring. The pool name and its `running/cap` value sit under it, with the
+  same size in every pool.
+- **One scroll area** under them, with every row. There is no "+N more" row. With nothing to show, one quiet line
+  says "No queued jobs". A fixed summary line is at the bottom.
+- **With the `runs` panel the list is a tree**, collapsed at first: one row for each running or queued run
+  (repository, workflow, branch or pull request, pool, time). Open a run to see its jobs and open a job to see
+  its steps. A run row and a job row have a step bar with one segment for each step: done (green), running
+  (amber, a soft pulse that stops when the user prefers reduced motion), failed (red), skipped (grey) and
+  pending (faint). The text "step N of M" and the name of the current step are next to the bar. Running runs come
+  first (longest first), then queued runs (longest wait first).
+- **Without the `runs` panel** the list is the rows of the `queue` panel: repository, pool, queued count and the
+  oldest wait. There is no tree.
+- **Links** go only to the dashboard tab whose id is the source id. With no such tab, or in edit mode, a row has
+  no link.
+
+#### Optional `runs` panel (v1 extension)
+
+```json
+{
+  "version": 1,
+  "id": "runs",
+  "title": "Runs",
+  "status": "ok",
+  "summary": "3 running, 2 queued",
+  "link": "/overview",
+  "runs": [
+    {
+      "id": "run-1",
+      "repo": "my-org/my-repo",
+      "workflow": "CI",
+      "ref": "PR 12",
+      "pool": "pool-a",
+      "state": "running",
+      "seconds": 642,
+      "jobs": [
+        {
+          "id": "job-1",
+          "name": "build",
+          "state": "running",
+          "pool": "pool-a",
+          "seconds": 640,
+          "steps": [
+            { "name": "Checkout", "state": "done" },
+            { "name": "Build", "state": "running" },
+            { "name": "Test", "state": "pending" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+`state` of a run or job is `running` or `queued`. `state` of a step is `done`, `running`, `failed`, `skipped`
+or `pending`. `seconds` is the time that the run has run or waited. A bad value is dropped or replaced by a
+default, and the widget never throws on bad data.
+
 ### Optional `tables` field (v1 extension)
 
 A panel may add `tables`. A source that does not send it is still valid version 1.

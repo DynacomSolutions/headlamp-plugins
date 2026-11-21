@@ -88,6 +88,45 @@ export interface PanelTable {
   rows: Array<Record<string, string | number>>;
 }
 
+export type RunState = 'running' | 'queued';
+export type StepState = 'done' | 'running' | 'failed' | 'skipped' | 'pending';
+const RUN_STATES: RunState[] = ['running', 'queued'];
+const STEP_STATES: StepState[] = ['done', 'running', 'failed', 'skipped', 'pending'];
+
+export interface PanelStep {
+  name: string;
+  state: StepState;
+}
+
+/** One job of a workflow run, with its steps in order. */
+export interface PanelJob {
+  id: string;
+  name: string;
+  state: RunState;
+  pool: string;
+  /** Seconds the job has run (running) or waited (queued). */
+  seconds: number;
+  steps: PanelStep[];
+}
+
+/**
+ * An optional v1 extension: one workflow run that is running or queued, with its jobs and their
+ * steps. A source serves it in a panel with the id `runs`.
+ */
+export interface PanelRun {
+  id: string;
+  repo: string;
+  workflow: string;
+  /** The branch or pull request of the run. */
+  ref: string;
+  pool: string;
+  state: RunState;
+  /** Seconds the run has run (running) or waited (queued). */
+  seconds: number;
+  link?: string;
+  jobs: PanelJob[];
+}
+
 export interface PanelModel {
   id: string;
   title: string;
@@ -100,6 +139,7 @@ export interface PanelModel {
   series: PanelSeries[];
   rings: PanelRing[];
   tables: PanelTable[];
+  runs: PanelRun[];
 }
 
 export interface PanelInfo {
@@ -210,6 +250,47 @@ function parseRing(raw: unknown): PanelRing | null {
   };
 }
 
+const oneOf = <T extends string>(v: unknown, list: ReadonlyArray<T>, fallback: T): T =>
+  list.includes(v as T) ? (v as T) : fallback;
+const seconds = (v: unknown): number => Math.max(0, num(v));
+
+function parseJob(raw: unknown): PanelJob | null {
+  if (!isObject(raw)) return null;
+  const name = str(raw.name);
+  if (name === '') return null;
+  return {
+    id: str(raw.id, name),
+    name,
+    state: oneOf(raw.state, RUN_STATES, 'running'),
+    pool: str(raw.pool),
+    seconds: seconds(raw.seconds),
+    steps: array(raw.steps)
+      .filter(isObject)
+      .map(s => ({ name: str(s.name), state: oneOf(s.state, STEP_STATES, 'pending') })),
+  };
+}
+
+function parseRun(raw: unknown): PanelRun | null {
+  if (!isObject(raw)) return null;
+  const repo = str(raw.repo);
+  if (repo === '') return null;
+  const workflow = str(raw.workflow);
+  const ref = str(raw.ref);
+  return {
+    id: str(raw.id, `${repo} ${workflow} ${ref}`),
+    repo,
+    workflow,
+    ref,
+    pool: str(raw.pool),
+    state: oneOf(raw.state, RUN_STATES, 'queued'),
+    seconds: seconds(raw.seconds),
+    link: safeLink(raw.link),
+    jobs: array(raw.jobs)
+      .map(parseJob)
+      .filter((j): j is PanelJob => j !== null),
+  };
+}
+
 function parseTable(raw: unknown): PanelTable | null {
   if (!isObject(raw)) return null;
   const columns = array(raw.columns)
@@ -302,6 +383,9 @@ export function parsePanel(json: unknown): PanelModel {
     tables: array(json.tables)
       .map(parseTable)
       .filter((t): t is PanelTable => t !== null),
+    runs: array(json.runs)
+      .map(parseRun)
+      .filter((r): r is PanelRun => r !== null),
   };
 }
 
@@ -331,6 +415,7 @@ export const isEmptyPanel = (p: PanelModel): boolean =>
   p.series.every(s => s.points.length === 0) &&
   p.rings.every(r => r.segments.length === 0) &&
   p.tables.every(t => t.rows.length === 0) &&
+  p.runs.length === 0 &&
   p.summary === '';
 
 /** A ring as sunburst data. Every segment stays its own arc: nothing is merged or cut. */
