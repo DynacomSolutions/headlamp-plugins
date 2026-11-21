@@ -11,7 +11,14 @@
  * is ready. When an instance is not ready and the source does not say which one, the sections of
  * that engine have the status "unknown", and the engine itself keeps the real status.
  */
-import type { PanelModel, PanelRow, PanelRowIcon, PanelStatus } from '../panels/model';
+import type {
+  PanelInstanceRole,
+  PanelModel,
+  PanelRow,
+  PanelRowCount,
+  PanelRowIcon,
+  PanelStatus,
+} from '../panels/model';
 
 export interface HoardNode {
   /** The node name, or "instance 2" when the source names no nodes. */
@@ -20,14 +27,24 @@ export interface HoardNode {
   primary: boolean;
   /** A short reason for a status that is not ok. */
   note?: string;
+  /** The instance name. Only set when the source sends the `instances` field. */
+  instance?: string;
+  /** The role of the instance. Only set when the source sends the `instances` field. */
+  role?: PanelInstanceRole;
 }
 
 export interface HoardEngine {
   /** The engine name, for example "postgres". */
   name: string;
   status: PanelStatus;
-  /** The databases of the engine. Undefined when the source gives no count. */
+  /** The databases of the engine. Undefined when the source gives no database count. */
   databases?: number;
+  /** The live count of the engine (databases, namespaces, buckets or queues). */
+  count?: PanelRowCount;
+  /** The text under the icon: the count with a short unit, or the old value text, or "no count". */
+  countText: string;
+  /** True when the sections come from the `instances` field and not from the text join. */
+  fromInstances: boolean;
   nodes: HoardNode[];
   icon?: PanelRowIcon;
   /** The raw link of the engine row. The widget maps it to the HoardDB tab. */
@@ -66,6 +83,27 @@ export const ENGINE_WORD: Record<PanelStatus, string> = {
   warn: 'Degraded',
   crit: 'Down',
   unknown: 'Unknown',
+};
+
+/** The short form of a count unit, in the singular and in the plural. */
+const UNIT_WORDS: Record<string, [string, string]> = {
+  databases: ['db', 'dbs'],
+  namespaces: ['ns', 'ns'],
+  buckets: ['bucket', 'buckets'],
+  queues: ['queue', 'queues'],
+};
+
+/** The count with its short unit, for example "14 dbs", "3 ns", "5 buckets" or "1 queue". */
+export function countText(count: PanelRowCount): string {
+  const words = UNIT_WORDS[count.unit.toLowerCase()];
+  const unit = words ? words[count.value === 1 ? 0 : 1] : count.unit;
+  return `${count.value} ${unit}`;
+}
+
+/** The old value text of a row. A dash or an empty value is no count. */
+const valueText = (value: string): string => {
+  const v = value.trim();
+  return /^[-\u2013\u2014]*$/.test(v) ? '' : v;
 };
 
 const canon = (s: string): string => s.trim().toLowerCase();
@@ -147,31 +185,55 @@ export function joinHoard(panels: HoardPanels): HoardModel {
       sorted.length > 0
         ? sorted
         : Array.from({ length: Math.max(total, 1) }, (_, i) => `instance ${i + 1}`);
-    const nodes: HoardNode[] = labels.map(label => {
-      const standby = stand.get(label);
-      const isPrimary = label === primary || (primary === undefined && labels.length === 1);
-      let status: PanelStatus;
-      let note: string | undefined;
-      if (standby) {
-        status = standby.status;
-        note = standby.status === 'ok' ? undefined : standby.value;
-      } else if (allReady || ready?.ready === 0) {
-        // Every instance is ready, or none is: the cluster status is the status of each node.
-        status = clusterStatus;
-      } else {
-        status = 'unknown';
-        note = `${issueText}. The source does not say which one.`;
-      }
-      return { name: label, status, primary: isPrimary, note };
-    });
+    const given = engine?.instances;
+    const fromInstances = given !== undefined && given.length > 0;
+    const textNodes = (): HoardNode[] =>
+      labels.map(label => {
+        const standby = stand.get(label);
+        const isPrimary = label === primary || (primary === undefined && labels.length === 1);
+        let status: PanelStatus;
+        let note: string | undefined;
+        if (standby) {
+          status = standby.status;
+          note = standby.status === 'ok' ? undefined : standby.value;
+        } else if (allReady || ready?.ready === 0) {
+          // Every instance is ready, or none is: the cluster status is the status of each node.
+          status = clusterStatus;
+        } else {
+          status = 'unknown';
+          note = `${issueText}. The source does not say which one.`;
+        }
+        return { name: label, status, primary: isPrimary, note };
+      });
+    // One section for each instance, in the order of the source, with the status of the instance.
+    const nodes: HoardNode[] = fromInstances
+      ? given.map(i => ({
+          name: i.node !== '' ? i.node : i.name,
+          status: i.status,
+          primary: i.role === 'primary' || i.role === 'single',
+          note: i.reason,
+          instance: i.name,
+          role: i.role,
+        }))
+      : textNodes();
     let status: PanelStatus = engine?.status ?? clusterStatus;
     if (cluster) status = worse(status, cluster.status);
     const failing = nodes.find(n => n.status !== 'ok' && n.status !== 'unknown');
-    for (const n of nodes)
-      if (n.status === 'warn' || n.status === 'crit') status = worse(status, n.status);
+    if (fromInstances) {
+      // An instance that is not ok makes the engine at least degraded. The row status can say more.
+      if (nodes.some(n => n.status !== 'ok')) status = worse(status, 'warn');
+    } else {
+      for (const n of nodes)
+        if (n.status === 'warn' || n.status === 'crit') status = worse(status, n.status);
+    }
+    const badInstance = nodes.find(n => n.status !== 'ok');
     const issue =
       status === 'ok'
         ? undefined
+        : fromInstances && issueText === '' && badInstance
+        ? `${badInstance.instance} on ${badInstance.name} ${ENGINE_WORD[
+            badInstance.status
+          ].toLowerCase()}${badInstance.note ? `: ${badInstance.note}` : ''}`
         : issueText !== ''
         ? issueText
         : failing
@@ -180,7 +242,16 @@ export function joinHoard(panels: HoardPanels): HoardModel {
     return {
       name,
       status,
-      databases: databasesOf(engine?.value ?? ''),
+      databases: engine?.count
+        ? engine.count.unit.toLowerCase() === 'databases'
+          ? engine.count.value
+          : undefined
+        : databasesOf(engine?.value ?? ''),
+      count: engine?.count,
+      countText: engine?.count
+        ? countText(engine.count)
+        : valueText(engine?.value ?? '') || 'no count',
+      fromInstances,
       nodes,
       icon: engine?.icon ?? cluster?.icon ?? fail?.icon,
       link: engine?.link ?? cluster?.link ?? fail?.link,
@@ -192,6 +263,7 @@ export function joinHoard(panels: HoardPanels): HoardModel {
   for (const e of engines)
     for (const n of e.nodes) {
       if (/^instance \d+$/.test(n.name)) continue;
+      if (n.instance !== undefined && n.name === n.instance) continue;
       nodeStatus[n.name] = n.name in nodeStatus ? worse(nodeStatus[n.name], n.status) : n.status;
     }
   const nodes = Object.keys(nodeStatus).sort((a, b) => a.localeCompare(b));

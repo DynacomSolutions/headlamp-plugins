@@ -24,6 +24,9 @@ export const RING = { outer: 46, inner: 35, gap: 0.07 } as const;
 
 export interface Section {
   node: string;
+  /** The instance name, when the source sends the `instances` field. */
+  instance?: string;
+  role?: string;
   status: PanelStatus;
   primary: boolean;
   path: string;
@@ -44,6 +47,8 @@ export function sectionsOf(engine: HoardEngine): Section[] {
     const at = (start + end) / 2;
     return {
       node: node.name,
+      instance: node.instance,
+      role: node.role,
       status: node.status,
       primary: node.primary,
       path: arcPath(RING.inner, RING.outer, start, end),
@@ -52,10 +57,30 @@ export function sectionsOf(engine: HoardEngine): Section[] {
   });
 }
 
-const sectionTitle = (engine: HoardEngine, s: Section, note?: string): string =>
-  `${engine.name}, ${s.node}: ${ENGINE_WORD[s.status]}${s.primary ? ', primary' : ''}${
-    note ? `. ${note}` : ''
-  }`;
+/** The tooltip of a section: the instance name, node, role and status, and the reason if there is one. */
+export const sectionTitle = (engine: HoardEngine, s: Section, note?: string): string =>
+  s.instance !== undefined
+    ? `${engine.name}, instance ${s.instance}, node ${s.node}, role ${
+        s.role ?? 'unknown'
+      }, status ${ENGINE_WORD[s.status].toLowerCase()}${note ? `, reason: ${note}` : ''}`
+    : `${engine.name}, ${s.node}: ${ENGINE_WORD[s.status]}${s.primary ? ', primary' : ''}${
+        note ? `. ${note}` : ''
+      }`;
+
+/** The tooltip of the icon: the engine with its count, and one line for each instance. */
+export const engineTitle = (engine: HoardEngine): string =>
+  [
+    `${engine.name}: ${ENGINE_WORD[engine.status]}, ${engine.countText}`,
+    ...engine.nodes.map(n =>
+      n.instance !== undefined
+        ? `${n.instance}, node ${n.name}, role ${n.role ?? 'unknown'}, status ${ENGINE_WORD[
+            n.status
+          ].toLowerCase()}${n.note ? `, reason: ${n.note}` : ''}`
+        : `${n.name}: ${ENGINE_WORD[n.status]}${n.primary ? ', primary' : ''}${
+            n.note ? `. ${n.note}` : ''
+          }`
+    ),
+  ].join('\n');
 
 function EngineRing(props: { engine: HoardEngine; source: PanelSource | undefined }): JSX.Element {
   const { engine, source } = props;
@@ -74,15 +99,25 @@ function EngineRing(props: { engine: HoardEngine; source: PanelSource | undefine
         height="100%"
         role="img"
         aria-label={`${engine.name}: ${ENGINE_WORD[engine.status]}. ${engine.nodes
-          .map(n => `${n.name} ${ENGINE_WORD[n.status]}${n.primary ? ' (primary)' : ''}`)
+          .map(
+            n =>
+              `${n.instance !== undefined ? `${n.instance} on ` : ''}${n.name} ${
+                ENGINE_WORD[n.status]
+              }${n.primary ? ' (primary)' : ''}`
+          )
           .join(', ')}`}
         style={{ display: 'block' }}
       >
+        {/* The icon tooltip: the engine, its count and every instance. The circle catches the hover. */}
+        <circle data-ring-hit r={RING.outer} fill="transparent">
+          <title>{engineTitle(engine)}</title>
+        </circle>
         {sections.length === 0 && <path d={arcPath(RING.inner, RING.outer, 0, TAU)} fill={track} />}
         {sections.map((s, i) => (
           <path
-            key={s.node}
+            key={`${s.instance ?? ''}/${s.node}`}
             data-section={s.node}
+            data-instance={s.instance}
             data-section-status={s.status}
             data-primary={s.primary ? '' : undefined}
             d={s.path}
@@ -96,7 +131,7 @@ function EngineRing(props: { engine: HoardEngine; source: PanelSource | undefine
           .filter(s => s.primary)
           .map(s => (
             <circle
-              key={`p-${s.node}`}
+              key={`p-${s.instance ?? ''}/${s.node}`}
               data-primary-dot
               cx={s.mid[0]}
               cy={s.mid[1]}
@@ -143,10 +178,7 @@ function EngineTile(props: {
 }): JSX.Element {
   const { engine, source, link, editing } = props;
   const tk = useTokens();
-  const count =
-    engine.databases === undefined
-      ? 'no count'
-      : `${engine.databases} ${engine.databases === 1 ? 'db' : 'dbs'}`;
+  const count = engine.countText;
   const body = (
     <Box
       data-engine={engine.name}

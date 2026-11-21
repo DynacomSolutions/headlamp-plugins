@@ -49,6 +49,25 @@ export interface PanelAgentFields {
   identities: PanelAgentAccount[];
 }
 
+/** The live count of a row of the HoardDB `engines` panel, for example 14 "databases". */
+export interface PanelRowCount {
+  value: number;
+  unit: string;
+}
+
+/** The role of an instance in the HoardDB `engines` panel. */
+export type PanelInstanceRole = 'primary' | 'standby' | 'replica' | 'single' | 'unknown';
+
+/** One instance of an engine, from the `instances` field of a row of the HoardDB `engines` panel. */
+export interface PanelRowInstance {
+  name: string;
+  node: string;
+  role: PanelInstanceRole;
+  status: PanelStatus;
+  /** Only present when the status is not ok. */
+  reason?: string;
+}
+
 export interface PanelRow {
   label: string;
   detail: string;
@@ -62,6 +81,10 @@ export interface PanelRow {
    * `/api/widgets/` base, for example `icons/postgresql.svg`. A bad value drops the icon, never the row.
    */
   icon?: PanelRowIcon;
+  /** An optional v1 extension: the live count of a HoardDB engine row. Absent when the service does not answer. */
+  count?: PanelRowCount;
+  /** An optional v1 extension: the instances of a HoardDB engine row, one ring segment for each. */
+  instances?: PanelRowInstance[];
   /**
    * An optional v1 extension: named text fields for a widget that joins several panels (the alerts
    * and incidents widget). Only string values are kept, a bad entry is dropped, never the row.
@@ -231,6 +254,50 @@ export function parseRowIcon(raw: unknown, label: string): PanelRowIcon | undefi
   if (src === undefined) return undefined;
   const alt = str(raw.alt).trim().slice(0, ICON_ALT_MAX);
   return { src, alt: alt === '' ? label : alt };
+}
+
+const COUNT_UNIT_MAX = 24;
+
+/** The count of a row. A bad value (no finite non-negative number, no unit) gives undefined. */
+export function parseRowCount(raw: unknown): PanelRowCount | undefined {
+  if (!isObject(raw)) return undefined;
+  const value = raw.value;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  const unit = str(raw.unit).trim().slice(0, COUNT_UNIT_MAX);
+  return unit === '' ? undefined : { value, unit };
+}
+
+const INSTANCE_ROLES: PanelInstanceRole[] = ['primary', 'standby', 'replica', 'single', 'unknown'];
+const INSTANCE_REASON_MAX = 240;
+/** The source writes `warning` and `critical` for an instance. The short forms are also read. */
+const instanceStatus = (v: unknown): PanelStatus =>
+  v === 'warning' ? 'warn' : v === 'critical' ? 'crit' : status(v);
+
+/**
+ * The instances of a row. An entry with no name is dropped, a bad role or status becomes "unknown".
+ * With no list, or no valid entry, the result is undefined and the widget uses the old text join.
+ */
+export function parseRowInstances(raw: unknown): PanelRowInstance[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: PanelRowInstance[] = [];
+  for (const r of raw) {
+    if (!isObject(r)) continue;
+    const name = str(r.name).trim();
+    if (name === '') continue;
+    const role = INSTANCE_ROLES.includes(r.role as PanelInstanceRole)
+      ? (r.role as PanelInstanceRole)
+      : 'unknown';
+    const item: PanelRowInstance = {
+      name,
+      node: str(r.node).trim(),
+      role,
+      status: instanceStatus(r.status),
+    };
+    const reason = str(r.reason).trim().slice(0, INSTANCE_REASON_MAX);
+    if (reason !== '') item.reason = reason;
+    out.push(item);
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 const META_KEY = /^[a-z][A-Za-z0-9_]{0,23}$/;
@@ -455,6 +522,8 @@ export function parsePanel(json: unknown): PanelModel {
           status: status(r.status),
           link: safeLink(r.link),
           icon: parseRowIcon(r.icon, label),
+          count: parseRowCount(r.count),
+          instances: parseRowInstances(r.instances),
           meta: parseMeta(r.meta),
           agent: parseAgentFields(r),
         };
