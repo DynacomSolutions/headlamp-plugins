@@ -297,6 +297,33 @@ describe('model client', () => {
     await expect(new ModelClient(route('cx', { style: 'responses' }), 'm').complete(req)).rejects.toThrow(/quota/);
   });
 
+  it('keeps the type, code and message of a stream failure wherever the upstream puts them', async () => {
+    const run = async (event: object) => {
+      capture(() => new Response(sse([event])));
+      return new ModelClient(route('cx', { style: 'responses' }), 'm').complete(req).then(
+        () => '',
+        (e: Error) => e.message,
+      );
+    };
+    expect(await run({ type: 'error', error: { type: 'server_error', code: 'internal', message: 'overloaded' } })).toBe(
+      'Model stream failed: error (internal): overloaded',
+    );
+    expect(await run({ type: 'response.failed', response: { status: 'failed', error: { code: 'rate_limit_exceeded', message: 'slow down' } } })).toBe(
+      'Model stream failed: response.failed (rate_limit_exceeded): slow down',
+    );
+    expect(await run({ type: 'error', status: 502, code: 'bad_gateway', message: 'upstream closed' })).toBe(
+      'Model stream failed: error 502 (bad_gateway): upstream closed',
+    );
+  });
+
+  it('shows the raw event when a stream failure has no message', async () => {
+    capture(() => new Response(sse([{ type: 'response.failed', response: { id: 'resp_1', status: 'failed', error: null } }])));
+    const err = await new ModelClient(route('cx', { style: 'responses' }), 'm').complete(req).catch((e: Error) => e);
+    expect((err as Error).message).toContain('response.failed');
+    expect((err as Error).message).toContain('"status":"failed"');
+    expect((err as Error).message).not.toContain('unknown error');
+  });
+
   it('still sends Chat Completions and Messages requests', async () => {
     const oa = capture(() => json({ choices: [{ message: { content: 'ok', tool_calls: [{ id: 't', function: { name: 'q', arguments: '{}' } }] }, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 3, completion_tokens: 2 } }));
     const a = await new ModelClient(route('oa'), 'glm').complete(req);
