@@ -28,6 +28,7 @@ import {
   slotCounts,
 } from './inventory';
 import { useInventory } from './inventoryStore';
+import { CPU_LAYOUT, GPU_LAYOUT, MEMORY_LAYOUT, NVME_LAYOUT, PCI_LAYOUT, SLOTS_LAYOUT, TableLayout, tableSx } from './tableLayout';
 
 const dash = (v: string | number | undefined) => (v === undefined || v === '' ? '-' : String(v));
 
@@ -52,17 +53,13 @@ function LinkCell({ link }: { link: LinkInfo | undefined }): JSX.Element {
 }
 
 /**
- * A hardware table keeps each cell on one line. In a narrow place (the node drawer is about 500 px
- * wide at 1280 px) the table scrolls sideways inside its box instead of wrapping every cell.
+ * A hardware table keeps short cells on one line and lets long text (device names, link text) wrap
+ * inside its cell, so every column stays in view in the node drawer. A very narrow place scrolls
+ * the table inside its box. See tableLayout.ts for the column rules.
  */
-function ScrollTable({ children }: { children: React.ReactNode }): JSX.Element {
+function ScrollTable({ layout, children }: { layout: TableLayout; children: React.ReactNode }): JSX.Element {
   return (
-    <Box data-hw-scroll sx={{
-        maxWidth: '100%',
-        overflowX: 'auto',
-        '& table': { width: 'max-content', minWidth: '100%', tableLayout: 'auto' },
-        '& th, & td': { whiteSpace: 'nowrap', overflow: 'visible', textOverflow: 'clip' },
-      }}>
+    <Box data-hw-scroll sx={tableSx(layout)}>
       {children}
     </Box>
   );
@@ -112,7 +109,7 @@ function CpuTable({ p }: { p: HardwareProfile }): JSX.Element {
       {c.sockets.length === 0 ? (
         <Empty>No CPU details reported.</Empty>
       ) : (
-        <ScrollTable><SimpleTable
+        <ScrollTable layout={CPU_LAYOUT}><SimpleTable
           data={c.sockets}
           columns={[
             { label: 'Socket', getter: s => s.socket },
@@ -147,7 +144,7 @@ function MemoryTable({ p }: { p: HardwareProfile }): JSX.Element {
       {m.modules.length === 0 ? (
         <Empty>No per-slot memory details reported.</Empty>
       ) : (
-        <ScrollTable><SimpleTable
+        <ScrollTable layout={MEMORY_LAYOUT}><SimpleTable
           data={m.modules}
           columns={[
             { label: 'Slot', getter: d => moduleLabel(d) },
@@ -188,7 +185,7 @@ function SlotsTable({ p }: { p: HardwareProfile }): JSX.Element {
           <Typography variant="body2" sx={{ mb: 0.5 }}>
             PCIe: {pcie.inUse} of {pcie.total} in use. {m2Summary(p)}.
           </Typography>
-          <ScrollTable><SimpleTable
+          <ScrollTable layout={SLOTS_LAYOUT}><SimpleTable
             data={p.slots}
             columns={[
               { label: 'Slot', getter: (s: Slot) => s.designation },
@@ -220,7 +217,7 @@ function PciTable({ p }: { p: HardwareProfile }): JSX.Element | null {
           {slow} device{slow === 1 ? ' runs' : 's run'} below the maximum PCIe link width.
         </Alert>
       )}
-      <ScrollTable><SimpleTable
+      <ScrollTable layout={PCI_LAYOUT}><SimpleTable
         data={p.pciDevices}
         columns={[
           { label: 'Address', getter: (d: PciDevice) => d.address },
@@ -242,7 +239,7 @@ function GpuTable({ p }: { p: HardwareProfile }): JSX.Element {
       {p.gpus.length === 0 ? (
         <Empty>No GPU reported.</Empty>
       ) : (
-        <ScrollTable><SimpleTable
+        <ScrollTable layout={GPU_LAYOUT}><SimpleTable
           data={p.gpus}
           columns={[
             { label: 'Address', getter: g => g.address },
@@ -266,7 +263,7 @@ function NvmeTable({ p }: { p: HardwareProfile }): JSX.Element {
       {p.nvme.length === 0 ? (
         <Empty>No NVMe drive reported.</Empty>
       ) : (
-        <ScrollTable><SimpleTable
+        <ScrollTable layout={NVME_LAYOUT}><SimpleTable
           data={p.nvme}
           columns={[
             { label: 'Device', getter: n => n.device },
