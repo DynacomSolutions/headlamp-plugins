@@ -43,6 +43,15 @@ export interface RingSegment {
   children?: RingSegment[];
 }
 
+/** One node of a ring: its own capacity and use, and its categories (each with its children). */
+export interface RingNode {
+  key: string;
+  label: string;
+  capacity: number;
+  used: number;
+  segments: RingSegment[];
+}
+
 /** A sunburst ring. The full circle is `capacity`, the filled part is `used`, in `unit`. */
 export interface Ring {
   id: 'cpu' | 'memory';
@@ -51,6 +60,8 @@ export interface Ring {
   capacity: number;
   used: number;
   segments: RingSegment[];
+  /** The same data split by node first. Absent from an older agent or when no node has data. */
+  nodes?: RingNode[];
 }
 
 export interface PanelBody {
@@ -248,6 +259,18 @@ function parseSegments(v: unknown, nested: boolean): RingSegment[] {
   }));
 }
 
+function parseNodes(v: unknown): RingNode[] {
+  return list(v)
+    .filter(n => typeof n.key === 'string' && n.key !== '')
+    .map(n => ({
+      key: String(n.key),
+      label: String(n.label ?? n.key),
+      capacity: positive(n.capacity),
+      used: positive(n.used),
+      segments: parseSegments(n.segments, true),
+    }));
+}
+
 function parseRings(v: unknown): Ring[] {
   return list(v)
     .filter(r => r.id === 'cpu' || r.id === 'memory')
@@ -259,6 +282,7 @@ function parseRings(v: unknown): Ring[] {
       capacity: positive(r.capacity),
       used: positive(r.used),
       segments: parseSegments(r.segments, true),
+      ...(list(r.nodes).length ? { nodes: parseNodes(r.nodes) } : {}),
     }));
 }
 

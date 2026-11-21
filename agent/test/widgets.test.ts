@@ -320,6 +320,19 @@ describe('panel mappings', () => {
       expect(busy!.stats[1]).toMatchObject({ value: '81.0%', status: 'warn' });
     });
 
+    it('passes the nodes of a ring through and drops a node without a key', async () => {
+      const nodes = [
+        { key: 'node:a', label: 'a', capacity: 60, used: 20, segments: [{ key: 'k8s', label: 'Kubernetes', value: 20, children: [{ key: 'k8s/ns:shop', label: 'Shop', value: 20 }] }] },
+        { key: 'node:b', label: 'b', capacity: 40, used: 0, segments: [] },
+      ];
+      const data = out(20, 200);
+      data.rings[0] = { ...data.rings[0], nodes: [...nodes, { key: '', label: 'x', capacity: 1, used: 1, segments: [] }] } as never;
+      const m = await buildPanel('usage-dashboard', deps({ usage_dashboard: data }));
+      expect(m!.rings![0].nodes).toEqual(nodes);
+      // A ring from an older tool has no nodes at all.
+      expect(m!.rings![1]).not.toHaveProperty('nodes');
+    });
+
     it('is unknown without capacity and keeps at most two rings', async () => {
       const none = await buildPanel('usage-dashboard', deps({ usage_dashboard: { nodes: 0, hostMetrics: false, rings: [] } }));
       expect(none).toMatchObject({ status: 'unknown', summary: 'No usage data', rows: [] });
