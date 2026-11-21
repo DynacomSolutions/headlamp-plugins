@@ -10,8 +10,22 @@ import type { PanelRowIcon } from './model';
 import { acquireIcon, releaseIcon } from './rowIcons';
 import type { PanelSource } from './sources';
 import { sourceKey } from './sources';
+import { useTokens } from './tokens';
 
-export const ROW_ICON_SIZE = 20;
+/** The tile around the icon, and the icon inside it, in px. */
+export const ROW_ICON_TILE = 24;
+export const ROW_ICON_SIZE = 18;
+
+/**
+ * Some source icons draw in a fixed dark grey or navy that nearly vanishes on the black kiosk.
+ * A brightness filter lifts them in the dark view only. The tile keeps every engine the same shape.
+ */
+export function darkIconFilter(src: string): string | undefined {
+  if (/sqlite/i.test(src)) return 'brightness(2.8) saturate(0.8)';
+  if (/(^|\/)(d1|kv|objectstore|queue)[.-]/i.test(src)) return 'brightness(2.2) saturate(0.5)';
+  if (/postgres/i.test(src)) return 'brightness(1.7) saturate(0.9)';
+  return undefined;
+}
 
 /** The object URL of an icon, or null while it loads or when it cannot be shown. */
 export function useRowIconUrl(
@@ -48,17 +62,23 @@ export function RowIcon(props: {
   icon: PanelRowIcon | undefined;
 }): JSX.Element {
   const url = useRowIconUrl(props.source, props.icon);
+  const tk = useTokens();
+  // An empty slot keeps its size but draws no tile, so the labels stay aligned.
+  const tile = url !== null && props.icon;
   return (
     <Box
       data-row-icon-slot
       sx={{
-        width: ROW_ICON_SIZE,
-        height: ROW_ICON_SIZE,
+        width: ROW_ICON_TILE,
+        height: ROW_ICON_TILE,
         flex: 'none',
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
         verticalAlign: 'middle',
+        borderRadius: '7px',
+        bgcolor: tile ? tk.hover : undefined,
+        boxShadow: tile ? `inset 0 0 0 1px ${tk.line}` : undefined,
       }}
     >
       {url !== null && props.icon && (
@@ -73,6 +93,7 @@ export function RowIcon(props: {
             height: ROW_ICON_SIZE,
             objectFit: 'contain',
             display: 'block',
+            filter: tk.mode === 'dark' ? darkIconFilter(props.icon.src) : undefined,
           }}
         />
       )}
