@@ -15,8 +15,8 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 
 import { LinkContext } from '../../links';
 import { parsePanel } from '../panels/model';
-import { HoardView, sectionsOf } from './HoardView';
-import { joinHoard } from './join';
+import { engineTitle, HoardView, sectionsOf } from './HoardView';
+import { countText, joinHoard } from './join';
 
 afterEach(cleanup);
 
@@ -226,5 +226,236 @@ describe('HoardView', () => {
   it('has no link when the dashboard has no HoardDB tab', () => {
     const { container } = view(model, { base: '', dashboard: 'ops', tabs: [] });
     expect(container.querySelectorAll('a')).toHaveLength(0);
+  });
+});
+
+const inst = (
+  name: string,
+  node: string,
+  role: string,
+  status = 'ok',
+  reason?: string
+): Record<string, unknown> => ({ name, node, role, status, ...(reason ? { reason } : {}) });
+
+/** An engines panel with the live fields: a count and the instances for each row. */
+const live = (critical = false) =>
+  panel('engines', [
+    {
+      label: 'postgres',
+      detail: 'cnpg, 3 instances',
+      value: '14 dbs',
+      status: critical ? 'warn' : 'ok',
+      icon: { src: 'icons/pg.svg', alt: 'PostgreSQL' },
+      count: { value: 14, unit: 'databases' },
+      instances: [
+        inst('db-1', 'node-a', 'primary'),
+        inst('db-2', 'node-b', 'standby'),
+        inst(
+          'db-3',
+          'node-c',
+          'standby',
+          critical ? 'critical' : 'ok',
+          critical ? 'replication stopped' : undefined
+        ),
+      ],
+    },
+    {
+      label: 'kv',
+      detail: 'kv, 2 instances',
+      value: '-',
+      count: { value: 3, unit: 'namespaces' },
+      instances: [inst('kv-0', 'node-a', 'primary'), inst('kv-1', 'node-b', 'replica')],
+    },
+    {
+      label: 'objectstore',
+      detail: 'single',
+      value: '-',
+      count: { value: 1, unit: 'buckets' },
+      instances: [inst('os-0', 'node-a', 'single')],
+    },
+    {
+      label: 'queue',
+      detail: 'single',
+      value: '-',
+      count: { value: 2, unit: 'queues' },
+      instances: [inst('q-0', 'node-a', 'single')],
+    },
+  ]);
+
+describe('parsePanel: count and instances', () => {
+  it('reads count and instances, and maps warning and critical', () => {
+    const row = live(true).rows[0];
+    expect(row.count).toEqual({ value: 14, unit: 'databases' });
+    expect(row.instances?.map(i => [i.name, i.node, i.role, i.status, i.reason])).toEqual([
+      ['db-1', 'node-a', 'primary', 'ok', undefined],
+      ['db-2', 'node-b', 'standby', 'ok', undefined],
+      ['db-3', 'node-c', 'standby', 'crit', 'replication stopped'],
+    ]);
+  });
+
+  it('drops bad values and never throws', () => {
+    const p = panel('engines', [
+      {
+        label: 'x',
+        count: { value: 'many', unit: 'databases' },
+        instances: [{ node: 'node-a' }, 7, { name: 'i-1', role: 'boss', status: 'fine' }],
+      },
+      { label: 'y', count: { value: -1, unit: 'queues' }, instances: [] },
+      { label: 'z', count: 'five', instances: 'no' },
+    ]);
+    expect(p.rows[0].count).toBeUndefined();
+    expect(p.rows[0].instances).toEqual([
+      { name: 'i-1', node: '', role: 'unknown', status: 'unknown' },
+    ]);
+    expect(p.rows[1].count).toBeUndefined();
+    expect(p.rows[1].instances).toBeUndefined();
+    expect(p.rows[2].count).toBeUndefined();
+    expect(p.rows[2].instances).toBeUndefined();
+  });
+});
+
+describe('joinHoard with the live fields', () => {
+  it('uses the count and one section for each instance, in the order of the source', () => {
+    const m = joinHoard({ engines: live() });
+    expect(m.engines.map(e => e.countText)).toEqual(['14 dbs', '3 ns', '1 bucket', '2 queues']);
+    const pg = m.engines[0];
+    expect(pg.fromInstances).toBe(true);
+    expect(pg.nodes.map(n => [n.instance, n.name, n.role, n.primary, n.status])).toEqual([
+      ['db-1', 'node-a', 'primary', true, 'ok'],
+      ['db-2', 'node-b', 'standby', false, 'ok'],
+      ['db-3', 'node-c', 'standby', false, 'ok'],
+    ]);
+    expect(m.engines[2].nodes[0].primary).toBe(true);
+    expect(m.nodes).toEqual(['node-a', 'node-b', 'node-c']);
+    expect(m.databases).toBe(14);
+    expect(m.summary).toBe('4 of 4 engines healthy, 14 databases');
+  });
+
+  it('does not use the text join when the instances exist', () => {
+    const m = joinHoard({
+      engines: live(),
+      clusters: clusters(),
+      replication: replication('warn'),
+      failback,
+    });
+    expect(m.engines[0].nodes.map(n => n.name)).toEqual(['node-a', 'node-b', 'node-c']);
+    expect(m.engines[0].nodes.every(n => n.status === 'ok')).toBe(true);
+  });
+
+  it('makes the engine at least degraded when an instance is not ok', () => {
+    const m = joinHoard({ engines: live(true) });
+    const pg = m.engines[0];
+    expect(pg.nodes[2].status).toBe('crit');
+    expect(pg.nodes[2].note).toBe('replication stopped');
+    expect(pg.status).toBe('warn');
+    expect(pg.issue).toBe('db-3 on node-c down: replication stopped');
+    expect(m.summary).toBe('3 of 4 engines healthy, 14 databases. Worst: postgres degraded');
+    expect(m.summaryTitle).toContain('db-3 on node-c down: replication stopped');
+    expect(m.nodeStatus['node-c']).toBe('crit');
+  });
+
+  it('raises an ok row to degraded for an instance that is not ok, and keeps a worse row status', () => {
+    const rows = (rowStatus: string) =>
+      panel('engines', [
+        {
+          label: 'kv',
+          status: rowStatus,
+          instances: [
+            inst('kv-0', 'node-a', 'primary'),
+            inst('kv-1', 'node-b', 'replica', 'unknown'),
+          ],
+        },
+      ]);
+    expect(joinHoard({ engines: rows('ok') }).engines[0].status).toBe('warn');
+    expect(joinHoard({ engines: rows('crit') }).engines[0].status).toBe('crit');
+  });
+
+  it('formats the units', () => {
+    expect(countText({ value: 1, unit: 'databases' })).toBe('1 db');
+    expect(countText({ value: 0, unit: 'databases' })).toBe('0 dbs');
+    expect(countText({ value: 1, unit: 'namespaces' })).toBe('1 ns');
+    expect(countText({ value: 5, unit: 'buckets' })).toBe('5 buckets');
+    expect(countText({ value: 2, unit: 'queues' })).toBe('2 queues');
+    expect(countText({ value: 4, unit: 'streams' })).toBe('4 streams');
+  });
+});
+
+describe('joinHoard without the live fields', () => {
+  it('falls back to the value text, then to "no count"', () => {
+    const m = joinHoard({
+      engines: panel('engines', [
+        { label: 'a', value: '13 dbs' },
+        { label: 'b', value: '7 topics' },
+        { label: 'c', value: '-' },
+        { label: 'd', value: '' },
+      ]),
+    });
+    expect(m.engines.map(e => e.countText)).toEqual(['13 dbs', '7 topics', 'no count', 'no count']);
+    expect(m.engines.map(e => e.fromInstances)).toEqual([false, false, false, false]);
+    expect(m.engines[0].databases).toBe(13);
+  });
+
+  it('keeps the count when only the count is missing, and the ring when only instances are missing', () => {
+    const only = panel('engines', [
+      {
+        label: 'kv',
+        detail: 'kv, 1 instances',
+        count: { value: 3, unit: 'namespaces' },
+        instances: [{ nothing: true }],
+      },
+    ]);
+    const m = joinHoard({ engines: only });
+    expect(m.engines[0].countText).toBe('3 ns');
+    expect(m.engines[0].fromInstances).toBe(false);
+    expect(m.engines[0].nodes.map(n => n.name)).toEqual(['instance 1']);
+  });
+});
+
+describe('HoardView with the live fields', () => {
+  it('shows the count under each icon and one coloured segment for each instance', () => {
+    const { container } = view(joinHoard({ engines: live(true) }));
+    const counts = [...container.querySelectorAll('[data-engine-count]')].map(n => n.textContent);
+    expect(counts).toEqual(['14 dbs', '3 ns', '1 bucket', '2 queues']);
+    const pg = container.querySelectorAll('[data-engine="postgres"] [data-section]');
+    expect([...pg].map(n => n.getAttribute('data-section-status'))).toEqual(['ok', 'ok', 'crit']);
+    expect(container.querySelectorAll('[data-engine="postgres"] [data-primary-dot]')).toHaveLength(
+      1
+    );
+    expect(
+      container.querySelectorAll('[data-engine="objectstore"] [data-primary-dot]')
+    ).toHaveLength(1);
+    expect(
+      container.querySelector('[data-engine="postgres"]')?.getAttribute('data-engine-status')
+    ).toBe('warn');
+  });
+
+  it('puts instance, node, role, status and reason in the segment tooltip and the icon tooltip', () => {
+    const { container } = view(joinHoard({ engines: live(true) }));
+    const seg = container.querySelector('[data-engine="postgres"] [data-instance="db-3"] title');
+    expect(seg?.textContent).toBe(
+      'postgres, instance db-3, node node-c, role standby, status down, reason: replication stopped'
+    );
+    const ok = container.querySelector('[data-engine="postgres"] [data-instance="db-1"] title');
+    expect(ok?.textContent).toBe('postgres, instance db-1, node node-a, role primary, status ok');
+    const icon = container.querySelector('[data-engine="postgres"] [data-ring-hit] title');
+    expect(icon?.textContent).toContain('postgres: Degraded, 14 dbs');
+    expect(icon?.textContent).toContain(
+      'db-3, node node-c, role standby, status down, reason: replication stopped'
+    );
+    const m = joinHoard({ engines: live(true) });
+    expect(icon?.textContent).toBe(engineTitle(m.engines[0]));
+  });
+
+  it('keeps the legend, the summary and no "more" or "Other" row', () => {
+    const { container } = view(joinHoard({ engines: live(true) }));
+    expect([...container.querySelectorAll('[data-legend-node]')].map(n => n.textContent)).toEqual([
+      'node-a',
+      'node-b',
+      'node-c',
+    ]);
+    expect(container.querySelector('[data-hoard-summary]')?.textContent).toBe(
+      '3 of 4 engines healthy, 14 databases. Worst: postgres degraded'
+    );
+    expect(container.textContent).not.toMatch(/\+\s*\d+\s*more|\d+ more|Other/);
   });
 });

@@ -621,22 +621,56 @@ One widget for the engines of a HoardDB source (default source id `hoarddb`) and
 replaces the separate engines and clusters panels on an overview. It fetches four panels of the source (`engines`,
 `clusters`, `replication` and `failback`) and joins them in the browser by engine name. No server change is needed.
 
-- **One tile for each engine**: its icon, its name and its database count under it. Tiles wrap in a grid. When they
-  do not fit, the grid scrolls. There is no "+N more" tile.
-- **A ring around the icon**: one section for each node that runs the engine, in the colours of the other status
-  marks (OK, degraded, down, unknown). A dot marks the primary. The node name, its status and "primary" show on
-  hover.
-- **Fixed under the tiles**: a legend of every node (with its worst status) and the summary line, for example
-  "5 of 5 engines healthy, 13 databases". When an engine is not healthy, the summary names the worst one.
+- **One tile for each engine**: its icon, its name and its count under it ("14 dbs", "3 ns", "5 buckets",
+  "2 queues"). Tiles wrap in a grid. When they do not fit, the grid scrolls. There is no "+N more" tile.
+- **A ring around the icon**: one segment for each instance of the engine, in the colours of the other status
+  marks (OK, degraded, down, unknown). A dot marks the primary (or single) instance. A tooltip on the icon and on
+  each segment shows the instance name, node, role and status, and the reason when the status is not OK.
+- **Fixed under the tiles**: a legend of every node seen (with its worst status) and the summary line, for example
+  "5 of 5 engines healthy, 22 databases". An engine with one instance that is not OK is at least degraded in the
+  summary line. The summary line names the worst engine.
 - **Links**: a tile links only to the dashboard tab whose id is the source id (for example `hoarddb`). With no such
   tab, or in edit mode, a tile has no link.
-- **Joins**: the nodes of an engine come from the detail line of the `clusters` panel (`nodes a, b, c`, or
-  `primary node a`), the `failback` panel (the node of the primary) and the standby rows of the `replication` panel
-  (`engine/pod`, detail `node x`). An engine that only one panel names still gets a tile.
-- **Not available from the source**: the source has no status for each instance. A section takes the status of
-  its standby row (a PostgreSQL standby) or, when every instance of the cluster is ready, the status of the cluster.
-  When some instances are not ready and the source does not say which, the sections of that engine show "unknown"
-  and the tile shows the real engine status. The database count exists only for PostgreSQL. Other engines show "no count".
+
+#### Optional row fields of the `engines` panel (v1 extension)
+
+A row of the `engines` panel may add two fields. A source that does not send them is still valid version 1.
+
+```json
+{
+  "label": "postgres",
+  "detail": "cnpg, 4 instances",
+  "value": "14 dbs",
+  "status": "ok",
+  "count": { "value": 14, "unit": "databases" },
+  "instances": [
+    { "name": "db-1", "node": "node-a", "role": "primary", "status": "ok" },
+    {
+      "name": "db-2",
+      "node": "node-b",
+      "role": "standby",
+      "status": "warning",
+      "reason": "replication lag 12 s"
+    }
+  ]
+}
+```
+
+- `count`: `value` is a number and `unit` is a word. The source sends `databases`, `namespaces`, `buckets` or
+  `queues`. The tile shows `dbs`, `ns`, `buckets` and `queues` (singular when the value is 1). Another unit shows
+  as sent. The field is missing when the service does not answer. Then the tile shows the old `value` text, and
+  "no count" when `value` is empty or a dash. The summary line adds the `databases` counts.
+- `instances`: a list of `name`, `node`, `role` (`primary`, `standby`, `replica`, `single` or `unknown`), `status`
+  (`ok`, `warning`, `critical` or `unknown`) and `reason` (only when the status is not `ok`). The ring has one
+  segment for each item, in list order. The primary and the single instance carry the dot. An entry with no name is
+  dropped. A bad role or status becomes `unknown`. The legend has one entry for each node that the lists name.
+- **Without `instances`** (an older source): the widget joins four panels (`engines`, `clusters`, `replication` and
+  `failback`) in the browser, by engine name, as before. The nodes of an engine come from the detail line of the
+  `clusters` panel (`nodes a, b, c`, or `primary node a`), the `failback` panel (the node of the primary) and the
+  standby rows of the `replication` panel (`engine/pod`, detail `node x`). The source then has no status for each
+  instance. A section takes the status of its standby row or, when every instance of the cluster is ready, the
+  status of the cluster. Otherwise the sections of that engine show "unknown" and the tile shows the real engine
+  status.
 
 ### Optional `tables` field (v1 extension)
 
