@@ -90,8 +90,10 @@ describe('PanelView', () => {
     );
     expect(container.querySelector('[data-panel-summary]')?.textContent).toBe('Busy');
     expect(container.querySelectorAll('[data-stat]')).toHaveLength(1);
-    expect(container.querySelectorAll('[data-row]')).toHaveLength(2);
-    expect(container.querySelectorAll('[data-fraction]')).toHaveLength(2);
+    // The critical row is a band. The healthy row folds into one line.
+    expect(container.querySelectorAll('[data-row]')).toHaveLength(1);
+    expect(container.querySelector('[data-rows-fold]')?.textContent).toBe('1 more OK');
+    expect(container.querySelectorAll('[data-fraction]')).toHaveLength(1);
     expect(container.querySelector('a[href="/c/main/nodes/node-a"]')?.textContent).toBe('node-a');
     expect(container.querySelectorAll('[data-sparkline]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-arc="category"]')).toHaveLength(2);

@@ -29,6 +29,8 @@ export interface PanelConfig extends SourcePanelConfig {
   showSummary?: boolean;
   showStats?: boolean;
   rowLayout?: RowLayout;
+  seriesLimit?: number;
+  seriesUnit?: string;
 }
 
 export function PanelWidget({
@@ -93,6 +95,20 @@ export function PanelWidget({
 }
 
 const DISPLAY_FIELDS: ConfigField[] = [
+  {
+    key: 'seriesLimit',
+    label: 'Series limit line',
+    type: 'number',
+    min: 0,
+    help: 'A value that a series must stay under, for example 5. The series plot draws it as a labelled dashed line. 0 or empty: no line.',
+  },
+  {
+    key: 'seriesUnit',
+    label: 'Series unit',
+    type: 'text',
+    placeholder: 's',
+    help: 'The unit after the numbers of the series plot, for example s.',
+  },
   { key: 'showSummary', label: 'Show summary line', type: 'boolean' },
   { key: 'showStats', label: 'Show stat tiles', type: 'boolean' },
   {

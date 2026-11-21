@@ -1,9 +1,11 @@
 /*
- * The rows of a panel, one line each: status mark, icon, label, a muted detail, a thin bar only
- * where the fraction tells something, and the value. The worst rows come first. When the rows do
- * not fit the height, the list shows the rows that fit and a quiet "+N more" line, never a
- * half-cut row. Rows with and without an icon stay aligned: one icon slot, one bar slot and one
- * value width for every row.
+ * The rows of a panel as status bands. A row that needs attention (warning, critical or unknown)
+ * is a tinted band with a label, a detail line and a large value. When bands exist, the healthy
+ * rows fold into one line such as "95 more up", so the few rows that matter come first. A panel
+ * with only healthy rows lists them. A bar shows only where the fraction tells something. The bands
+ * and the folded line have square corners, so the bottom of the list is a straight edge. When the
+ * rows do not fit the height, the list shows the rows that fit and a quiet "+N more" line, never a
+ * half-cut row. Rows with and without an icon stay aligned: one icon slot, one bar slot.
  */
 import Box from '@mui/material/Box';
 import React from 'react';
@@ -39,14 +41,49 @@ export function Label(props: { row: PanelRow; editing: boolean }): JSX.Element {
 export const isInformative = (r: PanelRow): boolean =>
   r.fraction !== undefined && (r.fraction < 0.995 || r.status !== 'ok');
 
-export const ROW_HEIGHT = 26;
-export const ROW_HEIGHT_ICON = 28;
+export const ROW_HEIGHT = 52;
+export const ROW_GAP = 6;
+export const FOLD_HEIGHT = 36;
 export const MORE_HEIGHT = 24;
 
-/** How many rows show in a list of the given height. A height of 0 (not measured) shows all. */
-export function fitRows(count: number, height: number, rowHeight: number): number {
-  if (height <= 0 || count * rowHeight <= height) return count;
-  return Math.max(1, Math.floor((height - MORE_HEIGHT) / rowHeight));
+/** The word after the folded count, by panel id: "95 more up", "6 more engines OK". */
+const OK_WORD: Record<string, string> = {
+  uptime: 'up',
+  backups: 'backups OK',
+  engines: 'engines OK',
+  clusters: 'clusters OK',
+  agents: 'agents running',
+  pools: 'pools OK',
+  'claude-swap': 'members OK',
+};
+export const okWordOf = (panelId: string): string => OK_WORD[panelId] ?? 'OK';
+
+export interface RowPlan {
+  /** The rows to draw, in order. */
+  items: PanelRow[];
+  /** Healthy rows folded into one line. */
+  folded: number;
+  /** Rows left out for lack of height, shown as "+N more". */
+  more: number;
+}
+
+/**
+ * Which rows to draw. The worst come first. When some rows need attention and some are healthy,
+ * the healthy rows fold. A height of 0 (not measured) draws every row.
+ */
+export function planRows(rows: PanelRow[], height: number): RowPlan {
+  const ordered = bySeverity(rows);
+  const bad = ordered.filter(r => r.status !== 'ok');
+  const fold = bad.length > 0 && bad.length < ordered.length;
+  const items = fold ? bad : ordered;
+  const folded = fold ? ordered.length - bad.length : 0;
+  if (height <= 0) return { items, folded, more: 0 };
+  const unit = ROW_HEIGHT + ROW_GAP;
+  const total = items.length * unit + (folded > 0 ? FOLD_HEIGHT : 0);
+  if (total <= height) return { items, folded, more: 0 };
+  const n = Math.max(1, Math.floor((height - MORE_HEIGHT) / unit));
+  const shown = Math.min(n, items.length);
+  return { items: items.slice(0, shown), folded: 0, more: items.length - shown + folded };
 }
 
 function Bar(props: { row: PanelRow }): JSX.Element {
@@ -58,7 +95,7 @@ function Bar(props: { row: PanelRow }): JSX.Element {
     <Box
       role="img"
       aria-label={`${Math.round(fraction * 100)} percent`}
-      sx={{ width: 48, height: 4, borderRadius: '2px', bgcolor: tk.track, overflow: 'hidden' }}
+      sx={{ width: 80, height: 8, borderRadius: '4px', bgcolor: tk.track, overflow: 'hidden' }}
     >
       <Box
         data-fraction={fraction}
@@ -76,111 +113,139 @@ export function RowList(props: {
   rows: PanelRow[];
   /** The height in px that the list may use. 0 means every row. */
   height: number;
+  /** The width in px of the list. 0 (not measured) draws the bars. A narrow list has no bars. */
+  width?: number;
   editing: boolean;
   source?: PanelSource;
+  /** The word after the folded count. */
+  okWord?: string;
   /** The colour of the plot line that belongs to a row. It shows as a short line before the row. */
   swatch?: (row: PanelRow) => string | undefined;
 }): JSX.Element {
-  const { rows, height, editing, source, swatch } = props;
+  const { rows, height, width = 0, editing, source, swatch, okWord = 'OK' } = props;
   const tk = useTokens();
-  const withBar = rows.some(isInformative);
+  const plan = React.useMemo(() => planRows(rows, height), [rows, height]);
+  // Under 360 px a bar would leave the label no room.
+  const withBar = (width === 0 || width >= 360) && plan.items.some(isInformative);
   const withIcon = source !== undefined && rows.some(r => r.icon !== undefined);
-  const rowHeight = withIcon ? ROW_HEIGHT_ICON : ROW_HEIGHT;
-  const ordered = React.useMemo(() => bySeverity(rows), [rows]);
-  const shown = fitRows(ordered.length, height, rowHeight);
-  const hidden = ordered.length - shown;
-  // One value width for every row, so the bars start at the same place.
-  const valueWidth = Math.max(...ordered.map(r => r.value.length), 2);
   return (
-    <Box data-rows sx={{ display: 'flex', flexDirection: 'column', minWidth: 0, fontSize: 13 }}>
-      {ordered.slice(0, shown).map((r, i) => (
+    <Box
+      data-rows
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: `${ROW_GAP}px`,
+        minWidth: 0,
+        fontSize: 13,
+      }}
+    >
+      {plan.items.map((r, i) => {
+        const band = r.status !== 'ok';
+        const big = r.value.length <= 5;
+        return (
+          <Box
+            key={`${r.label}-${i}`}
+            data-row
+            data-row-status={r.status}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              height: ROW_HEIGHT,
+              px: 1.5,
+              flex: 'none',
+              minWidth: 0,
+              // Square corners: a band and the list end in a straight edge.
+              borderRadius: 0,
+              bgcolor: band ? tk.fill[r.status] : 'transparent',
+              boxShadow: band ? 'none' : `inset 0 -1px 0 ${tk.line}`,
+            }}
+          >
+            {swatch && (
+              <Box
+                data-row-swatch
+                sx={{ width: 12, height: 3, borderRadius: '2px', flex: 'none', bgcolor: swatch(r) }}
+              />
+            )}
+            <StatusMark status={r.status} size={16} />
+            {withIcon && (
+              <Box data-row-icon-cell sx={{ display: 'flex' }}>
+                <RowIcon source={source} icon={r.icon} />
+              </Box>
+            )}
+            <Box sx={{ flex: '1 1 0', minWidth: 0 }}>
+              <Box
+                title={r.label}
+                sx={{
+                  fontSize: 16,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                <Label row={r} editing={editing} />
+              </Box>
+              {r.detail && (
+                <Box
+                  title={r.detail}
+                  sx={{
+                    color: tk.fg2,
+                    fontSize: 12.5,
+                    lineHeight: 1.2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {r.detail}
+                </Box>
+              )}
+            </Box>
+            {withBar && (
+              <Box sx={{ width: 80, flex: 'none' }}>{isInformative(r) && <Bar row={r} />}</Box>
+            )}
+            <Box
+              sx={{
+                flex: 'none',
+                textAlign: 'right',
+                whiteSpace: 'nowrap',
+                fontVariantNumeric: 'tabular-nums',
+                fontSize: big ? 22 : 15,
+                lineHeight: 1,
+              }}
+            >
+              {r.value}
+            </Box>
+          </Box>
+        );
+      })}
+      {plan.folded > 0 && (
         <Box
-          key={`${r.label}-${i}`}
-          data-row
+          data-rows-fold
           sx={{
             display: 'flex',
             alignItems: 'center',
             gap: 1,
-            height: rowHeight,
+            height: FOLD_HEIGHT,
+            px: 1.5,
             flex: 'none',
-            minWidth: 0,
-            borderTop: i === 0 ? 0 : `1px solid ${tk.line}`,
+            borderRadius: 0,
+            bgcolor: tk.fill.ok,
+            fontSize: 16,
           }}
         >
-          {swatch && (
-            <Box
-              data-row-swatch
-              sx={{ width: 12, height: 3, borderRadius: '2px', flex: 'none', bgcolor: swatch(r) }}
-            />
-          )}
-          <StatusMark status={r.status} size={11} />
-          {withIcon && (
-            <Box data-row-icon-cell sx={{ display: 'flex' }}>
-              <RowIcon source={source} icon={r.icon} />
-            </Box>
-          )}
-          <Box
-            title={r.label}
-            sx={{
-              flex: '0 1 auto',
-              maxWidth: '46%',
-              minWidth: 0,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <Label row={r} editing={editing} />
-          </Box>
-          <Box
-            title={r.detail}
-            sx={{
-              flex: '1 1 0',
-              minWidth: 0,
-              color: tk.mut,
-              fontSize: 12,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {r.detail}
-          </Box>
-          {withBar && (
-            <Box sx={{ width: 48, flex: 'none' }}>{isInformative(r) && <Bar row={r} />}</Box>
-          )}
-          <Box
-            sx={{
-              flex: 'none',
-              minWidth: `${valueWidth}ch`,
-              textAlign: 'right',
-              whiteSpace: 'nowrap',
-              fontVariantNumeric: 'tabular-nums',
-              color:
-                r.status === 'warn'
-                  ? tk.status.warn
-                  : r.status === 'crit'
-                  ? tk.status.crit
-                  : tk.fg2,
-            }}
-          >
-            {r.value}
-          </Box>
+          <StatusMark status="ok" size={13} />
+          <span>
+            {plan.folded} more {okWord}
+          </span>
         </Box>
-      ))}
-      {hidden > 0 && (
+      )}
+      {plan.more > 0 && (
         <Box
           data-rows-more
-          sx={{
-            height: MORE_HEIGHT,
-            pt: '4px',
-            color: tk.mut,
-            fontSize: 12.5,
-            borderTop: `1px solid ${tk.line}`,
-            flex: 'none',
-          }}
+          sx={{ height: MORE_HEIGHT, px: 1.5, color: tk.mut, fontSize: 14, flex: 'none' }}
         >
-          +{hidden} more
+          +{plan.more} more
         </Box>
       )}
     </Box>

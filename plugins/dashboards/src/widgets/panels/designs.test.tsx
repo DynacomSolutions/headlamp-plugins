@@ -9,11 +9,13 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
   ConfigStore: class {},
 }));
 
+import { alertChipsWidget } from './AlertChips';
+import { PANEL_WIDGETS } from './index';
 import { parsePanel } from './model';
 import { fitLaneRows, fullCount, PanelLanes, worstSegment } from './PanelLanes';
 import { DEFAULT_DISPLAY, displayOf, PanelView } from './PanelView';
 import { groupRows } from './rowGroups';
-import { fitRows, isInformative, MORE_HEIGHT, ROW_HEIGHT } from './RowList';
+import { isInformative, MORE_HEIGHT, planRows, ROW_GAP, ROW_HEIGHT } from './RowList';
 import { niceMax } from './SeriesPlot';
 import { worstStat } from './StatTiles';
 import { bySeverity } from './tokens';
@@ -43,25 +45,42 @@ describe('severity order of rows', () => {
   });
 });
 
-describe('row fit', () => {
-  it('shows every row when they fit or when the height is not measured', () => {
-    expect(fitRows(10, 0, ROW_HEIGHT)).toBe(10);
-    expect(fitRows(4, 4 * ROW_HEIGHT, ROW_HEIGHT)).toBe(4);
+describe('row plan', () => {
+  const row = (label: string, status: 'ok' | 'warn' | 'crit') => ({
+    label,
+    detail: '',
+    value: '1',
+    status,
   });
-  it('shows the rows that fit and leaves room for the "+N more" line', () => {
-    const n = fitRows(40, 300, ROW_HEIGHT);
-    expect(n * ROW_HEIGHT + MORE_HEIGHT).toBeLessThanOrEqual(300);
-    expect((n + 1) * ROW_HEIGHT + MORE_HEIGHT).toBeGreaterThan(300);
+  it('draws every row when the height is not measured', () => {
+    const rows = [row('a', 'ok'), row('b', 'ok')];
+    expect(planRows(rows, 0)).toEqual({ items: bySeverity(rows), folded: 0, more: 0 });
+  });
+  it('folds the healthy rows when some rows need attention', () => {
+    const plan = planRows([row('a', 'ok'), row('b', 'crit'), row('c', 'ok'), row('d', 'warn')], 0);
+    expect(plan.items.map(r => r.label)).toEqual(['b', 'd']);
+    expect(plan.folded).toBe(2);
+  });
+  it('lists healthy rows when every row is healthy', () => {
+    const plan = planRows([row('a', 'ok'), row('b', 'ok')], 0);
+    expect(plan.items).toHaveLength(2);
+    expect(plan.folded).toBe(0);
+  });
+  it('shows the rows that fit and counts the rest in "+N more"', () => {
+    const rows = Array.from({ length: 40 }, (_, i) => row(`r${i}`, 'ok'));
+    const plan = planRows(rows, 300);
+    expect(plan.items.length * (ROW_HEIGHT + ROW_GAP) + MORE_HEIGHT).toBeLessThanOrEqual(300);
+    expect(plan.items.length + plan.more).toBe(40);
   });
   it('always shows one row', () => {
-    expect(fitRows(10, 10, ROW_HEIGHT)).toBe(1);
+    expect(planRows([row('a', 'crit'), row('b', 'crit')], 10).items).toHaveLength(1);
   });
   it('draws a bar only when it tells something', () => {
-    const row = { label: 'a', detail: '', value: '1', status: 'ok' as const };
-    expect(isInformative({ ...row, fraction: 1 })).toBe(false);
-    expect(isInformative({ ...row, fraction: 0.4 })).toBe(true);
-    expect(isInformative({ ...row, fraction: 1, status: 'warn' })).toBe(true);
-    expect(isInformative(row)).toBe(false);
+    const base = row('a', 'ok');
+    expect(isInformative({ ...base, fraction: 1 })).toBe(false);
+    expect(isInformative({ ...base, fraction: 0.4 })).toBe(true);
+    expect(isInformative({ ...base, fraction: 1, status: 'warn' })).toBe(true);
+    expect(isInformative(base)).toBe(false);
   });
 });
 
@@ -90,6 +109,30 @@ describe('stat tiles', () => {
 });
 
 describe('row list', () => {
+  it('shows the worst rows as bands and folds the rest into one line', () => {
+    const { container } = view(
+      <PanelView
+        kiosk
+        editing={false}
+        panel={panel({
+          id: 'uptime',
+          rows: [
+            { label: 'fine', detail: '', value: '1', status: 'ok' },
+            { label: 'fine2', detail: '', value: '1', status: 'ok' },
+            { label: 'broken', detail: '', value: '2', status: 'crit' },
+          ],
+        })}
+      />
+    );
+    expect(container.querySelectorAll('[data-row]')).toHaveLength(1);
+    expect(container.querySelector('[data-rows-fold]')?.textContent).toBe('2 more up');
+  });
+  it('gives every number of the summary line one size', () => {
+    const { container } = view(
+      <PanelView kiosk editing={false} panel={panel({ summary: '95 up, 1 degraded, 0 down' })} />
+    );
+    expect(container.querySelectorAll('[data-panel-summary]')).toHaveLength(1);
+  });
   it('sorts rows by severity in the panel', () => {
     const { container } = view(
       <PanelView
@@ -105,7 +148,7 @@ describe('row list', () => {
     );
     const labels = Array.from(container.querySelectorAll('[data-row]')).map(r => r.textContent);
     expect(labels[0]).toContain('broken');
-    expect(labels[1]).toContain('fine');
+    expect(container.querySelector('[data-rows-fold]')?.textContent).toBe('1 more OK');
   });
 });
 
@@ -185,5 +228,25 @@ describe('stacked lanes', () => {
     );
     expect(container.querySelector('[data-lanes]')).not.toBeNull();
     expect(container.querySelector('[data-rows]')).toBeNull();
+  });
+});
+
+describe('series limit from the widget settings', () => {
+  it('reads a limit line and a unit from the display options and drops bad ones', () => {
+    expect(displayOf({ seriesLimit: 5, seriesUnit: 's' })).toMatchObject({
+      seriesLimit: 5,
+      seriesUnit: 's',
+    });
+    expect(displayOf({ seriesLimit: -1, seriesUnit: 3 }).seriesLimit).toBeUndefined();
+    expect(displayOf({}).seriesUnit).toBeUndefined();
+  });
+});
+
+describe('alert chips widget', () => {
+  it('is a card-less header widget of the alerts panel that the palette lists', () => {
+    expect(alertChipsWidget.type).toBe('agent.alert-chips');
+    expect(alertChipsWidget.card).toBe(false);
+    expect(alertChipsWidget.defaultConfig).toEqual({ source: 'agent', panel: 'alerts' });
+    expect(PANEL_WIDGETS).toContain(alertChipsWidget);
   });
 });
