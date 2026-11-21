@@ -103,8 +103,8 @@ describe('resolveLink', () => {
 
   it('gives no link for an address with no matching tab', () => {
     expect(
-      resolveLink('https://runwarden.example.com/overview', TARGETS, {
-        sourceId: 'runwarden',
+      resolveLink('https://runners.example.com/overview', TARGETS, {
+        sourceId: 'runners',
         panelId: 'pools',
       })
     ).toBeUndefined();
@@ -224,9 +224,9 @@ describe('panel row links', () => {
   it.each(LAYOUTS)('an https row link with no matching tab shows no link (%s)', layout => {
     const { container } = view(
       'pools',
-      'https://runwarden.example.com/overview',
+      'https://runners.example.com/overview',
       layout,
-      'runwarden'
+      'runners'
     );
     expect(container.querySelector('a')).toBeNull();
     expect(container.textContent).toContain('acme');
