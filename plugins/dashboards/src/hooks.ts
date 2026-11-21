@@ -7,6 +7,7 @@ import type { WidgetDefinition } from './contract';
 import { getRegistry } from './registry';
 import { backoffDelay } from './resilience/backoff';
 import { useDashboardNamespace } from './settings';
+import { reuseEqual } from './spec/share';
 import {
   AccessError,
   ConflictError,
@@ -142,6 +143,84 @@ export function useDashboard(storage: DashboardStorage, name: string): Loaded<St
     true,
     cached
   );
+}
+
+/**
+ * Keeps a long-open page in step with the saved dashboard. On each refresh tick (`tick` changes) it
+ * reads the ConfigMap again and compares its resourceVersion with the one on screen. An equal
+ * version changes nothing, so no widget renders. A new version replaces the data in place: the tab,
+ * the scroll position and the data of the widgets that stay are kept (see `reuseEqual`). With `hold`
+ * (unsaved edits or a running save) the new version waits in `newer` instead, so the page can tell
+ * the user, and it applies when `hold` ends. A spec from the browser cache has no resourceVersion,
+ * so the first answer of the cluster always wins over it. A failed read is ignored: the connection
+ * indicator shows it.
+ */
+export function useSpecWatch(
+  storage: DashboardStorage,
+  name: string,
+  loaded: Loaded<StoredDashboard>,
+  tick: number,
+  hold: boolean
+): { newer: StoredDashboard | undefined; applyNewer: () => void } {
+  const [newer, setNewer] = React.useState<StoredDashboard | undefined>(undefined);
+  // The latest values, for the async callbacks that must not see an old render.
+  const latest = React.useRef({ loaded, hold, newer });
+  latest.current = { loaded, hold, newer };
+
+  const apply = React.useCallback((fresh: StoredDashboard) => {
+    const { loaded: now } = latest.current;
+    const spec = now.data ? reuseEqual(now.data.spec, fresh.spec) : fresh.spec;
+    const next = { ...fresh, spec };
+    writeCachedDashboard(lastGoodStore(), next);
+    now.set(next);
+    setNewer(undefined);
+  }, []);
+
+  const first = React.useRef(true);
+  React.useEffect(() => {
+    // The page load reads the spec already, so the first tick has nothing to add.
+    if (first.current) {
+      first.current = false;
+      return undefined;
+    }
+    const startedOn = latest.current.loaded.data;
+    if (!startedOn) return undefined;
+    let live = true;
+    storage.get(name).then(
+      fresh => {
+        if (!live) return;
+        const { loaded: now, hold: held, newer: waiting } = latest.current;
+        // A save or a reload gave the page another version while this read ran: this answer is old.
+        if (now.data?.resourceVersion !== startedOn.resourceVersion) return;
+        if (fresh.resourceVersion === startedOn.resourceVersion && !now.fromCache) {
+          if (waiting) setNewer(undefined);
+          return;
+        }
+        if (!held) apply(fresh);
+        else if (waiting?.resourceVersion !== fresh.resourceVersion) setNewer(fresh);
+      },
+      () => undefined
+    );
+    return () => {
+      live = false;
+    };
+    // Only a new tick starts a read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tick]);
+
+  const current = loaded.data?.resourceVersion;
+  React.useEffect(() => {
+    // A save gave the page the version that was waiting: the notice is old.
+    if (newer && newer.resourceVersion === current) setNewer(undefined);
+    // The hold ended (a discard, or a save): take the waiting version.
+    else if (newer && !hold) apply(newer);
+  }, [newer, current, hold, apply]);
+
+  const applyNewer = React.useCallback(() => {
+    const waiting = latest.current.newer;
+    if (waiting) apply(waiting);
+  }, [apply]);
+  return { newer, applyNewer };
 }
 
 /** Whether the user can create, update and delete ConfigMaps in the namespace. undefined while unknown. */

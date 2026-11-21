@@ -44,6 +44,7 @@ import {
   useCanWrite,
   useClusterNames,
   useDashboard,
+  useSpecWatch,
   useStorage,
   useWidgetDefinition,
   useWidgetDefinitions,
@@ -173,6 +174,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const editing = query.edit && !query.kiosk && writable;
   const spec: DashboardSpec | undefined = editing && draft ? draft : stored?.spec;
   const dirty = editing && draft !== null && draft !== stored?.spec;
+  // Each refresh tick reads the saved spec again. A change shows in place. Unsaved edits are never replaced.
+  const specWatch = useSpecWatch(storage, name, loaded, signal, dirty || save.saving);
 
   // The edit callbacks below are stable while the stored spec is, so dragging a widget does not
   // recreate them. They work on the draft, which starts as the stored spec.
@@ -1096,6 +1099,29 @@ function DashboardView({ name }: { name: string }): JSX.Element {
               {save.saving ? 'Saving…' : 'Save'}
             </Button>
           </Box>
+        )}
+        {!kiosk && editing && specWatch.newer && (
+          <Alert
+            severity="info"
+            role="status"
+            data-spec-changed
+            sx={{ mb: 1 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  setDraft(null);
+                  specWatch.applyNewer();
+                }}
+              >
+                Discard my changes and load it
+              </Button>
+            }
+          >
+            The saved dashboard changed. Your changes stay on screen. Save them to see the conflict,
+            or load the saved dashboard.
+          </Alert>
         )}
         {!kiosk && save.conflict && (
           <Alert

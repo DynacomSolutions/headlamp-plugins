@@ -85,6 +85,13 @@ shows the age of that data ("Refreshed 2 min ago") until the first fresh answer.
 minutes shows a small "Cached" mark. The dashboard spec, the cluster sources and the kiosk scroll
 position are kept the same way.
 
+A page that stays open (a wall kiosk) also follows the saved dashboard. On each refresh tick it reads
+the ConfigMap again and compares the resourceVersion. A new version shows in place: the tab, the
+scroll position and the data of the widgets that stay are kept, new widgets load, and removed widgets
+go. The cached spec never wins over a newer spec of the cluster. In edit mode with unsaved changes the
+page keeps them and shows a notice, "The saved dashboard changed", with a button to load the saved
+version. A save still sends the old resourceVersion, so a conflict shows as before.
+
 A widget from another plugin reads and writes its data with the optional `cache` prop of
 `WidgetProps` (see `contract.ts`). It must work when `cache` is missing.
 
