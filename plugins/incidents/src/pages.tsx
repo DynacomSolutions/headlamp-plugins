@@ -12,7 +12,8 @@ import { AgentActions } from './AgentActions';
 import { createChat } from './chat-data';
 import { ChatPage } from './ChatPage';
 import { rerunDiagnosis, useDiagnoses, useDiagnosis, useSettings } from './data';
-import { DiagnosesTable } from './DiagnosesTable';
+import { IncidentChats } from './IncidentChats';
+import { IncidentsBrowser } from './IncidentsBrowser';
 import { LaunchesPage } from './LaunchPages';
 import { DiagnosisSummary } from './model';
 import { NotificationsPage } from './NotificationsPage';
@@ -41,7 +42,7 @@ export function IncidentsPage() {
       ) : data && data.length === 0 ? (
         <Typography>No diagnoses yet.</Typography>
       ) : (
-        <DiagnosesTable rows={data ?? []} onRerun={rerun} />
+        <IncidentsBrowser rows={data ?? []} onRerun={rerun} />
       )}
     </SectionBox>
   );
@@ -109,6 +110,7 @@ function IncidentDetail({ id }: { id: string }) {
         <CircularProgress aria-label="Loading" />
       ) : data ? (
         <>
+          <IncidentChats diagnosisId={id} />
           <A2uiRenderer messages={data.a2ui} />
           <AgentActions
             diagnosisId={id}

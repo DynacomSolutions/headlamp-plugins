@@ -343,7 +343,9 @@ const publishSchema = z.object({
 });
 
 const rerunSchema = z.object({ model: z.string().max(200).nullish() }).strict();
-const createChatSchema = z.object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional() }).strict();
+const createChatSchema = z
+  .object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional(), diagnosisIds: z.array(z.string().min(1).max(200)).min(1).max(20).optional() })
+  .strict();
 const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional(), push: z.string().regex(/^[0-9a-f]{32}$/).optional() });
 const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional() });
 
@@ -656,7 +658,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         try {
           if (!id && req.method === 'GET') {
             const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
-            return send(res, 200, { chats: chats.list(limit) });
+            return send(res, 200, { chats: chats.list(limit, url.searchParams.get('diagnosisId') || undefined) });
           }
           if (!id && req.method === 'POST') return send(res, 201, await chats.create(await chatBody(req, createChatSchema)));
           if (id && !action && req.method === 'GET') return send(res, 200, chats.get(id));

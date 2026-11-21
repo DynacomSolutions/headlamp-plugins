@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { mask, maskText } from '../mask.js';
-import { DEFAULT_TITLE, type Chat, type ChatMessage, type ChatStep, type ChatStore } from '../chats.js';
+import { chatDiagnosisIds, DEFAULT_TITLE, type Chat, type ChatMessage, type ChatStep, type ChatStore } from '../chats.js';
 import type { DiagnosisStore } from '../store.js';
 import { ModelCatalogue, UnknownModelError } from './catalogue.js';
 import type { ToolHost } from './engine.js';
@@ -31,9 +31,17 @@ export interface ChatSummary {
   title: string;
   model: string;
   diagnosisId?: string;
+  diagnosisIds?: string[];
   updatedAt: string;
   running: boolean;
 }
+
+/** Incidents one chat may link to. */
+export const MAX_CHAT_INCIDENTS = 20;
+/** Characters of incident context in the system prompt, shared by the linked incidents. */
+const CONTEXT_CHARS = 48_000;
+const SINGLE_CONTEXT_CHARS = 12_000;
+const MIN_CONTEXT_CHARS = 2_400;
 
 export interface ChatDeps {
   store: ChatStore;
@@ -62,7 +70,7 @@ export function trimHistory(messages: Message[], limit = HISTORY_RESULT_CHARS): 
   return out;
 }
 
-export function systemPrompt(budget: number, diagnosis?: Diagnosis): string {
+export function systemPrompt(budget: number, diagnosis?: Diagnosis | Diagnosis[]): string {
   const parts = [
     readSkill().body,
     [
@@ -73,23 +81,36 @@ export function systemPrompt(budget: number, diagnosis?: Diagnosis): string {
       'You cannot change anything. Say so when asked, and show the command or the change for the operator to make.',
     ].join('\n'),
   ];
-  if (diagnosis) parts.push(diagnosisContext(diagnosis));
+  const list = diagnosis === undefined ? [] : Array.isArray(diagnosis) ? diagnosis : [diagnosis];
+  if (list.length === 1) parts.push(diagnosisContext(list[0]!));
+  else if (list.length > 1) {
+    const each = Math.max(MIN_CONTEXT_CHARS, Math.floor(CONTEXT_CHARS / list.length));
+    parts.push(
+      `## The ${list.length} incidents this chat is about\nThe operator chose these incidents together. Compare them, and look for a shared cause, when the question asks for it.`,
+      ...list.map((d, i) => diagnosisContext(d, `Incident ${i + 1} of ${list.length}`, each)),
+    );
+  }
   return parts.join('\n\n');
 }
 
-function diagnosisContext(d: Diagnosis): string {
-  const lines = [`## The incident this chat is about\nDiagnosis ${d.id} (${d.status}${d.resolvedAt ? ', resolved' : ''}).`, `Alert: ${JSON.stringify(d.alert)}`];
+function diagnosisContext(d: Diagnosis, heading = 'The incident this chat is about', limit = SINGLE_CONTEXT_CHARS): string {
+  const lines = [`## ${heading}\nDiagnosis ${d.id} (${d.status}${d.resolvedAt ? ', resolved' : ''}).`, `Alert: ${JSON.stringify(d.alert)}`];
   if (d.error) lines.push(`Error: ${d.error}`);
   if (d.result) {
     lines.push(`Summary: ${d.result.summary}`, `Likely cause (${d.result.confidence} confidence): ${d.result.likelyCause}`);
     lines.push(`Fixes:\n${d.result.fixes.map((f, i) => `${i + 1}. ${f.title}: ${f.detail}`).join('\n')}`, `How to verify: ${d.result.verify}`);
   }
   if (d.evidence.length) lines.push(`Evidence:\n${d.evidence.map(e => `- ${e.id} ${e.tool} (${e.ok ? 'ok' : 'failed'}): ${e.summary}`).join('\n')}`);
-  return clip(lines.join('\n'), 12_000);
+  return clip(lines.join('\n'), limit);
+}
+
+function linkFields(chat: Chat): { diagnosisId?: string; diagnosisIds?: string[] } {
+  const ids = chatDiagnosisIds(chat);
+  return ids.length ? { diagnosisId: ids[0], diagnosisIds: ids } : {};
 }
 
 function summary(store: ChatStore, chat: Chat): ChatSummary {
-  return { id: chat.id, title: chat.title, model: chat.model, ...(chat.diagnosisId ? { diagnosisId: chat.diagnosisId } : {}), updatedAt: chat.updatedAt, running: store.running(chat) };
+  return { id: chat.id, title: chat.title, model: chat.model, ...linkFields(chat), updatedAt: chat.updatedAt, running: store.running(chat) };
 }
 
 export class ChatService {
@@ -110,14 +131,19 @@ export class ChatService {
     }
   }
 
-  list(limit: number): ChatSummary[] {
-    return this.deps.store.list().slice(0, limit).map(c => summary(this.deps.store, c));
+  /** Newest activity first. `diagnosisId` keeps only the chats linked to that incident. */
+  list(limit: number, diagnosisId?: string): ChatSummary[] {
+    const all = this.deps.store.list();
+    const kept = diagnosisId ? all.filter(c => chatDiagnosisIds(c).includes(diagnosisId)) : all;
+    return kept.slice(0, limit).map(c => summary(this.deps.store, c));
   }
 
-  async create(body: { model?: string; diagnosisId?: string }): Promise<{ id: string }> {
-    if (body.diagnosisId !== undefined && !(await this.deps.diagnoses.get(body.diagnosisId))) throw new ChatError(404, `No diagnosis ${body.diagnosisId}`);
+  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[] }): Promise<{ id: string }> {
+    const ids = [...new Set([...(body.diagnosisIds ?? []), ...(body.diagnosisId !== undefined ? [body.diagnosisId] : [])])];
+    if (ids.length > MAX_CHAT_INCIDENTS) throw new ChatError(400, `A chat can link at most ${MAX_CHAT_INCIDENTS} incidents`);
+    for (const id of ids) if (!(await this.deps.diagnoses.get(id))) throw new ChatError(404, `No diagnosis ${id}`);
     const model = await this.modelId(body.model);
-    return { id: this.deps.store.create({ model, diagnosisId: body.diagnosisId }).id };
+    return { id: this.deps.store.create({ model, diagnosisIds: ids }).id };
   }
 
   private chat(id: string): Chat {
@@ -132,7 +158,7 @@ export class ChatService {
       id: chat.id,
       title: chat.title,
       model: chat.model,
-      ...(chat.diagnosisId ? { diagnosisId: chat.diagnosisId } : {}),
+      ...linkFields(chat),
       createdAt: chat.createdAt,
       updatedAt: chat.updatedAt,
       running: this.deps.store.running(chat),
@@ -240,8 +266,8 @@ export class ChatService {
       const specs = await guard(host.list());
       const names = new Set(specs.map(s => s.name));
       const toolSpecs: ToolSpec[] = specs.map(s => withReason(s));
-      const diagnosis = chat.diagnosisId ? await this.deps.diagnoses.get(chat.diagnosisId) : undefined;
-      const system = systemPrompt(budget, diagnosis);
+      const linked = (await Promise.all(chatDiagnosisIds(chat).map(id => this.deps.diagnoses.get(id)))).filter((d): d is Diagnosis => !!d);
+      const system = systemPrompt(budget, linked.length === 1 ? linked[0] : linked);
       const past = this.history(chat, reply);
       const turn: Message[] = [];
       const texts: string[] = [];

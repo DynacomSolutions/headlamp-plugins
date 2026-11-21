@@ -370,9 +370,9 @@ All routes answer JSON and have the same protection as `POST /api/diagnoses`.
 
 | Route | Answer |
 | --- | --- |
-| `GET /api/chats?limit=50` | `{ chats: [{ id, title, model, diagnosisId?, updatedAt, running }] }`, newest first |
-| `POST /api/chats` with `{ model?, diagnosisId? }` | 201 `{ id }`. An unknown model gets 400 with the valid ids. An unknown diagnosis gets 404 |
-| `GET /api/chats/<id>` | `{ id, title, model, diagnosisId?, createdAt, updatedAt, running, messages }` |
+| `GET /api/chats?limit=50&diagnosisId=<id>` | `{ chats: [{ id, title, model, diagnosisId?, diagnosisIds?, updatedAt, running }] }`, newest first. `diagnosisId` keeps the chats linked to that incident |
+| `POST /api/chats` with `{ model?, diagnosisId?, diagnosisIds? }` | 201 `{ id }`. `diagnosisIds` links one chat to 1 to 20 incidents, and the system prompt holds all of them. `diagnosisId` is the same for one incident. An unknown model gets 400 with the valid ids. An unknown diagnosis gets 404 |
+| `GET /api/chats/<id>` | `{ id, title, model, diagnosisId?, diagnosisIds?, createdAt, updatedAt, running, messages }` |
 | `POST /api/chats/<id>/messages` with `{ text, model? }` | 202 `{ messageId }`. `text` has 1 to 8000 characters. 409 when a turn runs in this chat. 429 above `AGENT_MAX_CHAT_TURNS`. A `model` switches the chat from this turn on |
 | `POST /api/chats/<id>/cancel` | 200. Stops the running turn, which gets the status `cancelled` |
 | `PATCH /api/chats/<id>` with `{ title?, model? }` | 200 with the chat summary |
