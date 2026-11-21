@@ -13,7 +13,7 @@ import { useElementSize } from '../promql/useElementSize';
 import { SunburstData } from './geometry';
 import { LegendSwatch } from './LegendSwatch';
 import { categoryOf, NodeRing, useNodeColours } from './NodeRing';
-import { pairNodes, PairRow } from './pairModel';
+import { inOrder, pairNodes, pairOrder, PairRow } from './pairModel';
 import { SunburstChart } from './SunburstChart';
 
 export interface PairRing {
@@ -40,9 +40,12 @@ export function UsagePair({ first, second, kiosk = false }: UsagePairProps): JSX
   const [active, setActive] = React.useState<string | null>(null);
   const [picked, setPicked] = React.useState<string | null>(null);
   const box = useElementSize<HTMLDivElement>();
-  const nodesA = first.data.nodes;
-  const nodesB = second.data.nodes;
-  const lists = React.useMemo(() => [nodesA ?? [], nodesB ?? []], [nodesA, nodesB]);
+  // One node order for both rings and the legend.
+  const ordered = React.useMemo(() => {
+    const order = pairOrder(first.data, second.data);
+    return [inOrder(first.data, order), inOrder(second.data, order)] as const;
+  }, [first.data, second.data]);
+  const lists = React.useMemo(() => [ordered[0].nodes ?? [], ordered[1].nodes ?? []], [ordered]);
   const colours = useNodeColours(lists);
   const nodes = React.useMemo(() => pairNodes(first.data, second.data), [first.data, second.data]);
   const shown = active ?? picked;
@@ -159,10 +162,10 @@ export function UsagePair({ first, second, kiosk = false }: UsagePairProps): JSX
       }}
     >
       <Box sx={{ display: 'flex', gap: '4px', flex: 'none', alignItems: 'center' }}>
-        {[first, second].map(r => (
+        {[first, second].map((r, i) => (
           <NodeRing
             key={r.title}
-            data={r.data}
+            data={ordered[i]}
             format={r.format}
             title={r.title}
             colours={colours}

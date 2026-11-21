@@ -30,11 +30,44 @@ export interface PairNode {
 const used = (n: SunburstNode | undefined): number | undefined =>
   n ? Math.max(0, n.used) : undefined;
 
-/** The nodes of both charts, in the order of the first chart, then the nodes that only the second has. */
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+/**
+ * The one node order of a pair: every node of either chart, by name in natural order. The order does
+ * not depend on the size of a node or on the chart, so the same node sits at the same place in both
+ * rings and in the legend, and a refresh never moves it.
+ */
+export function pairOrder(a: SunburstData, b: SunburstData): Array<{ key: string; label: string }> {
+  const seen = new Map<string, string>();
+  for (const n of [...(a.nodes ?? []), ...(b.nodes ?? [])])
+    if (!seen.has(n.key)) seen.set(n.key, n.label);
+  return [...seen]
+    .map(([key, label]) => ({ key, label }))
+    .sort((x, y) => collator.compare(x.label, y.label) || x.key.localeCompare(y.key));
+}
+
+/**
+ * The data of one ring with its nodes in the given order. A node that the ring has not gets an empty
+ * node, so every node of the legend has an arc in both rings.
+ */
+export function inOrder(
+  data: SunburstData,
+  order: ReadonlyArray<{ key: string; label: string }>
+): SunburstData {
+  const have = new Map((data.nodes ?? []).map(n => [n.key, n]));
+  return {
+    ...data,
+    nodes: order.map(
+      o => have.get(o.key) ?? { key: o.key, label: o.label, capacity: 0, used: 0, categories: [] }
+    ),
+  };
+}
+
+/** The nodes of both charts in the order of `pairOrder`. */
 export function pairNodes(a: SunburstData, b: SunburstData): PairNode[] {
   const an = a.nodes ?? [];
   const bn = b.nodes ?? [];
-  const keys = [...new Set([...an.map(n => n.key), ...bn.map(n => n.key)])];
+  const keys = pairOrder(a, b).map(o => o.key);
   return keys.map(key => {
     const na = an.find(n => n.key === key);
     const nb = bn.find(n => n.key === key);

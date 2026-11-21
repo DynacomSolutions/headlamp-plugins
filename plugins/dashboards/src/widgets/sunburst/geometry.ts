@@ -224,6 +224,31 @@ export const freeKey = (nodeKey: string): string => `${nodeKey}/~free`;
 export const nodeSpan = (n: Pick<SunburstNode, 'capacity' | 'used'>): number =>
   Math.max(positive(n.capacity), positive(n.used));
 
+/** The smallest angle of a node arc, in radians (about 19 degrees): room for a short node name. */
+export const MIN_NODE_ANGLE = 0.34;
+
+/**
+ * The angle of each node: its share of the circle, but never less than `MIN_NODE_ANGLE`, so a small
+ * node stays visible and can hold its label. The larger nodes shrink by the same factor to make room.
+ * With very many nodes the minimum shrinks to a quarter of an even share.
+ */
+export function nodeAngles(spans: number[]): number[] {
+  const total = spans.reduce((s, v) => s + v, 0);
+  if (spans.length === 0 || total <= 0) return spans.map(() => 0);
+  const floor = Math.min(MIN_NODE_ANGLE, TAU / (2 * spans.length));
+  const small = new Set<number>();
+  let angles = spans.map(v => (v / total) * TAU);
+  for (let pass = 0; pass <= spans.length; pass++) {
+    const room = TAU - small.size * floor;
+    const big = spans.reduce((s, v, i) => (small.has(i) ? s : s + v), 0);
+    angles = spans.map((v, i) => (small.has(i) ? floor : big > 0 ? (v / big) * room : 0));
+    const next = angles.findIndex((a, i) => !small.has(i) && a < floor);
+    if (next < 0) break;
+    small.add(next);
+  }
+  return angles;
+}
+
 /**
  * The arcs of a node-first sunburst, for a chart of the given radius. The first ring is one arc
  * per node, sized by its capacity (or its use, when that is larger). Inside each node the second
@@ -232,17 +257,24 @@ export const nodeSpan = (n: Pick<SunburstNode, 'capacity' | 'used'>): number =>
  * third ring. Every group is its own arc: no "Other" arc and no top-N cut.
  */
 export function layoutNodeArcs(nodes: SunburstNode[], radius: number): NodeArcShape[] {
-  const list = nodes.map(n => ({ ...n, span: nodeSpan(n) })).filter(n => n.span > 0);
-  const scale = list.reduce((s, n) => s + n.span, 0);
+  const all = nodes.map(n => ({ ...n, span: nodeSpan(n) }));
+  const scale = all.reduce((s, n) => s + n.span, 0);
   if (scale <= 0) return [];
+  // A node that has no capacity and no use among others still gets its minimum arc, so every node
+  // of a legend has an arc.
+  const list = all;
+  const angles = nodeAngles(list.map(n => n.span));
   const centre = radius * CENTRE;
   const nodeEnd = radius * NODE_RING_END;
   const catEnd = radius * CATEGORY_RING_END;
   const arcs: NodeArcShape[] = [];
   let at = 0;
-  for (const node of list) {
+  for (const [ni, node] of list.entries()) {
     const start = at;
-    const end = start + (node.span / scale) * TAU;
+    const end = start + angles[ni];
+    // The angle of one unit inside this node. A small node is widened to its minimum arc, and its
+    // categories, children and free slice widen with it, so they still fill the node exactly.
+    const unit = node.span > 0 ? angles[ni] / node.span : 0;
     arcs.push({
       kind: 'node',
       key: node.key,
@@ -267,7 +299,7 @@ export function layoutNodeArcs(nodes: SunburstNode[], radius: number): NodeArcSh
     const fitCats = catTotal > room && catTotal > 0 ? room / catTotal : 1;
     let cat = start;
     for (const c of cats) {
-      const cend = cat + ((c.value * fitCats) / scale) * TAU;
+      const cend = cat + c.value * fitCats * unit;
       arcs.push({
         kind: 'category',
         key: c.key,
@@ -289,7 +321,7 @@ export function layoutNodeArcs(nodes: SunburstNode[], radius: number): NodeArcSh
       const fitKids = kidTotal > c.value ? c.value / kidTotal : 1;
       let kat = cat;
       for (const k of kids) {
-        const kend = kat + ((k.value * fitCats * fitKids) / scale) * TAU;
+        const kend = kat + k.value * fitCats * fitKids * unit;
         arcs.push({
           kind: 'child',
           key: k.key,
@@ -318,7 +350,7 @@ export function layoutNodeArcs(nodes: SunburstNode[], radius: number): NodeArcSh
         nodeLabel: node.label,
         categoryKey: '',
         categoryLabel: '',
-        start: end - (free / scale) * TAU,
+        start: end - free * unit,
         end,
         inner: nodeEnd + RING_GAP / 2,
         outer: radius,
