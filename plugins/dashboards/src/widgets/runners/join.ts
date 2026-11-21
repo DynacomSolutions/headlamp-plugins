@@ -119,6 +119,35 @@ export function progressOf(steps: ReadonlyArray<PanelStep>): StepProgress | null
   return { n: at + 1, total: steps.length, name: steps[at].name, state: steps[at].state };
 }
 
+/** The narrowest step segment in pixels, and the gap between two segments. */
+export const STEP_MIN_SEGMENT = 4;
+export const STEP_GAP = 1;
+/** The bar width to assume before the first measurement. */
+export const STEP_BAR_FALLBACK_WIDTH = 360;
+
+/** The order of the groups in a continuous bar. */
+export const STEP_GROUP_ORDER: StepState[] = ['done', 'failed', 'running', 'skipped', 'pending'];
+
+export type StepBarLayout =
+  | { mode: 'segments' }
+  | { mode: 'continuous'; groups: { state: StepState; count: number }[] };
+
+/**
+ * How to draw the bar. Each step gets its own segment while every segment keeps the minimum
+ * width. With more steps than that the bar is one continuous strip, split into one block for each
+ * state in proportion to its step count. A width of zero or less means "not measured yet".
+ */
+export function stepBarLayout(steps: ReadonlyArray<PanelStep>, width: number): StepBarLayout {
+  const room = width > 0 ? width : STEP_BAR_FALLBACK_WIDTH;
+  const needed = steps.length * (STEP_MIN_SEGMENT + STEP_GAP) - STEP_GAP;
+  if (needed <= room) return { mode: 'segments' };
+  const groups = STEP_GROUP_ORDER.map(state => ({
+    state,
+    count: steps.filter(s => s.state === state).length,
+  })).filter(g => g.count > 0);
+  return { mode: 'continuous', groups };
+}
+
 /** A time in seconds as text: "45s", "2m 7s", "1h 5m". */
 export function formatWait(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));

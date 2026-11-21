@@ -554,7 +554,7 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
   (repository, workflow, branch or pull request, pool, time). Open a run to see its jobs and open a job to see
   its steps. A run row and a job row have a step bar with one segment for each step: done (green), running
   (amber, a soft pulse that stops when the user prefers reduced motion), failed (red), skipped (grey) and
-  pending (faint). The text "step N of M" and the name of the current step are next to the bar. Running runs come
+  pending (faint). The bar is on its own line at the full row width. The text "step N of M" and the name of the current step are on the next line, cut with an ellipsis when too long, so the two never overlap. When the segments would be narrower than 4 px, the bar is one continuous strip with a block for each state, sized by its step count. Running runs come
   first (longest first), then queued runs (longest wait first).
 - **Without the `runs` panel** the list is the rows of the `queue` panel: repository, pool, queued count and the
   oldest wait. There is no tree.

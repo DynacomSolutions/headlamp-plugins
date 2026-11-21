@@ -20,6 +20,10 @@ import {
   type QueueRow,
   type RunnerModel,
   type RunnerPool,
+  STEP_GAP,
+  STEP_GROUP_ORDER,
+  STEP_MIN_SEGMENT,
+  stepBarLayout,
   stepsOfRun,
 } from './join';
 
@@ -270,19 +274,37 @@ export function useStepColours(): Record<StepState, string> {
   };
 }
 
-/** One segment for each step. The running segment pulses softly, and never when motion is reduced. */
+/**
+ * The step bar. Each step has its own segment while all segments stay at least 4 px wide. With
+ * more steps than that, it is one continuous strip with a block for each state, sized by the
+ * step count. The running part pulses softly, and never when motion is reduced.
+ */
 export function StepBar(props: { steps: ReadonlyArray<PanelStep> }): JSX.Element {
   const colours = useStepColours();
+  const { ref, size } = useElementSize<HTMLDivElement>();
+  const layout = stepBarLayout(props.steps, size.width);
+  const summary = STEP_GROUP_ORDER.map(state => ({
+    state,
+    count: props.steps.filter(s => s.state === state).length,
+  }))
+    .filter(g => g.count > 0)
+    .map(g => `${g.count} ${STEP_WORD[g.state].toLowerCase()}`)
+    .join(', ');
   return (
     <Box
+      ref={ref}
       data-step-bar
+      data-step-bar-mode={layout.mode}
       role="img"
-      aria-label={`${props.steps.length} steps`}
+      aria-label={`${props.steps.length} steps: ${summary}`}
       sx={{
         display: 'flex',
-        gap: '2px',
+        gap: layout.mode === 'segments' ? `${STEP_GAP}px` : 0,
+        width: '100%',
         height: 6,
         minWidth: 0,
+        overflow: 'hidden',
+        borderRadius: '3px',
         '@keyframes stepPulse': { '0%, 100%': { opacity: 1 }, '50%': { opacity: 0.55 } },
         '& [data-step-state="running"]': {
           animation: 'stepPulse 2.4s ease-in-out infinite',
@@ -290,33 +312,60 @@ export function StepBar(props: { steps: ReadonlyArray<PanelStep> }): JSX.Element
         },
       }}
     >
-      {props.steps.map((s, i) => (
-        <Tooltip
-          key={`${s.name}-${i}`}
-          title={`${s.name}: ${STEP_WORD[s.state]}`}
-          disableInteractive
-        >
-          <Box
-            data-step-state={s.state}
-            sx={{ flex: '1 1 0', minWidth: 2, borderRadius: '2px', bgcolor: colours[s.state] }}
-          />
-        </Tooltip>
-      ))}
+      {layout.mode === 'segments'
+        ? props.steps.map((s, i) => (
+            <Tooltip
+              key={`${s.name}-${i}`}
+              title={`${s.name}: ${STEP_WORD[s.state]}`}
+              disableInteractive
+            >
+              <Box
+                data-step-state={s.state}
+                sx={{
+                  flex: '1 1 0',
+                  minWidth: STEP_MIN_SEGMENT,
+                  borderRadius: '2px',
+                  bgcolor: colours[s.state],
+                }}
+              />
+            </Tooltip>
+          ))
+        : layout.groups.map(g => (
+            <Tooltip
+              key={g.state}
+              title={`${g.count} ${STEP_WORD[g.state].toLowerCase()}`}
+              disableInteractive
+            >
+              <Box
+                data-step-state={g.state}
+                data-step-count={g.count}
+                sx={{
+                  flex: `${g.count} 1 0`,
+                  minWidth: 2,
+                  bgcolor: colours[g.state],
+                }}
+              />
+            </Tooltip>
+          ))}
     </Box>
   );
 }
 
-/** The step bar with "step N of M" and the current step name. One line. */
+/**
+ * The step bar on its own line at the full width, then "step N of M" and the current step name on
+ * the next line. The two never share a line, so they cannot overlap at any step count.
+ */
 function Progress(props: { steps: ReadonlyArray<PanelStep>; waiting?: boolean }): JSX.Element {
   const tk = useTokens();
   const p = progressOf(props.steps);
   return (
-    <Box data-progress sx={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+    <Box
+      data-progress
+      sx={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: 0 }}
+    >
       {p ? (
         <>
-          <Box sx={{ flex: `0 0 ${Math.min(50, 14 + p.total * 3)}%`, minWidth: 0 }}>
-            <StepBar steps={props.steps} />
-          </Box>
+          <StepBar steps={props.steps} />
           <Box
             data-progress-text
             sx={{
