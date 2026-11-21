@@ -5,6 +5,10 @@
  * state, one lane for each limit window, and its worst limit with the status mark at the end. Every
  * row is drawn: nothing folds into a "+N more" line and no group is named "Other". A row links
  * only to a dashboard tab (see `links.tsx`).
+ *
+ * A narrow widget (under STACK_WIDTH, measured on the widget, not on the window) draws the overview
+ * as one vertical list: the stat tiles in a small grid on top, then one column in which every
+ * identity row stacks its name, its login state and one line for each limit with its percentage.
  */
 import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
@@ -25,6 +29,12 @@ export const WIDE_WIDTH = 640;
 export const WIDE_ROW = 520;
 /** A widget at least this wide draws the identities of a group in two columns. */
 export const TWO_COLUMNS = 1000;
+/** An overview widget narrower than this draws one vertical list (see `isStacked`). */
+export const STACK_WIDTH = 560;
+/** The number of stat tiles in each row of a stacked widget. */
+export const STACK_TILE_COLUMNS = 3;
+/** True when the widget is narrow: one vertical list, no legend, the limits stacked in each row. */
+export const isStacked = (width: number): boolean => width > 0 && width < STACK_WIDTH;
 const ROW_HEIGHT = { wide: 42, narrow: 40 };
 const GROUP_HEIGHT = 30;
 const BAR_MAX = 26;
@@ -106,8 +116,14 @@ function Legend(props: { limits: string[]; wide: boolean }): JSX.Element {
   );
 }
 
-function GroupHeader(props: { group: AisGroup; link?: string; editing: boolean }): JSX.Element {
-  const { group, link, editing } = props;
+function GroupHeader(props: {
+  group: AisGroup;
+  link?: string;
+  editing: boolean;
+  /** A narrow widget: the header wraps, so the note under the name is never cut. */
+  stacked?: boolean;
+}): JSX.Element {
+  const { group, link, editing, stacked } = props;
   const tk = useTokens();
   const n = group.members.length;
   const noun =
@@ -127,13 +143,14 @@ function GroupHeader(props: { group: AisGroup; link?: string; editing: boolean }
         display: 'flex',
         alignItems: 'baseline',
         gap: 1.25,
-        height: GROUP_HEIGHT,
         gridColumn: '1 / -1',
         flex: 'none',
         px: 1.5,
         pt: '8px',
         minWidth: 0,
-        whiteSpace: 'nowrap',
+        ...(stacked
+          ? { flexWrap: 'wrap', columnGap: 1.25, rowGap: 0, pb: '4px' }
+          : { height: GROUP_HEIGHT, whiteSpace: 'nowrap' }),
         boxShadow: `inset 0 -1px 0 ${tk.line2}`,
       }}
     >
@@ -149,6 +166,7 @@ function GroupHeader(props: { group: AisGroup; link?: string; editing: boolean }
           component="span"
           data-pool-chip
           sx={{
+            flex: 'none',
             fontSize: 11,
             px: '6px',
             borderRadius: '8px',
@@ -159,7 +177,15 @@ function GroupHeader(props: { group: AisGroup; link?: string; editing: boolean }
           Pool
         </Box>
       )}
-      <Box component="span" sx={{ fontSize: 12.5, color: tk.fg2 }}>
+      <Box
+        component="span"
+        sx={{
+          fontSize: 12.5,
+          color: tk.fg2,
+          minWidth: 0,
+          ...(stacked ? {} : { overflow: 'hidden', textOverflow: 'ellipsis' }),
+        }}
+      >
         {n} {noun}
         {group.kind === 'pool' ? poolNote(group) : ''}
       </Box>
@@ -195,6 +221,58 @@ function LoginLine(props: { identity: AisIdentity }): JSX.Element {
       {problem && <StatusMark status={login.status} size={10} />}
       {login.word}
     </Box>
+  );
+}
+
+/** The marks of a member: the served one and the registry active one. */
+function MemberChips(props: { identity: AisIdentity }): JSX.Element {
+  const { identity } = props;
+  const tk = useTokens();
+  return (
+    <>
+      {identity.serving && (
+        <Box
+          component="span"
+          data-serving-chip
+          title="The gateway served this member last, so the agents of the pool run as this login now."
+          sx={{
+            flex: 'none',
+            fontSize: 11,
+            px: '6px',
+            borderRadius: '8px',
+            color: tk.fg,
+            bgcolor: tk.fill.ok,
+            boxShadow: `inset 0 0 0 1px ${tk.status.ok}`,
+          }}
+        >
+          Serving
+        </Box>
+      )}
+      {/* The registry mark shows alone when no serving data exists, else only where it differs. */}
+      {identity.active && !identity.serving && (
+        <Box
+          component="span"
+          data-active-chip
+          title={
+            identity.serving === undefined
+              ? undefined
+              : 'The registry lists this member as active, but the gateway serves another member.'
+          }
+          sx={{
+            flex: 'none',
+            fontSize: 11,
+            px: '6px',
+            borderRadius: '8px',
+            color: tk.fg,
+            ...(identity.serving === undefined
+              ? { bgcolor: tk.fill.ok, boxShadow: `inset 0 0 0 1px ${tk.status.ok}` }
+              : { boxShadow: `inset 0 0 0 1px ${tk.line2}`, color: tk.fg2 }),
+          }}
+        >
+          {identity.serving === undefined ? 'Active' : 'Registry active'}
+        </Box>
+      )}
+    </>
   );
 }
 
@@ -295,48 +373,7 @@ function IdentityRow(props: {
                 {poolMembersText(pool.count)}
               </Box>
             )}
-            {identity.serving && (
-              <Box
-                component="span"
-                data-serving-chip
-                title="The gateway served this member last, so the agents of the pool run as this login now."
-                sx={{
-                  flex: 'none',
-                  fontSize: 11,
-                  px: '6px',
-                  borderRadius: '8px',
-                  color: tk.fg,
-                  bgcolor: tk.fill.ok,
-                  boxShadow: `inset 0 0 0 1px ${tk.status.ok}`,
-                }}
-              >
-                Serving
-              </Box>
-            )}
-            {/* The registry mark shows alone when no serving data exists, else only where it differs. */}
-            {identity.active && !identity.serving && (
-              <Box
-                component="span"
-                data-active-chip
-                title={
-                  identity.serving === undefined
-                    ? undefined
-                    : 'The registry lists this member as active, but the gateway serves another member.'
-                }
-                sx={{
-                  flex: 'none',
-                  fontSize: 11,
-                  px: '6px',
-                  borderRadius: '8px',
-                  color: tk.fg,
-                  ...(identity.serving === undefined
-                    ? { bgcolor: tk.fill.ok, boxShadow: `inset 0 0 0 1px ${tk.status.ok}` }
-                    : { boxShadow: `inset 0 0 0 1px ${tk.line2}`, color: tk.fg2 }),
-                }}
-              >
-                {identity.serving === undefined ? 'Active' : 'Registry active'}
-              </Box>
-            )}
+            <MemberChips identity={identity} />
           </Box>
           {pool ? (
             <Box
@@ -445,6 +482,158 @@ function IdentityRow(props: {
   );
 }
 
+/**
+ * An identity row of the vertical list: the name with its marks and status on the first line, the
+ * login state under it, then one line for each limit: its name, a thin bar and its percentage. The
+ * row grows with its limits, so nothing is cut off.
+ */
+function StackedRow(props: {
+  identity: AisIdentity;
+  limits: string[];
+  colours: ReturnType<typeof limitColours>;
+  link?: string;
+  editing: boolean;
+  /** A member of a pool: drawn one step in, under its pool header. */
+  indent: boolean;
+}): JSX.Element {
+  const { identity, limits, colours, link, editing, indent } = props;
+  const tk = useTokens();
+  const lanes = limits
+    .map(name => ({ name, limit: identity.limits.find(l => l.name === name) }))
+    .filter(x => x.limit && x.limit.fraction !== undefined);
+  const laneTrack = tk.mode === 'dark' ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)';
+  const loginProblem = identity.login?.status === 'warn' || identity.login?.status === 'crit';
+  const summary = [
+    `${identity.provider} ${identity.name}`,
+    identity.login ? identity.login.word : 'no login data',
+    ...identity.limits.map(l => `${l.name}: ${l.value}`),
+    STATUS_WORD[identity.status],
+  ].join('. ');
+  const name = (
+    <Box component="span" sx={{ fontSize: 15 }}>
+      {identity.name}
+    </Box>
+  );
+  return (
+    <Box
+      data-ais-row={identity.key}
+      data-stacked
+      data-row-status={identity.status}
+      data-active={identity.active ? '' : undefined}
+      data-serving={identity.serving ? '' : undefined}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '3px',
+        minWidth: 0,
+        py: '7px',
+        pl: indent ? 2.5 : 1.5,
+        pr: 1.5,
+        ...(indent ? { borderLeft: `2px solid ${tk.line2}`, ml: 1.5 } : {}),
+        bgcolor: loginProblem && identity.login ? tk.fill[identity.login.status] : 'transparent',
+        boxShadow: `inset 0 -1px 0 ${tk.line}`,
+      }}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0, lineHeight: 1.2 }}>
+        <Tooltip title={`${identity.provider} / ${identity.name}`} placement="top-start">
+          <Box
+            data-ais-label
+            sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {link && !editing ? (
+              <InternalLink to={link} style={LINK_STYLE}>
+                {name}
+              </InternalLink>
+            ) : (
+              name
+            )}
+          </Box>
+        </Tooltip>
+        <MemberChips identity={identity} />
+        <Box data-ais-status sx={{ display: 'flex', flex: 'none', ml: 'auto' }}>
+          <StatusMark status={identity.status} size={13} />
+        </Box>
+      </Box>
+      <LoginLine identity={identity} />
+      {lanes.length > 0 ? (
+        <Box
+          data-bar
+          role="img"
+          aria-label={summary}
+          sx={{ display: 'grid', gap: '3px', pt: '2px' }}
+        >
+          {lanes.map(({ name: lane, limit }) => {
+            const c = colours.get(lane);
+            const f = clamp(limit?.fraction ?? 0);
+            return (
+              <Box
+                key={lane}
+                data-lane={lane}
+                title={`${lane}: ${limit?.value}`}
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: '96px minmax(30px, 1fr) 44px',
+                  columnGap: '8px',
+                  alignItems: 'center',
+                  fontSize: 11.5,
+                  lineHeight: 1.2,
+                }}
+              >
+                <Box
+                  component="span"
+                  sx={{
+                    color: tk.fg2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {lane}
+                </Box>
+                <Box
+                  sx={{
+                    position: 'relative',
+                    height: 6,
+                    borderRadius: '3px',
+                    overflow: 'hidden',
+                    bgcolor: laneTrack,
+                  }}
+                >
+                  <Box
+                    data-segment={lane}
+                    data-fill={limit?.fraction}
+                    sx={{
+                      position: 'absolute',
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: f > 0 ? `max(2px, ${f * 100}%)` : 0,
+                      borderRadius: '3px',
+                      bgcolor: c?.colour,
+                      opacity: c?.opacity,
+                    }}
+                  />
+                </Box>
+                <Box
+                  component="span"
+                  data-lane-value
+                  sx={{ textAlign: 'right', fontSize: 12.5, fontVariantNumeric: 'tabular-nums' }}
+                >
+                  {limit?.value}
+                </Box>
+              </Box>
+            );
+          })}
+        </Box>
+      ) : (
+        <Box data-no-limits sx={{ fontSize: 12, color: tk.mut }}>
+          No limit data
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 /** The pool as an identity row: the limits of its active member, and the worst status of them. */
 function poolIdentity(group: AisGroup): AisIdentity {
   return {
@@ -484,6 +673,7 @@ export function AisView(props: {
   const columns = !consoleView && root.size.width >= TWO_COLUMNS ? 2 : 1;
   const wide = root.size.width >= WIDE_WIDTH;
   const wideRow = root.size.width / columns >= WIDE_ROW;
+  const stacked = !consoleView && isStacked(root.size.width);
   const colours = React.useMemo(() => limitColours(model.limits, tk.mode), [model.limits, tk.mode]);
   // Every link goes to the AIS tab of the dashboard, or is dropped.
   const linkOf = (raw: string | undefined): string | undefined =>
@@ -493,6 +683,7 @@ export function AisView(props: {
       ref={root.ref}
       data-ais
       data-ais-view={consoleView ? 'console' : 'overview'}
+      data-ais-layout={stacked ? 'stacked' : wide ? 'wide' : 'compact'}
       sx={{
         display: 'flex',
         flexDirection: 'column',
@@ -504,9 +695,15 @@ export function AisView(props: {
       }}
     >
       {!consoleView && model.stats.length > 0 && (
-        <StatTiles stats={model.stats} width={root.size.width} textTiles={model.textTiles} />
+        <StatTiles
+          stats={model.stats}
+          width={root.size.width}
+          textTiles={model.textTiles}
+          columns={stacked ? STACK_TILE_COLUMNS : undefined}
+        />
       )}
-      {model.limits.length > 0 && <Legend limits={model.limits} wide={wide} />}
+      {/* The stacked rows name each limit on its own line, so they need no legend. */}
+      {!stacked && model.limits.length > 0 && <Legend limits={model.limits} wide={wide} />}
       <ScrollArea label="Limits by pool and identity">
         <Box
           data-ais-list
@@ -541,21 +738,38 @@ export function AisView(props: {
                     }}
                   />
                 ) : (
-                  <GroupHeader group={group} link={linkOf(group.link)} editing={editing} />
+                  <GroupHeader
+                    group={group}
+                    link={linkOf(group.link)}
+                    editing={editing}
+                    stacked={stacked}
+                  />
                 )}
                 {(!poolRow || open) &&
-                  group.members.map(identity => (
-                    <IdentityRow
-                      key={identity.key}
-                      identity={identity}
-                      limits={model.limits}
-                      colours={colours}
-                      link={linkOf(identity.link)}
-                      editing={editing}
-                      wide={wideRow}
-                      indent={poolRow}
-                    />
-                  ))}
+                  group.members.map(identity =>
+                    stacked ? (
+                      <StackedRow
+                        key={identity.key}
+                        identity={identity}
+                        limits={model.limits}
+                        colours={colours}
+                        link={linkOf(identity.link)}
+                        editing={editing}
+                        indent={group.kind === 'pool'}
+                      />
+                    ) : (
+                      <IdentityRow
+                        key={identity.key}
+                        identity={identity}
+                        limits={model.limits}
+                        colours={colours}
+                        link={linkOf(identity.link)}
+                        editing={editing}
+                        wide={wideRow}
+                        indent={poolRow}
+                      />
+                    )
+                  )}
               </React.Fragment>
             );
           })}

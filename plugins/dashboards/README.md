@@ -491,6 +491,12 @@ needed.
 - **One row for each identity**: its name, its login state (an expired or expiring login tints the row and
   shows a mark and a word), one lane for each limit window (5-hour, weekly, weekly for a model, monthly), its
   worst limit and one status mark. A widget at least 1000 px wide draws the identities of a group in two columns.
+- **Narrow widget**: a widget under 560 px wide (its own width, not the window width) draws one vertical
+  list. The stat tiles sit in a grid of 3 in each row with the same numeral size. Under them one column scrolls:
+  each pool is a header with its members indented under it, then the identities of no pool under their
+  provider. Each row stacks its name, its login state and one line for each limit with a bar and its
+  percentage. There is no legend, as each line names its limit. A size of 3 columns by 15 rows fits a 1920 px
+  wall display.
 - **Joins**: the login panel names an identity as `tool / name` and the limits panel as `Provider / name`.
   The tool names `claude`, `codex`, `grok`, `kimi`, `zai` and `opencode` map to their providers. A tool with
   no limits (for example `pi`) is its own group. The members of the `claude-swap` panel belong to the
