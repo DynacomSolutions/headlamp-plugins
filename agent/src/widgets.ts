@@ -27,6 +27,12 @@ export interface Row {
   link?: string;
   /** Optional. `src` is relative to `/api/widgets/` (for example `icons/postgresql.svg`); `alt` is the kind. */
   icon?: { src: string; alt: string };
+  /**
+   * Optional named text fields for a widget that joins several panels (for example the alerts and
+   * incidents widget). The alerts and incidents panels set `kind`, `group`, `target`, `severity`,
+   * `state`, `at`, `resolvedAt`, `id` and `agent`.
+   */
+  meta?: Record<string, string>;
 }
 
 export interface Series {
@@ -328,6 +334,48 @@ async function usageDashboard(d: PanelDeps): Promise<PanelBody> {
   };
 }
 
+
+// ---------- issue groups ----------
+
+/** The labels that name a workload or a volume of an alert, in order. The first one that is set is the target. */
+const WORKLOAD_LABELS = ['target', 'deployment', 'statefulset', 'daemonset', 'cronjob', 'job_name', 'persistentvolumeclaim'];
+const TARGET_MAX = 120;
+/** The random alphabet of Kubernetes object suffixes (no vowels, no 0, 1 and 3). */
+const GENERATED = '[bcdfghjklmnpqrstvwxz2456789]';
+
+/**
+ * A pod name without its generated suffix, so the pods of one workload make one target: `web-7d9f8c6b5-x2k4p`
+ * and `web-7d9f8c6b5-q8w2z` both give `web`. A name with no such suffix stays as it is.
+ */
+export function podWorkload(pod: string): string {
+  return pod
+    .replace(new RegExp(`-${GENERATED}{8,10}-${GENERATED}{5}$`), '')
+    .replace(new RegExp(`-${GENERATED}{5}$`), '')
+    .replace(/-[0-9a-f]{8}$/, '');
+}
+
+/**
+ * What an alert is about, as one short text: `namespace/workload` for a workload alert, `node:device` or
+ * `node:mountpoint` for a disk alert, the probe target, or "" when the alert has no such label. The same
+ * function names the target of a firing alert and of the incident that the alert opened, so the two meet in
+ * one group.
+ */
+export function issueTarget(labels: Record<string, unknown> | undefined): string {
+  const get = (k: string): string => (typeof labels?.[k] === 'string' ? (labels[k] as string).trim() : '');
+  const ns = get('namespace');
+  const inNs = (name: string): string => (ns && name !== get('target') ? `${ns}/${name}` : name);
+  const workload = WORKLOAD_LABELS.map(get).find(v => v !== '');
+  let target: string;
+  if (workload) target = inNs(workload);
+  else if (get('node') && (get('mountpoint') || get('device'))) target = `${get('node')}:${get('mountpoint') || get('device')}`;
+  else if (get('pod')) target = inNs(podWorkload(get('pod')));
+  else target = get('node') || ns || get('instance');
+  return target.slice(0, TARGET_MAX);
+}
+
+/** The key of an issue group: one alert name on one target. */
+export const issueGroup = (name: string, target: string): string => `${name}|${target}`;
+
 // ---------- alerts ----------
 
 async function alerts(d: PanelDeps): Promise<PanelBody> {
@@ -337,12 +385,16 @@ async function alerts(d: PanelDeps): Promise<PanelBody> {
   const critical = firing.filter(a => a.severity === 'critical').length;
   const warning = firing.filter(a => a.severity !== 'critical').length;
   const pending = all.filter(a => a.state === 'pending').length;
-  const rows: Row[] = all.map(a => ({
-    label: String(a.name),
-    detail: String(a.annotations?.summary ?? a.annotations?.description ?? a.labels?.namespace ?? a.severity ?? '').slice(0, 160),
-    value: String(a.state),
-    status: a.state !== 'firing' ? 'unknown' : a.severity === 'critical' ? 'crit' : 'warn',
-  }));
+  const rows: Row[] = all.map(a => {
+    const target = issueTarget(a.labels);
+    return {
+      label: String(a.name),
+      detail: String(a.annotations?.summary ?? a.annotations?.description ?? a.labels?.namespace ?? a.severity ?? '').slice(0, 160),
+      value: String(a.state),
+      status: a.state !== 'firing' ? 'unknown' : a.severity === 'critical' ? 'crit' : 'warn',
+      meta: { kind: 'alert', group: issueGroup(String(a.name), target), target, severity: String(a.severity ?? ''), state: String(a.state), at: String(a.activeAt ?? '') },
+    };
+  });
   return {
     status: critical > 0 ? 'crit' : firing.length > 0 ? 'warn' : 'ok',
     summary: all.length === 0 ? 'No alerts' : `${critical} critical, ${warning} warning, ${pending} pending`,
@@ -455,18 +507,45 @@ async function updates(d: PanelDeps): Promise<PanelBody> {
 
 // ---------- incidents ----------
 
+/** The launch statuses in which a T3 Code agent works on an incident. */
+const WORKING_LAUNCH = new Set(['launching', 'running', 'waiting']);
+
 async function incidents(d: PanelDeps): Promise<PanelBody> {
   const data = (await d.call('list_diagnoses', { limit: TOP_ALL })) as Obj;
   const all = list(data.diagnoses);
+  // An approved launch that still runs also means that an agent works on the incident. The launches tool is
+  // optional (it exists only when the launch feature is on), so a failure leaves the diagnosis state alone.
+  const launched = new Set<string>();
+  try {
+    const out = (await d.call('list_agent_launches', { limit: 100 })) as Obj;
+    for (const l of list(out.launches)) if (WORKING_LAUNCH.has(String(l.status)) && l.diagnosisId) launched.add(String(l.diagnosisId));
+  } catch {
+    // No launches.
+  }
   const rows: Row[] = all.map(x => {
     const open = !x.resolved;
     // A finished diagnosis of an open incident is not "done": the incident is still open.
     const state = open && x.status === 'done' ? 'open' : String(x.status);
+    const target = issueTarget(x.labels);
+    const working = open && (x.status === 'queued' || x.status === 'running' || launched.has(String(x.id)));
+    const agent = working ? 'working' : x.status === 'failed' ? 'failed' : x.status === 'done' ? 'diagnosed' : '';
     return {
       label: String(x.alert),
       detail: String(x.likelyCause || state).slice(0, 160),
       value: open ? state : 'resolved',
       status: !open ? 'ok' : x.status === 'failed' ? 'unknown' : x.severity === 'critical' ? 'crit' : 'warn',
+      link: x.id ? `/c/{cluster}/incidents/${encodeURIComponent(String(x.id))}` : undefined,
+      meta: {
+        kind: 'incident',
+        group: issueGroup(String(x.alert), target),
+        target,
+        severity: String(x.severity ?? ''),
+        state: String(x.status),
+        agent,
+        at: String(x.createdAt ?? ''),
+        resolvedAt: String(x.resolvedAt ?? ''),
+        id: String(x.id ?? ''),
+      },
     };
   });
   const open = all.filter(x => !x.resolved).length;

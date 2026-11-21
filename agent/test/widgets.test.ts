@@ -3,7 +3,7 @@ import { loadConfig } from '../src/config.js';
 import { startServer } from '../src/server.js';
 import { provider } from '../../plugins/usage/agent/provider.js';
 import { usageFixture } from './usage-dashboard-fixture.js';
-import { PanelError, PANELS, buildPanel, listPanels, sortRows, type PanelDeps, type Row } from '../src/widgets.js';
+import { PanelError, PANELS, buildPanel, issueGroup, issueTarget, listPanels, podWorkload, sortRows, type PanelDeps, type Row } from '../src/widgets.js';
 
 const FAKE_PASSWORD = ['hun', 'ter2'].join('');
 
@@ -234,6 +234,67 @@ describe('panel mappings', () => {
     expect(m!.rows.some(r => r.value === 'done')).toBe(false);
     // The failed row stays out of the panel status.
     expect(m!.status).toBe('crit');
+  });
+
+  describe('issue groups', () => {
+    it('names the target of an alert from its labels', () => {
+      expect(issueTarget({ namespace: 'shop', deployment: 'web', pod: 'web-1', instance: '192.0.2.1:80' })).toBe('shop/web');
+      expect(issueTarget({ namespace: 'shop', pod: 'web-7d9f8c6b5-x2k4p' })).toBe('shop/web');
+      expect(issueTarget({ namespace: 'db', persistentvolumeclaim: 'data-0', node: 'n1' })).toBe('db/data-0');
+      expect(issueTarget({ target: 'app.example.com', instance: 'https://app.example.com/' })).toBe('app.example.com');
+      expect(issueTarget({ node: 'n1', device: 'sdb' })).toBe('n1:sdb');
+      // A disk alert names the mount point, not the exporter pod that reports it.
+      expect(issueTarget({ node: 'n1', mountpoint: '/srv', device: '/dev/nvme0', pod: 'node-exporter-k5ps7' })).toBe('n1:/srv');
+      expect(issueTarget({ node: 'n1' })).toBe('n1');
+      expect(issueTarget({ namespace: 'shop' })).toBe('shop');
+      expect(issueTarget({})).toBe('');
+      expect(issueTarget(undefined)).toBe('');
+    });
+
+    it('cuts the generated suffix of a pod name and keeps a plain name', () => {
+      expect(podWorkload('web-7d9f8c6b5-x2k4p')).toBe('web');
+      expect(podWorkload('node-exporter-k5ps7')).toBe('node-exporter');
+      expect(podWorkload('runner-91f683ae')).toBe('runner');
+      expect(podWorkload('db-0')).toBe('db-0');
+      expect(podWorkload('redis')).toBe('redis');
+    });
+
+    it('gives a firing alert and its incident the same group key', async () => {
+      const labels = { alertname: 'KubeDeploymentDown', namespace: 'shop', deployment: 'web', instance: '192.0.2.1:8080' };
+      const a = await buildPanel('alerts', deps({ list_alerts: { alerts: [{ name: 'KubeDeploymentDown', state: 'firing', severity: 'critical', labels, annotations: {}, activeAt: '2026-11-22T01:00:00Z' }] } }));
+      const i = await buildPanel(
+        'incidents',
+        deps({ list_diagnoses: { diagnoses: [{ id: 'd1', alert: 'KubeDeploymentDown', severity: 'critical', status: 'done', createdAt: '2026-11-22T01:01:00Z', likelyCause: 'Crash loop', resolved: false, resolvedAt: '', labels: { ...labels, instance: '192.0.2.2:8080' } }] } }),
+      );
+      expect(a!.rows[0].meta).toMatchObject({ kind: 'alert', group: issueGroup('KubeDeploymentDown', 'shop/web'), target: 'shop/web', state: 'firing' });
+      expect(i!.rows[0].meta).toMatchObject({ kind: 'incident', group: a!.rows[0].meta!.group, agent: 'diagnosed', id: 'd1' });
+      expect(i!.rows[0].link).toBe('/c/{cluster}/incidents/d1');
+    });
+
+    it('says an agent works on an incident while its diagnosis runs or a launch runs', async () => {
+      const m = await buildPanel(
+        'incidents',
+        deps({
+          list_diagnoses: {
+            diagnoses: [
+              { id: '1', alert: 'A', severity: 'warning', status: 'running', likelyCause: '', resolved: false, labels: {} },
+              { id: '2', alert: 'B', severity: 'warning', status: 'done', likelyCause: 'Cause', resolved: false, labels: {} },
+              { id: '3', alert: 'C', severity: 'warning', status: 'failed', likelyCause: '', resolved: false, labels: {} },
+              { id: '4', alert: 'D', severity: 'warning', status: 'done', likelyCause: 'Cause', resolved: true, resolvedAt: '2026-11-22T02:00:00Z', labels: {} },
+            ],
+          },
+          list_agent_launches: { launches: [{ id: 'l1', status: 'running', diagnosisId: '2' }, { id: 'l2', status: 'completed', diagnosisId: '3' }] },
+        }),
+      );
+      const agent = Object.fromEntries(m!.rows.map(r => [r.label, r.meta!.agent]));
+      expect(agent).toEqual({ A: 'working', B: 'working', C: 'failed', D: 'diagnosed' });
+      expect(m!.rows.find(r => r.label === 'D')!.meta!.resolvedAt).toBe('2026-11-22T02:00:00Z');
+    });
+
+    it('keeps the diagnosis state when the launches tool is missing', async () => {
+      const m = await buildPanel('incidents', deps({ list_diagnoses: { diagnoses: [{ id: '1', alert: 'A', severity: 'warning', status: 'done', likelyCause: 'Cause', resolved: false, labels: {} }] } }));
+      expect(m!.rows[0].meta!.agent).toBe('diagnosed');
+    });
   });
 
   it('prints one decimal in every percentage', async () => {
