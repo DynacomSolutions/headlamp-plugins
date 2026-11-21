@@ -354,3 +354,137 @@ describe('worstLimit', () => {
     expect(worstLimit([])).toBeUndefined();
   });
 });
+
+// The agents panel of a new source: the Agents table says which member the gateway really serves.
+const COLUMNS = ['pool', 'identity', 'tool', 'identitySource', 'age'].map(key => ({
+  key,
+  label: key,
+  align: 'left',
+}));
+const agentRow = (pool: string, identity: string, identitySource: string) => ({
+  pool,
+  identity,
+  tool: 'claude',
+  identitySource,
+  age: '1h',
+});
+const servedPanels = (rows: ReturnType<typeof agentRow>[]) => ({
+  limits,
+  identities,
+  swap,
+  agents: parsePanel({
+    version: 1,
+    id: 'agents',
+    title: 'Agents',
+    status: 'ok',
+    summary: '',
+    // Old stat sum is 2 x the real count: the old scan counted the helper of each agent too.
+    stats: [{ label: 'claude', value: String(rows.length * 2), status: 'ok' }],
+    rows: rows.map(r => ({
+      label: 'claude',
+      detail: `${r.pool} / ${r.identity}`,
+      value: '1h',
+      status: 'ok',
+    })),
+    tables: [{ title: 'Agents', columns: COLUMNS, rows }],
+  }),
+});
+const served = (rows: ReturnType<typeof agentRow>[]) => joinAis(servedPanels(rows));
+
+describe('joinAis with the member that the gateway serves', () => {
+  it('marks the served member, not the registry active one', () => {
+    const g = served([agentRow('pool-one', 'blue', 'gateway-ledger')]).groups[0];
+    expect(g.active).toBe('red');
+    expect(g.serving).toEqual(['blue']);
+    expect(g.members.map(m => [m.name, m.serving, m.active])).toEqual([
+      ['blue', true, false],
+      ['red', false, true],
+      ['violet', false, false],
+    ]);
+  });
+  it('takes the pool limits from the served member', () => {
+    const g = served([agentRow('pool-one', 'blue', 'gateway-ledger')]).groups[0];
+    expect(g.poolLimitsOf).toBe('blue');
+    expect(g.poolLimits?.map(l => l.name)).toEqual(['Weekly']);
+    expect(g.poolStatus).toBe('ok');
+  });
+  it('takes the worst served member when the gateway serves several', () => {
+    const g = served([
+      agentRow('pool-one', 'blue', 'gateway-ledger'),
+      agentRow('pool-one', 'red', 'gateway-ledger'),
+    ]).groups[0];
+    expect(g.serving).toEqual(['blue', 'red']);
+    expect(g.poolLimitsOf).toBe('red');
+    expect(g.poolStatus).toBe('crit');
+  });
+  it('matches the pool and member names loosely', () => {
+    const g = served([agentRow('Pool_One', 'BLUE', 'gateway-ledger')]).groups[0];
+    expect(g.serving).toEqual(['blue']);
+  });
+  it('leaves a pool without a gateway record as it was: the registry member is the one', () => {
+    const g = served([agentRow('pool-one', 'red', 'pool-active')]).groups[0];
+    expect(g.serving).toBeUndefined();
+    expect(g.members.every(m => m.serving === undefined)).toBe(true);
+    expect(g.poolLimitsOf).toBe('red');
+  });
+  it('shows the served member in the tile, and counts the sessions without the helpers', () => {
+    const m = served([
+      agentRow('pool-one', 'blue', 'gateway-ledger'),
+      agentRow('', 'solo', 'session-marker'),
+    ]);
+    const tiles = m.stats.map(s => [s.label, s.value]);
+    expect(tiles).toContainEqual(['Sessions', '2']);
+    expect(tiles).toContainEqual(['Serving member', 'blue']);
+    expect(m.summary).toBe('2 sessions, 7 identities, 1 pool');
+  });
+});
+
+describe('AisView with the member that the gateway serves', () => {
+  const render2 = (rows: ReturnType<typeof agentRow>[], mode?: 'console') =>
+    render(
+      wrap(
+        <AisView
+          model={served(rows)}
+          sourceId="ais-console"
+          kiosk={false}
+          editing={false}
+          view={mode}
+        />
+      )
+    ).container;
+
+  it('marks Serving on the served member and Registry active on the other (overview)', () => {
+    const c = render2([agentRow('pool-one', 'blue', 'gateway-ledger')]);
+    expect(
+      c.querySelector('[data-ais-row="anthropic/blue"] [data-serving-chip]')?.textContent
+    ).toBe('Serving');
+    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-active-chip]')?.textContent).toBe(
+      'Registry active'
+    );
+    expect(c.querySelectorAll('[data-serving-chip]')).toHaveLength(1);
+    expect(c.querySelector('[data-group-kind="pool"]')?.textContent).toContain(
+      'serving blue, registry active red'
+    );
+  });
+  it('says Serving on the pool row (console)', () => {
+    const c = render2([agentRow('pool-one', 'blue', 'gateway-ledger')], 'console');
+    expect(c.querySelector('[data-ais-row="pool:pool-one"] [data-pool-sub]')?.textContent).toBe(
+      'Serving blue'
+    );
+    expect(
+      c.querySelector('[data-ais-row="pool:pool-one"] [data-pool-sub]')?.getAttribute('title')
+    ).toContain('Limits of blue. Registry active red');
+    expect(c.querySelector('[data-ais-row="anthropic/blue"] [data-serving-chip]')).not.toBeNull();
+  });
+  it('shows no Registry active mark when the registry member is the served one', () => {
+    const c = render2([agentRow('pool-one', 'red', 'gateway-ledger')], 'console');
+    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-serving-chip]')).not.toBeNull();
+    expect(c.querySelector('[data-active-chip]')).toBeNull();
+    expect(c.querySelector('[data-pool-sub]')?.textContent).toBe('Serving red');
+  });
+  it('keeps the old Active mark for a source that does not say who is served', () => {
+    const c = view();
+    expect(c.querySelector('[data-serving-chip]')).toBeNull();
+    expect(c.querySelector('[data-active-chip]')?.textContent).toBe('Active');
+  });
+});

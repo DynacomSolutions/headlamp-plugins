@@ -10,6 +10,7 @@
  */
 import type { PanelModel, PanelRow, PanelStatus, Stat } from '../panels/model';
 import { orderLimits } from '../panels/rowGroups';
+import { agentCount, servingByPool } from './agents';
 
 export interface AisLimit {
   /** The window name, for example "5-hour" or "Weekly". */
@@ -36,7 +37,13 @@ export interface AisIdentity {
   limits: AisLimit[];
   /** The name of the pool, when the identity is a member of one. */
   pool?: string;
+  /** The registry marks the identity as the active member of its pool. */
   active: boolean;
+  /**
+   * The gateway really serves the identity now: the agents data names it for its gateway-routed
+   * pool. Absent when the agents data says nothing about the pool.
+   */
+  serving?: boolean;
   /** The worst status of the login state and the limits. */
   status: PanelStatus;
   /** The raw link of the first row that names the identity. The widget maps it to a dashboard tab. */
@@ -48,13 +55,22 @@ export interface AisGroup {
   kind: 'pool' | 'provider';
   title: string;
   members: AisIdentity[];
-  /** The name of the active member of a pool. */
+  /** The name of the registry active member of a pool. */
   active?: string;
   /**
-   * The limits of a pool: the limits of its active member. The swap sends work through the active
-   * member, so its windows decide what the pool can do now. A pool with no active member has none.
+   * The members that a gateway-routed pool really serves now, from the agents data (the member the
+   * gateway served last). Absent when the agents data does not name one. It can differ from `active`:
+   * the gateway picks a member for each request, so the registry value can be old.
+   */
+  serving?: string[];
+  /**
+   * The limits of a pool: the limits of the member that it serves now (the worst one, when it
+   * serves several), else the limits of its registry active member. Work goes through that member,
+   * so its windows decide what the pool can do now. A pool with no such member has none.
    */
   poolLimits?: AisLimit[];
+  /** The member whose limits `poolLimits` holds. */
+  poolLimitsOf?: string;
   /** The worst status of the pool limits. */
   poolStatus?: PanelStatus;
   link?: string;
@@ -215,19 +231,46 @@ export function joinAis(panels: AisPanels): AisModel {
   const bySeverity = (a: Draft, b: Draft): number =>
     RANK[b.status] - RANK[a.status] || a.order - b.order;
 
+  // The members that the gateway really serves, by pool (names as the swap panel writes them).
+  const servingRaw = servingByPool(panels.agents);
+  const servingOf = (pool: string): string[] | undefined => {
+    for (const [name, who] of servingRaw) if (canon(name) === canon(pool)) return who;
+    return undefined;
+  };
+
   const groups: AisGroup[] = poolOrder.map(pool => {
-    const members = all
-      .filter(d => d.pool === pool)
-      .sort((a, b) => Number(b.active) - Number(a.active) || a.order - b.order);
-    const active = members.find(m => m.active);
+    const names = servingOf(pool);
+    const inPool = all.filter(d => d.pool === pool);
+    // Use the name that the swap panel gives, so the row and the pool line say the same word.
+    const serving = names?.map(n => inPool.find(m => canon(m.name) === canon(n))?.name ?? n);
+    if (serving) {
+      for (const m of inPool) m.serving = serving.some(n => canon(n) === canon(m.name));
+    }
+    const members = inPool.sort(
+      (a, b) =>
+        Number(b.serving ?? false) - Number(a.serving ?? false) ||
+        Number(b.active) - Number(a.active) ||
+        a.order - b.order
+    );
+    const registry = members.find(m => m.active);
+    // The pool windows are those of the member that it serves now. With several, the one in the
+    // worst state decides what the pool can do. With none, the registry active member decides.
+    const serves = members.filter(m => m.serving && m.limits.length > 0);
+    const limitsOf =
+      serves.reduce<Draft | undefined>(
+        (best, m) => (best === undefined || RANK[m.status] > RANK[best.status] ? m : best),
+        undefined
+      ) ?? registry;
     return {
       key: `pool:${pool}`,
       kind: 'pool',
       title: pool,
       members,
       active: poolActive.get(pool),
-      poolLimits: active?.limits,
-      poolStatus: active?.limits.reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
+      serving,
+      poolLimits: limitsOf?.limits,
+      poolLimitsOf: limitsOf?.name,
+      poolStatus: limitsOf?.limits.reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
       link: poolLink.get(pool),
     };
   });
@@ -256,13 +299,9 @@ export function joinAis(panels: AisPanels): AisModel {
   // Stat tiles: sessions, the login states, the pools and the active member of each pool.
   const stats: Stat[] = [];
   const textTiles: number[] = [];
-  const agents = panels.agents;
-  if (agents) {
-    const total =
-      agents.stats.length > 0
-        ? agents.stats.reduce((n, s) => n + count(s.value), 0)
-        : agents.rows.length;
-    stats.push({ label: 'Sessions', value: String(total), status: 'ok' });
+  // The same count as the agents sunburst (see `agentCount`): no helper process, one per agent.
+  if (panels.agents) {
+    stats.push({ label: 'Sessions', value: String(agentCount(panels.agents)), status: 'ok' });
   }
   if (panels.identities) {
     for (const label of ['Logged in', 'Expiring', 'Expired', 'Logged out']) {
@@ -276,13 +315,19 @@ export function joinAis(panels: AisPanels): AisModel {
   if (poolOrder.length > 0) {
     const pools = statValue(panels.swap, 'Pools');
     stats.push({ label: 'Pools', value: pools?.value ?? String(poolOrder.length), status: 'ok' });
-    for (const pool of poolOrder) {
-      const active = poolActive.get(pool);
+    for (const group of groups.filter(g => g.kind === 'pool')) {
+      const pool = group.title;
+      // The member that the gateway really serves wins over the registry active member.
+      const shown = group.serving ?? (group.active ? [group.active] : []);
+      const word = group.serving ? 'Serving' : 'Active';
       textTiles.push(stats.length);
       stats.push({
-        label: poolOrder.length === 1 ? 'Active member' : `Active in ${pool}`,
-        value: active ?? 'None',
-        status: active ? 'ok' : 'warn',
+        label:
+          poolOrder.length === 1
+            ? `${word} member${shown.length > 1 ? 's' : ''}`
+            : `${word} in ${pool}`,
+        value: shown.length > 0 ? shown.join(', ') : 'None',
+        status: shown.length > 0 ? 'ok' : 'warn',
       });
     }
   }

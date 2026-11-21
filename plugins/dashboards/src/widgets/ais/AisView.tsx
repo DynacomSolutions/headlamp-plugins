@@ -161,7 +161,7 @@ function GroupHeader(props: { group: AisGroup; link?: string; editing: boolean }
       )}
       <Box component="span" sx={{ fontSize: 12.5, color: tk.fg2 }}>
         {n} {noun}
-        {group.kind === 'pool' && group.active ? `, active ${group.active}` : ''}
+        {group.kind === 'pool' ? poolNote(group) : ''}
       </Box>
     </Box>
   );
@@ -206,7 +206,13 @@ function IdentityRow(props: {
   editing: boolean;
   wide: boolean;
   /** A pool row: the line under the name, a toggle in front and a heavier look. */
-  pool?: { sub: React.ReactNode; open: boolean; onToggle: () => void; count: number };
+  pool?: {
+    sub: React.ReactNode;
+    detail: string;
+    open: boolean;
+    onToggle: () => void;
+    count: number;
+  };
   /** A member of a pool in the console view: drawn one step in. */
   indent?: boolean;
 }): JSX.Element {
@@ -237,6 +243,7 @@ function IdentityRow(props: {
       data-ais-row={identity.key}
       data-row-status={identity.status}
       data-active={identity.active ? '' : undefined}
+      data-serving={identity.serving ? '' : undefined}
       sx={{
         display: 'grid',
         gridTemplateColumns: `${wide ? 230 : 140}px minmax(40px, 1fr) ${wide ? 150 : 84}px 14px`,
@@ -288,10 +295,11 @@ function IdentityRow(props: {
                 {poolMembersText(pool.count)}
               </Box>
             )}
-            {identity.active && (
+            {identity.serving && (
               <Box
                 component="span"
-                data-active-chip
+                data-serving-chip
+                title="The gateway served this member last, so the agents of the pool run as this login now."
                 sx={{
                   flex: 'none',
                   fontSize: 11,
@@ -302,7 +310,31 @@ function IdentityRow(props: {
                   boxShadow: `inset 0 0 0 1px ${tk.status.ok}`,
                 }}
               >
-                Active
+                Serving
+              </Box>
+            )}
+            {/* The registry mark shows alone when no serving data exists, else only where it differs. */}
+            {identity.active && !identity.serving && (
+              <Box
+                component="span"
+                data-active-chip
+                title={
+                  identity.serving === undefined
+                    ? undefined
+                    : 'The registry lists this member as active, but the gateway serves another member.'
+                }
+                sx={{
+                  flex: 'none',
+                  fontSize: 11,
+                  px: '6px',
+                  borderRadius: '8px',
+                  color: tk.fg,
+                  ...(identity.serving === undefined
+                    ? { bgcolor: tk.fill.ok, boxShadow: `inset 0 0 0 1px ${tk.status.ok}` }
+                    : { boxShadow: `inset 0 0 0 1px ${tk.line2}`, color: tk.fg2 }),
+                }}
+              >
+                {identity.serving === undefined ? 'Active' : 'Registry active'}
               </Box>
             )}
           </Box>
@@ -310,8 +342,15 @@ function IdentityRow(props: {
             <Box
               component="span"
               data-pool-sub
-              title="The pool sends work through its active member, so the limits of that member decide what the pool can do now."
-              sx={{ fontSize: 11.5, color: tk.mut, whiteSpace: 'nowrap' }}
+              title={`${pool.detail}. The pool sends work through the member that it serves now, so the limits of that member decide what the pool can do now.`}
+              sx={{
+                display: 'block',
+                fontSize: 11.5,
+                color: tk.mut,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
             >
               {pool.sub}
             </Box>
@@ -498,6 +537,7 @@ export function AisView(props: {
                       onToggle: () => toggle(group.key),
                       count: group.members.length,
                       sub: poolSub(group),
+                      detail: poolDetail(group),
                     }}
                   />
                 ) : (
@@ -532,9 +572,40 @@ export function AisView(props: {
   );
 }
 
-/** The line under a pool name: why the limits on the pool row are those of one member. */
+/** The names of a list in one phrase: "a", "a and b", "a, b and c". */
+const nameList = (names: string[]): string =>
+  names.length < 2
+    ? names.join('')
+    : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+
+/** The end of a pool group header in the overview: who serves, and the registry mark when it differs. */
+function poolNote(group: AisGroup): string {
+  if (group.serving && group.serving.length > 0) {
+    const differs = group.active !== undefined && !group.serving.includes(group.active);
+    return `, serving ${nameList(group.serving)}${
+      differs ? `, registry active ${group.active}` : ''
+    }`;
+  }
+  return group.active ? `, active ${group.active}` : '';
+}
+
+/** The line under a pool name: who the pool serves, else why its limits are those of one member. */
 function poolSub(group: AisGroup): string {
+  if (group.serving && group.serving.length > 0) return `Serving ${nameList(group.serving)}`;
   return group.active ? `Limits of active member ${group.active}` : 'No active member';
+}
+
+/** The full text of the pool line, for its tooltip: the serving members, their limits and the registry. */
+function poolDetail(group: AisGroup): string {
+  if (!group.serving || group.serving.length === 0) return poolSub(group);
+  const differs = group.active !== undefined && !group.serving.includes(group.active);
+  return [
+    poolSub(group),
+    group.poolLimitsOf ? `Limits of ${group.poolLimitsOf}` : '',
+    differs ? `Registry active ${group.active}` : '',
+  ]
+    .filter(t => t !== '')
+    .join('. ');
 }
 
 const poolMembersText = (n: number): string => `${n} ${n === 1 ? 'member' : 'members'}`;

@@ -155,7 +155,8 @@ export function NodeRing({
     if (a.kind === 'free')
       return `${a.nodeLabel} free: ${format(a.value)} (${percent(share(a.value))})`;
     const path = a.kind === 'category' ? a.label : `${a.categoryLabel} / ${a.label}`;
-    return `${a.nodeLabel} / ${path}: ${format(a.value)} (${percent(share(a.value))})`;
+    const note = a.detail ? `, ${a.detail}` : '';
+    return `${a.nodeLabel} / ${path}: ${format(a.value)} (${percent(share(a.value))})${note}`;
   };
 
   const summary =
