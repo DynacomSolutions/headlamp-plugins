@@ -27,7 +27,7 @@ import { ConnectionIndicator } from './components/ConnectionIndicator';
 import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
 import { FilterBar } from './components/FilterBar';
 import { HeaderIconButton } from './components/HeaderIconButton';
-import { HeaderPart,HeaderStrip } from './components/HeaderStrip';
+import { HeaderPart, HeaderStrip } from './components/HeaderStrip';
 import { PaletteDrawer } from './components/PaletteDrawer';
 import { RefreshControls } from './components/RefreshStatus';
 import { SectionActions, SectionView } from './components/SectionView';
@@ -584,7 +584,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           : undefined
       }
       onReset={() => replaceQuery({ view: '', filters: spec.filters })}
-      compact={barLevel >= 1}
+      // The three parts of a wide bar leave no room for open fields: they stay behind the Filters button.
+      compact={barLevel >= 1 || centred}
       tight={barLevel >= 2}
     />
   );
@@ -913,7 +914,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             <Box
               sx={{
                 minWidth: 80,
-                maxWidth: kiosk ? 'none' : barLevel >= 2 ? 150 : 240,
+                maxWidth: kiosk ? 'none' : centred ? 180 : barLevel >= 2 ? 150 : 240,
                 flex: '0 1 auto',
               }}
             >
@@ -939,7 +940,14 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             </Box>
             {headerPart('left')}
             <ConnectionIndicator />
-            <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
+            {/* On a wide page bar the filters take the second row of the left part. */}
+            <Box
+              sx={{
+                flex: '1 1 auto',
+                minWidth: 0,
+                ...(centred && !kiosk ? { flexBasis: '100%' } : {}),
+              }}
+            >
               {(!kiosk || spec.kioskShowFilters) && filterBar}
             </Box>
           </Box>
@@ -1141,7 +1149,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 /** At this bar width (px) and above, the filter fields show in the row. Below it they fold into one button. */
 const BAR_FULL_WIDTH = 1560;
 /** At this bar width (px) and above, the bar has three equal parts and the clock is in its middle. */
-const BAR_CENTRED_WIDTH = 1280;
+const BAR_CENTRED_WIDTH = 1000;
 /** Below this bar width (px), the "Refreshed" text goes too. */
 const BAR_TIGHT_WIDTH = 1060;
 
