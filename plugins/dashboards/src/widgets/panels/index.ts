@@ -1,8 +1,9 @@
+import { alertChipsWidget } from './AlertChips';
 import { panelWidget } from './PanelWidget';
 import { sunburstPanelWidget } from './SunburstWidget';
 import { syncSourceWidgetsNow } from './variants';
 
-export const PANEL_WIDGETS = [panelWidget, sunburstPanelWidget];
+export const PANEL_WIDGETS = [panelWidget, sunburstPanelWidget, alertChipsWidget];
 
 /**
  * Adds the palette entry of each saved source. The plugin settings may load a little after the

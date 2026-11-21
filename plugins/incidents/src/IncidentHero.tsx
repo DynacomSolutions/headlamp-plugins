@@ -54,7 +54,7 @@ function Count(props: {
 export function IncidentHero({ counts }: { counts: IncidentSummaryCounts }): JSX.Element {
   const s = counts.byStatus;
   return (
-    <Box sx={{ containerType: 'inline-size', flex: 'none' }}>
+    <Box sx={{ containerType: 'inline-size', flex: 'none', pt: 1.25 }}>
       <Box
         sx={{
           display: 'flex',

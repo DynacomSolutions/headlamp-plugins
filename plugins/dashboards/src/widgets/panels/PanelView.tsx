@@ -12,7 +12,7 @@ import { isEmptyPanel, PanelModel, PanelRing, ringToSunburst } from './model';
 import { PanelBars } from './PanelBars';
 import { PanelLanes } from './PanelLanes';
 import { PanelTables } from './PanelTables';
-import { RowList } from './RowList';
+import { okWordOf, RowList } from './RowList';
 import { SeriesPlot, useSeriesColours } from './SeriesPlot';
 import type { PanelSource } from './sources';
 import { Sparkline } from './Sparkline';
@@ -51,6 +51,10 @@ export interface PanelDisplay {
   /** The stat tiles. Default on. */
   showStats: boolean;
   rowLayout: RowLayout;
+  /** A limit line for the series plot, when the series has none of its own. 0 or missing: none. */
+  seriesLimit?: number;
+  /** The unit that the plot shows after its numbers, for example `s`. */
+  seriesUnit?: string;
 }
 
 export const DEFAULT_DISPLAY: PanelDisplay = {
@@ -64,8 +68,17 @@ export function displayOf(config: {
   showSummary?: unknown;
   showStats?: unknown;
   rowLayout?: unknown;
+  seriesLimit?: unknown;
+  seriesUnit?: unknown;
 }): PanelDisplay {
+  const limit =
+    typeof config.seriesLimit === 'number' && config.seriesLimit > 0
+      ? config.seriesLimit
+      : undefined;
+  const unit = typeof config.seriesUnit === 'string' ? config.seriesUnit.trim().slice(0, 8) : '';
   return {
+    ...(limit !== undefined ? { seriesLimit: limit } : {}),
+    ...(unit !== '' ? { seriesUnit: unit } : {}),
     showSummary: config.showSummary !== false,
     showStats: config.showStats !== false,
     rowLayout:
@@ -134,11 +147,12 @@ export function PanelView({
     >
       {display.showSummary && (panel.summary || panel.status !== 'unknown') && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
-          <StatusMark status={panel.status} size={13} />
+          <StatusMark status={panel.status} size={16} />
+          {/* One size and one weight for every word and number of the summary. */}
           <Typography
             variant="body2"
             data-panel-summary
-            sx={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3 }}
+            sx={{ fontWeight: 600, fontSize: 16, lineHeight: 1.3 }}
           >
             {panel.summary || STATUS_WORD[panel.status]}
           </Typography>
@@ -163,7 +177,15 @@ export function PanelView({
       )}
       {hasSeries &&
         (sharedPlot ? (
-          <SeriesPlot series={panel.series} width={plotWidth} height={plotHeight} />
+          <SeriesPlot
+            series={panel.series.map(s => ({
+              ...s,
+              limit: s.limit ?? display.seriesLimit,
+              unit: s.unit ?? display.seriesUnit,
+            }))}
+            width={plotWidth}
+            height={plotHeight}
+          />
         ) : (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {panel.series.map((s, i) => (
@@ -200,7 +222,9 @@ export function PanelView({
         >
           <RowList
             rows={panel.rows}
+            okWord={okWordOf(panel.id)}
             height={fitted ? rowsBox.size.height : 0}
+            width={rowsBox.size.width}
             editing={editing}
             source={source}
             swatch={swatch}

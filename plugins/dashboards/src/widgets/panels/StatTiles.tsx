@@ -1,7 +1,8 @@
 /*
- * The stat tiles of a panel: a status tint, a status mark and a word, and a large number. The
- * worst tile with a real value is wider and has the largest number. A zero value is a quiet
- * outline, so the tile that matters stands out. Status is a shape and a word, never colour alone.
+ * The stat tiles of a panel: no box and no divider. A large number sits over a small chip with the
+ * status mark and the label. The chip carries the status tint, so the tint stays small and the
+ * number stays calm. Only the worst non-zero tile colours its number. A zero value fades out. Status
+ * is a shape and a word, never colour alone.
  */
 import Box from '@mui/material/Box';
 import React from 'react';
@@ -28,88 +29,79 @@ export function worstStat(stats: Stat[]): number {
 /** A tile is narrow when its share of the row is under 100 px. */
 const NARROW = 100;
 /** The numeral size in px by value length: short, medium, long. */
-const SIZE = [42, 32, 24];
-const SIZE_WORST = [58, 44, 30];
-const SIZE_NARROW = 26;
-const SIZE_NARROW_WORST = 30;
-const SIZE_GRID = 30;
+const SIZE = [34, 26, 20];
+const SIZE_NARROW = [28, 22, 17];
 
 const sizeIndex = (v: string): number => (v.length <= 3 ? 0 : v.length <= 5 ? 1 : 2);
 
-/** The height in px of the tile block for a width, so the panel can count how many rows fit. */
-export function tilesHeight(count: number, width: number): number {
-  if (count === 0) return 0;
-  const narrow = width > 0 && width / count < NARROW;
-  if (narrow && count > 3) {
-    const rows = Math.ceil(count / 2);
-    return rows * 62 + (rows - 1) * 6;
-  }
-  return 84;
-}
+/** The height of the tile row in px. */
+export const TILES_HEIGHT = 68;
 
 export function StatTiles(props: { stats: Stat[]; width: number }): JSX.Element {
   const { stats, width } = props;
   const tk = useTokens();
   const narrow = width > 0 && width / Math.max(1, stats.length) < NARROW;
-  const grid = narrow && stats.length > 3;
   const worst = worstStat(stats);
   return (
     <Box
       data-stats
-      sx={
-        grid
-          ? {
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gridAutoRows: 62,
-              gap: '6px',
-              flex: 'none',
-            }
-          : { display: 'flex', gap: stats.length > 3 ? '4px' : '6px', height: 84, flex: 'none' }
-      }
+      sx={{
+        display: 'flex',
+        gap: narrow ? '6px' : '10px',
+        height: TILES_HEIGHT,
+        flex: 'none',
+        alignItems: 'flex-start',
+        pt: '4px',
+      }}
     >
       {stats.map((s, i) => {
         const zero = isZero(s);
         const isWorst = i === worst;
-        const size = grid
-          ? SIZE_GRID
-          : narrow
-          ? isWorst
-            ? SIZE_NARROW_WORST
-            : SIZE_NARROW
-          : (isWorst ? SIZE_WORST : SIZE)[sizeIndex(s.value)];
+        const size = (narrow ? SIZE_NARROW : SIZE)[sizeIndex(s.value)];
         return (
           <Box
             key={`${s.label}-${i}`}
             data-stat
             data-stat-worst={isWorst ? '' : undefined}
-            sx={{
-              flex: grid ? 'none' : isWorst ? '1.8 1 0' : '1 1 0',
-              minWidth: 0,
-              borderRadius: '8px',
-              px: stats.length > 3 || narrow ? 1 : 1.25,
-              pt: '7px',
-              pb: '5px',
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'space-between',
-              bgcolor: zero ? 'transparent' : tk.fill[s.status],
-              boxShadow: zero ? `inset 0 0 0 1px ${tk.line}` : 'none',
-              color: zero ? tk.mut : tk.fg,
-            }}
+            sx={{ flex: '1 1 0', minWidth: 0 }}
           >
             <Box
+              component="div"
               sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: narrow || stats.length > 3 ? 12 : 12.5,
-                minWidth: 0,
-                opacity: zero ? 1 : 1,
+                fontSize: size,
+                lineHeight: 1.05,
+                letterSpacing: '-0.01em',
+                whiteSpace: 'nowrap',
+                fontVariantNumeric: 'tabular-nums',
+                color: zero
+                  ? tk.mut
+                  : isWorst && (s.status === 'warn' || s.status === 'crit')
+                  ? tk.status[s.status]
+                  : tk.fg,
               }}
             >
-              <Box sx={{ display: 'flex', opacity: zero ? 0.5 : 1 }}>
-                <StatusMark status={s.status} size={14} />
+              {s.value}
+            </Box>
+            <Box
+              data-stat-chip
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                maxWidth: '100%',
+                mt: '6px',
+                px: '7px',
+                py: '2px',
+                borderRadius: '10px',
+                fontSize: narrow ? 11.5 : 12.5,
+                lineHeight: 1.3,
+                color: zero ? tk.mut : tk.fg,
+                bgcolor: zero ? 'transparent' : tk.fill[s.status],
+                boxShadow: zero ? `inset 0 0 0 1px ${tk.line}` : 'none',
+              }}
+            >
+              <Box sx={{ display: 'flex', opacity: zero ? 0.4 : 1 }}>
+                <StatusMark status={s.status} size={11} />
               </Box>
               <Box
                 component="span"
@@ -117,17 +109,6 @@ export function StatTiles(props: { stats: Stat[]; width: number }): JSX.Element 
               >
                 {s.label}
               </Box>
-            </Box>
-            <Box
-              component="div"
-              sx={{
-                fontSize: size,
-                lineHeight: 1,
-                whiteSpace: 'nowrap',
-                fontVariantNumeric: 'tabular-nums',
-              }}
-            >
-              {s.value}
             </Box>
           </Box>
         );

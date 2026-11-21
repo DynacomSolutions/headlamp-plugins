@@ -13,7 +13,7 @@ import { sourceKey } from './sources';
 import { useTokens } from './tokens';
 
 /** The tile around the icon, and the icon inside it, in px. */
-export const ROW_ICON_TILE = 24;
+export const ROW_ICON_TILE = 28;
 export const ROW_ICON_SIZE = 18;
 
 /**
@@ -76,7 +76,7 @@ export function RowIcon(props: {
         alignItems: 'center',
         justifyContent: 'center',
         verticalAlign: 'middle',
-        borderRadius: '7px',
+        borderRadius: '8px',
         bgcolor: tile ? tk.hover : undefined,
         boxShadow: tile ? `inset 0 0 0 1px ${tk.line}` : undefined,
       }}
