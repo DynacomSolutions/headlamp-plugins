@@ -596,7 +596,7 @@ Users need `list` (and `watch`) access to the chosen kind. A refused list shows 
 
 ## PromQL widgets
 
-Five widgets in the **Monitoring** group query a Prometheus-compatible service (VictoriaMetrics,
+Six widgets in the **Monitoring** group query a Prometheus-compatible service (VictoriaMetrics,
 Prometheus). They use the plain HTTP API (`/api/v1/query` and `/api/v1/query_range`) through the
 Kubernetes API service proxy, as the other plugins do. The signed in user needs the `get` verb on
 `services/proxy` for that Service.
@@ -605,13 +605,14 @@ Set where the service is in the plugin settings (blank fields use the defaults):
 (`monitoring`), service (`victoria-metrics`), port (`8428`) and an optional path prefix such as
 `/prometheus`.
 
-| Type                | What it shows                                                                   |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `promql.timeseries` | Line, area, stacked area or bars from a range query. Several queries per chart. |
-| `promql.stat`       | One value, an optional sparkline and thresholds.                                |
-| `promql.gauge`      | One value against a scale, with thresholds.                                     |
-| `promql.table`      | One row per series of an instant query. Pick the label columns. Sortable.       |
-| `promql.breakdown`  | A pie (donut) or bars from an instant query, grouped by a label.                |
+| Type                | What it shows                                                                        |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `promql.timeseries` | Line, area, stacked area or bars from a range query. Several queries per chart.      |
+| `promql.stat`       | One value, an optional sparkline and thresholds.                                     |
+| `promql.gauge`      | One value against a scale, with thresholds.                                          |
+| `promql.table`      | One row per series of an instant query. Pick the label columns. Sortable.            |
+| `promql.breakdown`  | A pie (donut) or bars from an instant query, grouped by a label.                     |
+| `promql.matrix`     | A rows by columns matrix from an instant query, for example ping loss per node pair. |
 
 **Template variables.** They follow the filter bar, so one query serves every filter. An unknown
 `$name` stays as typed. Use double quotes around them.
@@ -636,6 +637,16 @@ shown as percent) and seconds (ms, s, min, h, d).
 **Thresholds.** `70:warning, 90:critical` gives the status from a value up. Below the first step the
 status is good. The statuses are good, warning, serious and critical. "A lower value is worse" reads
 the steps as "or less". A status always shows an icon and a word, so colour is never the only cue.
+
+**Matrix.** `promql.matrix` draws one cell for each pair of a row label and a column label (default
+`source` and `target`). The value query gives the cell value. An optional path query (1 direct, 0 relayed)
+puts an `R` mark on a relayed pair. An optional round trip query (seconds) goes in the cell tooltip. With
+"same members" on, rows and columns are the union of every label value that a query returned, and the
+diagonal is blank. A pair with no sample shows a dash on a hatched cell ("no data"), never 0. A value above
+"Warning above" gets a triangle and an amber fill. A value above "Critical above" gets a square and a red
+fill. A value equal to a limit is not above it. A summary line stays in the widget footer: "30 pairs, 2 above
+2%, 4 no data, worst a to b 3.5%". The matrix shows every pair, scrolls when the widget is small and has no
+"+N more" row and no "Other" group.
 
 **Performance and behaviour.**
 
