@@ -222,8 +222,10 @@ export function Composer(props: {
   onSend: (text: string) => void;
   onStop: () => void;
   picker: React.ReactNode;
+  /** A larger input for a wall screen: a strong edge, bigger text and a bigger send button. */
+  large?: boolean;
 }) {
-  const { running, disabled, onSend, onStop, picker } = props;
+  const { running, disabled, onSend, onStop, picker, large } = props;
   const [text, setText] = React.useState('');
   const canSend = !running && !disabled && text.trim() !== '';
   const send = () => {
@@ -234,9 +236,11 @@ export function Composer(props: {
   return (
     <Box
       sx={theme => ({
-        border: `1px solid ${theme.palette.divider}`,
+        border: large
+          ? `2px solid ${theme.palette.text.primary}`
+          : `1px solid ${theme.palette.divider}`,
         borderRadius: 3,
-        p: 1,
+        p: large ? 1.5 : 1,
         display: 'flex',
         flexDirection: 'column',
         gap: 0.5,
@@ -247,7 +251,7 @@ export function Composer(props: {
         component="textarea"
         aria-label="Message"
         placeholder="Ask about the cluster or an incident"
-        rows={2}
+        rows={large ? 3 : 2}
         maxLength={8000}
         value={text}
         onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setText(e.target.value)}
@@ -264,6 +268,7 @@ export function Composer(props: {
           background: 'transparent',
           color: theme.palette.text.primary,
           font: 'inherit',
+          fontSize: large ? '1.25rem' : undefined,
           px: 1,
           py: 0.5,
           maxHeight: 200,
@@ -290,7 +295,7 @@ export function Composer(props: {
             disabled={!canSend}
             onClick={send}
           >
-            <Icon icon="mdi:arrow-up-circle" width={28} height={28} />
+            <Icon icon="mdi:arrow-up-circle" width={large ? 44 : 28} height={large ? 44 : 28} />
           </IconButton>
         )}
       </Box>

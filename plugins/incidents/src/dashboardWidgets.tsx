@@ -29,8 +29,8 @@ import { cleanErrorText } from './chat-model';
 import { Composer, EXAMPLE_PROMPTS, MessageView, useStickToBottom } from './ChatPage';
 import { registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
 import { fetchAllDiagnoses, rerunDiagnosis, useSettings } from './data';
-import { DiagnosesTable } from './DiagnosesTable';
-import { IncidentSummary } from './IncidentSummary';
+import { IncidentHero } from './IncidentHero';
+import { IncidentRows } from './IncidentRows';
 import {
   backendUrl,
   DEFAULT_FILTER,
@@ -130,14 +130,8 @@ function IncidentListWidget({
   }, []);
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-      <Box
-        sx={theme => ({
-          flex: 'none',
-          pb: 1,
-          borderBottom: `1px solid ${theme.palette.divider}`,
-        })}
-      >
-        <IncidentSummary counts={counts} />
+      <Box sx={{ flex: 'none' }}>
+        <IncidentHero counts={counts} />
         {state.error && (
           <Alert severity={state.rows ? 'warning' : 'error'} sx={{ mt: 1 }}>
             {state.rows
@@ -158,10 +152,8 @@ function IncidentListWidget({
               : 'No diagnoses match the filters of this widget.'}
           </Typography>
         ) : (
-          <DiagnosesTable
+          <IncidentRows
             rows={rows}
-            compact
-            stickyHeader
             touch={kiosk}
             selectedId={selected?.id ?? null}
             onSelect={hasChat ? onSelect : undefined}
@@ -315,7 +307,14 @@ function IncidentChatWidget({
   return (
     <Box
       data-incident-chat
-      sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}
+      sx={{
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        minHeight: 0,
+        containerType: 'inline-size',
+      }}
     >
       <Box sx={{ flex: 'none', pb: 1, minHeight: 28, display: 'flex', alignItems: 'center' }}>
         {selected ? (
@@ -353,21 +352,59 @@ function IncidentChatWidget({
                 textAlign: 'center',
               }}
             >
-              <Typography variant="subtitle1" component="h2">
+              <Typography
+                component="h2"
+                sx={{
+                  fontSize: 'clamp(22px, 3.4cqw, 34px)',
+                  lineHeight: 1.2,
+                  fontWeight: 600,
+                  mb: 1.5,
+                }}
+              >
                 {selected
                   ? `Ask the agent about ${selected.alertName}`
                   : 'What do you want to know about the cluster?'}
               </Typography>
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, justifyContent: 'center' }}>
+              <Box
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                  gap: 1.5,
+                  width: '100%',
+                }}
+              >
                 {prompts.map(p => (
                   <Button
                     key={p}
-                    size={kiosk ? 'medium' : 'small'}
-                    variant="outlined"
+                    variant="contained"
                     color="inherit"
                     disabled={busy}
                     onClick={() => onSend(p)}
-                    sx={{ textTransform: 'none', borderRadius: 4 }}
+                    sx={theme => ({
+                      textTransform: 'none',
+                      borderRadius: 2.5,
+                      justifyContent: 'flex-start',
+                      textAlign: 'left',
+                      minHeight: kiosk ? 96 : 72,
+                      px: 2.25,
+                      py: 1.5,
+                      fontSize: 'clamp(16px, 2.2cqw, 21px)',
+                      lineHeight: 1.25,
+                      fontWeight: 400,
+                      boxShadow: 'none',
+                      color: theme.palette.text.primary,
+                      bgcolor:
+                        theme.palette.mode === 'dark'
+                          ? 'rgba(255,255,255,0.16)'
+                          : 'rgba(0,0,0,0.08)',
+                      '&:hover': {
+                        boxShadow: 'none',
+                        bgcolor:
+                          theme.palette.mode === 'dark'
+                            ? 'rgba(255,255,255,0.24)'
+                            : 'rgba(0,0,0,0.14)',
+                      },
+                    })}
                   >
                     {p}
                   </Button>
@@ -388,6 +425,7 @@ function IncidentChatWidget({
           </Alert>
         )}
         <Composer
+          large={kiosk}
           running={running}
           disabled={busy}
           onSend={onSend}
