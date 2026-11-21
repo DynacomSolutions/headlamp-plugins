@@ -220,28 +220,60 @@ describe('AisView', () => {
     expect(scroll).toHaveLength(1);
     expect(scroll[0].contains(c.querySelector('[data-stats]'))).toBe(false);
     expect(scroll[0].contains(c.querySelector('[data-legend]'))).toBe(false);
-    expect(scroll[0].querySelectorAll('[data-ais-row]')).toHaveLength(7);
+    // 7 identities and the pool line.
+    expect(scroll[0].querySelectorAll('[data-ais-row]')).toHaveLength(8);
   });
 
   it('draws every row and group and no "+N more" line', () => {
     const c = view();
-    expect(c.querySelectorAll('[data-ais-group]')).toHaveLength(5);
-    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(7);
+    // The pool is a line of its own, so four provider headers remain.
+    expect(c.querySelectorAll('[data-ais-group]')).toHaveLength(4);
+    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(8);
     expect(c.textContent).not.toMatch(/\+\s*\d+\s*more/i);
     expect(c.textContent).not.toMatch(/\bother\b/i);
   });
 
-  it('marks the active member, the pool and the login state on the row', () => {
+  it('marks the active member with a dot, and a login that needs attention with an icon', () => {
     const c = view();
-    expect(c.querySelectorAll('[data-active-chip]')).toHaveLength(1);
-    expect(c.querySelector('[data-active] [data-active-chip]')?.textContent).toBe('Active');
-    expect(c.querySelector('[data-group-kind="pool"] [data-pool-chip]')).not.toBeNull();
-    expect(c.querySelector('[data-ais-row$="/red"] [data-login="crit"]')?.textContent).toContain(
-      'Expired'
+    expect(c.querySelectorAll('[data-active-mark]')).toHaveLength(1);
+    expect(c.querySelector('[data-active] [data-active-mark]')?.getAttribute('aria-label')).toBe(
+      'Active'
     );
-    expect(c.querySelector('[data-ais-row$="/solo"] [data-login="warn"]')?.textContent).toContain(
-      'Expiring'
-    );
+    // A mark, not a chip: no text on the line for the mark.
+    expect(c.querySelector('[data-active-mark]')?.textContent).toBe('');
+    expect(
+      c.querySelector('[data-ais-row$="/red"] [data-login="crit"]')?.getAttribute('title')
+    ).toBe('Login: Expired');
+    expect(
+      c.querySelector('[data-ais-row$="/solo"] [data-login="warn"]')?.getAttribute('title')
+    ).toBe('Login: Expiring');
+    // A member that is logged in has no login mark and no login text.
+    expect(c.querySelector('[data-ais-row$="/blue"] [data-login]')).toBeNull();
+    expect(c.querySelector('[data-ais-list]')?.textContent).not.toMatch(/Logged in/);
+  });
+
+  it('draws one thin line for each identity: the name, the bars and the worst percentage', () => {
+    const c = view();
+    const red = c.querySelector('[data-ais-row="anthropic/red"]') as HTMLElement;
+    expect(red.textContent).toBe('red100%');
+    expect(red.querySelectorAll('[data-lane]')).toHaveLength(2);
+    expect(red.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('crit');
+    // The window names are in the legend only, never on a line.
+    const list = c.querySelector('[data-ais-list]') as HTMLElement;
+    expect(list.textContent).not.toMatch(/Weekly|5-hour|Monthly/);
+    expect(c.querySelector('[data-legend]')?.textContent).toContain('Weekly (Fable)');
+  });
+
+  it('gives each window the colour of its legend swatch', () => {
+    const c = view();
+    const swatch = (name: string) =>
+      c.querySelector(`[data-legend-item="${name}"] [data-swatch]`)?.getAttribute('data-swatch');
+    const fill = (name: string) =>
+      c.querySelector(`[data-ais-row="anthropic/red"] [data-segment="${name}"]`);
+    expect(swatch('Weekly')).toBeTruthy();
+    expect(swatch('Weekly')).not.toBe(swatch('Weekly (Fable)'));
+    expect(fill('Weekly')).not.toBeNull();
+    expect(fill('Weekly (Fable)')).not.toBeNull();
   });
 
   it('draws one lane for each limit of an identity', () => {
@@ -297,16 +329,30 @@ const consoleView = () =>
   ).container;
 
 describe('AisView console view', () => {
-  it('gives the pool the limits of its active member and says so', () => {
-    const g = model().groups[0];
-    expect(g.poolLimits?.map(l => l.name)).toEqual(['Weekly', 'Weekly (Fable)']);
-    expect(g.poolStatus).toBe('crit');
+  it('gives the pool the joint bars of all members and says so', () => {
     const c = consoleView();
-    const row = c.querySelector('[data-ais-row="pool:pool-one"]');
-    expect(row?.querySelectorAll('[data-lane]')).toHaveLength(2);
-    expect(row?.querySelector('[data-pool-sub]')?.textContent).toContain(
-      'Limits of active member red'
+    const row = c.querySelector('[data-ais-row="pool:pool-one"]') as HTMLElement;
+    expect(row.querySelectorAll('[data-lane]')).toHaveLength(2);
+    expect(row.querySelector('[data-pool-sub]')?.textContent).toBe('Pool total, 3 members');
+    // Weekly: (100 + 40 + 7) / 3 = 49 %. Weekly (Fable): only one member reports, at 100 %.
+    expect(row.querySelector('[data-segment="Weekly"]')?.getAttribute('data-fill')).toBe(
+      String((1 + 0.4 + 0.07) / 3)
     );
+    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('100%');
+    expect(row.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('crit');
+    expect(row.getAttribute('data-row-status')).toBe('crit');
+  });
+
+  it('marks a member that reports no data for a window', () => {
+    const c = consoleView();
+    const blue = c.querySelector('[data-ais-row="anthropic/blue"]') as HTMLElement;
+    expect(blue.querySelector('[data-lane="Weekly"]')?.hasAttribute('data-missing')).toBe(false);
+    expect(blue.querySelector('[data-lane="Weekly (Fable)"]')?.hasAttribute('data-missing')).toBe(
+      true
+    );
+    expect(blue.querySelector('[data-segment="Weekly (Fable)"]')).toBeNull();
+    const red = c.querySelector('[data-ais-row="anthropic/red"]') as HTMLElement;
+    expect(red.querySelector('[data-lane][data-missing]')).toBeNull();
   });
 
   it('opens every pool by default with the members under it, the active one marked', () => {
@@ -321,7 +367,7 @@ describe('AisView console view', () => {
       'anthropic/blue',
       'anthropic/violet',
     ]);
-    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-active-chip]')).not.toBeNull();
+    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-active-mark]')).not.toBeNull();
     expect(c.querySelector('[data-ais-row="anthropic/red"] [data-login="crit"]')).not.toBeNull();
   });
 
@@ -477,36 +523,36 @@ describe('AisView with the member that the gateway serves', () => {
   it('marks Serving on the served member and Registry active on the other (overview)', () => {
     const c = render2([agentRow('pool-one', 'blue', 'gateway-ledger')]);
     expect(
-      c.querySelector('[data-ais-row="anthropic/blue"] [data-serving-chip]')?.textContent
+      c
+        .querySelector('[data-ais-row="anthropic/blue"] [data-serving-mark]')
+        ?.getAttribute('aria-label')
     ).toBe('Serving');
-    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-active-chip]')?.textContent).toBe(
-      'Registry active'
-    );
-    expect(c.querySelectorAll('[data-serving-chip]')).toHaveLength(1);
-    expect(c.querySelector('[data-group-kind="pool"]')?.textContent).toContain(
-      'serving blue, registry active red'
+    expect(
+      c
+        .querySelector('[data-ais-row="anthropic/red"] [data-active-mark]')
+        ?.getAttribute('aria-label')
+    ).toBe('Registry active');
+    expect(c.querySelectorAll('[data-serving-mark]')).toHaveLength(1);
+    expect(c.querySelector('[data-ais-row^="pool:"] [data-pool-sub]')?.textContent).toBe(
+      'Pool total, 3 members'
     );
   });
-  it('says Serving on the pool row (console)', () => {
+  it('keeps the joint bars on the pool row whoever the gateway serves (console)', () => {
     const c = render2([agentRow('pool-one', 'blue', 'gateway-ledger')], 'console');
-    expect(c.querySelector('[data-ais-row="pool:pool-one"] [data-pool-sub]')?.textContent).toBe(
-      'Serving blue'
-    );
-    expect(
-      c.querySelector('[data-ais-row="pool:pool-one"] [data-pool-sub]')?.getAttribute('title')
-    ).toContain('Limits of blue. Registry active red');
-    expect(c.querySelector('[data-ais-row="anthropic/blue"] [data-serving-chip]')).not.toBeNull();
+    const row = c.querySelector('[data-ais-row="pool:pool-one"]') as HTMLElement;
+    expect(row.querySelector('[data-pool-sub]')?.textContent).toBe('Pool total, 3 members');
+    expect(row.querySelectorAll('[data-lane]')).toHaveLength(2);
+    expect(c.querySelector('[data-ais-row="anthropic/blue"] [data-serving-mark]')).not.toBeNull();
   });
   it('shows no Registry active mark when the registry member is the served one', () => {
     const c = render2([agentRow('pool-one', 'red', 'gateway-ledger')], 'console');
-    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-serving-chip]')).not.toBeNull();
-    expect(c.querySelector('[data-active-chip]')).toBeNull();
-    expect(c.querySelector('[data-pool-sub]')?.textContent).toBe('Serving red');
+    expect(c.querySelector('[data-ais-row="anthropic/red"] [data-serving-mark]')).not.toBeNull();
+    expect(c.querySelector('[data-active-mark]')).toBeNull();
   });
   it('keeps the old Active mark for a source that does not say who is served', () => {
     const c = view();
-    expect(c.querySelector('[data-serving-chip]')).toBeNull();
-    expect(c.querySelector('[data-active-chip]')?.textContent).toBe('Active');
+    expect(c.querySelector('[data-serving-mark]')).toBeNull();
+    expect(c.querySelector('[data-active-mark]')?.getAttribute('aria-label')).toBe('Active');
   });
 });
 
@@ -566,8 +612,8 @@ describe('AisView stacked (narrow widget)', () => {
 
   it('draws every identity and every group, with no "+N more" line and no Other group', () => {
     const c = viewAt(470);
-    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(7);
-    expect(c.querySelectorAll('[data-ais-group]')).toHaveLength(5);
+    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(8);
+    expect(c.querySelectorAll('[data-ais-group]')).toHaveLength(4);
     expect(c.textContent).not.toMatch(/\+\s*\d+\s*more/i);
     expect(c.textContent).not.toMatch(/\bother\b/i);
     for (const g of model().groups)
@@ -575,20 +621,19 @@ describe('AisView stacked (narrow widget)', () => {
         expect(c.querySelector(`[data-ais-row="${m.key}"]`)).not.toBeNull();
   });
 
-  it('puts the name, the login state and each limit with its percentage in each row', () => {
+  it('puts the name, the bars and one percentage in each line, with no text for the login', () => {
     const c = viewAt(470);
-    const red = c.querySelector('[data-ais-row="anthropic/red"]') as HTMLElement;
-    const row = red ?? (c.querySelector('[data-ais-row$="/red"]') as HTMLElement);
-    expect(row.hasAttribute('data-stacked')).toBe(true);
-    expect(row.querySelector('[data-login]')).not.toBeNull();
-    const lanes = row.querySelectorAll('[data-lane]');
-    expect(lanes.length).toBeGreaterThan(0);
-    lanes.forEach(l => expect(l.querySelector('[data-lane-value]')?.textContent).toMatch(/\d+%/));
+    const row = c.querySelector('[data-ais-row="anthropic/red"]') as HTMLElement;
+    expect(row.querySelector('[data-login="crit"]')).not.toBeNull();
+    expect(row.querySelectorAll('[data-lane]').length).toBeGreaterThan(0);
+    expect(row.textContent).toBe('red100%');
+    const blue = c.querySelector('[data-ais-row="anthropic/blue"]') as HTMLElement;
+    expect(blue.textContent).toBe('blue40%');
   });
 
   it('marks the active member and keeps the summary line outside the scroll area', () => {
     const c = viewAt(470);
-    expect(c.querySelector('[data-active] [data-active-chip]')?.textContent).toBe('Active');
+    expect(c.querySelector('[data-active] [data-active-mark]')).not.toBeNull();
     const scroll = c.querySelectorAll('[data-scroll-area]');
     expect(scroll).toHaveLength(1);
     expect(scroll[0].contains(c.querySelector('[data-ais-summary]'))).toBe(false);
@@ -609,17 +654,20 @@ describe('AisView stacked (narrow widget)', () => {
     expect(sizes[0]).toBe('34px');
   });
 
-  it('draws no legend, as each limit is named in its row', () => {
-    expect(viewAt(470).querySelector('[data-legend]')).toBeNull();
+  it('draws the fixed legend, as no line names its limit', () => {
+    const c = viewAt(470);
+    expect(c.querySelector('[data-legend]')).not.toBeNull();
+    expect(c.querySelector('[data-scroll-area]')?.contains(c.querySelector('[data-legend]'))).toBe(
+      false
+    );
   });
 
   it('keeps the wide layout for a wide widget', () => {
     const c = viewAt(1200);
     const root = c.querySelector('[data-ais]');
     expect(root?.getAttribute('data-ais-layout')).toBe('wide');
-    expect(c.querySelector('[data-stacked]')).toBeNull();
     expect(c.querySelector('[data-legend]')).not.toBeNull();
     expect(c.querySelector('[data-stats]')?.getAttribute('data-stat-columns')).toBeNull();
-    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(7);
+    expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(8);
   });
 });
