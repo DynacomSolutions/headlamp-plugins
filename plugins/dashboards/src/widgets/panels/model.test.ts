@@ -225,6 +225,82 @@ describe('ringToSunburst', () => {
   });
 });
 
+describe('ringToSunburst by node', () => {
+  const ring = parsePanel({
+    version: 1,
+    id: 'x',
+    rings: [
+      {
+        id: 'cpu',
+        label: 'CPU',
+        unit: 'cores',
+        capacity: 30,
+        used: 12,
+        segments: [
+          {
+            key: 'k8s',
+            label: 'Kubernetes',
+            value: 12,
+            children: [{ key: 'k8s/a', label: 'a', value: 12 }],
+          },
+        ],
+        nodes: [
+          {
+            key: 'node:worker-1',
+            label: 'worker-1',
+            capacity: 20,
+            used: 8,
+            segments: [
+              {
+                key: 'k8s',
+                label: 'Kubernetes',
+                value: 8,
+                children: [{ key: 'k8s/a', label: 'a', value: 8 }],
+              },
+            ],
+          },
+          {
+            key: 'node:worker-2',
+            label: 'worker-2',
+            capacity: 10,
+            used: 4,
+            segments: [{ key: 'k8s', label: 'Kubernetes', value: 4 }],
+          },
+          { key: '', label: 'no key', capacity: 1, used: 1, segments: [] },
+        ],
+      },
+    ],
+  }).rings[0];
+
+  it('keeps the nodes of a ring and drops a node without a key', () => {
+    expect(ring.nodes!.map(n => n.key)).toEqual(['node:worker-1', 'node:worker-2']);
+    expect(ring.nodes![0]).toMatchObject({ capacity: 20, used: 8 });
+  });
+
+  it('groups by node only when asked and keeps the category data otherwise', () => {
+    expect(ringToSunburst(ring).nodes).toBeUndefined();
+    expect(ringToSunburst(ring, { groupBy: 'category' }).nodes).toBeUndefined();
+    const data = ringToSunburst(ring, { groupBy: 'node' });
+    expect(data.capacity).toBe(30);
+    expect(data.categories.map(c => c.key)).toEqual(['k8s']);
+    expect(data.nodes!.map(n => [n.label, n.capacity, n.used])).toEqual([
+      ['worker-1', 20, 8],
+      ['worker-2', 10, 4],
+    ]);
+    expect(data.nodes![0].categories[0].children).toEqual([{ key: 'k8s/a', label: 'a', value: 8 }]);
+  });
+
+  it('falls back to category first when the agent sends no nodes', () => {
+    const old = parsePanel({
+      version: 1,
+      id: 'x',
+      rings: [{ id: 'cpu', capacity: 1, used: 1, segments: [{ key: 'a', label: 'A', value: 1 }] }],
+    }).rings[0];
+    expect(old.nodes).toBeUndefined();
+    expect(ringToSunburst(old, { groupBy: 'node' }).nodes).toBeUndefined();
+  });
+});
+
 describe('mayFetch', () => {
   it('fetches the first time and then only after the minimum wait', () => {
     expect(mayFetch(null, 1000, 60)).toBe(true);

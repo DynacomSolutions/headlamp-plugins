@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { arcPath, CENTRE, fitCentreText, layoutArcs, TAU, trackPath, usedShare } from './geometry';
+import {
+  arcPath,
+  CENTRE,
+  fitCentreText,
+  freeKey,
+  layoutArcs,
+  layoutNodeArcs,
+  nodeSpan,
+  SunburstNode,
+  TAU,
+  trackPath,
+  usedShare,
+} from './geometry';
 
 const data = {
   capacity: 100,
@@ -159,5 +171,137 @@ describe('fitCentreText', () => {
       fitCentreText('abcdefghijklmnopqrstuv', 9, 0, R)
     );
     expect(fitCentreText('x'.repeat(200), 9, 0, R)).toBe(3);
+  });
+});
+
+describe('layoutNodeArcs', () => {
+  const cat = (key: string, value: number, kids: number[] = []) => ({
+    key,
+    label: key.toUpperCase(),
+    value,
+    children: kids.map((v, i) => ({ key: `${key}/${i}`, label: `${key}${i}`, value: v })),
+  });
+  // worker-1 holds 40 of 60, worker-2 holds 10 of 40 and worker-3 is idle with 20.
+  const nodes: SunburstNode[] = [
+    {
+      key: 'node:worker-1',
+      label: 'worker-1',
+      capacity: 60,
+      used: 40,
+      categories: [cat('k8s', 30, [20, 10]), cat('system', 10, [10])],
+    },
+    {
+      key: 'node:worker-2',
+      label: 'worker-2',
+      capacity: 40,
+      used: 10,
+      categories: [cat('k8s', 10, [10])],
+    },
+    { key: 'node:worker-3', label: 'worker-3', capacity: 20, used: 0, categories: [] },
+  ];
+  const arcs = layoutNodeArcs(nodes, 96);
+  const of = (kind: string, node?: string) =>
+    arcs.filter(a => a.kind === kind && (node === undefined || a.nodeKey === node));
+  const share = (a: { start: number; end: number }) => (a.end - a.start) / TAU;
+
+  it('puts the node ring first, each node at its share of the total capacity', () => {
+    const ring = of('node');
+    expect(ring.map(a => a.key)).toEqual(nodes.map(n => n.key));
+    expect(ring.map(share)).toEqual(
+      ring.map((_, i) => [60, 40, 20][i] / 120).map(v => expect.closeTo(v, 6))
+    );
+    // The node ring is the innermost ring and the arcs follow each other without a gap.
+    const inner = Math.max(...ring.map(a => a.outer));
+    for (const a of arcs.filter(x => x.kind !== 'node'))
+      expect(a.inner).toBeGreaterThanOrEqual(inner);
+    expect(ring[0].start).toBe(0);
+    expect(ring[2].end).toBeCloseTo(TAU, 6);
+  });
+
+  it('keeps the category and child rings inside each node at their real size', () => {
+    const w1 = of('category', 'node:worker-1');
+    expect(w1.map(a => a.key)).toEqual(['k8s', 'system']);
+    expect(w1.map(share)).toEqual([expect.closeTo(30 / 120, 6), expect.closeTo(10 / 120, 6)]);
+    const kids = of('child', 'node:worker-1').filter(a => a.categoryKey === 'k8s');
+    expect(kids.map(a => a.value)).toEqual([20, 10]);
+    expect(kids.map(share)).toEqual([expect.closeTo(20 / 120, 6), expect.closeTo(10 / 120, 6)]);
+    // A child sits inside the angle of its category.
+    const [k8s] = w1;
+    for (const k of kids) {
+      expect(k.start).toBeGreaterThanOrEqual(k8s.start - 1e-9);
+      expect(k.end).toBeLessThanOrEqual(k8s.end + 1e-9);
+    }
+    // The node ring, the category ring and the child ring do not overlap.
+    expect(w1[0].outer).toBeLessThan(kids[0].inner);
+  });
+
+  it('adds one free slice per node with spare capacity, at the end of the node', () => {
+    const free = of('free');
+    expect(free.map(a => a.nodeKey)).toEqual(['node:worker-1', 'node:worker-2', 'node:worker-3']);
+    expect(free.map(a => a.value)).toEqual([20, 30, 20]);
+    expect(free.map(a => a.key)).toEqual(nodes.map(n => freeKey(n.key)));
+    for (const f of free) {
+      const node = of('node', f.nodeKey)[0];
+      expect(f.end).toBeCloseTo(node.end, 9);
+      expect(share(f)).toBeCloseTo(f.value / 120, 6);
+      // The free slice spans the category and the child ring.
+      expect(f.outer).toBe(96);
+    }
+    // The used arcs and the free arc of a node fill its wedge exactly.
+    for (const n of nodes) {
+      const node = of('node', n.key)[0];
+      const used = of('category', n.key).reduce((s, a) => s + share(a), 0);
+      expect(used + share(of('free', n.key)[0])).toBeCloseTo(share(node), 6);
+    }
+  });
+
+  it('draws no free slice for a full node and widens an overcommitted node', () => {
+    const full = layoutNodeArcs(
+      [{ key: 'node:a', label: 'a', capacity: 10, used: 10, categories: [cat('k8s', 10)] }],
+      96
+    );
+    expect(full.some(a => a.kind === 'free')).toBe(false);
+    const over = layoutNodeArcs(
+      [
+        { key: 'node:a', label: 'a', capacity: 10, used: 15, categories: [cat('k8s', 15)] },
+        { key: 'node:b', label: 'b', capacity: 15, used: 0, categories: [] },
+      ],
+      96
+    );
+    expect(nodeSpan(nodes[0])).toBe(60);
+    expect(over.find(a => a.kind === 'node' && a.nodeKey === 'node:a')).toMatchObject({
+      value: 15,
+    });
+    expect(share(over.find(a => a.kind === 'node' && a.nodeKey === 'node:a')!)).toBeCloseTo(0.5, 6);
+    expect(over.some(a => a.kind === 'free' && a.nodeKey === 'node:a')).toBe(false);
+  });
+
+  it('never folds a small group into an Other arc', () => {
+    const many = layoutNodeArcs(
+      [
+        {
+          key: 'node:a',
+          label: 'a',
+          capacity: 1000,
+          used: 500,
+          categories: [cat('k8s', 499, [498, 0.5, 0.5]), cat('tiny', 1, [1])],
+        },
+      ],
+      96
+    );
+    expect(many.filter(a => a.kind === 'child').map(a => a.key)).toEqual([
+      'k8s/0',
+      'k8s/1',
+      'k8s/2',
+      'tiny/0',
+    ]);
+    expect(JSON.stringify(many)).not.toMatch(/other/i);
+  });
+
+  it('draws nothing for no nodes or for nodes without capacity and use', () => {
+    expect(layoutNodeArcs([], 96)).toEqual([]);
+    expect(
+      layoutNodeArcs([{ key: 'n', label: 'n', capacity: 0, used: 0, categories: [] }], 96)
+    ).toEqual([]);
   });
 });

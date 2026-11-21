@@ -5,7 +5,7 @@
  * are ignored, a bad value is dropped or replaced by a default, and the widget never throws on
  * bad data. The types match `agent/src/widgets.ts`, plus the optional `tables` field.
  */
-import type { SunburstCategory, SunburstData } from '../sunburst/geometry';
+import type { SunburstCategory, SunburstData, SunburstGroupBy } from '../sunburst/geometry';
 
 export type PanelStatus = 'ok' | 'warn' | 'crit' | 'unknown';
 
@@ -55,6 +55,15 @@ export interface RingSegment {
   children?: RingSegment[];
 }
 
+/** One node of a ring: its own capacity and use, and its categories with their children. */
+export interface RingNode {
+  key: string;
+  label: string;
+  capacity: number;
+  used: number;
+  segments: RingSegment[];
+}
+
 export interface PanelRing {
   id: string;
   label: string;
@@ -62,6 +71,8 @@ export interface PanelRing {
   capacity: number;
   used: number;
   segments: RingSegment[];
+  /** The same data split by node first. Absent from an older agent. */
+  nodes?: RingNode[];
 }
 
 export interface PanelTableColumn {
@@ -162,19 +173,40 @@ function parseSegment(raw: unknown, depth: number): RingSegment | null {
   return seg;
 }
 
+function parseSegments(raw: unknown): RingSegment[] {
+  return array(raw)
+    .map(s => parseSegment(s, 0))
+    .filter((s): s is RingSegment => s !== null);
+}
+
+function parseNode(raw: unknown): RingNode | null {
+  if (!isObject(raw)) return null;
+  const key = str(raw.key);
+  if (key === '') return null;
+  return {
+    key,
+    label: str(raw.label, key),
+    capacity: Math.max(0, num(raw.capacity)),
+    used: Math.max(0, num(raw.used)),
+    segments: parseSegments(raw.segments),
+  };
+}
+
 function parseRing(raw: unknown): PanelRing | null {
   if (!isObject(raw)) return null;
   const id = str(raw.id);
   if (id === '') return null;
+  const nodes = array(raw.nodes)
+    .map(parseNode)
+    .filter((n): n is RingNode => n !== null);
   return {
     id,
     label: str(raw.label, id),
     unit: str(raw.unit, 'bytes'),
     capacity: Math.max(0, num(raw.capacity)),
     used: Math.max(0, num(raw.used)),
-    segments: array(raw.segments)
-      .map(s => parseSegment(s, 0))
-      .filter((s): s is RingSegment => s !== null),
+    segments: parseSegments(raw.segments),
+    ...(nodes.length > 0 ? { nodes } : {}),
   };
 }
 
@@ -302,14 +334,32 @@ export const isEmptyPanel = (p: PanelModel): boolean =>
   p.summary === '';
 
 /** A ring as sunburst data. Every segment stays its own arc: nothing is merged or cut. */
-export function ringToSunburst(ring: PanelRing): SunburstData {
+export function ringToSunburst(
+  ring: PanelRing,
+  options: { groupBy?: SunburstGroupBy } = {}
+): SunburstData {
+  const nodes =
+    options.groupBy === 'node' && ring.nodes && ring.nodes.length > 0
+      ? ring.nodes.map(n => ({
+          key: n.key,
+          label: n.label,
+          capacity: n.capacity,
+          used: n.used,
+          categories: n.segments.map(s => ({
+            key: s.key,
+            label: s.label,
+            value: s.value,
+            children: (s.children ?? []).map(c => ({ key: c.key, label: c.label, value: c.value })),
+          })),
+        }))
+      : undefined;
   const categories: SunburstCategory[] = ring.segments.map(s => ({
     key: s.key,
     label: s.label,
     value: s.value,
     children: (s.children ?? []).map(c => ({ key: c.key, label: c.label, value: c.value })),
   }));
-  return { capacity: ring.capacity, categories };
+  return { capacity: ring.capacity, categories, ...(nodes ? { nodes } : {}) };
 }
 
 /**

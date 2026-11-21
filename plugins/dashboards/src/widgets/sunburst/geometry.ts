@@ -20,10 +20,27 @@ export interface SunburstCategory {
   children?: SunburstChild[];
 }
 
+/** What the first ring of a sunburst is: the categories, or the nodes with the categories inside each. */
+export type SunburstGroupBy = 'category' | 'node';
+
+/** One node of a node-first sunburst: its capacity, its use and the categories inside it. */
+export interface SunburstNode {
+  key: string;
+  label: string;
+  /** What the node can hold. The free part is `capacity - used`, when that is positive. */
+  capacity: number;
+  /** What the node uses. */
+  used: number;
+  categories: SunburstCategory[];
+}
+
 export interface SunburstData {
   /** The full circle, in the unit of the values. */
   capacity: number;
+  /** The categories of the whole circle. In node-first data this is the sum over the nodes. */
   categories: SunburstCategory[];
+  /** Present for node-first data: the first ring is one arc per node and `categories` sit inside it. */
+  nodes?: SunburstNode[];
 }
 
 export interface ArcShape {
@@ -175,4 +192,139 @@ export function fitCentreText(
   const glyph = bold ? GLYPH_BOLD : GLYPH;
   const chars = Math.max(1, text.length);
   return Math.min(base, Math.max(3, width / (chars * glyph)));
+}
+
+/** The rings of a node-first sunburst: the node ring, the category ring and the child ring. */
+export const NODE_RING_END = 0.66;
+export const CATEGORY_RING_END = 0.83;
+
+export type NodeArcKind = 'node' | 'category' | 'child' | 'free';
+
+export interface NodeArcShape {
+  kind: NodeArcKind;
+  /** The key of the arc. A free arc has the key `<node key>/~free`. */
+  key: string;
+  label: string;
+  value: number;
+  nodeKey: string;
+  nodeLabel: string;
+  /** The key of the category, for a category or a child arc. Empty otherwise. */
+  categoryKey: string;
+  categoryLabel: string;
+  start: number;
+  end: number;
+  inner: number;
+  outer: number;
+}
+
+/** The key of the free slice of a node. */
+export const freeKey = (nodeKey: string): string => `${nodeKey}/~free`;
+
+/** The size of a node wedge: its capacity, or its use when that is larger (an overcommitted node). */
+export const nodeSpan = (n: Pick<SunburstNode, 'capacity' | 'used'>): number =>
+  Math.max(positive(n.capacity), positive(n.used));
+
+/**
+ * The arcs of a node-first sunburst, for a chart of the given radius. The first ring is one arc
+ * per node, sized by its capacity (or its use, when that is larger). Inside each node the second
+ * ring is one arc per category and the third ring one arc per child, each at its real size. The
+ * capacity that the node does not use is a free arc at the end of the node, over the second and
+ * third ring. Every group is its own arc: no "Other" arc and no top-N cut.
+ */
+export function layoutNodeArcs(nodes: SunburstNode[], radius: number): NodeArcShape[] {
+  const list = nodes.map(n => ({ ...n, span: nodeSpan(n) })).filter(n => n.span > 0);
+  const scale = list.reduce((s, n) => s + n.span, 0);
+  if (scale <= 0) return [];
+  const centre = radius * CENTRE;
+  const nodeEnd = radius * NODE_RING_END;
+  const catEnd = radius * CATEGORY_RING_END;
+  const arcs: NodeArcShape[] = [];
+  let at = 0;
+  for (const node of list) {
+    const start = at;
+    const end = start + (node.span / scale) * TAU;
+    arcs.push({
+      kind: 'node',
+      key: node.key,
+      label: node.label,
+      value: positive(node.used),
+      nodeKey: node.key,
+      nodeLabel: node.label,
+      categoryKey: '',
+      categoryLabel: '',
+      start,
+      end,
+      inner: centre,
+      outer: nodeEnd - RING_GAP / 2,
+    });
+    const cats = node.categories
+      .map(c => ({ ...c, value: positive(c.value) }))
+      .filter(c => c.value > 0);
+    const catTotal = cats.reduce((s, c) => s + c.value, 0);
+    // Categories that sum to more than the node (sampling skew) are scaled down to fit it.
+    const free = Math.max(0, node.span - positive(node.used));
+    const room = node.span - free;
+    const fitCats = catTotal > room && catTotal > 0 ? room / catTotal : 1;
+    let cat = start;
+    for (const c of cats) {
+      const cend = cat + ((c.value * fitCats) / scale) * TAU;
+      arcs.push({
+        kind: 'category',
+        key: c.key,
+        label: c.label,
+        value: c.value,
+        nodeKey: node.key,
+        nodeLabel: node.label,
+        categoryKey: c.key,
+        categoryLabel: c.label,
+        start: cat,
+        end: cend,
+        inner: nodeEnd + RING_GAP / 2,
+        outer: catEnd - RING_GAP / 2,
+      });
+      const kids = (c.children ?? [])
+        .map(k => ({ ...k, value: positive(k.value) }))
+        .filter(k => k.value > 0);
+      const kidTotal = kids.reduce((s, k) => s + k.value, 0);
+      const fitKids = kidTotal > c.value ? c.value / kidTotal : 1;
+      let kat = cat;
+      for (const k of kids) {
+        const kend = kat + ((k.value * fitCats * fitKids) / scale) * TAU;
+        arcs.push({
+          kind: 'child',
+          key: k.key,
+          label: k.label,
+          value: k.value,
+          nodeKey: node.key,
+          nodeLabel: node.label,
+          categoryKey: c.key,
+          categoryLabel: c.label,
+          start: kat,
+          end: kend,
+          inner: catEnd + RING_GAP / 2,
+          outer: radius,
+        });
+        kat = kend;
+      }
+      cat = cend;
+    }
+    if (free > 0) {
+      arcs.push({
+        kind: 'free',
+        key: freeKey(node.key),
+        label: 'Free',
+        value: free,
+        nodeKey: node.key,
+        nodeLabel: node.label,
+        categoryKey: '',
+        categoryLabel: '',
+        start: end - (free / scale) * TAU,
+        end,
+        inner: nodeEnd + RING_GAP / 2,
+        outer: radius,
+      });
+    }
+    at = end;
+  }
+  return arcs;
 }
