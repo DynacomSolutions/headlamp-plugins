@@ -317,17 +317,23 @@ export function joinAis(panels: AisPanels): AisModel {
     stats.push({ label: 'Pools', value: pools?.value ?? String(poolOrder.length), status: 'ok' });
     for (const group of groups.filter(g => g.kind === 'pool')) {
       const pool = group.title;
-      // The member that the gateway really serves wins over the registry active member.
-      const shown = group.serving ?? (group.active ? [group.active] : []);
-      const word = group.serving ? 'Serving' : 'Active';
+      if (group.serving) {
+        // The member that the gateway really serves wins over the registry active member. The tile
+        // is a number, like the other tiles, so it is never cut. The names are on the pool line and
+        // on the member rows.
+        stats.push({
+          label: poolOrder.length === 1 ? 'Serving' : `Serving in ${pool}`,
+          value: String(group.serving.length),
+          status: group.serving.length > 0 ? 'ok' : 'warn',
+        });
+        continue;
+      }
+      // No serving data: the tile names the registry active member.
       textTiles.push(stats.length);
       stats.push({
-        label:
-          poolOrder.length === 1
-            ? `${word} member${shown.length > 1 ? 's' : ''}`
-            : `${word} in ${pool}`,
-        value: shown.length > 0 ? shown.join(', ') : 'None',
-        status: shown.length > 0 ? 'ok' : 'warn',
+        label: poolOrder.length === 1 ? 'Active member' : `Active in ${pool}`,
+        value: group.active ?? 'None',
+        status: group.active ? 'ok' : 'warn',
       });
     }
   }

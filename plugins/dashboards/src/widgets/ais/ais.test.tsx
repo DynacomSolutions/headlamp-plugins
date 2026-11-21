@@ -421,6 +421,18 @@ describe('joinAis with the member that the gateway serves', () => {
     const g = served([agentRow('Pool_One', 'BLUE', 'gateway-ledger')]).groups[0];
     expect(g.serving).toEqual(['blue']);
   });
+  it('counts the served members in the tile', () => {
+    const m = served([
+      agentRow('pool-one', 'blue', 'gateway-ledger'),
+      agentRow('pool-one', 'red', 'gateway-ledger'),
+    ]);
+    expect(m.stats.map(s => [s.label, s.value])).toContainEqual(['Serving', '2']);
+  });
+  it('keeps the active member name tile for a pool without a gateway record', () => {
+    const m = served([agentRow('pool-one', 'red', 'pool-active')]);
+    expect(m.stats.map(s => [s.label, s.value])).toContainEqual(['Active member', 'red']);
+    expect(m.textTiles).toHaveLength(1);
+  });
   it('leaves a pool without a gateway record as it was: the registry member is the one', () => {
     const g = served([agentRow('pool-one', 'red', 'pool-active')]).groups[0];
     expect(g.serving).toBeUndefined();
@@ -434,7 +446,9 @@ describe('joinAis with the member that the gateway serves', () => {
     ]);
     const tiles = m.stats.map(s => [s.label, s.value]);
     expect(tiles).toContainEqual(['Sessions', '2']);
-    expect(tiles).toContainEqual(['Serving member', 'blue']);
+    expect(tiles).toContainEqual(['Serving', '1']);
+    // The tile is a number, so it is not a text tile and no name is cut.
+    expect(m.textTiles).toEqual([]);
     expect(m.summary).toBe('2 sessions, 7 identities, 1 pool');
   });
 });
