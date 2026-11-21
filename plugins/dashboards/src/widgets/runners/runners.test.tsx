@@ -22,6 +22,9 @@ import {
   joinRunners,
   orderRuns,
   progressOf,
+  STEP_GAP,
+  STEP_MIN_SEGMENT,
+  stepBarLayout,
   stepsOfRun,
 } from './join';
 import { ringShares, RunnersView } from './RunnersView';
@@ -282,5 +285,135 @@ describe('the widget view', () => {
     expect(anchors.length).toBeGreaterThan(0);
     for (const a of anchors) expect(a.getAttribute('href')).toBe('/c/main/dashboards/ops/runners');
     expect(container.innerHTML).not.toContain('example.com');
+  });
+});
+
+/** A run with one job of `total` steps: the first `done` are done, then one running, rest pending. */
+const runOfSteps = (total: number, done: number, failed = false) =>
+  parsePanel({
+    version: 1,
+    id: 'runs',
+    title: 'Runs',
+    status: 'ok',
+    summary: '',
+    runs: [
+      {
+        id: 'r-many',
+        repo: 'org/repo-m',
+        workflow: 'build',
+        ref: 'main',
+        pool: 'pool-a',
+        state: 'running',
+        seconds: 60,
+        jobs: [
+          {
+            id: 'j1',
+            name: 'compile',
+            state: 'running',
+            pool: 'pool-a',
+            seconds: 60,
+            steps: Array.from({ length: total }, (_, i) =>
+              step(
+                `Step ${i + 1}`,
+                i < done ? 'done' : i === done ? (failed ? 'failed' : 'running') : 'pending'
+              )
+            ),
+          },
+        ],
+      },
+    ],
+  });
+
+describe('the step bar layout', () => {
+  const stepsOf = (total: number, done: number) =>
+    (runOfSteps(total, done).runs ?? [])[0].jobs[0].steps;
+  const WIDTH = 380;
+
+  it('keeps one segment for each step while every segment is at least 4 px wide', () => {
+    for (const total of [3, 12, 31, 75]) {
+      expect(stepBarLayout(stepsOf(total, 1), WIDTH).mode).toBe('segments');
+      expect(total * (STEP_MIN_SEGMENT + STEP_GAP) - STEP_GAP).toBeLessThanOrEqual(WIDTH);
+    }
+  });
+
+  it('draws one continuous bar when the segments would be thinner than 4 px', () => {
+    for (const total of [80, 200]) {
+      expect(stepBarLayout(stepsOf(total, 5), WIDTH).mode).toBe('continuous');
+    }
+    expect(stepBarLayout(stepsOf(31, 5), 100).mode).toBe('continuous');
+  });
+
+  it('splits a continuous bar by state in proportion to the step count', () => {
+    const layout = stepBarLayout(stepsOf(80, 40), WIDTH);
+    expect(layout).toEqual({
+      mode: 'continuous',
+      groups: [
+        { state: 'done', count: 40 },
+        { state: 'running', count: 1 },
+        { state: 'pending', count: 39 },
+      ],
+    });
+  });
+
+  it('assumes a default width before the first measurement', () => {
+    expect(stepBarLayout(stepsOf(12, 1), 0).mode).toBe('segments');
+    expect(stepBarLayout(stepsOf(80, 1), 0).mode).toBe('continuous');
+  });
+});
+
+describe('the step bar and its label', () => {
+  const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+  const measure = (width: number) =>
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return (this as HTMLElement).hasAttribute('data-step-bar') ? width : 0;
+      },
+    });
+  afterEach(() => {
+    if (original) Object.defineProperty(HTMLElement.prototype, 'clientWidth', original);
+  });
+
+  it.each([3, 12, 31, 80])('puts the bar and the label on separate lines for %i steps', total => {
+    measure(380);
+    const { container } = view(joinRunners({ pools, queue, runs: runOfSteps(total, 2) }));
+    const bar = container.querySelector('[data-run] [data-step-bar]') as HTMLElement;
+    const label = container.querySelector('[data-run] [data-progress-text]') as HTMLElement;
+    expect(bar).not.toBeNull();
+    expect(label.textContent).toBe('step 3 of ' + total + ' · Step 3');
+    // The label is not inside the bar, and both are children of one column.
+    expect(bar.contains(label)).toBe(false);
+    expect(bar.parentElement).toBe(label.parentElement);
+    const column = getComputedStyle(bar.parentElement!);
+    expect(column.display).toBe('flex');
+    expect(column.flexDirection).toBe('column');
+    // The bar takes the full width and the label truncates with an ellipsis.
+    expect(getComputedStyle(bar).width).toBe('100%');
+    expect(getComputedStyle(label).textOverflow).toBe('ellipsis');
+    expect(getComputedStyle(label).whiteSpace).toBe('nowrap');
+    // The count of drawn parts stays in step with the layout choice.
+    const parts = bar.querySelectorAll('[data-step-state]').length;
+    if (total * (STEP_MIN_SEGMENT + STEP_GAP) - STEP_GAP <= 380) {
+      expect(bar.getAttribute('data-step-bar-mode')).toBe('segments');
+      expect(parts).toBe(total);
+    } else {
+      expect(bar.getAttribute('data-step-bar-mode')).toBe('continuous');
+      expect(parts).toBe(3);
+    }
+  });
+
+  it('keeps the state colours in a continuous bar', () => {
+    measure(380);
+    const { container } = view(joinRunners({ pools, queue, runs: runOfSteps(80, 20, true) }));
+    const bar = container.querySelector('[data-run] [data-step-bar]') as HTMLElement;
+    const colour = (state: string) =>
+      getComputedStyle(bar.querySelector(`[data-step-state="${state}"]`)!).backgroundColor;
+    expect(bar.getAttribute('data-step-bar-mode')).toBe('continuous');
+    expect(new Set(['done', 'failed', 'pending'].map(colour)).size).toBe(3);
+    const sizes = [...bar.querySelectorAll('[data-step-count]')].map(e =>
+      e.getAttribute('data-step-count')
+    );
+    expect(sizes).toEqual(['20', '1', '59']);
+    expect(bar.getAttribute('aria-label')).toBe('80 steps: 20 done, 1 failed, 59 pending');
   });
 });
