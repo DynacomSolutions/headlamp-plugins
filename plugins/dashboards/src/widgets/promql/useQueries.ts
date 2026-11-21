@@ -3,10 +3,13 @@
  * refresh signal changes, and at no other time: a resize or a layout drag never fetches. The
  * chart width is read from a ref at fetch time to choose the step. The in-flight request is
  * aborted when anything changes and on unmount, and the previous result stays on screen
- * (dimmed by `loading`) until the new one arrives.
+ * (dimmed by `loading`) until the new one arrives. When a fetch fails, the last good results stay,
+ * `staleSince` says when they were fetched, and the fetch tries again after 2 s, 4 s, 8 s and so on
+ * up to 60 s.
  */
 import React from 'react';
 import type { DashboardFilters } from '../../contract';
+import { backoffDelay } from '../../resilience/backoff';
 import { useMetricsEndpoint } from './endpoint';
 import { QueryResult, runInstant, runRange, windowFor } from './prom';
 
@@ -21,6 +24,8 @@ export interface QueriesState {
   /** The window of the last range fetch. */
   start: number | undefined;
   end: number | undefined;
+  /** Epoch ms of the last good results, set only while a fetch fails and the old results stay. */
+  staleSince?: number;
 }
 
 export interface UseQueriesArgs {
@@ -50,10 +55,16 @@ export function useQueries(args: UseQueriesArgs): QueriesState {
   const endpoint = useMetricsEndpoint();
   const queriesKey = JSON.stringify(queries);
   const [state, setState] = React.useState<QueriesState>(EMPTY);
+  const [retry, setRetry] = React.useState(0);
+  const failures = React.useRef(0);
+  const okAt = React.useRef(0);
+  const retryTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  React.useEffect(() => () => clearTimeout(retryTimer.current), []);
 
   React.useEffect(() => {
     const texts: string[] = JSON.parse(queriesKey);
     if (!enabled) return undefined;
+    clearTimeout(retryTimer.current);
     if (texts.every(q => q.trim() === '')) {
       setState(EMPTY);
       return undefined;
@@ -75,6 +86,8 @@ export function useQueries(args: UseQueriesArgs): QueriesState {
     ).then(
       results => {
         if (ctrl.signal.aborted) return;
+        failures.current = 0;
+        okAt.current = Date.now();
         setState({
           results,
           error: undefined,
@@ -87,12 +100,33 @@ export function useQueries(args: UseQueriesArgs): QueriesState {
       },
       (e: unknown) => {
         if (ctrl.signal.aborted) return;
-        setState({ ...EMPTY, error: e instanceof Error ? e.message : String(e) });
+        // Keep the last good results on screen, and try again later.
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          error: e instanceof Error ? e.message : String(e),
+          staleSince: prev.results && okAt.current ? okAt.current : undefined,
+        }));
+        failures.current += 1;
+        retryTimer.current = setTimeout(
+          () => setRetry(n => n + 1),
+          backoffDelay(failures.current, 2_000, 60_000, 0.2)
+        );
       }
     );
     return () => ctrl.abort();
     // `widthRef` is a ref, and `filters` is a new object only when a filter changes.
-  }, [mode, queriesKey, filters, enabled, refreshSignal, reportRefreshed, endpoint, widthRef]);
+  }, [
+    mode,
+    queriesKey,
+    filters,
+    enabled,
+    refreshSignal,
+    reportRefreshed,
+    endpoint,
+    widthRef,
+    retry,
+  ]);
 
   return state;
 }

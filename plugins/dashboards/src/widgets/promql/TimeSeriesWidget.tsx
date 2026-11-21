@@ -7,6 +7,7 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import React from 'react';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../contract';
+import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { parseBlocks } from './blocks';
 import { kioskBox, Notice, useColourBook, useInk } from './common';
@@ -73,6 +74,7 @@ function TimeSeriesWidget({
     widthRef: sizeRef,
     enabled: measured,
   });
+  useReportStale(state.staleSince);
   const [hidden, setHidden] = React.useState<ReadonlySet<string>>(new Set());
   const [table, setTable] = React.useState(false);
 
@@ -103,7 +105,7 @@ function TimeSeriesWidget({
   const tz = state.end !== undefined ? -new Date(state.end * 1000).getTimezoneOffset() * 60 : 0;
 
   let body: React.ReactNode;
-  if (state.error) body = <Notice kind="error">{state.error}</Notice>;
+  if (state.error && !state.results) body = <Notice kind="error">{state.error}</Notice>;
   else if (queries.every(q => q === ''))
     body = <Notice kind="empty">Set a query in the widget settings.</Notice>;
   else if (!state.results) body = <Notice kind="wait">Loading...</Notice>;

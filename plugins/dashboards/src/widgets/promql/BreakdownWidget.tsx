@@ -1,6 +1,7 @@
 import Box from '@mui/material/Box';
 import React from 'react';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../contract';
+import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { kioskBox, Notice, useColourBook, useInk } from './common';
 import { Group, groupSamples, parseVector } from './mapping';
@@ -307,6 +308,7 @@ function BreakdownWidget({
     reportRefreshed,
     widthRef: sizeRef,
   });
+  useReportStale(state.staleSince);
   const groups = React.useMemo(() => {
     const r = state.results?.[0];
     return r
@@ -318,7 +320,7 @@ function BreakdownWidget({
   const unit = UNIT_OPTIONS.some(o => o.value === config.unit) ? config.unit : 'plain';
 
   let body: React.ReactNode;
-  if (state.error) body = <Notice kind="error">{state.error}</Notice>;
+  if (state.error && !state.results) body = <Notice kind="error">{state.error}</Notice>;
   else if (queries[0] === '')
     body = <Notice kind="empty">Set a query in the widget settings.</Notice>;
   else if (!groups) body = <Notice kind="wait">Loading...</Notice>;

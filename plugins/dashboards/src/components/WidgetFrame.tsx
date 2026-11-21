@@ -11,6 +11,7 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { useDashboardContext } from '../context';
 import { useWidgetDefinition } from '../hooks';
+import { StaleContext, StaleMarker } from '../resilience/stale';
 import { ErrorBoundary } from './ErrorBoundary';
 import { PlaceholderWidget } from './PlaceholderWidget';
 
@@ -46,19 +47,23 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
   const card = def ? def.card !== false : true;
   const scroll = selfScroll ?? def?.selfScroll ?? false;
 
+  // A widget that keeps old data while its source fails reports since when (see resilience/stale.tsx).
+  const [staleSince, setStaleSince] = React.useState<number | undefined>(undefined);
   const body = def ? (
-    <ErrorBoundary resetKey={resetKey}>
-      <def.Component
-        instanceId={id}
-        config={merged}
-        filters={filters}
-        refreshSignal={refreshSignal}
-        reportRefreshed={reportRefreshed}
-        editing={editing}
-        kiosk={kiosk}
-        compact={inline ? true : undefined}
-      />
-    </ErrorBoundary>
+    <StaleContext.Provider value={setStaleSince}>
+      <ErrorBoundary resetKey={resetKey}>
+        <def.Component
+          instanceId={id}
+          config={merged}
+          filters={filters}
+          refreshSignal={refreshSignal}
+          reportRefreshed={reportRefreshed}
+          editing={editing}
+          kiosk={kiosk}
+          compact={inline ? true : undefined}
+        />
+      </ErrorBoundary>
+    </StaleContext.Provider>
   ) : (
     <PlaceholderWidget type={type} />
   );
@@ -144,6 +149,11 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
             {menu}
           </Box>
         )}
+        {staleSince !== undefined && (
+          <Box sx={{ position: 'absolute', top: 0, right: 0, zIndex: 1 }}>
+            <StaleMarker since={staleSince} />
+          </Box>
+        )}
         <Box sx={{ flex: 1, minHeight: 0, overflow: scroll ? 'auto' : 'hidden' }}>{body}</Box>
       </Box>
     );
@@ -169,6 +179,7 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
         <Typography variant="subtitle2" noWrap sx={{ flex: 1, minWidth: 0 }}>
           {shownTitle}
         </Typography>
+        {staleSince !== undefined && <StaleMarker since={staleSince} />}
         {menu}
       </Box>
       <Box sx={{ flex: 1, minHeight: 0, overflow: scroll ? 'auto' : 'hidden', px: 1, pb: 1 }}>

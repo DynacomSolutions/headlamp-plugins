@@ -98,6 +98,31 @@ label wraps to two lines at most, and a tooltip gives the full label). Choose th
 set "Tab bar position" to "Left side", then set "Left tab style" to "Compact rail" (default) or "Wide" (the
 earlier wide tabs, icon beside the label). Top tabs are not changed.
 
+## Kiosk and rollouts
+
+A wall kiosk stays on one dashboard for days, so a Headlamp rollout must not blank it. The plugin handles this
+on the page, with no manual reload:
+
+- **Stale data.** A widget that cannot reach its source keeps its last good data. Its card shows
+  "Stale since HH:MM" in the title row. The panel, sunburst, PromQL and Kubernetes report widgets do this. Their fetch
+  tries again by itself after 2 s, 4 s, 8 s and so on up to 60 s (20% spread), and the marker goes when it succeeds.
+  In a kiosk the big "Refresh failed" alert of a panel does not show: the marker says it. A widget of another
+  plugin keeps its own error handling.
+- **Connection note.** A small note in the header, "Server unreachable since HH:MM", shows when the server does not
+  answer. It shows nothing while the link is good. There is no full screen error. A kiosk that opens while the server
+  is away shows a waiting line and loads the dashboard when the server answers. When the server is back, every widget
+  fetches at once.
+- **Reload into a new version.** A probe every 15 s (2 s to 15 s with a backoff while offline) reads the plugin's
+  `package.json` and the page's HTML. When the plugin version or the Headlamp script files differ twice in a row, a kiosk
+  reloads itself, with the same URL (tab, kiosk, view). The page never reloads while the server is down, so the browser
+  never shows its own error page.
+- **Failed chunks.** A lazy chunk or script that fails to load (the old file names are gone after a new version) is
+  caught. The kiosk reloads once the server answers.
+- **No reload loop.** At most three reloads in ten minutes, at least 30 s apart, counted in `sessionStorage`.
+  Only a kiosk reloads. A normal page is never reloaded, because someone may be editing.
+
+The code is in `src/resilience/` (`connection.ts`, `backoff.ts`, `stale.tsx`) and `src/components/ConnectionIndicator.tsx`.
+
 ## Storage
 
 One ConfigMap per dashboard, in the namespace set in the plugin settings (default

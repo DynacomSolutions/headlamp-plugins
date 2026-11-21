@@ -9,6 +9,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import type { WidgetDefinition, WidgetProps } from '../../contract';
+import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import { usePanel, usePanelList } from './data';
@@ -41,6 +42,8 @@ function RingWidget({
     reportRefreshed,
     sourceId
   );
+  // A failed refresh keeps the last panel. The card then says since when the data is old.
+  useReportStale(state.staleSince);
   const ring = state.panel?.rings.find(r => r.id === config.ring) ?? state.panel?.rings[0];
   const data = React.useMemo(() => (ring ? ringToSunburst(ring) : null), [ring]);
   if (!config.panel) {
@@ -61,7 +64,7 @@ function RingWidget({
   }
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-      {state.error && (
+      {state.error && !(kiosk && state.panel) && (
         <Alert severity={state.panel ? 'warning' : 'error'} sx={{ mb: 1 }}>
           {state.panel
             ? `Refresh failed, showing the last data: ${state.error}`

@@ -1,6 +1,7 @@
 /* The Kubernetes report widget: a Salesforce style report over any resource kind. */
 import React from 'react';
 import type { WidgetDefinition, WidgetProps } from '../../contract';
+import { useReportStale } from '../../resilience/stale';
 import { DEFAULT_REPORT, normaliseConfig, ReportConfig } from './config';
 import { ReportBody } from './ReportBody';
 import { ReportSettings } from './ReportSettings';
@@ -16,6 +17,7 @@ function K8sReport({
 }: WidgetProps<ReportConfig>): JSX.Element {
   const cfg = React.useMemo(() => normaliseConfig(config), [config]);
   const state = useResources(cfg.source, filters, refreshSignal, reportRefreshed);
+  useReportStale(state.staleSince);
   // Namespaces and nodes narrow the rows. The label selector goes to the API server.
   const scope = React.useMemo(
     () => ({ namespaces: filters.namespaces, nodes: filters.nodes }),

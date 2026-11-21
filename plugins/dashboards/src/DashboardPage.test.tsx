@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter, Route, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -173,6 +173,46 @@ describe('dashboard page', () => {
     expect(container.ownerDocument.querySelector('[data-kiosk-overlay]')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' }));
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
+  });
+
+  it('waits in a kiosk when the server is away at the start, with no error screen, and loads by itself', async () => {
+    const real = request.getMockImplementation()!;
+    let up = false;
+    request.mockImplementation(async (path: string, params?: any) => {
+      if (!up && path.startsWith('/api/v1/namespaces/headlamp-dashboards/configmaps/ops'))
+        throw new TypeError('Failed to fetch');
+      return real(path, params);
+    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { container } = mount('/dashboards/ops?kiosk=1');
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100);
+      });
+      expect(container.ownerDocument.querySelector('[data-kiosk-waiting]')).not.toBeNull();
+      expect(container.ownerDocument.querySelector('[role="alert"]')).toBeNull();
+      expect(screen.queryByText('Hello header')).toBeNull();
+      up = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_100);
+      });
+      expect(screen.getByText('Hello header')).toBeTruthy();
+      expect(container.ownerDocument.querySelector('[data-kiosk-waiting]')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps showing the error for a refusal (not transient), also in a kiosk', async () => {
+    const real = request.getMockImplementation()!;
+    request.mockImplementation(async (path: string, params?: any) => {
+      if (path.startsWith('/api/v1/namespaces/headlamp-dashboards/configmaps/ops'))
+        throw Object.assign(new Error('forbidden'), { status: 403 });
+      return real(path, params);
+    });
+    const { container } = mount('/dashboards/ops?kiosk=1');
+    expect(await screen.findByText(/not allowed to read dashboards/)).toBeTruthy();
+    expect(container.ownerDocument.querySelector('[data-kiosk-waiting]')).toBeNull();
   });
 
   it('hides the filter bar in kiosk mode by default and keeps it outside kiosk', async () => {

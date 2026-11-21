@@ -22,6 +22,7 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, Prompt, useHistory, useLocation } from 'react-router-dom';
 import { BandActions, BandView } from './components/BandView';
+import { ConnectionIndicator } from './components/ConnectionIndicator';
 import { DashboardSettingsDialog } from './components/DashboardSettingsDialog';
 import { FilterBar } from './components/FilterBar';
 import { HeaderStrip } from './components/HeaderStrip';
@@ -35,6 +36,7 @@ import { DashboardContext, DashboardContextValue } from './context';
 import type { DashboardFilters, WidgetDefinition } from './contract';
 import { scalableRows, useFillRowHeight } from './fillHeight';
 import {
+  isTransientError,
   useCanWrite,
   useClusterNames,
   useDashboard,
@@ -44,6 +46,7 @@ import {
 } from './hooks';
 import { enterBrowserFullscreen, KioskOverlay } from './kiosk/Kiosk';
 import { createRefreshStore } from './refreshStore';
+import { useConnection } from './resilience/useConnection';
 import {
   addSection,
   addTab,
@@ -106,6 +109,8 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const storage = useStorage();
   const loaded = useDashboard(storage, name);
   const canWrite = useCanWrite(storage.namespace);
+  // Starts the link probe and the chunk error listeners for this page (see resilience/connection.ts).
+  const link = useConnection();
   const stored: StoredDashboard | undefined = loaded.data;
   const { tab: tabParam } = parsePath(location.pathname);
   const query = React.useMemo(() => parseQuery(location.search), [location.search]);
@@ -141,6 +146,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   React.useEffect(() => {
     ensureClusterSources(transportFor(undefined), undefined, storage.namespace);
   }, [signal, storage.namespace]);
+  // When the server answers again after an outage, fetch fresh data at once, without waiting for each widget's retry.
+  const wasOnline = React.useRef(true);
+  React.useEffect(() => {
+    if (link.online && !wasOnline.current) refresh.trigger();
+    wasOnline.current = link.online;
+  }, [link.online, refresh]);
   const definitions = useWidgetDefinitions();
   const namespaceOptions = useClusterNames('/api/v1/namespaces');
   const nodeOptions = useClusterNames('/api/v1/nodes');
@@ -410,6 +421,21 @@ function DashboardView({ name }: { name: string }): JSX.Element {
 
   // ---- render ----
 
+  // A kiosk never shows an error screen for a server that is only away: it waits and the load retries.
+  if (!stored && query.kiosk && (loaded.loading || isTransientError(loaded.error))) {
+    return (
+      <KioskOverlay onExit={() => replaceQuery({ kiosk: false })} bar={<ConnectionIndicator />}>
+        <Box
+          data-kiosk-waiting
+          sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Typography variant="h6" color="text.secondary">
+            Waiting for the server. This page loads the dashboard when it answers.
+          </Typography>
+        </Box>
+      </KioskOverlay>
+    );
+  }
   if (loaded.loading && !stored) return <Loader title="Loading the dashboard" />;
   if (!stored || !spec || !activeTab) {
     return (
@@ -758,6 +784,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             <IconButton aria-label="Refresh now" onClick={() => refresh.trigger()}>
               <Icon icon="mdi:refresh" width={26} height={26} />
             </IconButton>
+            <ConnectionIndicator />
             {spec.kioskShowFilters && filterBar}
             <Box sx={{ flex: 1 }} />
             {headerStrip}
@@ -814,6 +841,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           )}
         </Box>
         <RefreshControls store={refresh} seconds={seconds} onSecondsChange={onSecondsChange} />
+        <ConnectionIndicator />
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>{filterBar}</Box>
         {!editing && (
           <Tooltip
