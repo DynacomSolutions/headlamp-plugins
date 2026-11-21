@@ -225,7 +225,7 @@ so it never takes a slot from the automatic diagnoses of new alerts. One diagnos
 a time (`409` while it is queued or running), and `AGENT_MAX_CONCURRENT_RERUNS` limits the open re-runs.
 
 Every diagnosis is kept for ever. Nothing deletes or prunes them. They live in
-PostgreSQL (`DATABASE_URL`, the shared `pg-shared` cluster): one row per diagnosis, the
+PostgreSQL (`DATABASE_URL`, the shared Postgres engine): one row per diagnosis, the
 whole record as `jsonb` plus indexed columns for the queries. A list reads one page
 (`LIMIT`/`OFFSET`) and the count comes from SQL, so a request never loads the history.
 The service creates its table on start. It also imports the JSON files of the old

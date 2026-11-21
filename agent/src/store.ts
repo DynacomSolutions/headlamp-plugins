@@ -244,7 +244,7 @@ function lease(d: Diagnosis): Date | null {
 }
 
 /**
- * Diagnoses in the shared PostgreSQL cluster (`pg-shared`). One row each, the whole record as `data` (jsonb)
+ * Diagnoses in the shared Postgres engine. One row each, the whole record as `data` (jsonb)
  * and the fields the queries need as columns, so a list reads one page and a count never loads a record.
  * Two pods share the table. `update` locks the row (`SELECT ... FOR UPDATE`), so the lease checks hold.
  */
