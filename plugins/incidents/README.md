@@ -7,7 +7,7 @@ is read-only.
 ## What it shows
 
 - `/incidents`: a table of diagnoses, newest first, with time, alert name,
-  severity (critical red, warning amber, other grey), status (queued, running,
+  severity (critical red, warning amber, any other severity grey), status (queued, running,
   done, failed), likely cause (or the error), confidence, source and whether the
   alert is resolved. It refreshes every 15 seconds and lists every diagnosis (it reads all pages).
   Click a row to open it. A failed row has a "Run again" button. It calls
@@ -62,13 +62,14 @@ layout change. The Incidents pages are unchanged.
 
 | Type | Config | What it shows |
 | --- | --- | --- |
-| `incidents.list` | `{ status: 'all' \| 'queued' \| 'running' \| 'done' \| 'failed', severity: 'all' \| 'critical' \| 'warning' \| 'other', openOnly: boolean }` | A summary (counts by severity and status) that stays at the top. The list below it scrolls on its own. |
+| `incidents.list` | `{ status: 'all' \| 'queued' \| 'running' \| 'done' \| 'failed', severity: 'all' \| 'critical' \| 'warning' \| 'other', openOnly: boolean }` | A summary (counts by severity and status) that stays at the top. The list below it scrolls on its own, so the last card can always be reached. |
 | `incidents.chat` | `{}` | The incident agent chat, with the same model picker and backend as the chat page. The message list scrolls and the input stays at the bottom. |
 
 - The list widget reads every diagnosis page by page (`limit` and `offset`, with the `total` that the agent
   reports), so the summary counts the real total and never the first page only.
-- The summary counts the rows that the filters leave. `other` severity means any severity that is
-  not `critical` or `warning`. `openOnly` hides the diagnoses whose alert is resolved.
+- The summary counts the rows that the filters leave. The summary shows each severity that is not
+  `critical` or `warning` by its own name (for example `info`, or `unrated` for none), never as one
+  "other" count. The `other` filter value (shown as "Info, none and unrated") matches all of them. `openOnly` hides the diagnoses whose alert is resolved.
 - When a dashboard has both widgets, a click on a list row selects that incident for the chat
   (the alert name link still opens the incident page). A second click on the same row clears it.
   The chat then talks about that incident (`diagnosisId`). Each incident keeps its own chat while the

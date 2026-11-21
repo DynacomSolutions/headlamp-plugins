@@ -322,7 +322,6 @@ function FooterLine(props: {
         gap: 1,
         minWidth: 0,
         fontSize: 13,
-        flex: 'none',
         pt: props.footer ? 0 : 0.75,
       }}
     >
