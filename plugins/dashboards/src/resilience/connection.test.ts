@@ -328,7 +328,7 @@ describe('the probe loop', () => {
 });
 
 describe('scripts of this server only', () => {
-  const page = 'https://k8s.example.com/c/dynacom/dashboards/operations?kiosk=1';
+  const page = 'https://k8s.example.com/c/main/dashboards/operations?kiosk=1';
 
   it('keeps the /assets/ scripts of the same origin and drops the ones an extension adds', () => {
     expect(
