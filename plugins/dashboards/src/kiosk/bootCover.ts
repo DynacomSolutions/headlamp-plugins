@@ -18,6 +18,15 @@ export function isKioskAddress(loc: Pick<Location, 'pathname' | 'search'>): bool
   return /\/dashboards\/[^/]+/.test(loc.pathname) && new URLSearchParams(loc.search).get('kiosk') === '1';
 }
 
+/** Key where Headlamp saves the name of the chosen theme. */
+export const THEME_KEY = 'headlampThemePreference';
+
+/**
+ * Names of the Headlamp built-in themes that have a dark base, in lower case. Headlamp saves the
+ * display name, for example `Dark` and `Lights Out`, not a lower case id.
+ */
+const DARK_THEME_NAMES = new Set(['dark', 'lights out']);
+
 /** True when the saved theme is dark, or there is no saved choice and the system is dark. */
 export function prefersDark(
   storage: Pick<Storage, 'getItem'> | undefined,
@@ -25,13 +34,12 @@ export function prefersDark(
 ): boolean {
   let saved: string | null = null;
   try {
-    saved = storage?.getItem('headlampThemePreference') ?? null;
+    saved = storage?.getItem(THEME_KEY)?.trim() || null;
   } catch {
     saved = null;
   }
-  if (saved === 'dark') return true;
-  if (saved === 'light') return false;
-  return systemDark;
+  if (saved === null) return systemDark;
+  return DARK_THEME_NAMES.has(saved.toLowerCase());
 }
 
 /** Puts the cover over the page when a dark kiosk boots. Returns true when it did. */
