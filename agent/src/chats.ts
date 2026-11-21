@@ -29,10 +29,19 @@ export interface Chat {
   id: string;
   title: string;
   model: string;
+  /** The first linked incident. Kept for clients that know one incident only. */
   diagnosisId?: string;
+  /** Every linked incident, in the order the user chose. A chat about one incident has one entry. */
+  diagnosisIds?: string[];
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
+}
+
+/** The incidents a chat is linked to. Reads old files that hold `diagnosisId` only. */
+export function chatDiagnosisIds(chat: Pick<Chat, 'diagnosisId' | 'diagnosisIds'>): string[] {
+  if (chat.diagnosisIds?.length) return chat.diagnosisIds;
+  return chat.diagnosisId ? [chat.diagnosisId] : [];
 }
 
 export const DEFAULT_TITLE = 'New chat';
@@ -95,9 +104,18 @@ export class ChatStore {
     renameSync(tmp, target);
   }
 
-  create(fields: { model: string; diagnosisId?: string }): Chat {
+  create(fields: { model: string; diagnosisId?: string; diagnosisIds?: string[] }): Chat {
     const now = new Date().toISOString();
-    const chat: Chat = { id: randomUUID(), title: DEFAULT_TITLE, model: fields.model, diagnosisId: fields.diagnosisId, createdAt: now, updatedAt: now, messages: [] };
+    const ids = [...new Set([...(fields.diagnosisIds ?? []), ...(fields.diagnosisId ? [fields.diagnosisId] : [])])];
+    const chat: Chat = {
+      id: randomUUID(),
+      title: DEFAULT_TITLE,
+      model: fields.model,
+      ...(ids.length ? { diagnosisId: ids[0], diagnosisIds: ids } : {}),
+      createdAt: now,
+      updatedAt: now,
+      messages: [],
+    };
     this.chats.set(chat.id, chat);
     this.save(chat);
     return chat;

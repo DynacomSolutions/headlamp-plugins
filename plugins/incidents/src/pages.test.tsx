@@ -20,7 +20,11 @@ vi.mock('./a2ui', () => ({ A2uiRenderer: () => null }));
 vi.mock('./ChatPage', () => ({ ChatPage: () => null }));
 vi.mock('./AgentActions', () => ({ AgentActions: () => null }));
 vi.mock('./LaunchPages', () => ({ LaunchesPage: () => null }));
-vi.mock('./chat-data', () => ({ createChat: vi.fn(async () => 'chat1') }));
+vi.mock('./chat-data', () => ({
+  createChat: vi.fn(async () => 'chat1'),
+  createIncidentsChat: vi.fn(async () => 'chat1'),
+  useIncidentChats: () => ({ data: [], loading: false, error: null, refresh: () => {} }),
+}));
 vi.mock('./data', () => ({
   useSettings: () => ({}),
   useDiagnoses: () => ({

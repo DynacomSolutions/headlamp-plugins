@@ -10,10 +10,22 @@ is read-only.
   severity (critical red, warning amber, any other severity grey), status (queued, running,
   done, failed), likely cause (or the error), confidence, source and whether the
   alert is resolved. It refreshes every 15 seconds and lists every diagnosis (it reads all pages).
-  Click a row to open it. A failed row has a "Run again" button. It calls
+  Click a row to open it. The filters (status, severity, search, open only) and the selection are
+  query strings (`?status=failed&severity=critical&q=disk&open=1&sel=<id>,<id>`). A change replaces the
+  history entry, so Back leaves the page and the URL alone shows the same view.
+  The table scrolls inside the page. Its header, the filters and the selection bar stay fixed.
+  A failed row has a "Run again" button. It calls
   `POST /api/diagnoses/<id>/rerun` on the agent, stays disabled while the request runs
   and shows an error under the button. The same button is in the `incidents.list`
   dashboard widget and on the incident page of a failed diagnosis.
+- **Chat about several incidents**: each row has a checkbox, and the header checkbox selects every
+  shown row. Space toggles the focused row, Shift+click and Shift+Space select a range, and Escape
+  clears the selection. The bar shows "N selected" with **Clear** and **Select all shown**. **Chat
+  about N incidents** makes ONE chat thread: the agent gets the alert, summary, likely cause, fixes
+  and evidence of every selected incident. A chat holds at most 20 incidents. The thread opens at
+  `/incidents/chat/<id>` (pushed to history). It shows under each linked incident on the incident
+  page ("Chats about this incident") and in the chat list with its number of incidents. A chat about
+  one incident works as before.
 - `/incidents/:id`: the full diagnosis. The report is not built in React: the
   diagnosis carries an [A2UI v1.0](https://a2ui.org/specification/v1.0-a2ui/)
   surface and the plugin renders it. The page polls every 5 seconds while the

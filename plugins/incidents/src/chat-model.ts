@@ -38,9 +38,18 @@ export interface ChatSummary {
   id: string;
   title: string;
   model: string;
+  /** The first linked incident. An older agent sends this field only. */
   diagnosisId?: string;
+  /** Every linked incident. A chat about one incident has one entry. */
+  diagnosisIds?: string[];
   updatedAt: string;
   running: boolean;
+}
+
+/** The ids of the incidents a chat is about, from the list or, for an older agent, the single id. */
+export function chatIncidentIds(c: Pick<ChatSummary, 'diagnosisId' | 'diagnosisIds'>): string[] {
+  if (c.diagnosisIds && c.diagnosisIds.length > 0) return c.diagnosisIds;
+  return c.diagnosisId ? [c.diagnosisId] : [];
 }
 
 export interface ChatDetail extends ChatSummary {
@@ -70,11 +79,15 @@ export function parseModels(json: unknown): ModelList {
 
 export function parseSummary(raw: unknown): ChatSummary {
   const c = rec(raw);
+  const ids = Array.isArray(c.diagnosisIds)
+    ? [...new Set(c.diagnosisIds.map(str).filter(Boolean))]
+    : [];
   return {
     id: str(c.id),
     title: str(c.title),
     model: str(c.model),
-    diagnosisId: str(c.diagnosisId) || undefined,
+    diagnosisId: str(c.diagnosisId) || ids[0] || undefined,
+    ...(ids.length ? { diagnosisIds: ids } : {}),
     updatedAt: str(c.updatedAt),
     running: c.running === true,
   };

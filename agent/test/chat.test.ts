@@ -227,6 +227,55 @@ describe('chat service', () => {
     expect(systemPrompt(3)).not.toContain('KubePodCrashLooping');
   });
 
+  it('links one chat to several incidents and puts all of them into the system prompt', async () => {
+    const diagnoses = new MemoryDiagnosisStore();
+    const second = { ...diagnosis('d2'), alert: { ...diagnosis('d2').alert, name: 'NodeDiskPressure' } };
+    await diagnoses.put(diagnosis('d1'));
+    await diagnoses.put(second);
+    const { chats } = service([], { diagnoses });
+    script.queue.push({ text: 'Both share one cause.' });
+    // A repeated id counts once. The old single field still works next to the new list.
+    const { id } = await chats.create({ diagnosisIds: ['d1', 'd2', 'd1'] });
+    expect(chats.get(id)).toMatchObject({ diagnosisId: 'd1', diagnosisIds: ['d1', 'd2'] });
+    expect(chats.list(50)[0]).toMatchObject({ id, diagnosisIds: ['d1', 'd2'] });
+    expect(chats.list(50, 'd2').map(c => c.id)).toEqual([id]);
+    expect(chats.list(50, 'other')).toEqual([]);
+    await chats.send(id, 'Compare them');
+    await until(() => !(chats.get(id) as any).running);
+    const system = script.requests[0].messages[0].content as string;
+    expect(system).toContain('The 2 incidents this chat is about');
+    expect(system).toContain('Incident 1 of 2');
+    expect(system).toContain('Incident 2 of 2');
+    expect(system).toContain('Diagnosis d1');
+    expect(system).toContain('Diagnosis d2');
+    expect(system).toContain('NodeDiskPressure');
+    // The file keeps the list, and a chat written before the list existed still loads.
+    const file = JSON.parse(readFileSync(join(dir, 'chats', `${id}.json`), 'utf8'));
+    expect(file.diagnosisIds).toEqual(['d1', 'd2']);
+    const old = await chats.create({ diagnosisId: 'd1' });
+    expect(chats.get(old.id)).toMatchObject({ diagnosisId: 'd1', diagnosisIds: ['d1'] });
+    delete (file as any).diagnosisIds;
+    writeFileSync(join(dir, 'chats', `${id}.json`), JSON.stringify(file));
+    expect(service().chats.get(id)).toMatchObject({ diagnosisIds: ['d1'] });
+  });
+
+  it('rejects a missing incident or too many incidents for one chat', async () => {
+    const diagnoses = new MemoryDiagnosisStore();
+    await diagnoses.put(diagnosis('d1'));
+    const { chats } = service([], { diagnoses });
+    await expect(chats.create({ diagnosisIds: ['d1', 'missing'] })).rejects.toMatchObject({ status: 404, message: 'No diagnosis missing' });
+    const many = Array.from({ length: 21 }, (_, i) => `d${i}`);
+    await expect(chats.create({ diagnosisIds: many })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('shares the prompt budget between the linked incidents', () => {
+    const big = (id: string): Diagnosis => ({ ...diagnosis(id), evidence: Array.from({ length: 400 }, (_, i) => ({ id: `e${i}`, tool: 'get_resource', reason: 'r', summary: 'x'.repeat(100), ok: true })) });
+    const ids = Array.from({ length: 20 }, (_, i) => `d${i}`);
+    const prompt = systemPrompt(3, ids.map(big));
+    for (const id of ids) expect(prompt).toContain(`Diagnosis ${id}`);
+    expect(prompt.length).toBeLessThan(80_000);
+  });
+
   it('trims the oldest tool results first', () => {
     const tool = (content: string): Message => ({ role: 'tool', results: [{ id: 'x', name: 'n', content, isError: false }] });
     const history: Message[] = [tool('a'.repeat(200)), { role: 'user', text: 'q' }, tool('b'.repeat(200))];
@@ -282,6 +331,9 @@ describe('chat routes', () => {
       expect((await api(base, 'GET', '/api/chats')).body).toEqual({ chats: [] });
       expect((await api(base, 'POST', '/api/chats', { model: 'gateway/zzz' })).status).toBe(400);
       expect((await api(base, 'POST', '/api/chats', { diagnosisId: 'nope' })).status).toBe(404);
+      expect((await api(base, 'POST', '/api/chats', { diagnosisIds: ['nope'] })).status).toBe(404);
+      expect((await api(base, 'POST', '/api/chats', { diagnosisIds: [] })).status).toBe(400);
+      expect((await api(base, 'POST', '/api/chats', { diagnosisIds: Array.from({ length: 21 }, (_, i) => `d${i}`) })).status).toBe(400);
       const created = await api(base, 'POST', '/api/chats', {});
       expect(created.status).toBe(201);
       const id = created.body.id as string;

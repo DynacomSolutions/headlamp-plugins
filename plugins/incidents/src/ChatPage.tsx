@@ -3,10 +3,13 @@ import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import ButtonBase from '@mui/material/ButtonBase';
+import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Collapse from '@mui/material/Collapse';
+import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import Link from '@mui/material/Link';
+import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, useHistory, useParams } from 'react-router-dom';
@@ -18,14 +21,27 @@ import {
   useChat,
   useChats,
   useFavourites,
+  useIncidentNames,
   useModels,
 } from './chat-data';
 import { ChatMarkdown } from './chat-markdown';
-import { ChatMessage, ChatSummary, cleanErrorText, relativeTime, Step } from './chat-model';
+import {
+  chatIncidentIds,
+  ChatMessage,
+  ChatSummary,
+  cleanErrorText,
+  relativeTime,
+  Step,
+} from './chat-model';
 import { useSettings } from './data';
+import { DiagnosisSummary, severityColour } from './model';
 import { ModelPicker } from './ModelPicker';
 import { useChatPresence, usePushId } from './push-data';
 import { chatUrl, diagnosisUrl } from './routes';
+import { useFillHeight } from './useFillHeight';
+
+/** The width of the chat list on a wide screen. A narrow screen opens the same list in a drawer. */
+export const CHAT_RAIL_WIDTH = 192;
 
 export const EXAMPLE_PROMPTS = [
   'Which pods are failing right now, and why?',
@@ -35,43 +51,6 @@ export const EXAMPLE_PROMPTS = [
 ];
 
 const errorText = cleanErrorText;
-
-/** Space below an element that its ancestors keep (padding, border, margin). */
-function spaceBelow(el: HTMLElement): number {
-  let total = 0;
-  for (let n: HTMLElement | null = el; n && n !== document.body; n = n.parentElement) {
-    const cs = window.getComputedStyle(n);
-    total += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
-    if (n !== el) total += parseFloat(cs.marginBottom) || 0;
-  }
-  return total;
-}
-
-/**
- * Height that fills the viewport below the element's top edge, minus the space the
- * surrounding layout keeps below it. Avoids hard-coding Headlamp's chrome height.
- */
-function useFillHeight() {
-  const [height, setHeight] = React.useState<number | null>(null);
-  const [node, setNode] = React.useState<HTMLElement | null>(null);
-  React.useEffect(() => {
-    if (!node) return undefined;
-    const measure = () => {
-      const top = node.getBoundingClientRect().top;
-      setHeight(Math.max(0, Math.floor(window.innerHeight - top - spaceBelow(node))));
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    ro?.observe(document.body);
-    if (node.parentElement) ro?.observe(node.parentElement);
-    return () => {
-      window.removeEventListener('resize', measure);
-      ro?.disconnect();
-    };
-  }, [node]);
-  return { ref: setNode, height };
-}
 
 /* ---------- Thread ---------- */
 
@@ -323,44 +302,157 @@ function ChatList(props: {
             backgroundColor: c.id === activeId ? theme.palette.action.selected : 'transparent',
             '&:hover': { backgroundColor: theme.palette.action.hover },
             '& .chat-delete': { opacity: 0 },
-            '&:hover .chat-delete, & .chat-delete:focus-visible': { opacity: 1 },
+            '&:hover .chat-delete, & .chat-delete:focus-visible, &:focus-within .chat-delete': {
+              opacity: 1,
+            },
+            // A touch screen has no hover: the delete button stays visible.
+            '@media (hover: none)': { '& .chat-delete': { opacity: 1 } },
           })}
         >
-          <Link
-            component={RouterLink}
-            to={chatUrl(c.id)}
-            underline="none"
-            color="inherit"
-            aria-current={c.id === activeId ? 'page' : undefined}
-            sx={{ flex: 1, minWidth: 0, px: 1, py: 0.75 }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-              <Typography variant="body2" noWrap sx={{ flex: 1 }}>
-                {c.title || 'New chat'}
+          <Tooltip title={c.title || 'New chat'} placement="right" enterDelay={600}>
+            <Link
+              component={RouterLink}
+              to={chatUrl(c.id)}
+              underline="none"
+              color="inherit"
+              aria-current={c.id === activeId ? 'page' : undefined}
+              sx={{ flex: 1, minWidth: 0, px: 1, py: 0.5 }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                <Typography variant="body2" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                  {c.title || 'New chat'}
+                </Typography>
+                {c.running && (
+                  <Box
+                    role="status"
+                    aria-label="Running"
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      flexShrink: 0,
+                      borderRadius: '50%',
+                      backgroundColor: 'info.main',
+                    }}
+                  />
+                )}
+              </Box>
+              <Typography variant="caption" color="text.secondary" noWrap component="div">
+                {relativeTime(c.updatedAt)}
+                {chatIncidentIds(c).length > 1
+                  ? ` \u00b7 ${chatIncidentIds(c).length} incidents`
+                  : ''}
               </Typography>
-              {c.running && (
-                <Box
-                  role="status"
-                  aria-label="Running"
-                  sx={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: 'info.main' }}
-                />
-              )}
-            </Box>
-            <Typography variant="caption" color="text.secondary">
-              {relativeTime(c.updatedAt)}
-            </Typography>
-          </Link>
+            </Link>
+          </Tooltip>
           <IconButton
             className="chat-delete"
             size="small"
             aria-label={`Delete ${c.title || 'chat'}`}
             onClick={() => onDelete(c.id)}
+            sx={{ p: 0.25, mr: 0.25 }}
           >
-            <Icon icon="mdi:delete-outline" width={18} height={18} />
+            <Icon icon="mdi:delete-outline" width={16} height={16} />
           </IconButton>
         </Box>
       ))}
     </Box>
+  );
+}
+
+/* ---------- Linked incidents ---------- */
+
+/** The alert name and the time of day, so two incidents of one alert have different chips. */
+function chipLabel(id: string, names: Map<string, DiagnosisSummary>): string {
+  const d = names.get(id);
+  if (!d) return id;
+  const t = new Date(d.createdAt);
+  const time = Number.isNaN(t.getTime())
+    ? ''
+    : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return [d.alertName || id, time].filter(Boolean).join(' \u00b7 ');
+}
+
+/** The incidents a chat is about. One incident reads as a sentence, several as a scrolling list. */
+export function IncidentLinks({
+  ids,
+  names,
+}: {
+  ids: string[];
+  names: Map<string, DiagnosisSummary>;
+}) {
+  if (ids.length === 0) return null;
+  const label = (id: string) => names.get(id)?.alertName || id;
+  if (ids.length === 1) {
+    return (
+      <Typography variant="caption" color="text.secondary">
+        About incident{' '}
+        <Link component={RouterLink} to={diagnosisUrl(ids[0])}>
+          {label(ids[0])}
+        </Link>
+      </Typography>
+    );
+  }
+  return (
+    <Box data-chat-incidents>
+      <Typography variant="caption" color="text.secondary" component="div">
+        About {ids.length} incidents
+      </Typography>
+      <Box
+        component="ul"
+        aria-label="Incidents in this chat"
+        sx={{
+          listStyle: 'none',
+          m: 0,
+          p: 0,
+          mt: 0.5,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 0.5,
+          maxHeight: 76,
+          overflowY: 'auto',
+        }}
+      >
+        {ids.map(id => (
+          <Box component="li" key={id} sx={{ maxWidth: '100%', display: 'flex' }}>
+            <Chip
+              component={RouterLink}
+              to={diagnosisUrl(id)}
+              clickable
+              size="small"
+              variant="outlined"
+              color={severityColour(names.get(id)?.severity ?? '')}
+              label={chipLabel(id, names)}
+              title={names.get(id)?.likelyCause || id}
+              sx={{ maxWidth: '100%' }}
+            />
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  );
+}
+
+/** The New chat button and the chat list: the wide rail and the narrow drawer show the same thing. */
+function ChatRail(props: {
+  chats: ChatSummary[] | null;
+  activeId?: string;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <>
+      <Button
+        component={RouterLink}
+        to={chatUrl()}
+        variant="outlined"
+        color="inherit"
+        size="small"
+        startIcon={<Icon icon="mdi:plus" width={18} height={18} />}
+        sx={{ justifyContent: 'flex-start', textTransform: 'none', flexShrink: 0 }}
+      >
+        New chat
+      </Button>
+      <ChatList chats={props.chats} activeId={props.activeId} onDelete={props.onDelete} />
+    </>
   );
 }
 
@@ -382,10 +474,13 @@ export function ChatView({ id }: { id?: string }) {
   const [picked, setPicked] = React.useState<string | null>(null);
   const [sendError, setSendError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
   // Which device asked, and whether this page shows the chat: the agent pushes an answer only when it does not.
   const pushId = usePushId();
   useChatPresence(settings, id, pushId);
 
+  const linkedIds = chat.data ? chatIncidentIds(chat.data) : [];
+  const incidentNames = useIncidentNames(settings, linkedIds);
   const messages = chat.data?.messages ?? [];
   const running = !!chat.data?.running;
   // Derived: the pick wins, then the chat's own model, then the agent default.
@@ -481,28 +576,64 @@ export function ChatView({ id }: { id?: string }) {
         component="nav"
         aria-label="Chats"
         sx={theme => ({
-          width: { xs: 0, md: 260 },
+          width: { xs: 0, md: CHAT_RAIL_WIDTH },
           display: { xs: 'none', md: 'flex' },
           flexDirection: 'column',
-          gap: 1,
-          p: 1,
+          gap: 0.75,
+          p: 0.75,
           flexShrink: 0,
+          minWidth: 0,
           borderRight: `1px solid ${theme.palette.divider}`,
         })}
       >
-        <Button
-          component={RouterLink}
-          to={chatUrl()}
-          variant="outlined"
-          color="inherit"
-          startIcon={<Icon icon="mdi:plus" width={18} height={18} />}
-          sx={{ justifyContent: 'flex-start', textTransform: 'none' }}
-        >
-          New chat
-        </Button>
-        <ChatList chats={chats.data} activeId={id} onDelete={onDelete} />
+        <ChatRail chats={chats.data} activeId={id} onDelete={onDelete} />
       </Box>
+      <Drawer
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        PaperProps={
+          {
+            component: 'nav',
+            'aria-label': 'Chats',
+            sx: { width: 'min(280px, 85vw)', p: 1, gap: 0.75 },
+            // A tap on a chat link closes the drawer.
+            onClick: (e: React.MouseEvent) => {
+              if ((e.target as HTMLElement).closest('a')) setDrawerOpen(false);
+            },
+          } as any
+        }
+      >
+        <ChatRail chats={chats.data} activeId={id} onDelete={onDelete} />
+      </Drawer>
       <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <Box
+          sx={{
+            display: { xs: 'flex', md: linkedIds.length ? 'flex' : 'none' },
+            alignItems: 'flex-start',
+            gap: 1.5,
+            px: 2,
+            pt: 1,
+            flex: 'none',
+          }}
+        >
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            onClick={() => setDrawerOpen(true)}
+            startIcon={<Icon icon="mdi:forum-outline" width={18} height={18} />}
+            sx={{
+              display: { xs: 'inline-flex', md: 'none' },
+              textTransform: 'none',
+              flexShrink: 0,
+            }}
+          >
+            Chats
+          </Button>
+          <Box sx={{ flex: 1, minWidth: 0, maxWidth: 800, mx: { md: 'auto' } }}>
+            <IncidentLinks ids={linkedIds} names={incidentNames} />
+          </Box>
+        </Box>
         <Box
           ref={scroll.ref}
           onScroll={scroll.onScroll}
@@ -518,14 +649,6 @@ export function ChatView({ id }: { id?: string }) {
               minHeight: '100%',
             }}
           >
-            {chat.data?.diagnosisId && (
-              <Typography variant="caption" color="text.secondary">
-                About incident{' '}
-                <Link component={RouterLink} to={diagnosisUrl(chat.data.diagnosisId)}>
-                  {chat.data.diagnosisId}
-                </Link>
-              </Typography>
-            )}
             {id && chat.loading && !chat.data && <CircularProgress aria-label="Loading" />}
             {!id && (
               <Box
