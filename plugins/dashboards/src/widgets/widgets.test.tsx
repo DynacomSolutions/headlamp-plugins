@@ -38,6 +38,18 @@ describe('clock widget', () => {
     expect(container.querySelector('[data-clock-date]')?.textContent).toBe('Thu 19 Nov 2026');
     expect(container.querySelector('[data-clock-zone]')).toBeNull();
   });
+  it('draws the compact clock larger in full screen than in the page', () => {
+    const size = (kiosk: boolean) => {
+      const { container, unmount } = render(
+        <ClockView now={now} config={{ ...DEFAULT_CLOCK, timeZone: 'UTC' }} compact kiosk={kiosk} />
+      );
+      const px = getComputedStyle(container.querySelector('[data-clock-time]') as Element).fontSize;
+      unmount();
+      return px;
+    };
+    expect(size(true)).toBe('2.875rem');
+    expect(size(false)).toBe('1.5rem');
+  });
   it('hides the date and shows the zone name when asked', () => {
     const { container } = render(
       <ClockView

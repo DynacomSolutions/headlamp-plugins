@@ -820,9 +820,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           // One row. Below the full width the bar folds its controls (see barLevel) and never wraps.
           flexWrap: barLevel >= 1 ? 'nowrap' : 'wrap',
           alignItems: 'center',
-          gap: kiosk ? 1.5 : 1,
+          gap: kiosk ? 2.25 : 1,
           mb: 1,
           minWidth: 0,
+          // The wall header: a filled band with square top and round bottom corners.
+          ...(kiosk
+            ? { bgcolor: 'action.hover', borderRadius: '0 0 10px 10px', px: 2, minHeight: 68 }
+            : {}),
           ...(!kiosk && !editing && spec.header.sticky
             ? { position: 'sticky', top: 0, zIndex: 4, bgcolor: 'background.default' }
             : {}),
@@ -835,7 +839,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
             flex: '0 1 auto',
           }}
         >
-          <Typography variant={kiosk ? 'h6' : 'h5'} component="h1" noWrap>
+          <Typography
+            variant={kiosk ? 'h6' : 'h5'}
+            component="h1"
+            noWrap
+            sx={kiosk ? { fontSize: 26, fontWeight: 700 } : undefined}
+          >
             {spec.title}
           </Typography>
           {!kiosk && barLevel < 2 && spec.description && (
@@ -858,6 +867,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           showAuto={!kiosk}
           narrow={barLevel >= 2}
           iconSize={kiosk ? 26 : 22}
+          wall={kiosk}
         />
         <ConnectionIndicator />
         <Box sx={{ flex: '1 1 auto', minWidth: 0 }}>
@@ -888,6 +898,12 @@ function DashboardView({ name }: { name: string }): JSX.Element {
           <Tooltip title="Full screen">
             <IconButton
               aria-label="Full screen"
+              sx={{
+                width: 40,
+                height: 40,
+                bgcolor: 'action.hover',
+                '&:hover': { bgcolor: 'action.selected' },
+              }}
               onClick={() => {
                 enterBrowserFullscreen();
                 replaceQuery({ kiosk: true, edit: false });

@@ -11,7 +11,14 @@ import { clockTime, lastRefreshedAt, RefreshStore, relativeTime } from '../refre
 import { REFRESH_OPTIONS } from '../spec/model';
 
 /** Subscribes to the store itself, so a widget report rerenders only this text. */
-export function LastRefreshed({ store }: { store: RefreshStore }): JSX.Element {
+export function LastRefreshed({
+  store,
+  strong,
+}: {
+  store: RefreshStore;
+  /** Larger text in the full text colour, for the wall header. */
+  strong?: boolean;
+}): JSX.Element {
   const state = React.useSyncExternalStore(store.subscribe, store.getState);
   const now = useNow(1000);
   const at = lastRefreshedAt(state);
@@ -19,15 +26,23 @@ export function LastRefreshed({ store }: { store: RefreshStore }): JSX.Element {
     <Tooltip title={`Last refreshed ${clockTime(at)}`}>
       <Typography
         variant="caption"
-        color="text.secondary"
+        color={strong ? 'text.primary' : 'text.secondary'}
         data-last-refreshed
-        sx={{ whiteSpace: 'nowrap' }}
+        sx={{ whiteSpace: 'nowrap', ...(strong ? { fontSize: 15 } : {}) }}
       >
         Refreshed {relativeTime(at, now)}
       </Typography>
     </Tooltip>
   );
 }
+
+/** The filled round plate that the refresh and the full screen buttons share. */
+export const plateSx = {
+  width: 48,
+  height: 48,
+  bgcolor: 'action.selected',
+  '&:hover': { bgcolor: 'action.selected' },
+} as const;
 
 export function RefreshControls(props: {
   store: RefreshStore;
@@ -41,6 +56,8 @@ export function RefreshControls(props: {
   narrow?: boolean;
   /** Size of the refresh icon, in px. */
   iconSize?: number;
+  /** The wall header: a filled plate behind the refresh button and larger status text. */
+  wall?: boolean;
 }): JSX.Element {
   const {
     store,
@@ -50,12 +67,17 @@ export function RefreshControls(props: {
     showAuto = true,
     narrow,
     iconSize = 22,
+    wall,
   } = props;
   return (
     <>
-      {showText && <LastRefreshed store={store} />}
+      {showText && <LastRefreshed store={store} strong={wall} />}
       <Tooltip title="Refresh now">
-        <IconButton aria-label="Refresh now" onClick={() => store.trigger()}>
+        <IconButton
+          aria-label="Refresh now"
+          onClick={() => store.trigger()}
+          sx={wall ? plateSx : undefined}
+        >
           <Icon icon="mdi:refresh" width={iconSize} height={iconSize} />
         </IconButton>
       </Tooltip>

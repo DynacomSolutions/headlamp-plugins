@@ -62,8 +62,9 @@ export function useTick(step: number): Date {
 }
 
 /** The clock in the one row header: time over date, in the height of the row, with no card. */
-function CompactClock(props: { config: ClockConfig; now: Date }): JSX.Element {
-  const { config, now } = props;
+function CompactClock(props: { config: ClockConfig; now: Date; kiosk?: boolean }): JSX.Element {
+  const { config, now, kiosk } = props;
+  // The wall header (full screen): a 46 px time with the date beside it, read from 3 m.
   const { time, date } = formatClockParts(now, config);
   const zone = config.showZone
     ? config.timeZone === LOCAL_ZONE
@@ -77,10 +78,11 @@ function CompactClock(props: { config: ClockConfig; now: Date }): JSX.Element {
       data-clock-compact=""
       sx={{
         display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'flex-end',
+        flexDirection: kiosk ? 'row' : 'column',
+        alignItems: kiosk ? 'center' : 'flex-end',
+        gap: kiosk ? '14px' : 0,
         justifyContent: 'center',
-        textAlign: 'right',
+        textAlign: kiosk ? 'left' : 'right',
         whiteSpace: 'nowrap',
       }}
     >
@@ -89,9 +91,9 @@ function CompactClock(props: { config: ClockConfig; now: Date }): JSX.Element {
           component="div"
           data-clock-time
           sx={{
-            fontSize: '1.5rem',
-            fontWeight: 600,
-            lineHeight: 1.1,
+            fontSize: kiosk ? '2.875rem' : '1.5rem',
+            fontWeight: kiosk ? 700 : 600,
+            lineHeight: kiosk ? 1 : 1.1,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
@@ -102,8 +104,12 @@ function CompactClock(props: { config: ClockConfig; now: Date }): JSX.Element {
         <Typography
           component="div"
           data-clock-date
-          color="text.secondary"
-          sx={{ fontSize: '0.75rem', lineHeight: 1.2 }}
+          color={kiosk ? 'text.primary' : 'text.secondary'}
+          sx={
+            kiosk
+              ? { fontSize: '0.9375rem', lineHeight: 1.15, maxWidth: 80, whiteSpace: 'normal' }
+              : { fontSize: '0.75rem', lineHeight: 1.2 }
+          }
         >
           {second}
         </Typography>
@@ -116,9 +122,10 @@ export function ClockView(props: {
   config: ClockConfig;
   now: Date;
   compact?: boolean;
+  kiosk?: boolean;
 }): JSX.Element {
   const { config, now } = props;
-  if (props.compact) return <CompactClock config={config} now={now} />;
+  if (props.compact) return <CompactClock config={config} now={now} kiosk={props.kiosk} />;
   const { time, date } = formatClockParts(now, config);
   const size = SIZES[config.size] ?? SIZES.large;
   return (
@@ -175,10 +182,10 @@ export function ClockView(props: {
   );
 }
 
-function ClockWidget({ config, compact }: WidgetProps<ClockConfig>): JSX.Element {
+function ClockWidget({ config, compact, kiosk }: WidgetProps<ClockConfig>): JSX.Element {
   const merged = React.useMemo(() => ({ ...DEFAULT_CLOCK, ...config }), [config]);
   const now = useTick(tickMs(merged));
-  return <ClockView config={merged} now={now} compact={compact} />;
+  return <ClockView config={merged} now={now} compact={compact} kiosk={kiosk} />;
 }
 
 function ClockSettings({ config, onChange }: WidgetSettingsProps<ClockConfig>): JSX.Element {

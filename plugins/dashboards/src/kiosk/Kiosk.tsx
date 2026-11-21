@@ -91,7 +91,22 @@ export function KioskExitButton({ onExit }: { onExit: () => void }): JSX.Element
       }}
       aria-label="Exit full screen"
       startIcon={<Icon icon="mdi:fullscreen-exit" width={24} height={24} />}
-      sx={{ minHeight: 48, minWidth: 48, fontSize: 16, flex: 'none', whiteSpace: 'nowrap' }}
+      sx={theme => ({
+        minHeight: 48,
+        minWidth: 48,
+        fontSize: 17,
+        fontWeight: 400,
+        flex: 'none',
+        whiteSpace: 'nowrap',
+        // The quiet plate of the refresh button, a thin edge, an icon in the info colour.
+        '&.MuiButton-outlined.MuiButton-outlined': {
+          bgcolor: 'action.selected',
+          border: '1px solid',
+          borderColor:
+            theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.22)' : 'rgba(0,0,0,0.24)',
+        },
+        '& .MuiButton-startIcon': { color: 'info.main' },
+      })}
     >
       Exit full screen
     </Button>
