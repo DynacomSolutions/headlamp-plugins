@@ -104,6 +104,11 @@ describe('widget filters and summary', () => {
     expect(summariseDiagnoses(list)).toEqual({
       total: 4,
       bySeverity: { critical: 1, warning: 1, other: 2 },
+      // Each lower severity has its own name: no shared "other" count.
+      lower: [
+        { name: 'info', n: 1 },
+        { name: 'unrated', n: 1 },
+      ],
       byStatus: { queued: 1, running: 1, done: 1, failed: 1 },
       resolved: 1,
     });

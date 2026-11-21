@@ -71,7 +71,7 @@ export const CATEGORIES: { id: string; label: string }[] = [
   { id: 'k8s', label: 'Kubernetes' },
   { id: 't3', label: 'T3 Code' },
   { id: 'herdr', label: 'Herdr' },
-  { id: 'other', label: 'Other scopes' },
+  { id: 'other', label: 'Scopes with no role' },
   { id: 'system', label: 'System' },
 ];
 
@@ -425,7 +425,7 @@ function orchestrator(
   const known = projects.filter(p => p.key !== `${name}/p:unknown`).sort(byValue);
   const unknown = projects.filter(p => p.key === `${name}/p:unknown`);
 
-  // Other scopes: role-less scopes, and role-less sub-slices of an agents slice that hold no
+  // Scopes with no role: role-less scopes, and role-less sub-slices of an agents slice that hold no
   // agent scopes (a builds slice, say). A sub-slice that holds agents is drawn as its projects.
   const holdsAgents = new Set(agents.flatMap(a => ancestors(a, byName)));
   const others = own.filter(
@@ -440,7 +440,7 @@ function orchestrator(
   const otherItems = unitForest(others, `${name}/other`, 'thread', byName, r);
   const otherNodes = otherItems.length
     ? [
-        node(`${name}/other`, 'Other scopes', 'project', sum(otherItems), otherItems, {
+        node(`${name}/other`, 'Scopes with no role', 'project', sum(otherItems), otherItems, {
           icon: { kind: 'mdi', name: 'folder' },
         }),
       ]
@@ -476,7 +476,7 @@ function otherScopes(units: AgentUnit[], r: Resource): SunNode | null {
     .filter(n => n.value > 0)
     .sort(byValue);
   if (items.length === 0) return null;
-  return node('other', 'Other scopes', 'category', sum(items), items, {
+  return node('other', 'Scopes with no role', 'category', sum(items), items, {
     icon: { kind: 'mdi', name: 'folder' },
   });
 }

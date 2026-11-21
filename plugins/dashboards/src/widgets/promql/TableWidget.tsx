@@ -10,7 +10,7 @@ import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../../c
 import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { parseBlocks, QueryBlock } from './blocks';
-import { kioskBox, Notice, useInk } from './common';
+import { kioskBox, Notice, thinScroll, useInk } from './common';
 import { buildTableRows, parseVector, pickLabelColumns, TableRow as Row } from './mapping';
 import { QueryEditor } from './QueryEditor';
 import { formatValue, Unit, UNIT_OPTIONS } from './units';
@@ -124,12 +124,20 @@ function TableWidget({
       key={column}
       align={align}
       sortDirection={active.column === column ? active.dir : false}
-      sx={{ bgcolor: ink.surface, color: ink.secondary, fontWeight: 600, whiteSpace: 'nowrap' }}
+      // A click anywhere in the heading cell sorts. The label inside keeps the keyboard focus, and
+      // its click bubbles up to this handler.
+      onClick={() => click(column)}
+      sx={{
+        bgcolor: ink.surface,
+        color: ink.secondary,
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+        cursor: 'pointer',
+      }}
     >
       <TableSortLabel
         active={active.column === column}
         direction={active.column === column ? active.dir : 'asc'}
-        onClick={() => click(column)}
         sx={{
           color: 'inherit !important',
           '& .MuiTableSortLabel-icon': { color: 'inherit !important' },
@@ -145,7 +153,8 @@ function TableWidget({
       data-promql-table
       sx={{
         height: '100%',
-        overflow: kiosk ? 'hidden' : 'auto',
+        overflow: 'auto',
+        ...thinScroll,
         opacity: state.loading ? 0.6 : 1,
         transition: 'opacity 150ms',
         color: ink.primary,

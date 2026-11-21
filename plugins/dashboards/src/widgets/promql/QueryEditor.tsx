@@ -61,9 +61,11 @@ export function QueryEditor(props: {
         return {
           title: b.title,
           count: Array.isArray(res.result) ? res.result.length : samples.length,
-          rows: samples
-            .slice(0, 8)
-            .map(s => ({ name: s.name, value: s.value === null ? 'no value' : String(s.value) })),
+          // Every series is listed. A long list scrolls in the preview.
+          rows: samples.map(s => ({
+            name: s.name,
+            value: s.value === null ? 'no value' : String(s.value),
+          })),
         };
       })
     ).then(
@@ -119,21 +121,20 @@ export function QueryEditor(props: {
             {p.title ? `${p.title}: ` : ''}
             {p.count} {p.count === 1 ? 'series' : 'series'}
           </Typography>
-          {p.rows.map((r, j) => (
-            <Box
-              key={j}
-              sx={{
-                fontFamily: 'ui-monospace, monospace',
-                overflowWrap: 'anywhere',
-                color: 'text.secondary',
-              }}
-            >
-              {r.name} = {r.value}
-            </Box>
-          ))}
-          {p.count > p.rows.length && (
-            <Box color="text.secondary">and {p.count - p.rows.length} more</Box>
-          )}
+          <Box sx={{ maxHeight: 240, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            {p.rows.map((r, j) => (
+              <Box
+                key={j}
+                sx={{
+                  fontFamily: 'ui-monospace, monospace',
+                  overflowWrap: 'anywhere',
+                  color: 'text.secondary',
+                }}
+              >
+                {r.name} = {r.value}
+              </Box>
+            ))}
+          </Box>
         </Box>
       ))}
     </Box>

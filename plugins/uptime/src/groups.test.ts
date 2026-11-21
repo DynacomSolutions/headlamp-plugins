@@ -6,7 +6,7 @@ import {
   groupKeyOf,
   meanAvailability,
   namePrefix,
-  NOT_IN_CLUSTER,
+  ownName,
   Placements,
   resolveGroupBy,
   worstHistory,
@@ -34,7 +34,19 @@ const placed = (m: Record<string, [string, string]>): Placements =>
   new Map(
     Object.entries(m).map(([name, [namespace, app]]) => [
       name,
-      { namespace, app, route: { kind: 'httproute', namespace, name: 'r', host: 'h', path: '/', exact: false, labels: {} } },
+      {
+        namespace,
+        app,
+        route: {
+          kind: 'httproute',
+          namespace,
+          name: 'r',
+          host: 'h',
+          path: '/',
+          exact: false,
+          labels: {},
+        },
+      },
     ])
   );
 const grid3 = { stepSec: 60, buckets: 3 };
@@ -45,24 +57,28 @@ describe('grouping keys', () => {
     expect(namePrefix('api-edge-probe-2')).toBe('api');
     expect(namePrefix('github')).toBe('github');
   });
-  it('auto prefers the resolved namespace, then the app, then the name', () => {
+  it('auto prefers the app, then the namespace, then the name', () => {
     const plain = [check('a-1', 'up')];
     expect(resolveGroupBy('auto', plain)).toBe('name');
     // A group label alone is not an auto choice: pick it by hand.
     expect(resolveGroupBy('auto', [check('b', 'up', [], { group: 'edge' })])).toBe('name');
     expect(resolveGroupBy('auto', [check('b', 'up', [], { app: 'web' })])).toBe('app');
-    expect(resolveGroupBy('auto', [check('b', 'up', [], { app: 'web' }), check('c', 'up', [], { namespace: 'shop' })])).toBe(
-      'namespace'
-    );
-    // A namespace that the cluster routes give.
-    expect(resolveGroupBy('auto', plain, placed({ 'a-1': ['shop', 'web'] }))).toBe('namespace');
+    expect(resolveGroupBy('auto', [check('b', 'up', [], { namespace: 'shop' })])).toBe('namespace');
+    expect(
+      resolveGroupBy('auto', [
+        check('b', 'up', [], { app: 'web' }),
+        check('c', 'up', [], { namespace: 'shop' }),
+      ])
+    ).toBe('app');
+    // An app that the cluster routes give (its route label, else the namespace of the route).
+    expect(resolveGroupBy('auto', plain, placed({ 'a-1': ['shop', 'web'] }))).toBe('app');
     expect(resolveGroupBy('type', plain)).toBe('type');
   });
-  it('reads a label, falls back to the namespace or to Not in cluster, and upper-cases the type', () => {
+  it('reads a label, falls back to the namespace or to its own host, and upper-cases the type', () => {
     const c = check('a', 'up', [], { namespace: 'shop' }, 'tcp');
     expect(groupKeyOf(c, 'namespace')).toBe('shop');
     expect(groupKeyOf(c, 'app')).toBe('shop');
-    expect(groupKeyOf(check('b', 'up', [], {}, 'tcp'), 'app')).toBe('Not in cluster · TCP');
+    expect(groupKeyOf(check('b', 'up', [], {}, 'tcp'), 'app')).toBe('b');
     expect(groupKeyOf(c, 'type')).toBe('TCP');
     expect(groupKeyOf(check('a', 'up', [], { app_kubernetes_io_name: 'web' }), 'app')).toBe('web');
   });
@@ -78,19 +94,31 @@ describe('cluster groups', () => {
     check('stray', 'up'),
   ];
   const placements = placed({ web: ['shop', 'storefront'], api: ['shop', 'storefront'] });
-  it('groups by namespace and splits "Not in cluster" by check type', () => {
+  it('groups by app and gives each check that no route serves its own host', () => {
     const { groups, resolved } = buildGroups(checks, 'auto', grid3, false, placements);
-    expect(resolved).toBe('namespace');
-    expect(groups.map(g => g.key).sort()).toEqual([
-      `${NOT_IN_CLUSTER} · DNS`,
-      `${NOT_IN_CLUSTER} · HTTP`,
-      `${NOT_IN_CLUSTER} · TCP`,
-      'shop',
+    expect(resolved).toBe('app');
+    expect(groups.map(g => g.key).sort()).toEqual(['dns-a', 'dns-b', 'ssh', 'storefront', 'stray']);
+    expect(groups.find(g => g.key === 'storefront')?.checks.map(c => c.name)).toEqual([
+      'web',
+      'api',
     ]);
-    expect(groups.find(g => g.key === 'shop')?.checks.map(c => c.name)).toEqual(['web', 'api']);
-    expect(groups.find(g => g.key === `${NOT_IN_CLUSTER} · DNS`)?.checks).toHaveLength(2);
     expect(groups.flatMap(g => g.checks)).toHaveLength(checks.length);
-    expect(groups.some(g => /other/i.test(g.key))).toBe(false);
+    expect(groups.some(g => /other|ungrouped|not in cluster/i.test(g.key))).toBe(false);
+  });
+  it('groups by namespace with the same own-host rule', () => {
+    const { groups } = buildGroups(checks, 'namespace', grid3, false, placements);
+    expect(groups.map(g => g.key).sort()).toEqual(['dns-a', 'dns-b', 'shop', 'ssh', 'stray']);
+  });
+  it('names an unplaced check by the host of its address, else by its name', () => {
+    const c = check('probe one', 'up');
+    c.instance = 'https://edge.example.com:8443/health';
+    expect(ownName(c)).toBe('edge.example.com');
+    const d = check('plain', 'up');
+    d.instance = '';
+    expect(ownName(d)).toBe('plain');
+    expect(groupKeyOf(c, 'group')).toBe('edge.example.com');
+    expect(groupKeyOf(d, 'type')).toBe('HTTP');
+    expect(groupKeyOf({ ...d, type: '' }, 'type')).toBe('plain');
   });
   it('groups by app, which falls back to the namespace of the route', () => {
     const p = placed({ web: ['shop', 'storefront'], api: ['shop', 'shop'] });
@@ -103,16 +131,19 @@ describe('cluster groups', () => {
     const c = check('web', 'up', [], { namespace: 'labelled' });
     expect(groupKeyOf(c, 'namespace', placements)).toBe('labelled');
   });
-  it('without routes every check is not in the cluster, never one Other group', () => {
+  it('without routes every check groups under its own name, never one Other group', () => {
     const { groups } = buildGroups(checks, 'namespace', grid3, false);
-    expect(groups.every(g => g.key.startsWith(NOT_IN_CLUSTER))).toBe(true);
-    expect(groups).toHaveLength(3);
+    expect(groups).toHaveLength(checks.length);
+    expect(groups.every(g => g.checks.length === 1)).toBe(true);
+    expect(groups.some(g => /other|ungrouped|not in cluster/i.test(g.key))).toBe(false);
   });
 });
 
 describe('group status and history', () => {
   it('the worst status wins and no data never outranks up', () => {
-    expect(worstStatus([check('a', 'up'), check('b', 'down'), check('c', 'degraded')])).toBe('down');
+    expect(worstStatus([check('a', 'up'), check('b', 'down'), check('c', 'degraded')])).toBe(
+      'down'
+    );
     expect(worstStatus([check('a', 'up'), check('b', 'degraded')])).toBe('degraded');
     expect(worstStatus([check('a', 'up'), check('b', 'unknown')])).toBe('up');
     expect(worstStatus([check('a', 'unknown')])).toBe('unknown');

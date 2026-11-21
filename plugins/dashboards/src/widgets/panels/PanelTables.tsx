@@ -39,10 +39,13 @@ function SortableTable({ table }: { table: PanelTable }): JSX.Element {
                   aria-sort={
                     isActive ? (active.dir === 'asc' ? 'ascending' : 'descending') : 'none'
                   }
+                  // A click on the cell itself sorts too (the button inside gets its own click).
+                  onClick={(e: React.MouseEvent) => {
+                    if (e.target === e.currentTarget) onSort(c.key);
+                  }}
                   sx={{
                     textAlign: c.align,
-                    py: 0.5,
-                    px: 0.75,
+                    p: 0,
                     borderBottom: 1,
                     borderColor: 'divider',
                     fontWeight: 600,
@@ -55,9 +58,16 @@ function SortableTable({ table }: { table: PanelTable }): JSX.Element {
                     data-sort={c.key}
                     onClick={() => onSort(c.key)}
                     sx={{
+                      // The button fills the whole heading cell, so a click anywhere in it sorts.
                       all: 'unset',
+                      boxSizing: 'border-box',
+                      display: 'block',
+                      width: '100%',
+                      py: 0.5,
+                      px: 0.75,
+                      textAlign: c.align,
                       cursor: 'pointer',
-                      '&:focus-visible': { outline: '2px solid currentColor', outlineOffset: 2 },
+                      '&:focus-visible': { outline: '2px solid currentColor', outlineOffset: -2 },
                     }}
                   >
                     {c.label}

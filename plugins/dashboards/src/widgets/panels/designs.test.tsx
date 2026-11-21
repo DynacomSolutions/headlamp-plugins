@@ -15,15 +15,7 @@ import { parsePanel } from './model';
 import { fitLaneRows, fullCount, PanelLanes, worstSegment } from './PanelLanes';
 import { DEFAULT_DISPLAY, displayOf, PanelView } from './PanelView';
 import { groupRows } from './rowGroups';
-import {
-  isInformative,
-  MORE_HEIGHT,
-  planRows,
-  ROW_GAP,
-  ROW_HEIGHT,
-  VALUE_FONT_SIZE,
-  VALUE_FONT_WEIGHT,
-} from './RowList';
+import { isInformative, orderRows, VALUE_FONT_SIZE, VALUE_FONT_WEIGHT } from './RowList';
 import { niceMax } from './SeriesPlot';
 import { tileSize, worstStat } from './StatTiles';
 import { bySeverity } from './tokens';
@@ -53,35 +45,21 @@ describe('severity order of rows', () => {
   });
 });
 
-describe('row plan', () => {
+describe('row order', () => {
   const row = (label: string, status: 'ok' | 'warn' | 'crit') => ({
     label,
     detail: '',
     value: '1',
     status,
   });
-  it('draws every row when the height is not measured', () => {
-    const rows = [row('a', 'ok'), row('b', 'ok')];
-    expect(planRows(rows, 0)).toEqual({ items: bySeverity(rows), folded: 0, more: 0 });
+  it('draws every row, the worst first, and folds none', () => {
+    const rows = [row('a', 'ok'), row('b', 'crit'), row('c', 'ok'), row('d', 'warn')];
+    expect(orderRows(rows).map(r => r.label)).toEqual(['b', 'd', 'a', 'c']);
+    expect(orderRows(rows)).toEqual(bySeverity(rows));
   });
-  it('folds the healthy rows when some rows need attention', () => {
-    const plan = planRows([row('a', 'ok'), row('b', 'crit'), row('c', 'ok'), row('d', 'warn')], 0);
-    expect(plan.items.map(r => r.label)).toEqual(['b', 'd']);
-    expect(plan.folded).toBe(2);
-  });
-  it('lists healthy rows when every row is healthy', () => {
-    const plan = planRows([row('a', 'ok'), row('b', 'ok')], 0);
-    expect(plan.items).toHaveLength(2);
-    expect(plan.folded).toBe(0);
-  });
-  it('shows the rows that fit and counts the rest in "+N more"', () => {
-    const rows = Array.from({ length: 40 }, (_, i) => row(`r${i}`, 'ok'));
-    const plan = planRows(rows, 300);
-    expect(plan.items.length * (ROW_HEIGHT + ROW_GAP) + MORE_HEIGHT).toBeLessThanOrEqual(300);
-    expect(plan.items.length + plan.more).toBe(40);
-  });
-  it('always shows one row', () => {
-    expect(planRows([row('a', 'crit'), row('b', 'crit')], 10).items).toHaveLength(1);
+  it('keeps all of a long list, with no "+N more" cut', () => {
+    const rows = Array.from({ length: 200 }, (_, i) => row(`r${i}`, 'ok'));
+    expect(orderRows(rows)).toHaveLength(200);
   });
   it('draws a bar only when it tells something', () => {
     const base = row('a', 'ok');
@@ -117,7 +95,7 @@ describe('stat tiles', () => {
 });
 
 describe('row list', () => {
-  it('shows the worst rows as bands and folds the rest into one line', () => {
+  it('shows every row, the worst row as a band first, and folds none into one line', () => {
     const { container } = view(
       <PanelView
         kiosk
@@ -132,8 +110,10 @@ describe('row list', () => {
         })}
       />
     );
-    expect(container.querySelectorAll('[data-row]')).toHaveLength(1);
-    expect(container.querySelector('[data-rows-fold]')?.textContent).toBe('2 more up');
+    expect(container.querySelectorAll('[data-row]')).toHaveLength(3);
+    expect(container.querySelector('[data-row]')?.textContent).toContain('broken');
+    expect(container.querySelector('[data-rows-fold]')).toBeNull();
+    expect(container.textContent).not.toMatch(/\bmore\b/i);
   });
   it('gives every row value one size and weight, whatever the text or the status', () => {
     const look = (rows: { label: string; value: string; status: string }[]): string[] => {
@@ -207,7 +187,7 @@ describe('row list', () => {
     );
     const labels = Array.from(container.querySelectorAll('[data-row]')).map(r => r.textContent);
     expect(labels[0]).toContain('broken');
-    expect(container.querySelector('[data-rows-fold]')?.textContent).toBe('1 more OK');
+    expect(container.querySelector('[data-rows-fold]')).toBeNull();
   });
 });
 
@@ -239,17 +219,101 @@ const LIMITS = [
   { label: 'C / three', detail: 'Weekly', value: '50%', fraction: 0.5, status: 'ok' },
 ];
 
+describe('no fold rows and one fixed summary', () => {
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      label: `row ${i}`,
+      detail: '',
+      value: `${i}`,
+      status: i % 7 === 0 ? 'crit' : 'ok',
+    }));
+  const text = (c: HTMLElement) => c.textContent ?? '';
+  it('draws all rows of a long list inside one scroll area, and no "more" line', () => {
+    const { container } = view(
+      <PanelView kiosk editing={false} panel={panel({ id: 'uptime', rows: many(120) })} />
+    );
+    const area = container.querySelector('[data-scroll-area]') as HTMLElement;
+    expect(area).toBeTruthy();
+    expect(area.querySelectorAll('[data-row]')).toHaveLength(120);
+    expect(container.querySelector('[data-rows-more]')).toBeNull();
+    expect(container.querySelector('[data-rows-fold]')).toBeNull();
+    expect(text(container)).not.toMatch(/\bmore\b/i);
+  });
+  it('keeps the stat tiles and the summary line outside the scroll area', () => {
+    const { container } = view(
+      <PanelView
+        kiosk
+        editing={false}
+        panel={panel({
+          rows: many(30),
+          stats: [{ label: 'Up', value: '25', status: 'ok' }],
+          summary: 'All fine',
+        })}
+      />
+    );
+    const area = container.querySelector('[data-scroll-area]') as HTMLElement;
+    expect(area.contains(container.querySelector('[data-stat]'))).toBe(false);
+    expect(area.contains(container.querySelector('[data-panel-summary]'))).toBe(false);
+    expect(area.contains(container.querySelector('[data-row]'))).toBe(true);
+    expect(getComputedStyle(area).overflowY).toBe('auto');
+    expect(getComputedStyle(area).overscrollBehavior).toBe('contain');
+  });
+  it('lanes keep the legend outside the scroll area and draw every group', () => {
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      label: `acct ${i}`,
+      detail: i % 2 ? 'Weekly' : '5-hour',
+      value: '10%',
+      status: 'ok',
+      fraction: 0.1,
+    }));
+    const { container } = view(
+      <PanelView
+        kiosk
+        editing={false}
+        display={{ ...DEFAULT_DISPLAY, rowLayout: 'stacked-lanes' }}
+        panel={panel({ rows })}
+      />
+    );
+    const area = container.querySelector('[data-scroll-area]') as HTMLElement;
+    expect(area.contains(container.querySelector('[data-legend]'))).toBe(false);
+    expect(area.querySelectorAll('[data-bar-group]')).toHaveLength(40);
+    expect(container.querySelector('[data-rows-more]')).toBeNull();
+    expect(text(container)).not.toMatch(/\bmore\b/i);
+  });
+  it('grouped bars keep the legend outside the scroll area and draw every group', () => {
+    const rows = Array.from({ length: 40 }, (_, i) => ({
+      label: `acct ${i}`,
+      detail: 'Weekly',
+      value: '10%',
+      status: 'ok',
+      fraction: 0.1,
+    }));
+    const { container } = view(
+      <PanelView
+        kiosk
+        editing={false}
+        display={{ ...DEFAULT_DISPLAY, rowLayout: 'grouped-bars' }}
+        panel={panel({ rows })}
+      />
+    );
+    const area = container.querySelector('[data-scroll-area]') as HTMLElement;
+    expect(area.contains(container.querySelector('[data-legend]'))).toBe(false);
+    expect(area.querySelectorAll('[data-bar-group]')).toHaveLength(40);
+  });
+});
+
 describe('stacked lanes', () => {
   it('has the layout name `stacked-lanes` and keeps `grouped-bars`', () => {
     expect(displayOf({ rowLayout: 'stacked-lanes' }).rowLayout).toBe('stacked-lanes');
     expect(displayOf({ rowLayout: 'grouped-bars' }).rowLayout).toBe('grouped-bars');
     expect(displayOf({ rowLayout: 'other' }).rowLayout).toBe('list');
   });
-  it('fits the rows to the height and keeps the lane height rules', () => {
+  it('draws every row: a small height keeps the minimum row height and the list scrolls', () => {
     expect(fitLaneRows(16, 0, true).shown).toBe(16);
     const small = fitLaneRows(16, 200, false);
-    expect(small.shown).toBeLessThan(16);
-    expect(small.shown * small.rowHeight + 22).toBeLessThanOrEqual(200);
+    expect(small.shown).toBe(16);
+    expect(small.rowHeight).toBe(21);
+    expect(fitLaneRows(16, 200, true).rowHeight).toBe(25);
     expect(fitLaneRows(4, 600, true).rowHeight).toBeLessThanOrEqual(46);
   });
   it('finds the worst limit and counts the full limits', () => {

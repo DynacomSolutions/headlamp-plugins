@@ -164,7 +164,11 @@ export function IncidentRows(props: {
 }): JSX.Element {
   const ordered = React.useMemo(() => bySeverityFirst(props.rows), [props.rows]);
   return (
-    <Box data-incident-rows sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+    <Box
+      data-incident-rows
+      // The bottom space keeps the last card, with its Run again button, clear of the fade.
+      sx={{ display: 'flex', flexDirection: 'column', gap: 0.75, pb: 1.5 }}
+    >
       {ordered.map(d => (
         <Row
           key={d.id}

@@ -6,13 +6,15 @@
  * tick in the limit colour marks the end of each fraction, so equal or hidden values still show.
  * One tooltip lists every limit with its value and status. One status mark at the end of the row
  * shows the worst status of the group, so status is never colour alone and the limit colours never
- * carry status. A legend above the rows maps the colours to the limit names.
+ * carry status. A legend above the rows maps the colours to the limit names. The legend stays
+ * fixed and the rows scroll under it, so every group is drawn.
  */
 import Box from '@mui/material/Box';
 import { useTheme } from '@mui/material/styles';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { ScrollArea } from '../../components/ScrollArea';
 import { InternalLink } from '../../links';
 import { INK, KIOSK_INK } from '../promql/palette';
 import { limitColours } from './limitColours';
@@ -202,12 +204,22 @@ export function PanelBars(props: {
   // An icon column for every group when any group has an icon, so the labels stay aligned.
   const withIcon = source !== undefined && groups.some(g => g.icon !== undefined);
   return (
-    <Box data-bars sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, minWidth: 0 }}>
+    <Box
+      data-bars
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 1.25,
+        minWidth: 0,
+        height: '100%',
+        minHeight: 0,
+      }}
+    >
       <Box
         data-legend
         role="list"
         aria-label="Limits"
-        sx={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', pb: 0.5 }}
+        sx={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', pb: 0.5, flex: 'none' }}
       >
         {limits.map(name => {
           const c = colours.get(name);
@@ -236,46 +248,48 @@ export function PanelBars(props: {
           );
         })}
       </Box>
-      <Box
-        data-bar-grid
-        sx={{
-          display: 'grid',
-          // The label column fits the longest label, up to 35 % of the widget. The track takes the
-          // rest. The last column holds the one status mark of the row. An optional first column
-          // holds the row icon.
-          gridTemplateColumns: `${
-            withIcon ? 'auto ' : ''
-          }fit-content(${LABEL_MAX}) minmax(0, 1fr) auto`,
-          columnGap: 1.5,
-          rowGap: 1.25,
-          alignItems: 'center',
-          minWidth: 0,
-        }}
-      >
-        {groups.map(group => (
-          <Box key={group.label} data-bar-group={group.label} sx={{ display: 'contents' }}>
-            {withIcon && <RowIcon source={source} icon={group.icon} />}
-            <Tooltip title={group.label} placement="top-start">
-              <Typography
-                variant="body2"
-                data-bar-label
-                sx={{
-                  minWidth: 0,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                <GroupLabel group={group} editing={editing} />
-              </Typography>
-            </Tooltip>
-            <LimitTrack group={group} colours={colours} track={ink.track} surface={ink.surface} />
-            <Box data-bar-status sx={{ display: 'flex', alignItems: 'center' }}>
-              <StatusMark status={worstStatus(group.segments)} size={14} />
+      <ScrollArea label="Limits by identity">
+        <Box
+          data-bar-grid
+          sx={{
+            display: 'grid',
+            // The label column fits the longest label, up to 35 % of the widget. The track takes the
+            // rest. The last column holds the one status mark of the row. An optional first column
+            // holds the row icon.
+            gridTemplateColumns: `${
+              withIcon ? 'auto ' : ''
+            }fit-content(${LABEL_MAX}) minmax(0, 1fr) auto`,
+            columnGap: 1.5,
+            rowGap: 1.25,
+            alignItems: 'center',
+            minWidth: 0,
+          }}
+        >
+          {groups.map(group => (
+            <Box key={group.label} data-bar-group={group.label} sx={{ display: 'contents' }}>
+              {withIcon && <RowIcon source={source} icon={group.icon} />}
+              <Tooltip title={group.label} placement="top-start">
+                <Typography
+                  variant="body2"
+                  data-bar-label
+                  sx={{
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <GroupLabel group={group} editing={editing} />
+                </Typography>
+              </Tooltip>
+              <LimitTrack group={group} colours={colours} track={ink.track} surface={ink.surface} />
+              <Box data-bar-status sx={{ display: 'flex', alignItems: 'center' }}>
+                <StatusMark status={worstStatus(group.segments)} size={14} />
+              </Box>
             </Box>
-          </Box>
-        ))}
-      </Box>
+          ))}
+        </Box>
+      </ScrollArea>
     </Box>
   );
 }

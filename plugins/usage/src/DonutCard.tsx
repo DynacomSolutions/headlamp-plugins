@@ -32,7 +32,7 @@ export function DonutCard({ def, slices, total, windowSeconds, colourOf, nameOf,
   const theme = useTheme();
   const [hovered, setHovered] = React.useState<string | null>(null);
   const summary =
-    slices.length === 0 ? `${def.label}: no usage` : `${def.label}: ${slices.slice(0, 5).map(s => `${nameOf(s.key)} ${formatPercent(s.value, total)}`).join(', ')}${slices.length > 5 ? `, and ${slices.length - 5} more` : ''}`;
+    slices.length === 0 ? `${def.label}: no usage` : `${def.label}: ${slices.map(s => `${nameOf(s.key)} ${formatPercent(s.value, total)}`).join(', ')}`;
 
   return (
     <Paper variant="outlined" sx={{ p: 2, minWidth: 'min(460px, 100%)', flex: '1 1 460px', maxWidth: '100%' }}>

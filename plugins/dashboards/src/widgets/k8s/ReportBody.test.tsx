@@ -62,6 +62,25 @@ describe('ReportBody', () => {
     expect(names()).toEqual(['c', 'b', 'a']);
     expect(screen.getByText(/Pod: 3 rows/)).toBeTruthy();
   });
+  it('sorts on a click anywhere in the heading cell, not only on its text', () => {
+    show({
+      columns: [
+        { field: 'name', header: 'Pod' },
+        { field: 'restarts', header: '' },
+      ],
+    });
+    const head = screen.getByRole('columnheader', { name: /Restarts/ });
+    // The click lands on the cell itself, outside the text.
+    fireEvent.click(head);
+    expect(head.getAttribute('aria-sort')).toBe('ascending');
+    fireEvent.click(head);
+    expect(head.getAttribute('aria-sort')).toBe('descending');
+    // The button fills the cell, so a click on it sorts once, not twice.
+    const button = head.querySelector('[data-sort-cell]') as HTMLElement;
+    expect(button).toBeTruthy();
+    fireEvent.click(button);
+    expect(head.getAttribute('aria-sort')).toBe('ascending');
+  });
   it('renders only the visible rows of a long list', () => {
     const many = Array.from({ length: 5000 }, (_, i) => pod(`p-${i}`, 'x', 'Running', 0));
     show({}, many);

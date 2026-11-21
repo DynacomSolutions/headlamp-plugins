@@ -73,22 +73,24 @@ export function PanelWidget({
     );
   }
   return (
-    <Box sx={{ height: '100%', minWidth: 0 }}>
+    <Box sx={{ height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
       {state.error && !(kiosk && state.panel) && (
-        <Alert severity={state.panel ? 'warning' : 'error'} sx={{ mb: 1 }}>
+        <Alert severity={state.panel ? 'warning' : 'error'} sx={{ mb: 1, flex: 'none' }}>
           {state.panel
             ? `Refresh failed, showing the last data: ${state.error}`
             : `Could not load the panel: ${state.error}`}
         </Alert>
       )}
       {state.panel && (
-        <PanelView
-          panel={state.panel}
-          kiosk={kiosk}
-          editing={editing}
-          display={display}
-          source={source}
-        />
+        <Box sx={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}>
+          <PanelView
+            panel={state.panel}
+            kiosk={kiosk}
+            editing={editing}
+            display={display}
+            source={source}
+          />
+        </Box>
       )}
     </Box>
   );
@@ -147,6 +149,8 @@ export const panelWidget: WidgetDefinition<PanelConfig> = {
   minSize: { w: 3, h: 4 },
   defaultConfig: { source: AGENT_SOURCE_ID, panel: '', ...DEFAULT_DISPLAY },
   SettingsComponent: PanelSettings,
-  selfScroll: true,
+  // The panel keeps its summary fixed and scrolls only its rows (see PanelView), so the frame
+  // does not scroll it.
+  selfScroll: false,
   Component: PanelWidget,
 };

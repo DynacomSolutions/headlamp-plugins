@@ -1532,9 +1532,9 @@ export interface ProjectGroup {
   key: string;
   name: string;
   orchestrator: string;
-  /** All the project's agents, before the filter (the scopes, for the "Other scopes" group). */
+  /** All the project's agents, before the filter (the scopes, for the "Scopes with no role" group). */
   agents: number;
-  /** The "Other scopes" group: non-agent scopes of the orchestrator. */
+  /** The "Scopes with no role" group: non-agent scopes of the orchestrator. */
   other?: boolean;
   current: number;
   /** CPU cores in use by the group's units; absent when no unit has a sample. */
@@ -1573,7 +1573,7 @@ function baseName(p: string | undefined): string {
 }
 
 export const UNKNOWN_PROJECT = 'Unknown project';
-export const OTHER_SCOPES = 'Other scopes';
+export const OTHER_SCOPES = 'Scopes with no role';
 
 /** The project an agent sits under: T3 project title or Herdr workspace. */
 export function projectName(u: MemUnit): string {

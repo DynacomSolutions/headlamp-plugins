@@ -131,9 +131,12 @@ describe('incidents.list', () => {
   it('keeps the summary outside the scrolling list', async () => {
     const { container } = view(<List {...props(incidentListWidget.defaultConfig)} />);
     await screen.findByText('HighCPU');
-    const scroller = container.querySelector('[data-incident-list-scroll]') as HTMLElement;
+    const scroller = container.querySelector('[data-scroll-area]') as HTMLElement;
     expect(scroller.contains(screen.getByText(/^3 incidents\./))).toBe(false);
     expect(scroller.contains(screen.getByText('HighCPU'))).toBe(true);
+    // Every row is inside it, so the last card can be reached by scroll.
+    expect(scroller.querySelectorAll('[data-incident-row]')).toHaveLength(3);
+    expect(document.body.textContent).not.toMatch(/\bmore\b|\bother\b/i);
   });
   it('applies the status, severity and resolved filters, and counts only the rows shown', async () => {
     view(<List {...props({ status: 'all', severity: 'all', openOnly: true })} />);

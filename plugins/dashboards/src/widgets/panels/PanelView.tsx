@@ -2,10 +2,15 @@
  * Draws a PanelModel: the status and summary, stats as tiles, rows as a table with fraction bars
  * and links, series as sparklines and rings as sunbursts. Pure rendering, so it is easy to test.
  * Status is never colour alone: each status has its own shape and its own word.
+ *
+ * The stat tiles, the series plot, the legend and the summary line stay fixed. Only the rows (and
+ * the rings and tables that belong with them) scroll, inside one scroll area. No row is folded
+ * into a "+N more" line.
  */
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { ScrollArea } from '../../components/ScrollArea';
 import { useResolveLink } from '../../links';
 import { WidgetFooter } from '../footer';
 import { useElementSize } from '../promql/useElementSize';
@@ -14,7 +19,7 @@ import { isEmptyPanel, PanelModel, PanelRing, ringToSunburst } from './model';
 import { PanelBars } from './PanelBars';
 import { PanelLanes } from './PanelLanes';
 import { PanelTables } from './PanelTables';
-import { okWordOf, RowList } from './RowList';
+import { RowList } from './RowList';
 import { SeriesPlot, useSeriesColours } from './SeriesPlot';
 import type { PanelSource } from './sources';
 import { Sparkline } from './Sparkline';
@@ -117,12 +122,8 @@ export function PanelView({
   );
   const root = useElementSize<HTMLDivElement>();
   const rowsBox = useElementSize<HTMLDivElement>();
-  // The rows fit the height of the widget (and show "+N more") when the list is the last block
-  // and nothing else needs the height. Other layouts keep their own height and the widget scrolls.
-  const fitted =
-    (display.rowLayout === 'list' || display.rowLayout === 'stacked-lanes') &&
-    panel.rings.length === 0 &&
-    panel.tables.length === 0;
+  // The bars and lanes views keep their own legend fixed and scroll only their rows.
+  const ownScroll = display.rowLayout !== 'list' && panel.rows.length > 0;
   const hasSeries = panel.series.length > 0;
   const plotWidth = root.size.width;
   const plotHeight = Math.max(90, Math.min(220, Math.round(root.size.height * 0.42)));
@@ -152,25 +153,13 @@ export function PanelView({
         flexDirection: 'column',
         gap: 1.25,
         minWidth: 0,
-        ...(fitted ? { height: '100%', minHeight: 0, overflow: 'hidden' } : {}),
+        height: '100%',
+        minHeight: 0,
+        overflow: 'hidden',
       }}
     >
       {display.showStats && panel.stats.length > 0 && (
         <StatTiles stats={panel.stats} width={root.size.width} />
-      )}
-      {panel.rings.length > 0 && (
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center' }}>
-          {panel.rings.map(ring => (
-            <Box key={ring.id} data-ring={ring.id} sx={{ width: 'min(320px, 100%)', height: 300 }}>
-              <SunburstChart
-                data={ringToSunburst(ring)}
-                title={ring.label}
-                format={ringFormat(ring)}
-                kiosk={kiosk}
-              />
-            </Box>
-          ))}
-        </Box>
       )}
       {hasSeries &&
         (sharedPlot ? (
@@ -204,31 +193,57 @@ export function PanelView({
             ))}
           </Box>
         ))}
-      {rows.length > 0 && display.rowLayout === 'grouped-bars' && (
-        <PanelBars rows={rows} kiosk={kiosk} editing={editing} source={source} />
-      )}
-      {rows.length > 0 && display.rowLayout === 'stacked-lanes' && (
-        <Box sx={fitted ? { flex: '1 1 0', minHeight: 0, overflow: 'hidden' } : { minWidth: 0 }}>
-          <PanelLanes rows={rows} kiosk={kiosk} editing={editing} source={source} />
-        </Box>
-      )}
-      {rows.length > 0 && display.rowLayout === 'list' && (
-        <Box
-          ref={rowsBox.ref}
-          sx={fitted ? { flex: '1 1 0', minHeight: 0, overflow: 'hidden' } : { minWidth: 0 }}
+      {(panel.rings.length > 0 ||
+        panel.tables.length > 0 ||
+        (!ownScroll && rows.length > 0)) && (
+        <ScrollArea
+          label="Rows"
+          sx={ownScroll ? { flex: '0 1 auto', maxHeight: '45%' } : undefined}
         >
-          <RowList
-            rows={rows}
-            okWord={okWordOf(panel.id)}
-            height={fitted ? rowsBox.size.height : 0}
-            width={rowsBox.size.width}
-            editing={editing}
-            source={source}
-            swatch={swatch}
-          />
+          <Box
+            ref={rowsBox.ref}
+            sx={{ display: 'flex', flexDirection: 'column', gap: 1.25, minWidth: 0 }}
+          >
+            {panel.rings.length > 0 && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'center' }}>
+                {panel.rings.map(ring => (
+                  <Box
+                    key={ring.id}
+                    data-ring={ring.id}
+                    sx={{ width: 'min(320px, 100%)', height: 300 }}
+                  >
+                    <SunburstChart
+                      data={ringToSunburst(ring)}
+                      title={ring.label}
+                      format={ringFormat(ring)}
+                      kiosk={kiosk}
+                    />
+                  </Box>
+                ))}
+              </Box>
+            )}
+            {!ownScroll && rows.length > 0 && (
+              <RowList
+                rows={rows}
+                width={rowsBox.size.width}
+                editing={editing}
+                source={source}
+                swatch={swatch}
+              />
+            )}
+            {panel.tables.length > 0 && <PanelTables tables={panel.tables} />}
+          </Box>
+        </ScrollArea>
+      )}
+      {ownScroll && (
+        <Box sx={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}>
+          {display.rowLayout === 'grouped-bars' ? (
+            <PanelBars rows={rows} kiosk={kiosk} editing={editing} source={source} />
+          ) : (
+            <PanelLanes rows={rows} kiosk={kiosk} editing={editing} source={source} />
+          )}
         </Box>
       )}
-      {panel.tables.length > 0 && <PanelTables tables={panel.tables} />}
       {display.showSummary && (panel.summary || panel.status !== 'unknown') && (
         // The summary sits in the footer line of the widget frame, in one size and one weight.
         <WidgetFooter status={panel.status}>

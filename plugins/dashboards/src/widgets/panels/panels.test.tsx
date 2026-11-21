@@ -90,10 +90,10 @@ describe('PanelView', () => {
     );
     expect(container.querySelector('[data-panel-summary]')?.textContent).toBe('Busy');
     expect(container.querySelectorAll('[data-stat]')).toHaveLength(1);
-    // The critical row is a band. The healthy row folds into one line.
-    expect(container.querySelectorAll('[data-row]')).toHaveLength(1);
-    expect(container.querySelector('[data-rows-fold]')?.textContent).toBe('1 more OK');
-    expect(container.querySelectorAll('[data-fraction]')).toHaveLength(1);
+    // The critical row is a band and comes first. The healthy row is listed too, with no fold line.
+    expect(container.querySelectorAll('[data-row]')).toHaveLength(2);
+    expect(container.querySelector('[data-rows-fold]')).toBeNull();
+    expect(container.querySelectorAll('[data-fraction]')).toHaveLength(2);
     expect(container.querySelector('a[href="/c/main/nodes/node-a"]')?.textContent).toBe('node-a');
     expect(container.querySelectorAll('[data-sparkline]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-arc="category"]')).toHaveLength(2);
@@ -159,6 +159,29 @@ describe('SunburstChart', () => {
     const { container } = render(wrap(<SunburstChart data={data} title="CPU" format={fmt} />));
     expect(container.querySelectorAll('[data-legend-group]')).toHaveLength(2);
     expect(container.querySelector('svg')?.getAttribute('aria-label')).toMatch(/Alpha 60%/);
+    // The legend and the text summary list every group: no "+N more" line.
+    expect(container.textContent).not.toMatch(/\bmore\b/i);
+  });
+  it('lists all groups and children of a long legend in a scroll area, with no "more" line', () => {
+    const big = {
+      capacity: 100,
+      categories: Array.from({ length: 12 }, (_, i) => ({
+        key: `g${i}`,
+        label: `Group ${i}`,
+        value: 5,
+        children: Array.from({ length: 9 }, (_, j) => ({
+          key: `g${i}/c${j}`,
+          label: `Child ${i}.${j}`,
+          value: 0.5,
+        })),
+      })),
+    };
+    const { container } = render(wrap(<SunburstChart data={big} title="CPU" format={fmt} />));
+    const area = container.querySelector('[data-scroll-area]') as HTMLElement;
+    expect(area.querySelectorAll('[data-legend-group]')).toHaveLength(12);
+    expect(area.querySelectorAll('[data-legend-child]')).toHaveLength(108);
+    expect(container.textContent).not.toMatch(/\bmore\b|\bOther\b/);
+    expect(container.querySelector('svg')?.getAttribute('aria-label')).not.toMatch(/more/);
   });
   it('renders without data', () => {
     const { container } = render(
@@ -562,6 +585,14 @@ describe('PanelTables', () => {
     fireEvent.click(container.querySelector('[data-sort="name"]')!);
     expect(names(container)).toEqual(['a', 'b', 'c']);
     expect(container.querySelectorAll('th')[1].getAttribute('aria-sort')).toBe('none');
+  });
+  it('sorts on a click on the heading cell itself', () => {
+    const { container } = render(wrap(<PanelTables tables={tables} />));
+    const cell = container.querySelectorAll('th')[1];
+    fireEvent.click(cell);
+    expect(cell.getAttribute('aria-sort')).toBe('ascending');
+    fireEvent.click(cell);
+    expect(cell.getAttribute('aria-sort')).toBe('descending');
   });
   it('shows the tables inside a panel', () => {
     const { container } = render(

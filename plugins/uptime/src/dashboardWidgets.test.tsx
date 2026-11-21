@@ -81,7 +81,8 @@ afterEach(() => {
 describe('uptime.targets definition', () => {
   it('has the contract fields', () => {
     expect(uptimeTargetsWidget.type).toBe('uptime.targets');
-    expect(uptimeTargetsWidget.selfScroll).toBe(true);
+    // The widget keeps the tiles and the summary fixed and scrolls only its list of groups.
+    expect(uptimeTargetsWidget.selfScroll).toBe(false);
     expect(uptimeTargetsWidget.configSchema?.map(f => f.key)).toEqual([
       'groupBy',
       'expanded',
@@ -90,7 +91,7 @@ describe('uptime.targets definition', () => {
     ]);
     expect(uptimeTargetsWidget.defaultConfig).toEqual({
       groupBy: 'auto',
-      expanded: false,
+      expanded: true,
       range: '24h',
       onlyFailing: false,
     });
@@ -138,36 +139,29 @@ describe('uptime.targets in the cluster', () => {
       s('ssh', 'eu', 1, { instance: 'github.com:22', type: 'tcp' }),
     ]);
 
-  it('groups by the namespace of the route and puts the rest in Not in cluster by type', async () => {
+  it('groups by the namespace of the route and names the rest by their own host', async () => {
     withHosts();
     fetchRouteLists.mockResolvedValue({ routes, errors: [] });
     view(<Widget {...props({ groupBy: 'namespace' })} />);
     await flush();
-    // The failing group is a band. The groups that are up fold into one row until it opens.
-    fireEvent.click(document.querySelector('[data-uptime-fold]') as HTMLElement);
+    // Every group is listed with no fold row. The failing group comes first, then by name.
     const names = screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent);
-    expect(names).toEqual([
-      'shop',
-      '3 more up, worst of each period',
-      'Not in cluster · HTTP',
-      'Not in cluster · TCP',
-      'ops',
-    ]);
-    expect(screen.getByText(/4 groups by namespace/)).toBeTruthy();
+    expect(names).toEqual(['shop', 'github.com', 'ops']);
+    expect(document.querySelector('[data-uptime-fold]')).toBeNull();
+    expect(document.body.textContent).not.toMatch(/more up|Other|Ungrouped|Not in cluster/);
+    expect(screen.getByText(/3 groups by namespace/)).toBeTruthy();
   });
 
-  it('auto uses the namespace, and app groups use the route app label', async () => {
+  it('auto groups by the app: the route app label, else the namespace, else the host', async () => {
     withHosts();
     fetchRouteLists.mockResolvedValue({ routes, errors: [] });
-    const first = view(<Widget {...props({})} />);
+    view(<Widget {...props({})} />);
     await flush();
-    expect(screen.getByText(/groups by namespace/)).toBeTruthy();
-    first.unmount();
-    view(<Widget {...props({ groupBy: 'app' })} />);
-    await flush();
-    expect(screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent)).toContain(
-      'storefront'
-    );
+    expect(screen.getByText(/groups by app/)).toBeTruthy();
+    const names = screen.getAllByRole('button').map(b => b.querySelector('p')?.textContent);
+    // The route of db has no app label, so its app is its namespace.
+    expect(names).toEqual(['storefront', 'github.com', 'ops']);
+    expect(document.body.textContent).not.toMatch(/Other|Ungrouped|Not in cluster/);
   });
 
   it('lists the routes once per refresh, not once per check', async () => {
@@ -204,23 +198,32 @@ describe('uptime.targets in the cluster', () => {
 });
 
 describe('uptime.targets widget', () => {
-  it('shows every group collapsed, failing first, with counts', async () => {
+  it('lists every group, failing first, with counts, and folds none into one row', async () => {
     view(<Widget {...props({})} />);
     await flush();
     const headers = screen.getAllByRole('button');
-    expect(headers.map(h => h.getAttribute('aria-expanded'))).toEqual(['false', 'false']);
+    expect(headers).toHaveLength(2);
     expect(headers[0].textContent).toContain('web');
     expect(headers[0].textContent).toContain('2 · 1 down · 1 up');
-    // The group that is up folds into one row with its own strip.
-    expect(headers[1].textContent).toContain('1 more up, worst of each period');
-    fireEvent.click(headers[1]);
-    expect(screen.getAllByRole('button')[2].textContent).toContain('db');
-    expect(screen.queryByText('web-1')).toBeNull();
+    expect(headers[1].textContent).toContain('db');
+    expect(document.body.textContent).not.toMatch(/\bmore\b/);
+    expect(document.querySelector('[data-uptime-fold]')).toBeNull();
+  });
+
+  it('gives each group its own strip and each check its own strip', async () => {
+    view(<Widget {...props({})} />);
+    await flush();
+    expect(screen.getByLabelText(/^web: Down, the worst of 2 checks/).children.length).toBe(96);
+    expect(screen.getByLabelText(/^db: Up, the worst of 1 checks/).children.length).toBe(96);
+    expect(screen.getByLabelText(/^web-1: Up, availability/).children.length).toBe(96);
+    expect(screen.getByLabelText(/^web-2: Down, availability/).children.length).toBe(96);
+    expect(screen.getByLabelText(/^db: Up, availability/).children.length).toBe(96);
   });
 
   it('expands and collapses a group by click and shows every check', async () => {
-    view(<Widget {...props({})} />);
+    view(<Widget {...props({ expanded: false })} />);
     await flush();
+    expect(screen.queryByText('web-1')).toBeNull();
     fireEvent.click(screen.getAllByRole('button')[0]);
     expect(screen.getByText('web-1')).toBeTruthy();
     expect(screen.getByText('web-2')).toBeTruthy();
@@ -228,15 +231,14 @@ describe('uptime.targets widget', () => {
     expect(screen.queryByText('web-1')).toBeNull();
   });
 
-  it('starts expanded when the setting says so, and a toggle flips from that', async () => {
-    view(<Widget {...props({ expanded: true })} />);
+  it('starts expanded by default, and a toggle flips from that', async () => {
+    view(<Widget {...props({})} />);
     await flush();
     expect(screen.getByText('web-1')).toBeTruthy();
     expect(screen.getByText('web-2')).toBeTruthy();
     fireEvent.click(screen.getAllByRole('button')[0]);
     expect(screen.queryByText('web-1')).toBeNull();
-    fireEvent.click(document.querySelector('[data-uptime-fold]') as HTMLElement);
-    expect(screen.getAllByRole('button')[2].getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getAllByRole('button')[1].getAttribute('aria-expanded')).toBe('true');
   });
 
   it('only failing hides the groups that are up', async () => {
@@ -261,7 +263,7 @@ describe('uptime.targets widget', () => {
     ]);
   });
 
-  it('shows the stat tiles, the folded row with its own strip and the summary line', async () => {
+  it('shows the stat tiles and the summary line', async () => {
     view(<Widget {...props({})} />);
     await flush();
     expect(
@@ -269,8 +271,6 @@ describe('uptime.targets widget', () => {
         s => document.querySelector(`[data-uptime-tile="${s}"]`)?.textContent
       )
     ).toEqual(['2Up', '0Degraded', '1Down', '0No data']);
-    const strip = screen.getByLabelText(/^1 more up, worst of each period: the worst of 1 checks/);
-    expect(strip.children.length).toBe(96);
     expect(document.body.textContent).toContain('2 up, 0 degraded, 1 down, 0 no data');
   });
 
@@ -328,11 +328,18 @@ describe('uptime.targets widget', () => {
     expect(screen.getByText(/Could not read probe results: proxy down/)).toBeTruthy();
   });
 
-  it('scrolls by itself, with no scrollbar in the kiosk', async () => {
+  it('keeps the tiles and the summary outside the one scroll area that holds the groups', async () => {
     const { container } = view(<Widget {...props({}, { kiosk: true })} />);
     await flush();
-    const scroller = container.querySelector('[data-uptime-scroll]') as HTMLElement;
-    expect(scroller).toBeTruthy();
-    expect(getComputedStyle(scroller).overflowY).toBe('auto');
+    const areas = container.querySelectorAll('[data-scroll-area]');
+    expect(areas).toHaveLength(1);
+    const area = areas[0] as HTMLElement;
+    // Every group and every check is inside the scroll area. The tiles and the summary are not.
+    expect(area.querySelectorAll('[data-uptime-group]')).toHaveLength(2);
+    expect(area.contains(document.querySelector('[data-uptime-tiles]'))).toBe(false);
+    expect(area.contains(document.querySelector('[data-widget-summary]'))).toBe(false);
+    expect(document.querySelector('[data-widget-summary]')).toBeTruthy();
+    expect(getComputedStyle(area).overflowY).toBe('auto');
+    expect(getComputedStyle(area).overscrollBehavior).toBe('contain');
   });
 });
