@@ -34,6 +34,10 @@ const SIZE_NARROW = [28, 22, 17];
 
 const sizeIndex = (v: string): number => (v.length <= 3 ? 0 : v.length <= 5 ? 1 : 2);
 
+/** The numeral size of a tile row. Every tile has the size that the longest value needs. */
+export const tileSize = (stats: Stat[], narrow: boolean): number =>
+  (narrow ? SIZE_NARROW : SIZE)[Math.max(0, ...stats.map(s => sizeIndex(s.value)))];
+
 /** The height of the tile row in px. */
 export const TILES_HEIGHT = 68;
 
@@ -42,6 +46,7 @@ export function StatTiles(props: { stats: Stat[]; width: number }): JSX.Element 
   const tk = useTokens();
   const narrow = width > 0 && width / Math.max(1, stats.length) < NARROW;
   const worst = worstStat(stats);
+  const size = tileSize(stats, narrow);
   return (
     <Box
       data-stats
@@ -57,7 +62,6 @@ export function StatTiles(props: { stats: Stat[]; width: number }): JSX.Element 
       {stats.map((s, i) => {
         const zero = isZero(s);
         const isWorst = i === worst;
-        const size = (narrow ? SIZE_NARROW : SIZE)[sizeIndex(s.value)];
         return (
           <Box
             key={`${s.label}-${i}`}
