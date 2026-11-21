@@ -57,6 +57,13 @@ const segmentSchema = z.object({
   value: z.number(),
   children: z.array(z.object({ key: z.string(), label: z.string(), value: z.number() })).optional(),
 });
+const nodeSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  capacity: z.number(),
+  used: z.number(),
+  segments: z.array(segmentSchema),
+});
 const ringSchema = z.object({
   id: z.enum(['cpu', 'memory']),
   label: z.enum(['CPU', 'Memory']),
@@ -64,6 +71,8 @@ const ringSchema = z.object({
   capacity: z.number(),
   used: z.number(),
   segments: z.array(segmentSchema),
+  /** One entry per node, with the categories of that node. Lets a chart split the ring by node first. */
+  nodes: z.array(nodeSchema).optional(),
 });
 
 type Segment = { key: string; label: string; value: number; children?: Segment[] };
@@ -82,13 +91,10 @@ function mergeByKey(lists: SunNode[][]): Map<string, { key: string; label: strin
   return out;
 }
 
-function ring(id: 'cpu' | 'memory', trees: NodeTree[]): z.infer<typeof ringSchema> {
-  const cores = id === 'cpu';
-  const round = (n: number) => (cores ? Math.round(n * 1000) / 1000 : Math.round(n));
-  const capacity = trees.reduce((sum, t) => sum + t.capacity, 0);
-  const used = trees.reduce((sum, t) => sum + t.root.value, 0);
+/** The categories of the given trees, merged by key, each with its children. Every category and child keeps its real size. */
+function segmentsOf(lists: SunNode[][], round: (n: number) => number): Segment[] {
   const segments: Segment[] = [];
-  for (const seg of mergeByKey(trees.map(t => t.root.children)).values()) {
+  for (const seg of mergeByKey(lists).values()) {
     if (!(seg.value > 0)) continue;
     const kids = [...mergeByKey(seg.kids).values()]
       .filter(k => k.value > 0)
@@ -96,8 +102,30 @@ function ring(id: 'cpu' | 'memory', trees: NodeTree[]): z.infer<typeof ringSchem
       .map(k => ({ key: k.key, label: k.label, value: round(k.value) }));
     segments.push({ key: seg.key, label: seg.label, value: round(seg.value), ...(kids.length ? { children: kids } : {}) });
   }
-  segments.sort((a, b) => b.value - a.value);
-  return { id, label: cores ? 'CPU' : 'Memory', unit: cores ? 'cores' : 'bytes', capacity: round(capacity), used: round(used), segments };
+  return segments.sort((a, b) => b.value - a.value);
+}
+
+function ring(id: 'cpu' | 'memory', trees: NodeTree[]): z.infer<typeof ringSchema> {
+  const cores = id === 'cpu';
+  const round = (n: number) => (cores ? Math.round(n * 1000) / 1000 : Math.round(n));
+  const capacity = trees.reduce((sum, t) => sum + t.capacity, 0);
+  const used = trees.reduce((sum, t) => sum + t.root.value, 0);
+  const segments = segmentsOf(
+    trees.map(t => t.root.children),
+    round,
+  );
+  // The same data, split by node first. A node with no capacity and no use has nothing to show.
+  const nodes = trees
+    .map(t => ({
+      key: `node:${t.root.label}`,
+      label: t.root.label,
+      capacity: round(t.capacity),
+      used: round(t.root.value),
+      segments: segmentsOf([t.root.children], round),
+    }))
+    .filter(n => n.capacity > 0 || n.used > 0)
+    .sort((a, b) => Math.max(b.capacity, b.used) - Math.max(a.capacity, a.used) || a.key.localeCompare(b.key));
+  return { id, label: cores ? 'CPU' : 'Memory', unit: cores ? 'cores' : 'bytes', capacity: round(capacity), used: round(used), segments, ...(nodes.length ? { nodes } : {}) };
 }
 
 /** Reads the agent state of each URL. A failed or invalid backend is skipped. Hosts are keyed by node name, so two URLs that answer for the same node count once. */

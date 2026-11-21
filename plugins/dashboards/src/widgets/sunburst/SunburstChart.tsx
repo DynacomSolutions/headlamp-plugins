@@ -19,19 +19,9 @@ import {
   trackPath,
   usedShare,
 } from './geometry';
+import { NodeSunburstChart } from './NodeSunburstChart';
 import { childShade, colourAt } from './palette';
-
-/** The drawing is laid out in these units and scaled to the card by the viewBox. */
-const RADIUS = 96;
-const VIEW = RADIUS * 2 + 8;
-
-const percent = (share: number): string => {
-  const p = share * 100;
-  if (p > 0 && p < 0.1) return '<0.1%';
-  return `${p.toFixed(p >= 10 ? 0 : 1)}%`;
-};
-
-const clip = (s: string, max: number): string => (s.length > max ? `${s.slice(0, max - 1)}…` : s);
+import { clip, percent, RADIUS, VIEW } from './shared';
 
 export interface SunburstChartProps {
   data: SunburstData;
@@ -50,7 +40,19 @@ export interface SunburstChartProps {
 const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string =>
   `${a.level}\u0000${a.categoryKey}\u0000${a.key}`;
 
-export function SunburstChart({
+/**
+ * The sunburst. Data with `nodes` is drawn node first (see `NodeSunburstChart`). Other data is
+ * drawn category first: one arc per category and one arc per child.
+ */
+export function SunburstChart(props: SunburstChartProps): JSX.Element {
+  return props.data.nodes && props.data.nodes.length > 0 ? (
+    <NodeSunburstChart {...props} />
+  ) : (
+    <CategorySunburstChart {...props} />
+  );
+}
+
+function CategorySunburstChart({
   data,
   format,
   title,
@@ -98,11 +100,8 @@ export function SunburstChart({
     data.categories.length === 0
       ? `${title}: no usage`
       : `${title}: ${format(used)} of ${format(data.capacity)} used. ${data.categories
-          .slice(0, 5)
           .map(c => `${c.label} ${percent(scale > 0 ? c.value / scale : 0)}`)
-          .join(', ')}${
-          data.categories.length > 5 ? `, and ${data.categories.length - 5} more` : ''
-        }`;
+          .join(', ')}`;
 
   const track = theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
   const surface = theme.palette.background.paper;
@@ -133,11 +132,6 @@ export function SunburstChart({
     : side
     ? Math.min(bh, bw * 0.55)
     : Math.min(bw, bh * 0.6);
-  const legendHeight = side ? bh : bh - ringSize;
-  const perColumn = side || bw < 360 ? sorted.length : Math.ceil(sorted.length / 2);
-  const kidsShown = showChildren
-    ? Math.max(0, Math.min(4, Math.floor((legendHeight - perColumn * 38) / (perColumn * 14))))
-    : 0;
   const number = (v: number): string => format(v).split(' ')[0];
 
   return (
@@ -252,10 +246,16 @@ export function SunburstChart({
             minWidth: 0,
             minHeight: 0,
             width: '100%',
-            overflow: 'hidden',
+            // A row box centres its children, so stretch the list to the box height, then it scrolls.
+            alignSelf: 'stretch',
+            overflowY: 'auto',
+            overflowX: 'hidden',
             display: side ? 'flex' : 'grid',
             flexDirection: 'column',
-            justifyContent: 'center',
+            justifyContent: 'flex-start',
+            // Auto margins centre a short list and, unlike justify-content: center, never clip the top of a long one.
+            '& > li:first-of-type': { mt: 'auto' },
+            '& > li:last-of-type': { mb: 'auto' },
             gridTemplateColumns: bw >= 360 ? '1fr 1fr' : '1fr',
             alignContent: 'start',
             gap: side ? '5px' : '6px 16px',
@@ -332,9 +332,9 @@ export function SunburstChart({
                     {percent(scale > 0 ? c.value / scale : 0)}
                   </Box>
                 </ButtonBase>
-                {kidsShown > 0 && kids.length > 0 && (
+                {showChildren && kids.length > 0 && (
                   <Box component="ul" sx={{ listStyle: 'none', m: '2px 0 0 14px', p: 0 }}>
-                    {kids.slice(0, kidsShown).map(k => (
+                    {kids.map(k => (
                       <Box
                         component="li"
                         key={k.key}
@@ -364,14 +364,6 @@ export function SunburstChart({
                         </Box>
                       </Box>
                     ))}
-                    {kids.length > kidsShown && (
-                      <Box
-                        component="li"
-                        sx={{ fontSize: 11, lineHeight: '14px', color: 'text.disabled' }}
-                      >
-                        +{kids.length - kidsShown} more in the ring
-                      </Box>
-                    )}
                   </Box>
                 )}
               </li>

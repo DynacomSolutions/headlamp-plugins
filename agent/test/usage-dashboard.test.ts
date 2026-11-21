@@ -3,10 +3,19 @@ import { provider } from '../../plugins/usage/agent/provider.js';
 import { usageFixture, AGENT_STATE_URL, CORES_PER_NODE, MEMORY_PER_NODE } from './usage-dashboard-fixture.js';
 
 const tool = provider.tools.find(t => t.name === 'usage_dashboard')!;
+type Seg = { key: string; label: string; value: number; children?: Array<{ key: string; label: string; value: number }> };
 type Out = {
   nodes: number;
   hostMetrics: boolean;
-  rings: Array<{ id: string; label: string; unit: string; capacity: number; used: number; segments: Array<{ key: string; label: string; value: number; children?: Array<{ key: string; label: string; value: number }> }> }>;
+  rings: Array<{
+    id: string;
+    label: string;
+    unit: string;
+    capacity: number;
+    used: number;
+    segments: Seg[];
+    nodes?: Array<{ key: string; label: string; capacity: number; used: number; segments: Seg[] }>;
+  }>;
 };
 
 async function run(ctx = usageFixture().context()): Promise<{ data: Out; summary: string; view?: { rows: unknown[] } }> {
@@ -80,6 +89,43 @@ describe('usage_dashboard tool', () => {
     expect(k8s.children!.map(c => c.key)).toContain('k8s/ns:cert-manager');
     const labels = JSON.stringify(data.rings);
     expect(labels).not.toMatch(/other/i);
+  });
+
+  it('splits each ring by node, with the capacity and use of each node', async () => {
+    const { data } = await run();
+    for (const ring of data.rings) {
+      const nodes = ring.nodes!;
+      expect(nodes.map(n => n.label).sort()).toEqual(['worker-1', 'worker-2', 'worker-3']);
+      expect(nodes.map(n => n.key).sort()).toEqual(['node:worker-1', 'node:worker-2', 'node:worker-3']);
+      const per = ring.id === 'cpu' ? CORES_PER_NODE : MEMORY_PER_NODE;
+      for (const n of nodes) expect(n.capacity).toBe(per);
+      // The nodes add up to the ring, in capacity and in use.
+      expect(nodes.reduce((s, n) => s + n.capacity, 0)).toBe(ring.capacity);
+      expect(Math.abs(nodes.reduce((s, n) => s + n.used, 0) - ring.used)).toBeLessThan(ring.unit === 'cores' ? 0.01 : 16);
+      // Each node keeps its own categories, which add up to the use of the node.
+      for (const n of nodes) {
+        const total = n.segments.reduce((s, x) => s + x.value, 0);
+        expect(Math.abs(total - n.used)).toBeLessThan(ring.unit === 'cores' ? 0.01 : 16);
+        expect(n.used).toBeLessThanOrEqual(n.capacity);
+      }
+    }
+  });
+
+  it('puts the agent host categories on the node that has the agent host only', async () => {
+    const { data } = await run();
+    const [cpu] = data.rings;
+    const byNode = Object.fromEntries(cpu.nodes!.map(n => [n.label, n.segments.map(s => s.key).sort()]));
+    expect(byNode['worker-1']).toEqual(['k8s', 'system', 't3']);
+    expect(byNode['worker-2']).toEqual(['k8s', 'system']);
+    expect(byNode['worker-3']).toEqual(['k8s', 'system']);
+    // The node categories add up to the whole ring category, child by child.
+    const sum = (key: string) => cpu.nodes!.reduce((s, n) => s + (n.segments.find(x => x.key === key)?.value ?? 0), 0);
+    for (const seg of cpu.segments) expect(Math.abs(sum(seg.key) - seg.value)).toBeLessThan(0.01);
+  });
+
+  it('never makes an Other entry in the node split', async () => {
+    const { data } = await run();
+    expect(JSON.stringify(data.rings.map(r => r.nodes))).not.toMatch(/other/i);
   });
 
   it('reads the agent hosts from the setting and skips a backend that fails', async () => {

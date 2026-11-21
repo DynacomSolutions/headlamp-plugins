@@ -463,6 +463,12 @@ A panel may add `tables`. A source that does not send it is still valid version 
 Draws one ring (`cpu` or `memory`, or the first ring) of a panel that has rings, from any source, by default
 `usage-dashboard` on the agent. It has the same source and panel settings as the panel widget.
 
+Option `groupBy` sets the first ring. `category` (the default) keeps the category first. `node` splits the
+circle by node first (node-1, node-2 and so on), then category, then child. Each node is sized by its
+capacity, and its free capacity is a faint crosshatch on a transparent fill. It needs an agent that sends
+`nodes` for each ring. Without `nodes` the chart stays category first. To turn it on, set `"groupBy": "node"`
+in the `config` of the widget.
+
 ### The sunburst component
 
 `src/widgets/sunburst/SunburstChart.tsx` is a reusable two-level sunburst: the inner ring has one arc per
@@ -474,7 +480,8 @@ palette (Okabe-Ito, with lighter hues for dark mode and the kiosk). Rules:
 - Every group is its own arc at its real size. There is no "Other" arc and no top-N cut.
 - A mouse hover shows the label and the value in the centre. A tap selects an arc, and a second tap clears it.
   In kiosk mode hover is off and a tap selects, because the kiosk is a touch screen.
-- The legend lists every category, and the SVG has a text summary, so colour is never the only encoding.
+- The legend lists every category (every node, category and free row in node mode), and the SVG has a text
+  summary, so colour is never the only encoding. A long legend scrolls and never folds into "+N more".
 - The Usage plugin has its own copy (separate bundles cannot share code).
 
 ### Kiosk

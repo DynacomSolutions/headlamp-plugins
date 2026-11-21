@@ -22,6 +22,12 @@ import { useSourceLookup } from './sourcesConfig';
 export interface RingConfig extends SourcePanelConfig {
   /** The ring id: `cpu` or `memory`. */
   ring: string;
+  /**
+   * What the first ring is. `node` splits the circle by node first, then category, then the next
+   * level, and draws each node's free capacity as a crosshatch. Anything else (the default) keeps
+   * the category first. An agent that sends no per-node data is drawn category first.
+   */
+  groupBy?: 'category' | 'node';
 }
 
 function RingWidget({
@@ -45,7 +51,10 @@ function RingWidget({
   // A failed refresh keeps the last panel. The card then says since when the data is old.
   useReportStale(state.staleSince);
   const ring = state.panel?.rings.find(r => r.id === config.ring) ?? state.panel?.rings[0];
-  const data = React.useMemo(() => (ring ? ringToSunburst(ring) : null), [ring]);
+  const data = React.useMemo(
+    () => (ring ? ringToSunburst(ring, { groupBy: config.groupBy }) : null),
+    [ring, config.groupBy]
+  );
   if (!config.panel) {
     return (
       <Box sx={{ p: 1 }}>
@@ -109,6 +118,16 @@ export const sunburstPanelWidget: WidgetDefinition<RingConfig> = {
             options: [
               { value: 'cpu', label: 'CPU' },
               { value: 'memory', label: 'Memory' },
+            ],
+          },
+          {
+            key: 'groupBy',
+            label: 'First ring',
+            type: 'select',
+            help: "Node first splits the circle by node, with each node's free capacity hatched. It needs an agent that sends the nodes of a ring.",
+            options: [
+              { value: 'category', label: 'Category' },
+              { value: 'node', label: 'Node' },
             ],
           },
         ]}
