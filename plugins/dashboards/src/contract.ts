@@ -43,6 +43,20 @@ export interface WidgetSize {
   h: number;
 }
 
+/**
+ * The last good data of one widget, kept in the browser by the dashboard. Fetch nothing from it:
+ * it is only what the widget showed last time. Read it in the first render, show it at once with no
+ * spinner, then fetch in the background and `write` the new data when the fetch succeeds.
+ * `value` must be JSON (a plain object, array, string or number). `at` is the time of the data in
+ * epoch milliseconds. A widget treats a value that it cannot use as no value.
+ */
+export interface WidgetCache {
+  /** The cached value and its time, or undefined. Synchronous. */
+  read<T = unknown>(): { value: T; at: number } | undefined;
+  /** Keeps a value. `at` defaults to now. A value that is too big or not JSON is not kept. */
+  write(value: unknown, at?: number): void;
+}
+
 /** What the dashboard passes to a widget's `Component`. */
 export interface WidgetProps<C = Record<string, unknown>> {
   /** Unique id of this widget on the dashboard. Stable across renders and saves. */
@@ -77,6 +91,11 @@ export interface WidgetProps<C = Record<string, unknown>> {
    * the same place. It is null when the widget has no frame. A widget may ignore it.
    */
   footer?: HTMLElement | null;
+  /**
+   * The cache of this widget (see `WidgetCache`). Absent in an older Dashboards plugin and when the
+   * browser blocks storage: a widget that uses it must work without it.
+   */
+  cache?: WidgetCache;
 }
 
 /** What the dashboard passes to a widget's `SettingsComponent`. */

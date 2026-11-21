@@ -12,7 +12,7 @@ import type { WidgetDefinition, WidgetProps } from '../../contract';
 import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
 import { SunburstChart } from '../sunburst/SunburstChart';
-import { usePanel, usePanelList } from './data';
+import { useListGate, usePanel, usePanelList } from './data';
 import { ringToSunburst } from './model';
 import { sourceOf, SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
 import { ringFormat } from './PanelView';
@@ -35,10 +35,12 @@ function RingWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<RingConfig>): JSX.Element {
   const sourceId = sourceOf(config);
   const { source, pending } = useSourceLookup(sourceId);
-  const list = usePanelList(source, sourceId);
+  const [listOpen, settleList] = useListGate();
+  const list = usePanelList(source, sourceId, listOpen);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
   const state = usePanel(
     source,
@@ -46,10 +48,12 @@ function RingWidget({
     refreshSignal,
     minSeconds,
     reportRefreshed,
-    sourceId
+    sourceId,
+    cache
   );
+  React.useEffect(() => settleList(state), [state, settleList]);
   // A failed refresh keeps the last panel. The card then says since when the data is old.
-  useReportStale(state.staleSince);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   const ring = state.panel?.rings.find(r => r.id === config.ring) ?? state.panel?.rings[0];
   const data = React.useMemo(
     () => (ring ? ringToSunburst(ring, { groupBy: config.groupBy }) : null),
@@ -64,7 +68,7 @@ function RingWidget({
       </Box>
     );
   }
-  if (state.loading || pending) {
+  if (state.loading || (pending && !state.panel)) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
         <CircularProgress size={24} aria-label="Loading the ring" />

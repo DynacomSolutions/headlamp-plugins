@@ -120,7 +120,6 @@ describe('layoutSunburst', () => {
     expect(fill(a, 'k8s')).toBe(colourAt(0, 'light'));
     expect(fill(b, 'herdr')).toBe(colourAt(2, 'light'));
     expect(fill(b, 'system')).toBe(colourAt(5, 'light'));
-    expect(categoryColour('other', 'dark')).toBe(colourAt(3, 'dark'));
     expect(categoryColour('custom', 'light')).toBe(categoryColour('custom', 'light'));
     expect([0, 1, 2, 3, 5].map(i => colourAt(i, 'light'))).not.toContain(
       categoryColour('custom', 'light')

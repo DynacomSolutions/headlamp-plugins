@@ -357,3 +357,47 @@ describe('list and chat on one dashboard', () => {
     await waitFor(() => expect(modelCalls()).toBe(2));
   });
 });
+
+/** A cache in memory with the shape of `WidgetCache`, for the last good data tests. */
+function memoryCache() {
+  let held: { value: unknown; at: number } | undefined;
+  return {
+    read: <T,>() => held as { value: T; at: number } | undefined,
+    write: (value: unknown, at: number = Date.now()) => {
+      held = { value: JSON.parse(JSON.stringify(value)), at };
+    },
+    peek: () => held,
+  };
+}
+
+describe('incidents.list last good data', () => {
+  const List = incidentListWidget.Component;
+
+  it('writes the rows after a fetch, and the next mount shows them at once with no spinner', async () => {
+    const cache = memoryCache();
+    const first = view(<List {...props(incidentListWidget.defaultConfig, { cache })} />);
+    await first.findByText('HighCPU');
+    expect(cache.peek()).toBeDefined();
+    cleanup();
+
+    // The next load: the server never answers. The rows come from the cache in the first render.
+    request.mockImplementation(() => new Promise(() => undefined));
+    view(<List {...props(incidentListWidget.defaultConfig, { cache })} />);
+    expect(screen.getByText('HighCPU')).toBeTruthy();
+    expect(screen.queryByLabelText('Loading')).toBeNull();
+    expect(screen.getByText(/^3 incidents\./)).toBeTruthy();
+  });
+
+  it('shows a spinner when nothing is cached, and ignores a cache of another address or shape', () => {
+    request.mockImplementation(() => new Promise(() => undefined));
+    const cache = memoryCache();
+    cache.write({ key: 'another address', rows: [] });
+    view(<List {...props(incidentListWidget.defaultConfig, { cache })} />);
+    expect(screen.getByLabelText('Loading')).toBeTruthy();
+    cleanup();
+    const bad = memoryCache();
+    bad.write('not an object');
+    view(<List {...props(incidentListWidget.defaultConfig, { cache: bad })} />);
+    expect(screen.getByLabelText('Loading')).toBeTruthy();
+  });
+});

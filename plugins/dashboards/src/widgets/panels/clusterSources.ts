@@ -7,6 +7,8 @@
  * The result is cached here, one entry per cluster and namespace. Widgets never fetch it
  * themselves: they read the cache, and a refresh is one shared request (see `useSources`).
  */
+import { readCachedSourcesText, writeCachedSourcesText } from '../../cache/dashboardCache';
+import { lastGoodStore } from '../../cache/lastGood';
 import type { Transport } from '../../storage/storage';
 import { FIELD_MANAGER } from '../../storage/storage';
 import {
@@ -68,10 +70,27 @@ export function subscribeClusterSources(listener: () => void): () => void {
   };
 }
 
+/**
+ * The state of a key that was never read in this tab: the last good sources from the browser
+ * cache, when there are some. The state counts as old (`at` is one TTL ago), so the first widget
+ * that asks still starts a refresh, and widgets that need a source do not wait for it.
+ */
+function hydrate(key: string, namespace: string): ClusterSourcesState | undefined {
+  const text = readCachedSourcesText(lastGoodStore(), namespace);
+  if (text === undefined) return undefined;
+  const cm = { metadata: { resourceVersion: '' }, data: { [CLUSTER_SOURCES_KEY]: text } };
+  const state = stateFromConfigMap(cm, Date.now() - CLUSTER_SOURCES_TTL_MS);
+  states.set(key, state);
+  return state;
+}
+
 export const getClusterSourcesState = (
   cluster: string | undefined,
   namespace: string
-): ClusterSourcesState => states.get(keyOf(cluster, namespace)) ?? EMPTY;
+): ClusterSourcesState => {
+  const key = keyOf(cluster, namespace);
+  return states.get(key) ?? hydrate(key, namespace) ?? EMPTY;
+};
 
 /**
  * Marks the cached state of every other cluster key for a namespace as old. The settings page names
@@ -83,8 +102,14 @@ export function invalidateClusterSources(namespace: string, exceptKey?: string):
   });
 }
 
-/** Test helper: forget every cached state. */
+/** Test helper: forget every cached state, in memory and in the browser cache. */
 export function clearClusterSources(): void {
+  lastGoodStore().clear('_shared');
+  clearClusterSourcesMemoryOnly();
+}
+
+/** Test helper: forget the states in memory only, as a new page does. The browser cache stays. */
+export function clearClusterSourcesMemoryOnly(): void {
   states.clear();
   inflight.clear();
   emit();
@@ -150,7 +175,7 @@ export function loadClusterSources(
   const key = keyOf(cluster, namespace);
   const running = inflight.get(key);
   if (running) return running;
-  const prev = states.get(key) ?? EMPTY;
+  const prev = getClusterSourcesState(cluster, namespace);
   states.set(key, { ...prev, status: 'loading' });
   emit();
   const run = transport
@@ -163,6 +188,8 @@ export function loadClusterSources(
       res => {
         const items: any[] = Array.isArray(res?.items) ? res.items : [];
         const cm = items.find(i => i?.metadata?.name === CLUSTER_SOURCES_NAME);
+        const text = cm?.data?.[CLUSTER_SOURCES_KEY];
+        if (typeof text === 'string') writeCachedSourcesText(lastGoodStore(), namespace, text);
         return settle(key, stateFromConfigMap(cm));
       },
       e =>

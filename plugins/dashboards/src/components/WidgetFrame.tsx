@@ -8,6 +8,7 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { lastGoodStore, widgetCache } from '../cache/lastGood';
 import { useDashboardContext } from '../context';
 import { useWidgetDefinition } from '../hooks';
 import { StaleContext, StaleMarker } from '../resilience/stale';
@@ -34,7 +35,8 @@ export interface WidgetFrameProps {
 
 function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
   const { sectionId, id, type, title, config, selfScroll, actions, inline } = props;
-  const { filters, refreshSignal, editing, kiosk, reportRefreshed } = useDashboardContext();
+  const { filters, refreshSignal, editing, kiosk, reportRefreshed, cacheScope, reportCached } =
+    useDashboardContext();
   const def = useWidgetDefinition(type);
   const merged = React.useMemo(
     () => (def ? { ...def.defaultConfig, ...config } : config),
@@ -47,8 +49,36 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
   const card = def ? def.card !== false : true;
   const scroll = selfScroll ?? def?.selfScroll ?? false;
 
+  // The last good data of this widget, kept in the browser (see cache/lastGood.ts).
+  const cache = React.useMemo(
+    () => (cacheScope ? widgetCache(lastGoodStore(), cacheScope, id) : undefined),
+    [cacheScope, id]
+  );
+
+  // The header shows how old the cached data is until a fresh answer arrives.
+  React.useEffect(() => {
+    const at = cacheScope ? lastGoodStore().timeOf(cacheScope, id) : undefined;
+    if (at) reportCached?.(at);
+    // Once, for the data that the first render showed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // A widget that keeps old data while its source fails reports since when (see resilience/stale.tsx).
-  const [staleSince, setStaleSince] = React.useState<number | undefined>(undefined);
+  const [stale, setStale] = React.useState<{ since: number; cached: boolean } | undefined>(
+    undefined
+  );
+  const setStaleSince = React.useCallback(
+    (since: number | undefined, cached?: boolean) =>
+      setStale(prev =>
+        since === undefined
+          ? undefined
+          : prev?.since === since && prev.cached === !!cached
+          ? prev
+          : { since, cached: !!cached }
+      ),
+    []
+  );
+  const staleSince = stale?.since;
   // The footer line of the box. A widget draws its summary into it (see widgets/footer.tsx).
   const [footerEl, setFooterEl] = React.useState<HTMLElement | null>(null);
   const body = def ? (
@@ -64,6 +94,7 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
           kiosk={kiosk}
           compact={inline ? true : undefined}
           footer={inline || !card ? undefined : footerEl}
+          cache={cache}
         />
       </ErrorBoundary>
     </StaleContext.Provider>
@@ -154,7 +185,7 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
         )}
         {staleSince !== undefined && (
           <Box sx={{ position: 'absolute', top: 0, right: 0, zIndex: 1 }}>
-            <StaleMarker since={staleSince} />
+            <StaleMarker since={staleSince} cached={stale?.cached} />
           </Box>
         )}
         <Box sx={{ flex: 1, minHeight: 0, overflow: scroll ? 'auto' : 'hidden' }}>{body}</Box>
@@ -217,7 +248,7 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
           <Box sx={{ flex: 1 }} />
           {staleSince !== undefined && (
             <Box sx={{ bgcolor: 'background.default', px: 0.5, pointerEvents: 'auto' }}>
-              <StaleMarker since={staleSince} />
+              <StaleMarker since={staleSince} cached={stale?.cached} />
             </Box>
           )}
           {menu && <Box sx={{ bgcolor: 'background.default', pointerEvents: 'auto' }}>{menu}</Box>}

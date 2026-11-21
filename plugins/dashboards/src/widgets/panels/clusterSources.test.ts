@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetLastGoodStore } from '../../cache/lastGood';
 import {
   clearClusterSources,
+  clearClusterSourcesMemoryOnly,
   CLUSTER_SOURCES_RETRY_MS,
   CLUSTER_SOURCES_TTL_MS,
   ensureClusterSources,
@@ -243,5 +245,44 @@ describe('the ConfigMap to write', () => {
       labels: { [CLUSTER_SOURCES_LABEL]: 'true' },
     });
     expect(Object.keys(cm.data)).toEqual([CLUSTER_SOURCES_KEY]);
+  });
+});
+
+describe('cluster sources from the browser cache', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetLastGoodStore();
+    clearClusterSources();
+  });
+
+  it('writes the sources text on a good read, and a new tab uses it before the cluster answers', async () => {
+    const request = vi.fn(async () => ({ items: [configMap(['agentx'])] }));
+    await loadClusterSources({ request }, undefined, NS);
+    // A new page: the in-memory state is gone, the browser cache stays.
+    clearClusterSourcesMemoryOnly();
+    const state = getClusterSourcesState(undefined, NS);
+    expect(state.sources.map(s => s.id)).toEqual(['agentx']);
+    // A cached state is not pending (at is not 0), yet it counts as old, so a widget refreshes it.
+    expect(state.at).toBeGreaterThan(0);
+    const again = vi.fn(async () => ({ items: [configMap(['agentx', 'agenty'])] }));
+    ensureClusterSources({ request: again }, undefined, NS);
+    expect(again).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no cached sources on a first visit', () => {
+    expect(getClusterSourcesState(undefined, NS).sources).toEqual([]);
+    expect(getClusterSourcesState(undefined, NS).at).toBe(0);
+  });
+
+  it('keeps the cached sources when the first read fails', async () => {
+    const ok = vi.fn(async () => ({ items: [configMap(['agentx'])] }));
+    await loadClusterSources({ request: ok }, undefined, NS);
+    clearClusterSourcesMemoryOnly();
+    const bad = vi.fn(async () => {
+      throw new Error('down');
+    });
+    const state = await loadClusterSources({ request: bad }, undefined, NS);
+    expect(state.status).toBe('error');
+    expect(state.sources.map(s => s.id)).toEqual(['agentx']);
   });
 });

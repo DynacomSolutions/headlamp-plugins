@@ -8,9 +8,11 @@ import {
   applyNames,
   humanise,
   idOf,
+  nameOf,
   namespaceDataName,
   NO_NAMES,
   stripPodHash,
+  uniqueNames,
 } from './names';
 import { buildNodeTree } from './tree';
 import type { NodeMetrics } from './types';
@@ -109,7 +111,7 @@ describe('names in the tree', () => {
       'cpu',
       icon
     );
-    const proc = t.root.children.find(c => c.key === 'other')!.children[0].children[0];
+    const proc = t.root.children.find(c => c.key === 'scope:x.scope')!.children[0];
     expect(proc.displayName).toBe('Codex');
     expect(idOf(proc)).toBe('/usr/bin/node /opt/codex/bin/codex.js');
   });
@@ -127,5 +129,43 @@ describe('the selection carries both names', () => {
     const sel = selectionFor(t, t, [], ['k8s', 'k8s/ns:acme-runners'])!;
     expect(sel.label).toBe('Acme');
     expect(sel.id).toBe('acme-runners');
+  });
+});
+
+describe('unique sibling names', () => {
+  const shared = (ns: string) => ({ namespace: ns, pod: 'p', container: 'c', cpuCores: 1, memBytes: 1 });
+  const ctx = {
+    overrides: {},
+    namespaces: new Map(['team-a-billing', 'team-a-search', 'team-a-web'].map(n => [n, 'Team A Apps'])),
+  };
+
+  it('uniqueNames keeps unique names and adds the id to repeated ones', () => {
+    expect(
+      uniqueNames([
+        { name: 'Apps', id: 'a' },
+        { name: 'Apps', id: 'b' },
+        { name: 'Solo', id: 'c' },
+      ])
+    ).toEqual(['Apps (a)', 'Apps (b)', 'Solo']);
+  });
+
+  it('shows the real namespace id when namespaces share a display name', () => {
+    const t = buildNodeTree(
+      { ...metrics(), pods: ['team-a-billing', 'team-a-search', 'team-a-web', 'solo'].map(shared) },
+      null,
+      'cpu',
+      icon,
+      [],
+      { ...ctx, namespaces: new Map([...ctx.namespaces, ['solo', 'Solo apps']]) }
+    );
+    const k8s = t.root.children.find(c => c.key === 'k8s')!;
+    const labels = k8s.children.map(c => nameOf(c));
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels.sort()).toEqual([
+      'Solo apps',
+      'Team A Apps (team-a-billing)',
+      'Team A Apps (team-a-search)',
+      'Team A Apps (team-a-web)',
+    ]);
   });
 });

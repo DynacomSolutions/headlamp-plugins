@@ -62,6 +62,7 @@ function TimeSeriesWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<TimeSeriesConfig>): JSX.Element {
   const { ref, size, sizeRef, measured } = useElementSize<HTMLDivElement>();
   const { ink, mode } = useInk(kiosk);
@@ -76,8 +77,9 @@ function TimeSeriesWidget({
     reportRefreshed,
     widthRef: sizeRef,
     enabled: measured,
+    cache,
   });
-  useReportStale(state.staleSince);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   const [hidden, setHidden] = React.useState<ReadonlySet<string>>(new Set());
   const [table, setTable] = React.useState(false);
 

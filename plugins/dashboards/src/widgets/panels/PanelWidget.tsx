@@ -17,7 +17,7 @@ import type {
 } from '../../contract';
 import { useReportStale } from '../../resilience/stale';
 import { SettingsForm } from '../SettingsForm';
-import { usePanel, usePanelList } from './data';
+import { useListGate, usePanel, usePanelList } from './data';
 import { sourceOf, SourcePanelConfig, SourcePanelPicker } from './PanelPicker';
 import { DEFAULT_DISPLAY, displayOf, PanelView, RowLayout } from './PanelView';
 import { AGENT_SOURCE_ID } from './sources';
@@ -39,11 +39,13 @@ export function PanelWidget({
   reportRefreshed,
   editing,
   kiosk,
+  cache,
 }: WidgetProps<PanelConfig>): JSX.Element {
   const sourceId = sourceOf(config);
   const display = React.useMemo(() => displayOf(config), [config]);
   const { source, pending } = useSourceLookup(sourceId);
-  const list = usePanelList(source, sourceId);
+  const [listOpen, settleList] = useListGate();
+  const list = usePanelList(source, sourceId, listOpen);
   const minSeconds = list.panels.find(p => p.id === config.panel)?.refreshSeconds ?? 0;
   const state = usePanel(
     source,
@@ -51,10 +53,12 @@ export function PanelWidget({
     refreshSignal,
     minSeconds,
     reportRefreshed,
-    sourceId
+    sourceId,
+    cache
   );
+  React.useEffect(() => settleList(state), [state, settleList]);
   // A failed refresh keeps the last panel. The card then says since when the data is old.
-  useReportStale(state.staleSince);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
 
   if (!config.panel) {
     return (
@@ -65,7 +69,7 @@ export function PanelWidget({
       </Box>
     );
   }
-  if (state.loading || pending) {
+  if (state.loading || (pending && !state.panel)) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
         <CircularProgress size={24} aria-label="Loading the panel" />

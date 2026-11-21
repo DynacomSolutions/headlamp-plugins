@@ -107,7 +107,7 @@ describe('buildNodeTree', () => {
       unit({ name: 'job.scope', memBytes: 1 }),
     ];
     const t = buildNodeTree(metrics({ memUsed: 100 }), host(units), 'memory', icon);
-    expect(keys(t.root)).toEqual(['k8s', 't3', 'herdr', 'other', 'system']);
+    expect(keys(t.root)).toEqual(['k8s', 't3', 'herdr', 'scope:job.scope', 'system']);
     const t3 = t.root.children[1];
     expect(t3.value).toBe(11);
     expect(t3.children[0].key).toBe('t3/control');
@@ -120,7 +120,8 @@ describe('buildNodeTree', () => {
     expect(p.children[0].href).toBe('https://e.com/1');
     expect(t3.children[2].label).toBe('Unknown project');
     expect(t3.children[2].icon).toEqual({ kind: 'mdi', name: 'folder' });
-    expect(t.root.children[3].children[0].key).toBe('other/job.scope');
+    expect(t.root.children[3].key).toBe('scope:job.scope');
+    expect(t.root.children[3].label).toBe('job');
   });
 
   it('scales categories down on sampling skew', () => {
@@ -374,16 +375,19 @@ describe('buildNodeTree with nested backend units', () => {
   it('puts role-less scopes and agent-free sub-slices under the orchestrator', () => {
     const t = buildNodeTree(m(), host(live()), 'memory', icon);
     const t3 = find(t.root, 't3')!;
-    expect(keys(t3)).toEqual(['t3/control', 't3/p:p', 't3/other']);
-    const other = find(t3, 't3/other')!;
-    expect(other.label).toBe('Scopes with no role');
-    expect(other.children.map(c => [c.key, c.value])).toEqual([
-      ['t3/other/u:app-t3code-agents-builds.slice', 32 * GB],
-      ['t3/other/u:run-1.scope', 0.5 * GB],
+    expect(keys(t3)).toEqual([
+      't3/control',
+      't3/p:p',
+      't3/u:app-t3code-agents-builds.slice',
+      't3/u:run-1.scope',
+    ]);
+    expect(t3.children.slice(2).map(c => [c.key, c.value])).toEqual([
+      ['t3/u:app-t3code-agents-builds.slice', 32 * GB],
+      ['t3/u:run-1.scope', 0.5 * GB],
     ]);
     const all = JSON.stringify(t.root);
     expect(all).not.toContain('agents-env1.slice"');
-    expect(find(find(t.root, 'herdr')!, 'herdr/other')).toBeUndefined();
+    expect(keys(find(t.root, 'herdr')!).some(k => k.includes('/u:'))).toBe(false);
   });
 });
 
@@ -907,5 +911,91 @@ describe('Runner pool runner hierarchy', () => {
       const jobArc = all.find(n => n.key.endsWith('/wf:CI/job:build'));
       expect(jobArc?.children.map(c => c.label).sort()).toEqual(['#42', '#43']);
     }
+  });
+});
+
+describe('no catch-all arcs', () => {
+  const CATCH_ALL = /^(other|others|misc|rest|remaining|scopes with no role)$/i;
+  const fixtureUnits = () => [
+    unit({ name: 't3-agents.slice', kind: 'slice', orchestrator: 't3', role: 'agents', memBytes: 40 * GB }),
+    unit({
+      name: 'agent-1.scope',
+      orchestrator: 't3',
+      role: 'agent',
+      parent: 't3-agents.slice',
+      memBytes: 8 * GB,
+      project: 'Proj',
+      projectId: 'x',
+      thread: 'T1',
+    }),
+    unit({
+      name: 'build-a.scope',
+      orchestrator: 't3',
+      parent: 't3-agents.slice',
+      memBytes: 3 * GB,
+      procs: [proc(1, 2 * GB)],
+    }),
+    unit({ name: 'build-b.scope', orchestrator: 't3', parent: 't3-agents.slice', memBytes: 2 * GB }),
+    unit({ name: 'lone-job.scope', memBytes: 5 * GB, procs: [proc(2, 4 * GB)] }),
+    unit({ name: 'lone-task.scope', memBytes: 1 * GB }),
+  ];
+  const build = () => buildNodeTree(metrics({ memUsed: 100 * GB, memCapacity: 128 * GB }), host(fixtureUnits()), 'memory', icon);
+  const walk = (n: SunNode, fn: (n: SunNode) => void) => {
+    fn(n);
+    n.children.forEach(c => walk(c, fn));
+  };
+
+  it('has no key ending in /other or equal to other, and no catch-all label', () => {
+    const t = build();
+    walk(t.root, n => {
+      expect(n.key.endsWith('/other')).toBe(false);
+      expect(n.key).not.toBe('other');
+      expect(n.label).not.toMatch(CATCH_ALL);
+      expect(n.displayName ?? '').not.toMatch(CATCH_ALL);
+    });
+  });
+
+  it('draws every role-less scope under its own name at its real size', () => {
+    const t = build();
+    const t3 = t.root.children.find(c => c.key === 't3')!;
+    const own = t3.children.filter(c => c.key.startsWith('t3/u:'));
+    expect(own.map(c => [c.key, c.label, c.value])).toEqual([
+      ['t3/u:build-a.scope', 'build-a', 3 * GB],
+      ['t3/u:build-b.scope', 'build-b', 2 * GB],
+    ]);
+    expect(own[0].children.map(c => c.value)).toEqual([2 * GB]);
+    const loose = t.root.children.filter(c => c.key.startsWith('scope:'));
+    expect(loose.map(c => [c.key, c.label, c.kind, c.value])).toEqual([
+      ['scope:lone-job.scope', 'lone-job', 'category', 5 * GB],
+      ['scope:lone-task.scope', 'lone-task', 'category', 1 * GB],
+    ]);
+    expect(loose[0].children.map(c => c.value)).toEqual([4 * GB]);
+  });
+
+  it('keeps the totals', () => {
+    const t = build();
+    const t3 = t.root.children.find(c => c.key === 't3')!;
+    // The agents slice (40) already holds the agent scope and the role-less scopes inside it.
+    expect(t3.value).toBe(40 * GB);
+    expect(t.root.value).toBe(100 * GB);
+    const cats = t.root.children.reduce((s, c) => s + c.value, 0);
+    expect(cats).toBeCloseTo(100 * GB);
+    const system = t.root.children.find(c => c.key === 'system')!;
+    expect(system.value).toBeCloseTo(54 * GB, -3);
+  });
+
+  it('counts role-less scopes outside the slice in the orchestrator total', () => {
+    const t = buildNodeTree(
+      metrics({ memUsed: 100 * GB }),
+      host([
+        unit({ name: 't3-agents.slice', kind: 'slice', orchestrator: 't3', role: 'agents', memBytes: 10 * GB }),
+        unit({ name: 'free.scope', orchestrator: 't3', memBytes: 2 * GB }),
+      ]),
+      'memory',
+      icon
+    );
+    const t3 = t.root.children.find(c => c.key === 't3')!;
+    expect(t3.value).toBe(12 * GB);
+    expect(t3.children.map(c => [c.key, c.label, c.value])).toEqual([['t3/u:free.scope', 'free', 2 * GB]]);
   });
 });

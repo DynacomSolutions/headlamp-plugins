@@ -8,7 +8,8 @@
  */
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
-import type { DashboardFilters } from '../../contract';
+import { isOldData } from '../../cache/lastGood';
+import type { DashboardFilters, WidgetCache } from '../../contract';
 import { backoffDelay } from '../../resilience/backoff';
 import type { SourceRef } from './config';
 import { listPath } from './discovery';
@@ -19,27 +20,58 @@ export interface ResourceState {
   items: any[];
   loading: boolean;
   error: string | null;
-  /** Epoch ms of the last good list, set only while a stream fails and the old rows stay. */
+  /**
+   * Epoch ms of the last good list, set while a stream fails and the old rows stay, and while the
+   * rows on screen are cached and older than the stale limit.
+   */
   staleSince?: number;
+  /** True while the rows on screen come from the browser cache and no live list has arrived. */
+  cached?: boolean;
+  /** The time of the cached rows, while `cached` is true. */
+  cachedAt?: number;
 }
 
 const PUBLISH_DELAY_MS = 250;
+/** A live stream changes often. The cache keeps the list at most this often. */
+const CACHE_WRITE_EVERY_MS = 10_000;
+
+interface CachedList {
+  key: string;
+  items: any[];
+}
 
 export function useResources(
   source: SourceRef,
   filters: DashboardFilters,
   refreshSignal: number,
-  reportRefreshed: (at?: number) => void
+  reportRefreshed: (at?: number) => void,
+  /** The browser cache of the widget: the first render shows the last good list at once. */
+  cache?: WidgetCache
 ): ResourceState {
-  const [state, setState] = React.useState<ResourceState>({
-    items: [],
-    loading: true,
-    error: null,
-  });
   // Primitive keys keep the effect from running again when only an object identity changes.
   const nsKey = filters.namespaces.join('\u0000');
   const selector = filters.labelSelector;
   const { group, version, plural, namespaced, kind } = source;
+  const [state, setState] = React.useState<ResourceState>(() => {
+    try {
+      const hit = cache?.read<CachedList>();
+      const key = `${group}/${version}/${plural}|${nsKey}|${selector}`;
+      if (hit && hit.value?.key === key && Array.isArray(hit.value.items)) {
+        return {
+          items: hit.value.items,
+          loading: false,
+          error: null,
+          cached: true,
+          cachedAt: hit.at,
+          staleSince: isOldData(hit.at) ? hit.at : undefined,
+        };
+      }
+    } catch {
+      // A value that cannot be read is no value.
+    }
+    return { items: [], loading: true, error: null };
+  });
+  const lastWrite = React.useRef(0);
   // `stream` tells the refresh effect what to do: report, restart or wait.
   const stream = React.useRef<'loading' | 'ok' | 'failed'>('loading');
   const [restart, setRestart] = React.useState(0);
@@ -90,13 +122,34 @@ export function useResources(
         lastGood.current = { key: sourceKey, items: fresh, at: Date.now() };
       // A failed restart has nothing new: it keeps the last good rows, not an empty table.
       const keep = error !== null && loaded === 0 && good !== null;
-      setState({
-        items: keep ? good.items : fresh,
-        loading: loaded < namespaces.length && errors.size === 0,
-        error,
-        // The rows on screen are old, and the card says since when.
-        staleSince: error !== null && good !== null && (keep || loaded > 0) ? good.at : undefined,
+      setState(prev => {
+        // Rows from the browser cache stay until a live list arrives. A failure marks them as old.
+        const onCache = prev.cached === true && loaded === 0;
+        return {
+          items: keep ? good.items : onCache ? prev.items : fresh,
+          loading: loaded < namespaces.length && errors.size === 0,
+          error,
+          // The rows on screen are old, and the card says since when.
+          staleSince:
+            error !== null && good !== null && (keep || loaded > 0)
+              ? good.at
+              : onCache
+              ? error !== null
+                ? prev.cachedAt
+                : prev.staleSince
+              : undefined,
+          cached: onCache ? true : undefined,
+          cachedAt: onCache ? prev.cachedAt : undefined,
+        };
       });
+      if (
+        error === null &&
+        loaded === namespaces.length &&
+        Date.now() - lastWrite.current > CACHE_WRITE_EVERY_MS
+      ) {
+        lastWrite.current = Date.now();
+        cache?.write({ key: sourceKey, items: fresh } satisfies CachedList);
+      }
       if (loaded > 0) reportRefreshed();
       if (error !== null) {
         // Try the streams again: 2 s, 4 s, 8 s and so on up to 60 s.
@@ -123,7 +176,12 @@ export function useResources(
     };
 
     // Keep the old rows on screen while a refresh loads, but show the loading state.
-    setState(s => ({ ...s, loading: true, error: null, staleSince: undefined }));
+    setState(s => ({
+      ...s,
+      loading: !s.cached,
+      error: null,
+      staleSince: s.cached ? s.staleSince : undefined,
+    }));
 
     for (const ns of namespaces) {
       const url = listPath(src, ns);

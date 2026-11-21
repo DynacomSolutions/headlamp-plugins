@@ -2,7 +2,7 @@
 import { defineProvider, defineTool, promString, setting, z } from '../../../agent/src/sdk.js';
 // Pure logic of the nodes dashboard, shared with the Headlamp page (no React, no network).
 import { parseAgentState, type AgentHost } from '../src/nodes/agentState.js';
-import { namespaceDataName, nameOf, NO_NAMES, type NameContext } from '../src/nodes/names.js';
+import { idOf, namespaceDataName, nameOf, NO_NAMES, uniqueNames, type NameContext } from '../src/nodes/names.js';
 import { assembleNodeMetrics, NODE_QUERIES, type NodeSample, type QueryKey } from '../src/nodes/nodeMetrics.js';
 import { buildNodeTree, type NodeTree, type Resource, type SunNode } from '../src/nodes/tree.js';
 
@@ -77,12 +77,21 @@ const ringSchema = z.object({
 
 type Segment = { key: string; label: string; value: number; children?: Segment[] };
 
+type Merged = { key: string; label: string; id: string; repeatable: boolean; value: number; kids: SunNode[][] };
+
 /** Adds up the nodes of all trees that share a key. Values add up, the first label wins. */
-function mergeByKey(lists: SunNode[][]): Map<string, { key: string; label: string; value: number; kids: SunNode[][] }> {
-  const out = new Map<string, { key: string; label: string; value: number; kids: SunNode[][] }>();
+function mergeByKey(lists: SunNode[][]): Map<string, Merged> {
+  const out = new Map<string, Merged>();
   for (const list of lists) {
     for (const n of list) {
-      const hit = out.get(n.key) ?? { key: n.key, label: nameOf(n), value: 0, kids: [] };
+      const hit = out.get(n.key) ?? {
+        key: n.key,
+        label: nameOf(n),
+        id: idOf(n),
+        repeatable: n.kind === 'process' || n.kind === 'unused',
+        value: 0,
+        kids: [],
+      };
       hit.value += n.value;
       hit.kids.push(n.children);
       out.set(n.key, hit);
@@ -91,16 +100,30 @@ function mergeByKey(lists: SunNode[][]): Map<string, { key: string; label: strin
   return out;
 }
 
+/**
+ * Labels of merged siblings. Two segments of one list can share a label after the merge (the
+ * same display name on two namespaces of different nodes), so they get the unique name again.
+ */
+function labelled(items: Merged[]): Map<string, string> {
+  const some = items.filter(i => !i.repeatable);
+  const names = uniqueNames(some.map(i => ({ name: i.label, id: i.id })));
+  const out = new Map(items.map(i => [i.key, i.label]));
+  some.forEach((i, idx) => out.set(i.key, names[idx]));
+  return out;
+}
+
 /** The categories of the given trees, merged by key, each with its children. Every category and child keeps its real size. */
 function segmentsOf(lists: SunNode[][], round: (n: number) => number): Segment[] {
   const segments: Segment[] = [];
-  for (const seg of mergeByKey(lists).values()) {
-    if (!(seg.value > 0)) continue;
-    const kids = [...mergeByKey(seg.kids).values()]
-      .filter(k => k.value > 0)
+  const cats = [...mergeByKey(lists).values()].filter(c => c.value > 0);
+  const catLabels = labelled(cats);
+  for (const seg of cats) {
+    const kidList = [...mergeByKey(seg.kids).values()].filter(k => k.value > 0);
+    const kidLabels = labelled(kidList);
+    const kids = kidList
       .sort((a, b) => b.value - a.value)
-      .map(k => ({ key: k.key, label: k.label, value: round(k.value) }));
-    segments.push({ key: seg.key, label: seg.label, value: round(seg.value), ...(kids.length ? { children: kids } : {}) });
+      .map(k => ({ key: k.key, label: kidLabels.get(k.key) ?? k.label, value: round(k.value) }));
+    segments.push({ key: seg.key, label: catLabels.get(seg.key) ?? seg.label, value: round(seg.value), ...(kids.length ? { children: kids } : {}) });
   }
   return segments.sort((a, b) => b.value - a.value);
 }
@@ -146,8 +169,32 @@ const dashboard = defineTool({
   input: z.object({}),
   output: z.object({ nodes: z.number(), hostMetrics: z.boolean(), rings: z.array(ringSchema) }),
   async run(_args, ctx) {
+    // The three reads do not depend on each other, so they run together: the panel waits for the
+    // slowest one, not for the sum of them.
     const keys = Object.keys(NODE_QUERIES) as QueryKey[];
-    const settled = await Promise.allSettled(keys.map(key => ctx.prom.query(NODE_QUERIES[key])));
+    const urls = setting(ctx.settings, 'agentStateUrls', DEFAULT_AGENT_STATE_URLS)
+      .split(',')
+      .map(u => u.trim())
+      .filter(Boolean);
+    const readNames = async (): Promise<NameContext> => {
+      try {
+        const { items } = await ctx.kube.list('namespaces', { limit: 2000 });
+        const namespaces = new Map<string, string>();
+        for (const item of items) {
+          const id = item.metadata?.name;
+          const name = item.metadata ? namespaceDataName(item.metadata) : undefined;
+          if (id && name) namespaces.set(id, name);
+        }
+        return { overrides: {}, namespaces };
+      } catch {
+        return NO_NAMES;
+      }
+    };
+    const [settled, hosts, names] = await Promise.all([
+      Promise.allSettled(keys.map(key => ctx.prom.query(NODE_QUERIES[key]))),
+      agentHosts(urls, url => ctx.serviceGet(url)),
+      readNames(),
+    ]);
     const failed = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
     if (failed.length === keys.length) throw failed[0].reason;
     const results = {} as Record<QueryKey, NodeSample[]>;
@@ -156,26 +203,6 @@ const dashboard = defineTool({
       results[key] = r.status === 'fulfilled' ? r.value.map(s => ({ metric: s.metric, value: [0, String(s.value)] as [number, string] })) : [];
     });
     const metrics = assembleNodeMetrics(results);
-
-    const urls = setting(ctx.settings, 'agentStateUrls', DEFAULT_AGENT_STATE_URLS)
-      .split(',')
-      .map(u => u.trim())
-      .filter(Boolean);
-    const hosts = await agentHosts(urls, url => ctx.serviceGet(url));
-
-    let names: NameContext = NO_NAMES;
-    try {
-      const { items } = await ctx.kube.list('namespaces', { limit: 2000 });
-      const namespaces = new Map<string, string>();
-      for (const item of items) {
-        const id = item.metadata?.name;
-        const name = item.metadata ? namespaceDataName(item.metadata) : undefined;
-        if (id && name) namespaces.set(id, name);
-      }
-      names = { overrides: {}, namespaces };
-    } catch {
-      names = NO_NAMES;
-    }
 
     const rings = (['cpu', 'memory'] as Resource[]).map(r =>
       ring(

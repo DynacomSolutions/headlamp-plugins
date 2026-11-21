@@ -68,6 +68,7 @@ function TableWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<TableConfig>): JSX.Element {
   const { sizeRef } = useElementSize<HTMLDivElement>();
   const { ink } = useInk(kiosk);
@@ -80,8 +81,9 @@ function TableWidget({
     refreshSignal,
     reportRefreshed,
     widthRef: sizeRef,
+    cache,
   });
-  useReportStale(state.staleSince);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   const [sort, setSort] = React.useState<SortState | null>(null);
 
   const samples = React.useMemo(

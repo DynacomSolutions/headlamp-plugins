@@ -8,7 +8,8 @@
  * up to 60 s.
  */
 import React from 'react';
-import type { DashboardFilters } from '../../contract';
+import { isOldData } from '../../cache/lastGood';
+import type { DashboardFilters, WidgetCache } from '../../contract';
 import { backoffDelay } from '../../resilience/backoff';
 import { useMetricsEndpoint } from './endpoint';
 import { QueryResult, runInstant, runRange, windowFor } from './prom';
@@ -24,8 +25,13 @@ export interface QueriesState {
   /** The window of the last range fetch. */
   start: number | undefined;
   end: number | undefined;
-  /** Epoch ms of the last good results, set only while a fetch fails and the old results stay. */
+  /**
+   * Epoch ms of the last good results, set while a fetch fails and the old results stay, and while
+   * the results on screen are cached and older than the stale limit.
+   */
   staleSince?: number;
+  /** True while the results on screen come from the browser cache and no fresh answer has come. */
+  cached?: boolean;
 }
 
 export interface UseQueriesArgs {
@@ -39,6 +45,46 @@ export interface UseQueriesArgs {
   reportRefreshed: (at?: number) => void;
   /** The chart width in pixels, read at fetch time. */
   widthRef: React.MutableRefObject<{ width: number; height: number }>;
+  /** The browser cache of the widget: the first render shows the last good results at once. */
+  cache?: WidgetCache;
+}
+
+/** What the widget keeps in the browser cache. `key` ties it to the queries and filters. */
+interface CachedResults {
+  key: string;
+  results: QueryResult[];
+  step?: number;
+  start?: number;
+  end?: number;
+}
+
+const cacheKey = (mode: QueryMode, queriesKey: string, filters: DashboardFilters): string =>
+  `${mode}|${queriesKey}|${JSON.stringify(filters)}`;
+
+/** The cached state for these queries, with the time of the results, or undefined. */
+export function resultsFromCache(
+  cache: WidgetCache | undefined,
+  key: string
+): { state: QueriesState; at: number } | undefined {
+  try {
+    const hit = cache?.read<CachedResults>();
+    const v = hit?.value;
+    if (!hit || !v || v.key !== key || !Array.isArray(v.results)) return undefined;
+    return {
+      at: hit.at,
+      state: {
+        ...EMPTY,
+        results: v.results,
+        step: v.step,
+        start: v.start,
+        end: v.end,
+        cached: true,
+        staleSince: isOldData(hit.at) ? hit.at : undefined,
+      },
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 const EMPTY: QueriesState = {
@@ -51,13 +97,23 @@ const EMPTY: QueriesState = {
 };
 
 export function useQueries(args: UseQueriesArgs): QueriesState {
-  const { mode, queries, filters, enabled = true, refreshSignal, reportRefreshed, widthRef } = args;
+  const {
+    mode,
+    queries,
+    filters,
+    enabled = true,
+    refreshSignal,
+    reportRefreshed,
+    widthRef,
+    cache,
+  } = args;
   const endpoint = useMetricsEndpoint();
   const queriesKey = JSON.stringify(queries);
-  const [state, setState] = React.useState<QueriesState>(EMPTY);
+  const seed = React.useRef(resultsFromCache(cache, cacheKey(mode, queriesKey, filters)));
+  const [state, setState] = React.useState<QueriesState>(seed.current?.state ?? EMPTY);
   const [retry, setRetry] = React.useState(0);
   const failures = React.useRef(0);
-  const okAt = React.useRef(0);
+  const okAt = React.useRef(seed.current?.at ?? 0);
   const retryTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   React.useEffect(() => () => clearTimeout(retryTimer.current), []);
 
@@ -88,14 +144,20 @@ export function useQueries(args: UseQueriesArgs): QueriesState {
         if (ctrl.signal.aborted) return;
         failures.current = 0;
         okAt.current = Date.now();
-        setState({
-          results,
-          error: undefined,
-          loading: false,
-          step: mode === 'range' ? win.step : undefined,
-          start: mode === 'range' ? win.start : undefined,
-          end: mode === 'range' ? win.end : undefined,
-        });
+        const step = mode === 'range' ? win.step : undefined;
+        const start = mode === 'range' ? win.start : undefined;
+        const end = mode === 'range' ? win.end : undefined;
+        setState({ results, error: undefined, loading: false, step, start, end });
+        cache?.write(
+          {
+            key: cacheKey(mode, queriesKey, effective),
+            results,
+            step,
+            start,
+            end,
+          } satisfies CachedResults,
+          okAt.current
+        );
         reportRefreshed(now);
       },
       (e: unknown) => {

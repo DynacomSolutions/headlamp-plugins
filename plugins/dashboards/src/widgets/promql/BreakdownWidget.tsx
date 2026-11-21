@@ -296,6 +296,7 @@ function BreakdownWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  cache,
 }: WidgetProps<BreakdownConfig>): JSX.Element {
   const { ref, size, sizeRef } = useElementSize<HTMLDivElement>();
   const { ink, mode } = useInk(kiosk);
@@ -308,8 +309,9 @@ function BreakdownWidget({
     refreshSignal,
     reportRefreshed,
     widthRef: sizeRef,
+    cache,
   });
-  useReportStale(state.staleSince);
+  useReportStale(state.staleSince, !!state.cached && !state.error);
   const groups = React.useMemo(() => {
     const r = state.results?.[0];
     return r
