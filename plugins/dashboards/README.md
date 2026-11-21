@@ -662,15 +662,25 @@ in the `config` of the widget.
 ### Agent usage pair (`agent.usage-pair`)
 
 Draws two rings of one panel (by default `cpu` and `memory` of `usage-dashboard` on the agent) as two
-node-first sunbursts side by side with ONE shared legend. It has the same source and panel settings as the
+node-first sunbursts with ONE shared compact legend. It has the same source and panel settings as the
 panel widget, and it keeps the last good panel (the `cache` of the widget) like the other panel widgets.
 It is sized for 6 columns and 8 rows (`w` 6, `h` 8). Options: `first` and `second` set the two rings.
 
 - The same node and the same category have the same colour in both rings and in the legend.
-- The legend lists the node, then its categories, then its free capacity (faint crosshatch). Each row has one
-  value for each ring, in two columns of equal width. A group that only one ring has shows a dash in the other.
-- The legend stays in place and scrolls inside itself when it is long. There is no "+N more" row and no "Other" group.
-- A hover on a legend row or on an arc shows the same group in both rings. In kiosk mode a tap selects instead.
+- The legend is compact. A colour key of the categories (and the free capacity) sits once at the top, in the
+  colours of the rings. Below it, each node has ONE line: the node name, then the used and total value of each
+  ring in short form (for example `61.00 / 64 cores`), each with a thin bar split by category, in the same
+  colours, and ending with the free part. A hover on a bar segment shows the category and its value.
+  A ring that has no such node shows a dash.
+- Every node stays: there is no "+N more" row and no "Other" group. The key and the head stay in place, and the
+  list of nodes scrolls inside itself.
+- The layout follows the width and the height of the widget itself (a ResizeObserver, not the window). In a
+  narrow widget (under 560 px) the two rings are ALWAYS stacked, CPU above memory, each about 90 % of the width
+  of the widget and centred, with the legend below. They are never side by side there. For example, 3 columns
+  and 23 rows on a 1920 by 1080 screen. In a wide widget the legend sits on the right of the two rings, or
+  below them, whichever gives the bigger rings.
+- A hover on a node name, a bar segment or an arc shows the same group in both rings. In kiosk mode a tap
+  selects instead.
 - Without per-node data from the agent, the widget draws two category-first charts, each with its own legend.
 
 ### The sunburst component
