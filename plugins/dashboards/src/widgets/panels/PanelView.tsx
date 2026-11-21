@@ -6,6 +6,7 @@
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { WidgetFooter } from '../footer';
 import { useElementSize } from '../promql/useElementSize';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import { isEmptyPanel, PanelModel, PanelRing, ringToSunburst } from './model';
@@ -145,19 +146,6 @@ export function PanelView({
         ...(fitted ? { height: '100%', minHeight: 0, overflow: 'hidden' } : {}),
       }}
     >
-      {display.showSummary && (panel.summary || panel.status !== 'unknown') && (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 'none' }}>
-          <StatusMark status={panel.status} size={16} />
-          {/* One size and one weight for every word and number of the summary. */}
-          <Typography
-            variant="body2"
-            data-panel-summary
-            sx={{ fontWeight: 600, fontSize: 16, lineHeight: 1.3 }}
-          >
-            {panel.summary || STATUS_WORD[panel.status]}
-          </Typography>
-        </Box>
-      )}
       {display.showStats && panel.stats.length > 0 && (
         <StatTiles stats={panel.stats} width={root.size.width} />
       )}
@@ -232,6 +220,12 @@ export function PanelView({
         </Box>
       )}
       {panel.tables.length > 0 && <PanelTables tables={panel.tables} />}
+      {display.showSummary && (panel.summary || panel.status !== 'unknown') && (
+        // The summary sits in the footer line of the widget frame, in one size and one weight.
+        <WidgetFooter status={panel.status}>
+          <span data-panel-summary>{panel.summary || STATUS_WORD[panel.status]}</span>
+        </WidgetFooter>
+      )}
     </Box>
   );
 }

@@ -134,7 +134,7 @@ export function SunburstChart({
     ? Math.min(bh, bw * 0.55)
     : Math.min(bw, bh * 0.6);
   const legendHeight = side ? bh : bh - ringSize;
-  const perColumn = side ? sorted.length : Math.ceil(sorted.length / 2);
+  const perColumn = side || bw < 360 ? sorted.length : Math.ceil(sorted.length / 2);
   const kidsShown = showChildren
     ? Math.max(0, Math.min(4, Math.floor((legendHeight - perColumn * 38) / (perColumn * 14))))
     : 0;
@@ -256,7 +256,7 @@ export function SunburstChart({
             display: side ? 'flex' : 'grid',
             flexDirection: 'column',
             justifyContent: 'center',
-            gridTemplateColumns: '1fr 1fr',
+            gridTemplateColumns: bw >= 360 ? '1fr 1fr' : '1fr',
             alignContent: 'start',
             gap: side ? '5px' : '6px 16px',
           }}
@@ -267,7 +267,7 @@ export function SunburstChart({
               .filter(k => k.value > 0)
               .sort((a, b) => b.value - a.value);
             return (
-              <li key={c.key} data-legend-group={c.key}>
+              <li key={c.key} data-legend-group={c.key} style={{ minWidth: 0 }}>
                 <ButtonBase
                   onClick={() => select(id)}
                   {...hoverProps(id)}

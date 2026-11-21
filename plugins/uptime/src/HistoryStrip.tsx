@@ -9,13 +9,21 @@ import Tooltip from '@mui/material/Tooltip';
 import React from 'react';
 import { bucketSeverity, formatPercent } from './model';
 
+/**
+ * The bucket colours for each mode. They are fixed, not read from the theme: the kiosk theme draws
+ * the theme success colour in near white, and a green bucket must stay green.
+ */
+export const BUCKET_HUES = {
+  dark: { ok: '#66bb6a', warn: '#ffa726', crit: '#f44336' },
+  light: { ok: '#2e7d32', warn: '#c75b00', crit: '#d32f2f' },
+} as const;
+
 /** The colour of one bucket (availability 0..1, undefined = no data). */
 export function bucketColour(theme: Theme, v: number | undefined): string {
   const sev = bucketSeverity(v);
   if (sev === 'none') return theme.palette.action.disabledBackground;
-  if (sev === 'ok') return theme.palette.success.main;
-  if (sev === 'warn') return theme.palette.warning.main;
-  return theme.palette.error.main;
+  const hues = BUCKET_HUES[theme.palette.mode === 'dark' ? 'dark' : 'light'];
+  return sev === 'ok' ? hues.ok : sev === 'warn' ? hues.warn : hues.crit;
 }
 
 export interface HistoryStripProps {
@@ -36,7 +44,9 @@ export interface HistoryStripProps {
 }
 
 function cellTitle(startSec: number, stepSec: number, i: number, v: number | undefined): string {
-  return `${new Date((startSec + i * stepSec) * 1000).toLocaleString()}: ${v === undefined ? 'no data' : formatPercent(v)}`;
+  return `${new Date((startSec + i * stepSec) * 1000).toLocaleString()}: ${
+    v === undefined ? 'no data' : formatPercent(v)
+  }`;
 }
 
 export function HistoryStrip({
@@ -50,13 +60,22 @@ export function HistoryStrip({
 }: HistoryStripProps): JSX.Element {
   const theme = useTheme();
   return (
-    <Box role="img" aria-label={label} sx={{ display: 'flex', gap: '1px', alignItems: 'stretch', height, minWidth }}>
+    <Box
+      role="img"
+      aria-label={label}
+      sx={{ display: 'flex', gap: '1px', alignItems: 'stretch', height, minWidth }}
+    >
       {history.map((v, i) => {
         const cell = (
           <Box
             key={i}
             title={tooltips === 'native' ? cellTitle(startSec, stepSec, i, v) : undefined}
-            sx={{ flex: '1 1 0', minWidth: '1px', bgcolor: bucketColour(theme, v), borderRadius: '1px' }}
+            sx={{
+              flex: '1 1 0',
+              minWidth: '1px',
+              bgcolor: bucketColour(theme, v),
+              borderRadius: '1px',
+            }}
           />
         );
         return tooltips === 'native' ? (

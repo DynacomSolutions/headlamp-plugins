@@ -10,10 +10,11 @@
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
-import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
+import { alpha, useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { registerDashboardWidget, WidgetDefinition, WidgetProps } from './dashboardsContract';
 import {
   buildGroups,
@@ -25,6 +26,7 @@ import {
   RANGE_VALUES,
   UptimeGroup,
   WidgetRange,
+  worstHistory,
 } from './groups';
 import { HistoryStrip } from './HistoryStrip';
 import { PROBE_JOB, queryMetrics, queryRange } from './metrics';
@@ -79,24 +81,12 @@ const STATUS_LABEL: Record<Status, string> = {
   degraded: 'Degraded',
   unknown: 'No data',
 };
-const STATUS_CHIP: Record<Status, 'success' | 'error' | 'warning' | 'default'> = {
-  up: 'success',
-  down: 'error',
-  degraded: 'warning',
-  unknown: 'default',
-};
-const STATUS_DOT: Record<Status, string> = {
-  up: 'success.main',
-  down: 'error.main',
-  degraded: 'warning.main',
-  unknown: 'action.disabled',
-};
 
 /**
  * One column layout for the group header and the check lines, so the lines of a group and of its
  * checks start and end at the same place: marker, status, name, history line, availability.
  */
-const ROW_COLUMNS = '16px 76px minmax(0, 38%) minmax(64px, 1fr) 56px';
+const ROW_COLUMNS = '16px 92px minmax(0, 38%) minmax(64px, 1fr) 56px';
 
 /**
  * A narrow widget (3 grid columns on a small screen) has no room for five columns in one line. The
@@ -208,15 +198,130 @@ export function useUptimeChecks(
   };
 }
 
+/** The status shape of a check line (see `Mark`). */
 function Dot({ status }: { status: Status }): JSX.Element {
+  return <Mark status={status} size={10} />;
+}
+
+/**
+ * Fixed status hues for each mode, like the other dashboard panels: the kiosk theme draws the theme
+ * success colour in near white, and a green mark must stay green.
+ */
+const HUES = {
+  dark: { up: '#66bb6a', degraded: '#ffa726', down: '#f44336', unknown: 'rgba(255,255,255,0.7)' },
+  light: { up: '#2e7d32', degraded: '#c75b00', down: '#d32f2f', unknown: 'rgba(0,0,0,0.6)' },
+} as const;
+
+function useHues() {
+  const dark = useTheme().palette.mode === 'dark';
+  const hue = HUES[dark ? 'dark' : 'light'];
+  const fill = (status: Status): string =>
+    status === 'unknown'
+      ? dark
+        ? 'rgba(255,255,255,0.08)'
+        : 'rgba(0,0,0,0.05)'
+      : alpha(
+          hue[status],
+          dark ? (status === 'down' ? 0.18 : 0.16) : status === 'down' ? 0.12 : 0.13
+        );
+  return { hue, fill, dark };
+}
+
+/** The status shape: circle up, triangle degraded, square down, ring no data. Never colour alone. */
+function Mark({ status, size = 12 }: { status: Status; size?: number }): JSX.Element {
+  const { hue } = useHues();
+  const c = hue[status];
   return (
-    <Box
-      component="span"
-      aria-label={STATUS_LABEL[status]}
+    <svg
       role="img"
-      sx={{ width: 10, height: 10, borderRadius: '50%', bgcolor: STATUS_DOT[status], flex: 'none' }}
-    />
+      aria-label={STATUS_LABEL[status]}
+      width={size}
+      height={size}
+      viewBox="0 0 12 12"
+      style={{ flex: 'none' }}
+    >
+      {status === 'up' && <circle cx="6" cy="6" r="5" fill={c} />}
+      {status === 'degraded' && <path d="M6 1 L11 11 L1 11 Z" fill={c} />}
+      {status === 'down' && <rect x="1.5" y="1.5" width="9" height="9" rx="1" fill={c} />}
+      {status === 'unknown' && (
+        <circle cx="6" cy="6" r="4" fill="none" stroke={c} strokeWidth="2" />
+      )}
+    </svg>
   );
+}
+
+/**
+ * The stat tiles above the rows: a large number over a small tinted chip with the status shape and
+ * the word. A zero count fades out, and the worst non-zero count takes its status colour.
+ */
+function UptimeTiles({ counts }: { counts: Record<Status, number> }): JSX.Element {
+  const { hue, fill, dark } = useHues();
+  const order: Status[] = ['up', 'degraded', 'down', 'unknown'];
+  const worst = (['down', 'degraded'] as Status[]).find(s => counts[s] > 0);
+  const faint = dark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)';
+  return (
+    <Box data-uptime-tiles sx={{ display: 'flex', gap: '10px', pt: '2px', pb: 1.25 }}>
+      {order.map(s => {
+        const zero = counts[s] === 0;
+        return (
+          <Box key={s} data-uptime-tile={s} sx={{ flex: '1 1 0', minWidth: 0 }}>
+            <Box
+              sx={{
+                fontSize: 'clamp(22px, 7cqw, 34px)',
+                lineHeight: 1.05,
+                fontVariantNumeric: 'tabular-nums',
+                color: zero ? faint : s === worst ? hue[s] : 'text.primary',
+              }}
+            >
+              {counts[s]}
+            </Box>
+            <Box
+              sx={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                mt: '6px',
+                px: '7px',
+                py: '2px',
+                borderRadius: '10px',
+                fontSize: 12.5,
+                lineHeight: 1.3,
+                color: zero ? faint : 'text.primary',
+                bgcolor: zero ? 'transparent' : fill(s),
+                boxShadow: zero
+                  ? `inset 0 0 0 1px ${dark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)'}`
+                  : 'none',
+                maxWidth: '100%',
+              }}
+            >
+              <Mark status={s} size={11} />
+              <span>{STATUS_LABEL[s]}</span>
+            </Box>
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+/** The summary line in the footer of the widget frame, or in place when there is no frame. */
+function FooterLine(props: {
+  footer?: HTMLElement | null;
+  status: Status;
+  children: React.ReactNode;
+}): JSX.Element {
+  const line = (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, fontSize: 13 }}>
+      <Mark status={props.status} size={13} />
+      <Box
+        component="span"
+        sx={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+      >
+        {props.children}
+      </Box>
+    </Box>
+  );
+  return props.footer ? createPortal(line, props.footer) : line;
 }
 
 function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; kiosk: boolean }) {
@@ -307,6 +412,31 @@ function countsText(group: UptimeGroup): string {
   return `${group.checks.length} · ${parts.join(' · ')}`;
 }
 
+/** The status word with its shape in a small tinted chip. It folds away in a narrow widget (see NARROW). */
+function StatusChip({ status }: { status: Status }): JSX.Element {
+  const { fill } = useHues();
+  return (
+    <Box
+      data-uptime-chip
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px',
+        px: '8px',
+        py: '2px',
+        borderRadius: '10px',
+        fontSize: 12.5,
+        lineHeight: 1.3,
+        bgcolor: fill(status),
+        [NARROW]: { display: 'none' },
+      }}
+    >
+      <Mark status={status} size={11} />
+      <span>{STATUS_LABEL[status]}</span>
+    </Box>
+  );
+}
+
 function GroupBlock(props: {
   group: UptimeGroup;
   grid: HistoryGrid;
@@ -317,8 +447,11 @@ function GroupBlock(props: {
 }): JSX.Element {
   const { group, grid, startSec, expanded, onToggle, kiosk } = props;
   const bodyId = React.useId();
+  const { fill } = useHues();
+  // A group that needs attention is a tinted band with square corners. A group that is up has none.
+  const band = group.status !== 'up';
   return (
-    <Box component="section" aria-label={group.key}>
+    <Box component="section" aria-label={group.key} data-uptime-group={group.status}>
       <Box
         component="button"
         type="button"
@@ -335,8 +468,8 @@ function GroupBlock(props: {
           px: 1,
           ...NARROW_ROW,
           border: 0,
-          borderRadius: 1,
-          background: 'transparent',
+          borderRadius: 0,
+          background: band ? fill(group.status) : 'transparent',
           color: 'inherit',
           font: 'inherit',
           textAlign: 'left',
@@ -365,12 +498,7 @@ function GroupBlock(props: {
         >
           ›
         </Box>
-        <Chip
-          size="small"
-          label={STATUS_LABEL[group.status]}
-          color={STATUS_CHIP[group.status]}
-          sx={{ width: '100%', [NARROW]: { display: 'none' } }}
-        />
+        <StatusChip status={group.status} />
         <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'name' } }}>
           <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, minWidth: 0 }}>
             <Box
@@ -439,12 +567,110 @@ function GroupBlock(props: {
   );
 }
 
+/**
+ * The groups that are up fold into one row: "N more up, worst of each period" with its own history
+ * strip, the worst of every period over all of them. A tap opens the list of those groups.
+ */
+function FoldedUp(props: {
+  groups: UptimeGroup[];
+  grid: HistoryGrid;
+  startSec: number;
+  open: boolean;
+  onToggle: () => void;
+  kiosk: boolean;
+}): JSX.Element {
+  const { groups, grid, startSec, open, onToggle, kiosk } = props;
+  const { fill } = useHues();
+  const checks = React.useMemo(() => groups.flatMap(g => g.checks), [groups]);
+  const history = React.useMemo(() => worstHistory(checks, grid.buckets), [checks, grid.buckets]);
+  const text = `${groups.length} more up, worst of each period`;
+  return (
+    <Box
+      component="button"
+      type="button"
+      data-uptime-fold
+      onClick={onToggle}
+      aria-expanded={open}
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: ROW_COLUMNS,
+        alignItems: 'center',
+        columnGap: 1,
+        width: '100%',
+        minHeight: kiosk ? 48 : 36,
+        px: 1,
+        ...NARROW_ROW,
+        border: 0,
+        borderRadius: 0,
+        background: fill('up'),
+        color: 'inherit',
+        font: 'inherit',
+        textAlign: 'left',
+        cursor: 'pointer',
+        touchAction: 'manipulation',
+        WebkitTapHighlightColor: 'transparent',
+      }}
+    >
+      <Box
+        component="span"
+        aria-hidden
+        sx={{
+          display: 'inline-block',
+          textAlign: 'center',
+          transform: open ? 'rotate(90deg)' : 'none',
+          transition: 'transform 120ms',
+          [NARROW]: { gridArea: 'lead', alignSelf: 'start', pt: 0.25 },
+        }}
+      >
+        ›
+      </Box>
+      <StatusChip status="up" />
+      <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'name' } }}>
+        <Typography
+          variant="body2"
+          title={text}
+          sx={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            [NARROW]: { whiteSpace: 'normal' },
+          }}
+        >
+          {text}
+        </Typography>
+        <Typography variant="caption" color="text.secondary" component="div">
+          {checks.length} checks
+        </Typography>
+      </Box>
+      <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'strip', pr: 1 } }}>
+        <HistoryStrip
+          history={history}
+          startSec={startSec}
+          stepSec={grid.stepSec}
+          label={`${text}: the worst of ${checks.length} checks per period over ${gridLabel(grid)}`}
+          height={kiosk ? 22 : 18}
+          minWidth={64}
+          tooltips="native"
+        />
+      </Box>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ textAlign: 'right', pl: 1, [NARROW]: { gridArea: 'pct', alignSelf: 'start' } }}
+      >
+        {formatPercent(meanAvailability(history))}
+      </Typography>
+    </Box>
+  );
+}
+
 function UptimeTargetsWidget({
   config,
   filters,
   refreshSignal,
   reportRefreshed,
   kiosk,
+  footer,
 }: WidgetProps<UptimeWidgetConfig>): JSX.Element {
   const settings = normaliseConfig(config);
   const grid = React.useMemo(
@@ -491,6 +717,8 @@ function UptimeTargetsWidget({
           expandedByDefault={settings.expanded}
           onlyFailing={settings.onlyFailing}
           kiosk={kiosk}
+          footer={footer}
+          checks={visible}
         />
       )}
     </Scroller>
@@ -534,8 +762,11 @@ function TargetGroups(props: {
   expandedByDefault: boolean;
   onlyFailing: boolean;
   kiosk: boolean;
+  footer?: HTMLElement | null;
+  checks: Check[];
 }): JSX.Element {
   const { groups, grid, expandedByDefault, kiosk } = props;
+  const [foldOpen, setFoldOpen] = React.useState(false);
   // The groups the user flipped away from the default.
   const [flipped, setFlipped] = React.useState<ReadonlySet<string>>(new Set());
   const toggle = (key: string) =>
@@ -547,6 +778,30 @@ function TargetGroups(props: {
     });
   const startSec = historyStart(props.at ? props.at / 1000 : Date.now() / 1000, grid);
   const failingGroups = groups.filter(g => g.status === 'down' || g.status === 'degraded').length;
+  const counts = React.useMemo(() => {
+    const c: Record<Status, number> = { up: 0, degraded: 0, down: 0, unknown: 0 };
+    for (const ch of props.checks) c[ch.status] += 1;
+    return c;
+  }, [props.checks]);
+  // Groups that need attention come first as bands. The groups that are up fold into one row when
+  // some group needs attention. All groups up: they list as they are.
+  const attention = groups.filter(g => g.status !== 'up');
+  const upGroups = groups.filter(g => g.status === 'up');
+  const fold = attention.length > 0 && upGroups.length > 0;
+  const listed = fold ? attention : groups;
+  const renderGroup = (g: UptimeGroup) => (
+    <GroupBlock
+      key={g.key}
+      group={g}
+      grid={grid}
+      startSec={startSec}
+      expanded={expandedByDefault !== flipped.has(g.key)}
+      onToggle={() => toggle(g.key)}
+      kiosk={kiosk}
+    />
+  );
+  const summaryStatus: Status =
+    counts.down > 0 ? 'down' : counts.degraded > 0 ? 'degraded' : counts.up > 0 ? 'up' : 'unknown';
   return (
     <Box>
       {props.error && (
@@ -569,29 +824,29 @@ function TargetGroups(props: {
       )}
       {!props.failed && props.total > 0 && (
         <>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            component="div"
-            sx={{ px: 1, pb: 0.5 }}
-          >
-            {groups.length} groups by {props.resolved} · {props.total} checks · {failingGroups}{' '}
-            failing · last {gridLabel(grid)}
-          </Typography>
+          <UptimeTiles counts={counts} />
           {groups.length === 0 && props.onlyFailing && (
             <Alert severity="success">No group is failing.</Alert>
           )}
-          {groups.map(g => (
-            <GroupBlock
-              key={g.key}
-              group={g}
-              grid={grid}
-              startSec={startSec}
-              expanded={expandedByDefault !== flipped.has(g.key)}
-              onToggle={() => toggle(g.key)}
-              kiosk={kiosk}
-            />
-          ))}
+          {listed.map(renderGroup)}
+          {fold && (
+            <>
+              <FoldedUp
+                groups={upGroups}
+                grid={grid}
+                startSec={startSec}
+                open={foldOpen}
+                onToggle={() => setFoldOpen(o => !o)}
+                kiosk={kiosk}
+              />
+              {foldOpen && upGroups.map(renderGroup)}
+            </>
+          )}
+          <FooterLine footer={props.footer} status={summaryStatus}>
+            {counts.up} up, {counts.degraded} degraded, {counts.down} down, {counts.unknown} no
+            data. {groups.length} groups by {props.resolved}, {failingGroups} failing, last{' '}
+            {gridLabel(grid)}
+          </FooterLine>
         </>
       )}
     </Box>
