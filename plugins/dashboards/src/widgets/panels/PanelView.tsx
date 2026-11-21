@@ -193,9 +193,7 @@ export function PanelView({
             ))}
           </Box>
         ))}
-      {(panel.rings.length > 0 ||
-        panel.tables.length > 0 ||
-        (!ownScroll && rows.length > 0)) && (
+      {(panel.rings.length > 0 || panel.tables.length > 0 || (!ownScroll && rows.length > 0)) && (
         <ScrollArea
           label="Rows"
           sx={ownScroll ? { flex: '0 1 auto', maxHeight: '45%' } : undefined}

@@ -177,7 +177,9 @@ describe('SunburstChart', () => {
       })),
     };
     const { container } = render(wrap(<SunburstChart data={big} title="CPU" format={fmt} />));
-    const area = container.querySelector('[data-scroll-area]') as HTMLElement;
+    const area = container.querySelector('ul[aria-label="CPU groups"]') as HTMLElement;
+    expect(getComputedStyle(area).overflowY).toBe('auto');
+    expect(getComputedStyle(area).overscrollBehavior).toBe('contain');
     expect(area.querySelectorAll('[data-legend-group]')).toHaveLength(12);
     expect(area.querySelectorAll('[data-legend-child]')).toHaveLength(108);
     expect(container.textContent).not.toMatch(/\bmore\b|\bOther\b/);
