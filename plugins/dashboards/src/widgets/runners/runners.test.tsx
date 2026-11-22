@@ -22,6 +22,7 @@ import {
   groupRuns,
   joinRunners,
   orderRuns,
+  placeOf,
   progressOf,
   splitRepo,
   STEP_GAP,
@@ -665,5 +666,216 @@ describe('the grouped list', () => {
   it('has no "more" row and no "Other" group', () => {
     const { container } = drawOpen();
     expect(container.textContent).not.toMatch(/\d+ more|\bOther\b/);
+  });
+});
+
+describe('job counts in the group headers', () => {
+  const withCounts = (
+    id: string,
+    repo: string,
+    state: string,
+    seconds: number,
+    counts: unknown,
+    extra: Record<string, unknown> = {}
+  ) => ({ ...run(id, repo, state, seconds), counts, ...extra });
+  const jobsPanel = parsePanel({
+    version: 1,
+    id: 'runs',
+    title: 'Runs',
+    status: 'ok',
+    summary: '',
+    jobs: { running: 13, queued: 5 },
+    runs: [
+      withCounts('c1', 'org-a/web', 'running', 100, { running: 4, queued: 2 }),
+      withCounts('c2', 'org-a/web', 'running', 50, { running: 1, queued: 0 }),
+      withCounts('c3', 'org-a/api', 'running', 10, { running: 2, queued: 1 }),
+      withCounts('c4', 'org-b/app', 'queued', 300, { running: 0, queued: 2 }),
+      withCounts('c5', 'org-b/app', 'running', 20, { running: 6, queued: 0 }),
+    ],
+  });
+  const runsOnly = (panel: typeof jobsPanel) => panel.runs;
+
+  it('parses the counts of each run and the totals of the source', () => {
+    expect(jobsPanel.jobs).toEqual({ running: 13, queued: 5 });
+    expect(jobsPanel.runs.map(r => r.counts)).toEqual([
+      { running: 4, queued: 2 },
+      { running: 1, queued: 0 },
+      { running: 2, queued: 1 },
+      { running: 0, queued: 2 },
+      { running: 6, queued: 0 },
+    ]);
+  });
+
+  it('never throws on bad counts, and leaves them out', () => {
+    const bad = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      jobs: { running: 'many', queued: 1 },
+      runs: [
+        withCounts('b1', 'o/r', 'running', 1, { running: -1, queued: 0 }),
+        withCounts('b2', 'o/r', 'running', 1, 'none'),
+        withCounts('b3', 'o/r', 'running', 1, { running: 1 }),
+        withCounts('b4', 'o/r', 'running', 1, null),
+        withCounts('b5', 'o/r', 'running', 1, { running: 2.9, queued: 1 }),
+      ],
+    });
+    expect(bad.jobs).toBeUndefined();
+    expect(bad.runs.map(r => r.counts)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { running: 2, queued: 1 },
+    ]);
+  });
+
+  it('sums the counts of the runs in each org and repo, not the number of runs', () => {
+    const groups = groupRuns(runsOnly(jobsPanel));
+    const a = groups.find(g => g.name === 'org-a')!;
+    const b = groups.find(g => g.name === 'org-b')!;
+    expect(a).toMatchObject({ running: 7, queued: 3 });
+    expect(b).toMatchObject({ running: 6, queued: 2 });
+    expect(a.repos.find(r => r.name === 'web')).toMatchObject({ running: 5, queued: 2 });
+    expect(a.repos.find(r => r.name === 'api')).toMatchObject({ running: 2, queued: 1 });
+    expect(groups.reduce((n, g) => n + g.running, 0)).toBe(13);
+    expect(groups.reduce((n, g) => n + g.queued, 0)).toBe(5);
+  });
+
+  it('orders by the running job count, then by the longest time', () => {
+    const groups = groupRuns(runsOnly(jobsPanel));
+    expect(groups.map(g => g.name)).toEqual(['org-a', 'org-b']);
+    expect(groups[0].repos.map(r => r.name)).toEqual(['web', 'api']);
+    const flip = groupRuns([
+      withCounts('f1', 'o/few', 'running', 900, { running: 1, queued: 0 }),
+      withCounts('f2', 'o/many', 'running', 5, { running: 3, queued: 0 }),
+    ] as never);
+    expect(flip[0].repos.map(r => r.name)).toEqual(['many', 'few']);
+  });
+
+  it('counts a job that is only assigned to a runner as running', () => {
+    const p = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      runs: [
+        withCounts(
+          's1',
+          'o/r',
+          'queued',
+          5,
+          { running: 1, queued: 0 },
+          {
+            jobs: [
+              { id: 'j', name: 'build', state: 'queued', phase: 'assigned', seconds: 5, steps: [] },
+            ],
+          }
+        ),
+      ],
+    });
+    expect(p.runs[0].jobs[0]).toMatchObject({ state: 'queued', phase: 'assigned' });
+    expect(groupRuns(p.runs)[0]).toMatchObject({ running: 1, queued: 0 });
+  });
+
+  it('falls back to one job for each run when the counts are missing', () => {
+    const groups = groupRuns(grouped.runs);
+    const a = groups.find(g => g.name === 'org-a')!;
+    expect(a).toMatchObject({ running: 3, queued: 1 });
+    const mixed = groupRuns([
+      withCounts('m1', 'o/r', 'running', 5, { running: 4, queued: 1 }),
+      run('m2', 'o/r', 'queued', 9),
+    ] as never);
+    expect(mixed[0]).toMatchObject({ running: 4, queued: 2 });
+  });
+
+  it('shows no unlisted note when the listed jobs equal the totals, or no totals exist', () => {
+    expect(joinRunners({ pools, queue, runs: jobsPanel }).unlisted).toBe(0);
+    expect(joinRunners({ pools, queue, runs: grouped }).unlisted).toBe(0);
+    expect(joinRunners({ pools, queue, runs: null }).unlisted).toBe(0);
+    const { container } = viewFolded(joinRunners({ pools, queue, runs: jobsPanel }));
+    expect(container.querySelector('[data-runners-unlisted]')).toBeNull();
+  });
+
+  it('shows the jobs of the runs that the source did not list, with no Other group', () => {
+    const capped = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      summary: '',
+      jobs: { running: 20, queued: 6 },
+      runs: jobsPanel.runs,
+    });
+    const model = joinRunners({ pools, queue, runs: capped });
+    expect(model.unlisted).toBe(7 + 1);
+    const { container } = viewFolded(model);
+    expect(container.querySelector('[data-runners-unlisted]')?.textContent).toMatch(
+      /\+8 jobs not listed/
+    );
+    expect(container.querySelector('[data-runners-summary]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/\d+ more|\bOther\b/);
+    const one = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      jobs: { running: 14, queued: 5 },
+      runs: jobsPanel.runs,
+    });
+    const v = viewFolded(joinRunners({ pools, queue, runs: one }));
+    expect(v.container.querySelector('[data-runners-unlisted]')?.textContent).toMatch(
+      /\+1 job not listed/
+    );
+  });
+
+  it('keeps a run of an unknown repo under its org, in a row that says so', () => {
+    const p = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      jobs: { running: 5, queued: 2 },
+      runs: [
+        withCounts('u1', 'org-a', 'queued', 40, { running: 0, queued: 2 }, { repoKnown: false }),
+        withCounts('u2', 'org-a/web', 'running', 10, { running: 5, queued: 0 }),
+      ],
+    });
+    expect(p.runs.map(r => r.repoKnown)).toEqual([false, true]);
+    const groups = groupRuns(p.runs);
+    expect(groups.map(g => g.name)).toEqual(['org-a']);
+    expect(groups[0]).toMatchObject({ running: 5, queued: 2 });
+    expect(groups[0].repos.map(r => [r.name, r.running, r.queued])).toEqual([
+      ['web', 5, 0],
+      ['Repo not known', 0, 2],
+    ]);
+    expect(groups.flatMap(g => g.repos.flatMap(r => r.runs))).toHaveLength(2);
+    expect(placeOf({ repo: 'org-a', repoKnown: false })).toEqual({
+      org: 'org-a',
+      name: 'Repo not known',
+    });
+    expect(placeOf({ repo: 'org-a/web', repoKnown: true })).toEqual({ org: 'org-a', name: 'web' });
+  });
+
+  it('treats a missing repoKnown as known, so older data groups as before', () => {
+    const p = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      runs: [run('k1', 'org-a/web', 'running', 1)],
+    });
+    expect(p.runs[0].repoKnown).toBe(true);
+    expect(groupRuns(p.runs)[0].repos[0].name).toBe('web');
+  });
+
+  it('draws the sums in the headers, and the sum of the orgs equals the tiles', () => {
+    const model = joinRunners({ pools, queue, runs: jobsPanel });
+    const { container } = viewFolded(model);
+    const sum = (attr: string) =>
+      [...container.querySelectorAll(`[data-group="org"] [${attr}]`)].reduce(
+        (n, e) => n + Number(/\d+/.exec(e.textContent ?? '')?.[0] ?? 0),
+        0
+      );
+    expect(sum('data-group-running')).toBe(13);
+    expect(sum('data-group-queued')).toBe(5);
+    const web = container.querySelector('[data-group="repo"][data-group-key="org-a/web"]')!;
+    expect(web.querySelector('[data-group-running]')?.textContent).toBe('5 running');
+    expect(web.querySelector('[data-group-queued]')?.textContent).toBe('2 queued');
   });
 });

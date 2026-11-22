@@ -151,6 +151,16 @@ export type StepState = 'done' | 'running' | 'failed' | 'skipped' | 'pending';
 const RUN_STATES: RunState[] = ['running', 'queued'];
 const STEP_STATES: StepState[] = ['done', 'running', 'failed', 'skipped', 'pending'];
 
+/** Where a job stands: on a runner, assigned to a runner that has not started it, or waiting. */
+export type JobPhase = 'running' | 'assigned' | 'queued';
+const JOB_PHASES: JobPhase[] = ['running', 'assigned', 'queued'];
+
+/** A count of jobs. `running` includes the jobs that are assigned to a runner. */
+export interface JobCounts {
+  running: number;
+  queued: number;
+}
+
 export interface PanelStep {
   name: string;
   state: StepState;
@@ -161,6 +171,8 @@ export interface PanelJob {
   id: string;
   name: string;
   state: RunState;
+  /** `assigned` counts as running in the job counts, while `state` is still `queued`. */
+  phase: JobPhase;
   pool: string;
   /** Seconds the job has run (running) or waited (queued). */
   seconds: number;
@@ -173,7 +185,10 @@ export interface PanelJob {
  */
 export interface PanelRun {
   id: string;
+  /** `owner/repo`. Only the owner when `repoKnown` is false. */
   repo: string;
+  /** False when the source knows only the owner of the run, not its repository. */
+  repoKnown: boolean;
   workflow: string;
   /** The branch or pull request of the run. */
   ref: string;
@@ -182,6 +197,11 @@ export interface PanelRun {
   /** Seconds the run has run (running) or waited (queued). */
   seconds: number;
   link?: string;
+  /**
+   * The jobs of this run, counted before the source cut the list of jobs. Missing in the data of
+   * an older source.
+   */
+  counts?: JobCounts;
   jobs: PanelJob[];
 }
 
@@ -198,6 +218,11 @@ export interface PanelModel {
   rings: PanelRing[];
   tables: PanelTable[];
   runs: PanelRun[];
+  /**
+   * The totals of all jobs of the source, counted before the source cut the list of runs. Missing
+   * in the data of an older source.
+   */
+  jobs?: JobCounts;
 }
 
 export interface PanelInfo {
@@ -416,14 +441,26 @@ const oneOf = <T extends string>(v: unknown, list: ReadonlyArray<T>, fallback: T
   list.includes(v as T) ? (v as T) : fallback;
 const seconds = (v: unknown): number => Math.max(0, num(v));
 
+/** A pair of job counts, or undefined when the value is not a pair of non-negative numbers. */
+function parseJobCounts(raw: unknown): JobCounts | undefined {
+  if (!isObject(raw)) return undefined;
+  const count = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined;
+  const running = count(raw.running);
+  const queued = count(raw.queued);
+  return running === undefined || queued === undefined ? undefined : { running, queued };
+}
+
 function parseJob(raw: unknown): PanelJob | null {
   if (!isObject(raw)) return null;
   const name = str(raw.name);
   if (name === '') return null;
+  const state = oneOf(raw.state, RUN_STATES, 'running');
   return {
     id: str(raw.id, name),
     name,
-    state: oneOf(raw.state, RUN_STATES, 'running'),
+    state,
+    phase: oneOf(raw.phase, JOB_PHASES, state),
     pool: str(raw.pool),
     seconds: seconds(raw.seconds),
     steps: array(raw.steps)
@@ -438,15 +475,18 @@ function parseRun(raw: unknown): PanelRun | null {
   if (repo === '') return null;
   const workflow = str(raw.workflow);
   const ref = str(raw.ref);
+  const counts = parseJobCounts(raw.counts);
   return {
     id: str(raw.id, `${repo} ${workflow} ${ref}`),
     repo,
+    repoKnown: raw.repoKnown !== false,
     workflow,
     ref,
     pool: str(raw.pool),
     state: oneOf(raw.state, RUN_STATES, 'queued'),
     seconds: seconds(raw.seconds),
     link: safeLink(raw.link),
+    ...(counts ? { counts } : {}),
     jobs: array(raw.jobs)
       .map(parseJob)
       .filter((j): j is PanelJob => j !== null),
@@ -496,6 +536,7 @@ export function parsePanel(json: unknown): PanelModel {
   checkVersion(json, 'a panel');
   const id = str(json.id);
   if (id === '') throw new Error('The source sent a panel with no id.');
+  const jobs = parseJobCounts(json.jobs);
   return {
     id,
     title: str(json.title, id),
@@ -552,6 +593,7 @@ export function parsePanel(json: unknown): PanelModel {
     runs: array(json.runs)
       .map(parseRun)
       .filter((r): r is PanelRun => r !== null),
+    ...(jobs ? { jobs } : {}),
   };
 }
 

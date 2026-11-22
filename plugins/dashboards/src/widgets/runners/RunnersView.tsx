@@ -506,7 +506,7 @@ function JobRow(props: {
           </Box>
         </Box>
         <Box sx={{ pl: '20px' }}>
-          <Progress steps={job.steps} waiting={job.state === 'queued'} />
+          <Progress steps={job.steps} waiting={job.phase === 'queued'} />
         </Box>
       </Box>
       {open && hasSteps && <StepList steps={job.steps} depth={depth} />}
@@ -889,6 +889,14 @@ export function RunnersView(props: {
       </ScrollArea>
       <WidgetFooter status={model.status}>
         <span data-runners-summary>{model.summary}</span>
+        {model.tree && model.unlisted > 0 && (
+          <span
+            data-runners-unlisted
+            title="The source lists a limited number of runs. These jobs belong to runs that are not in the list. The tiles count them."
+          >
+            {`, +${model.unlisted} ${model.unlisted === 1 ? 'job' : 'jobs'} not listed`}
+          </span>
+        )}
       </WidgetFooter>
     </Box>
   );
