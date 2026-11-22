@@ -878,4 +878,93 @@ describe('job counts in the group headers', () => {
     expect(web.querySelector('[data-group-running]')?.textContent).toBe('5 running');
     expect(web.querySelector('[data-group-queued]')?.textContent).toBe('2 queued');
   });
+
+  describe('one snapshot for the tiles and the headers', () => {
+    // The pools panel is from an older moment: other generatedAt and other totals.
+    const older = parsePanel({
+      version: 1,
+      id: 'pools',
+      title: 'Pools',
+      status: 'ok',
+      summary: '2 pools, 9 running, 1 queued',
+      generatedAt: '2026-11-22T12:42:45Z',
+      stats: [
+        { label: 'Running', value: '9', status: 'ok' },
+        { label: 'Queued', value: '1', status: 'ok' },
+        { label: 'Free', value: '390', status: 'ok' },
+        { label: 'Pools', value: '2', status: 'ok' },
+      ],
+      rows: [
+        { label: 'pool-a', detail: '4 running, 1 queued, 195 free', value: '4/200', status: 'ok' },
+        { label: 'pool-b', detail: '5 running, 0 queued, 195 free', value: '5/200', status: 'ok' },
+      ],
+    });
+    const newer = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      status: 'ok',
+      summary: '',
+      generatedAt: '2026-11-22T12:43:08Z',
+      jobs: { running: 13, queued: 5 },
+      runs: jobsPanel.runs,
+    });
+    const tile = (c: HTMLElement, label: string): string | undefined =>
+      [...c.querySelectorAll('[data-stat]')]
+        .find(e => e.querySelector('[data-stat-label]')?.textContent === label)
+        ?.querySelector('[data-stat-value]')?.textContent ?? undefined;
+
+    it('takes Running, Queued and the summary from the runs panel, not the older pools panel', () => {
+      const model = joinRunners({ pools: older, queue, runs: newer });
+      expect(model.stats.map(s => [s.label, s.value])).toEqual([
+        ['Running', '13'],
+        ['Queued', '5'],
+        ['Free', '390'],
+        ['Pools', '2'],
+        ['Oldest wait', '35s'],
+      ]);
+      expect(model.summary).toBe('2 pools, 13 running, 5 queued');
+    });
+
+    it('draws tiles that equal the sums of the org headers', () => {
+      const { container } = viewFolded(joinRunners({ pools: older, queue, runs: newer }));
+      const sum = (attr: string) =>
+        [...container.querySelectorAll(`[data-group="org"] [${attr}]`)].reduce(
+          (n, e) => n + Number(/\d+/.exec(e.textContent ?? '')?.[0] ?? 0),
+          0
+        );
+      expect(tile(container, 'Running')).toBe(String(sum('data-group-running')));
+      expect(tile(container, 'Queued')).toBe(String(sum('data-group-queued')));
+      expect(container.querySelector('[data-runners-summary]')?.textContent).toBe(
+        '2 pools, 13 running, 5 queued'
+      );
+      expect(container.querySelector('[data-runners-unlisted]')).toBeNull();
+      // The rings still come from the pools panel.
+      expect([...container.querySelectorAll('[data-pool-value]')].map(v => v.textContent)).toEqual([
+        '4/200',
+        '5/200',
+      ]);
+    });
+
+    it('counts the unlisted jobs against the same totals as the tiles', () => {
+      const capped = parsePanel({
+        version: 1,
+        id: 'runs',
+        title: 'Runs',
+        jobs: { running: 20, queued: 6 },
+        runs: jobsPanel.runs,
+      });
+      const model = joinRunners({ pools: older, queue, runs: capped });
+      expect(model.stats[0].value).toBe('20');
+      expect(model.stats[1].value).toBe('6');
+      expect(model.unlisted).toBe(20 - 13 + (6 - 5));
+    });
+
+    it('falls back to the pools stats and summary when the runs panel has no job totals', () => {
+      const noTotals = parsePanel({ version: 1, id: 'runs', title: 'Runs', runs: jobsPanel.runs });
+      const model = joinRunners({ pools: older, queue, runs: noTotals });
+      expect(model.stats.slice(0, 2).map(s => s.value)).toEqual(['9', '1']);
+      expect(model.summary).toBe('2 pools, 9 running, 1 queued');
+    });
+  });
 });

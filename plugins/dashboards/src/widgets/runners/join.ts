@@ -2,6 +2,9 @@
  * The model of the runner widget (`runners.overview`): the pools panel, the queue panel and the
  * optional `runs` panel of one runner source, joined in the browser. The pools give one ring each.
  * The `runs` panel gives the tree of running and queued workflow runs with their jobs and steps.
+ * The Running and Queued tiles and the summary come from the `runs` panel (`jobs`), the same
+ * snapshot as the org headers. The pools panel is a separate request and can be from another
+ * moment, so it only gives the rings, Free and Pools, unless the `runs` panel has no `jobs`.
  * A source with no `runs` panel still works: the rows of the queue panel are the list, with no tree.
  */
 import type {
@@ -271,6 +274,15 @@ const stat = (label: string, value: string, status: PanelStatus = 'ok'): Stat =>
   status,
 });
 
+/** "2 pools, 34 running, 13 queued": the pools panel wording, with the counts of the runs panel. */
+function summaryOf(poolCount: number, totals: JobCounts): string {
+  return [
+    ...(poolCount > 0 ? [`${poolCount} ${poolCount === 1 ? 'pool' : 'pools'}`] : []),
+    `${totals.running} running`,
+    `${totals.queued} queued`,
+  ].join(', ');
+}
+
 export function joinRunners(input: {
   pools: PanelModel | null;
   queue: PanelModel | null;
@@ -281,14 +293,21 @@ export function joinRunners(input: {
   const fromPools = (label: string): Stat | undefined =>
     input.pools?.stats.find(s => s.label.toLowerCase() === label);
   const sum = (pick: (p: RunnerPool) => number): number => pools.reduce((n, p) => n + pick(p), 0);
-  const running = fromPools('running') ?? stat('Running', String(sum(p => p.running)));
-  const queued = fromPools('queued') ?? stat('Queued', String(sum(p => p.queued)));
+  const totals = input.runs?.jobs;
+  // One snapshot: the runs panel gives the job totals, the tree and the org headers, so the tiles
+  // and the headers always agree. The pools panel is fetched at another moment and can differ.
+  // Only a source with no job totals falls back to the pools stats.
+  const running = totals
+    ? stat('Running', String(totals.running), fromPools('running')?.status ?? 'ok')
+    : fromPools('running') ?? stat('Running', String(sum(p => p.running)));
+  const queued = totals
+    ? stat('Queued', String(totals.queued), fromPools('queued')?.status ?? 'ok')
+    : fromPools('queued') ?? stat('Queued', String(sum(p => p.queued)));
   const free = fromPools('free') ?? stat('Free', String(sum(p => p.free)));
   const poolCount = fromPools('pools') ?? stat('Pools', String(pools.length));
   const oldest =
     queueStats.find(s => s.label.toLowerCase() === 'oldest') ?? stat('Oldest wait', '-');
   const runs = input.runs ? orderRuns(input.runs.runs) : [];
-  const totals = input.runs?.jobs;
   const listed = tally(runs);
   const unlisted = totals
     ? Math.max(0, totals.running - listed.running) + Math.max(0, totals.queued - listed.queued)
@@ -297,7 +316,9 @@ export function joinRunners(input: {
     ...(input.pools ? [input.pools.status] : []),
     ...(input.queue ? [input.queue.status] : []),
   ]);
-  const summary = input.pools?.summary || input.queue?.summary || '';
+  const summary = totals
+    ? summaryOf(pools.length, totals)
+    : input.pools?.summary || input.queue?.summary || '';
   return {
     pools,
     stats: [running, queued, free, poolCount, { ...oldest, label: 'Oldest wait' }],
