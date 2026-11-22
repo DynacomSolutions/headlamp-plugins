@@ -142,7 +142,14 @@ const runs = parsePanel({
 });
 
 const LINKS = { base: '/c/main', dashboard: 'ops', tabs: ['overview', 'runners'] };
-const view = (model: ReturnType<typeof joinRunners>, mode: 'dark' | 'light' = 'dark') =>
+/** Open every repo group, so a test can reach the run rows. A repo is folded at first. */
+const openRepos = (container: HTMLElement) => {
+  for (const h of container.querySelectorAll('[data-group="repo"][aria-expanded="false"]')) {
+    fireEvent.click(h);
+  }
+};
+
+const viewFolded = (model: ReturnType<typeof joinRunners>, mode: 'dark' | 'light' = 'dark') =>
   render(
     <ThemeProvider theme={createTheme({ palette: { mode } })}>
       <MemoryRouter>
@@ -152,6 +159,13 @@ const view = (model: ReturnType<typeof joinRunners>, mode: 'dark' | 'light' = 'd
       </MemoryRouter>
     </ThemeProvider>
   );
+
+/** The view with every repo open, for the tests about the rows under a repo. */
+const view = (model: ReturnType<typeof joinRunners>, mode: 'dark' | 'light' = 'dark') => {
+  const r = viewFolded(model, mode);
+  openRepos(r.container);
+  return r;
+};
 
 describe('parsers', () => {
   it('reads the counts of a pool row and its cap', () => {
@@ -501,24 +515,53 @@ describe('grouping by org and repo', () => {
 });
 
 describe('the grouped list', () => {
-  const draw = () => view(joinRunners({ pools, queue, runs: grouped }));
+  const draw = () => viewFolded(joinRunners({ pools, queue, runs: grouped }));
+  const drawOpen = () => view(joinRunners({ pools, queue, runs: grouped }));
 
-  it('opens every org and repo group, with the runs under them in order', () => {
+  const HEADS = [
+    'org:org-a',
+    'repo:org-a/web',
+    'repo:org-a/api',
+    'org:org-c',
+    'repo:org-c/tool',
+    'org:org-b',
+    'repo:org-b/app',
+    'org:No org',
+    'repo:No org/loose',
+  ];
+  const headsOf = (container: HTMLElement) =>
+    [...container.querySelectorAll('[data-group]')].map(
+      h => `${h.getAttribute('data-group')}:${h.getAttribute('data-group-key')}`
+    );
+
+  it('opens every org and folds every repo at first, so no run row shows', () => {
     const { container } = draw();
     const heads = [...container.querySelectorAll('[data-group]')];
-    expect(
-      heads.map(h => `${h.getAttribute('data-group')}:${h.getAttribute('data-group-key')}`)
-    ).toEqual([
-      'org:org-a',
-      'repo:org-a/web',
-      'repo:org-a/api',
-      'org:org-c',
-      'repo:org-c/tool',
-      'org:org-b',
-      'repo:org-b/app',
-      'org:No org',
-      'repo:No org/loose',
-    ]);
+    expect(headsOf(container)).toEqual(HEADS);
+    for (const h of heads) {
+      expect(h.getAttribute('aria-expanded')).toBe(
+        h.getAttribute('data-group') === 'org' ? 'true' : 'false'
+      );
+    }
+    expect(container.querySelector('[data-run]')).toBeNull();
+  });
+
+  it('keeps the counts and the longest time on a folded repo header', () => {
+    const { container } = draw();
+    const web = container.querySelector('[data-group="repo"][data-group-key="org-a/web"]')!;
+    expect(web.getAttribute('aria-expanded')).toBe('false');
+    expect(web.querySelector('[data-group-running]')?.textContent).toBe('2 running');
+    expect(web.querySelector('[data-group-queued]')?.textContent).toBe('1 queued');
+    expect(web.querySelector('[data-time]')?.textContent).toBe('3m 20s');
+    const loose = container.querySelector('[data-group="repo"][data-group-key="No org/loose"]')!;
+    expect(loose.querySelector('[data-group-running]')).toBeNull();
+    expect(loose.querySelector('[data-group-queued]')?.textContent).toBe('1 queued');
+  });
+
+  it('opens a repo to show its runs in order', () => {
+    const { container } = drawOpen();
+    const heads = [...container.querySelectorAll('[data-group]')];
+    expect(headsOf(container)).toEqual(HEADS);
     for (const h of heads) expect(h.getAttribute('aria-expanded')).toBe('true');
     expect(
       [...container.querySelectorAll('[data-run]')].map(r => r.getAttribute('data-run'))
@@ -538,7 +581,7 @@ describe('the grouped list', () => {
   });
 
   it('does not repeat the org and repo in a run row', () => {
-    const { container } = draw();
+    const { container } = drawOpen();
     const row = container.querySelector('[data-run="a3"]')!;
     expect(row.textContent).toContain('wf-a3');
     expect(row.textContent).toContain('main');
@@ -548,7 +591,7 @@ describe('the grouped list', () => {
   });
 
   it('indents each level further', () => {
-    const { container } = draw();
+    const { container } = drawOpen();
     const pad = (sel: string) =>
       parseFloat(getComputedStyle(container.querySelector(sel)!).paddingLeft);
     expect(pad('[data-group="org"]')).toBe(0);
@@ -556,34 +599,39 @@ describe('the grouped list', () => {
     expect(pad('[data-run="a3"]')).toBeGreaterThan(pad('[data-group="repo"]'));
   });
 
-  it('folds a repo and an org, then opens them again', () => {
+  it('opens a repo and folds an org, then reverses both', () => {
     const { container } = draw();
-    fireEvent.click(container.querySelector('[data-group-key="org-a/web"]')!);
-    expect(container.querySelector('[data-run="a3"]')).toBeNull();
-    expect(container.querySelector('[data-run="a2"]')).not.toBeNull();
-    expect(
-      container.querySelector('[data-group-key="org-a/web"]')!.getAttribute('aria-expanded')
-    ).toBe('false');
-    fireEvent.click(container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
-    expect(container.querySelector('[data-group-key="org-a/api"]')).toBeNull();
+    const group = (key: string) => container.querySelector(`[data-group-key="${key}"]`)!;
+    fireEvent.click(group('org-a/web'));
+    expect(group('org-a/web').getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('[data-run="a3"]')).not.toBeNull();
     expect(container.querySelector('[data-run="a2"]')).toBeNull();
-    expect(container.querySelector('[data-run="a6"]')).not.toBeNull();
-    fireEvent.click(container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
-    expect(container.querySelector('[data-run="a2"]')).not.toBeNull();
+    fireEvent.click(group('org-a'));
+    expect(container.querySelector('[data-group-key="org-a/api"]')).toBeNull();
+    expect(container.querySelector('[data-run="a3"]')).toBeNull();
+    expect(container.querySelector('[data-group-key="org-c/tool"]')).not.toBeNull();
+    fireEvent.click(group('org-a'));
+    expect(container.querySelector('[data-run="a3"]')).not.toBeNull();
+    fireEvent.click(group('org-a/web'));
     expect(container.querySelector('[data-run="a3"]')).toBeNull();
   });
 
-  it('keeps a fold when the widget mounts again, and opens every group after a reload', () => {
+  it('keeps an opened repo when the widget mounts again, and folds it after a reload', () => {
     const stored = JSON.stringify([window.localStorage, window.sessionStorage]);
     const first = draw();
-    fireEvent.click(first.container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
+    fireEvent.click(first.container.querySelector('[data-group-key="org-a/web"]')!);
     first.unmount();
     const again = draw();
-    expect(again.container.querySelector('[data-run="a3"]')).toBeNull();
+    expect(again.container.querySelector('[data-run="a3"]')).not.toBeNull();
+    expect(again.container.querySelector('[data-run="a2"]')).toBeNull();
     expect(JSON.stringify([window.localStorage, window.sessionStorage])).toBe(stored);
     again.unmount();
     resetRunnerFolds(); // A reload starts a new page, so the module state is new.
-    expect(draw().container.querySelector('[data-run="a3"]')).not.toBeNull();
+    const fresh = draw();
+    expect(fresh.container.querySelector('[data-run]')).toBeNull();
+    expect(
+      fresh.container.querySelector('[data-group-key="org-a"]')!.getAttribute('aria-expanded')
+    ).toBe('true');
   });
 
   it('keeps a fold when the data refreshes', () => {
@@ -598,13 +646,16 @@ describe('the grouped list', () => {
       </ThemeProvider>
     );
     const r = render(ui(next(grouped)));
-    fireEvent.click(r.container.querySelector('[data-group="org"][data-group-key="org-a"]')!);
+    fireEvent.click(r.container.querySelector('[data-group-key="org-a/web"]')!);
+    fireEvent.click(r.container.querySelector('[data-group="org"][data-group-key="org-c"]')!);
     r.rerender(ui(next(grouped)));
-    expect(r.container.querySelector('[data-run="a3"]')).toBeNull();
+    expect(r.container.querySelector('[data-run="a3"]')).not.toBeNull();
+    expect(r.container.querySelector('[data-run="a2"]')).toBeNull();
+    expect(r.container.querySelector('[data-group-key="org-c/tool"]')).toBeNull();
   });
 
   it('still opens a run to its jobs and steps inside a group', () => {
-    const { container } = draw();
+    const { container } = drawOpen();
     fireEvent.click(container.querySelector('[data-run="a3"]')!);
     expect(container.querySelectorAll('[data-job]')).toHaveLength(1);
     fireEvent.click(container.querySelector('[data-job]')!);
@@ -612,7 +663,7 @@ describe('the grouped list', () => {
   });
 
   it('has no "more" row and no "Other" group', () => {
-    const { container } = draw();
+    const { container } = drawOpen();
     expect(container.textContent).not.toMatch(/\d+ more|\bOther\b/);
   });
 });
