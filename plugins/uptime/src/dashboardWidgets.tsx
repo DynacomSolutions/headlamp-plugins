@@ -111,8 +111,8 @@ const NARROW_ROW = {
   [NARROW]: {
     gridTemplateColumns: '16px minmax(0, 1fr) auto',
     gridTemplateAreas: '"lead name pct" "lead strip strip"',
-    rowGap: 0.5,
-    py: 0.5,
+    rowGap: 0.25,
+    py: 0.25,
   },
 } as const;
 
@@ -419,7 +419,7 @@ function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; k
         alignItems: 'center',
         columnGap: 1,
         px: 1,
-        minHeight: kiosk ? 36 : 28,
+        minHeight: kiosk ? 32 : 26,
         minWidth: 0,
         ...NARROW_ROW,
       }}
@@ -466,7 +466,7 @@ function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; k
           label={`${check.name}: ${
             STATUS_LABEL[check.status]
           }, availability ${mean} over ${gridLabel(grid)}`}
-          height={kiosk ? 16 : 14}
+          height={kiosk ? 10 : 9}
           minWidth={64}
           tooltips="native"
         />
@@ -550,7 +550,7 @@ function GroupBlock(props: {
           alignItems: 'center',
           columnGap: 1,
           width: '100%',
-          minHeight: kiosk ? 48 : 36,
+          minHeight: kiosk ? 40 : 32,
           px: 1,
           ...NARROW_ROW,
           border: 0,
@@ -642,7 +642,7 @@ function GroupBlock(props: {
             label={`${group.key}: ${STATUS_LABEL[group.status]}, the worst of ${
               group.checks.length
             } checks per period over ${gridLabel(grid)}`}
-            height={kiosk ? 22 : 18}
+            height={kiosk ? 14 : 12}
             minWidth={64}
             tooltips="native"
           />
