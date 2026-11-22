@@ -565,7 +565,9 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
 - **With the `runs` panel the list is a tree**. The first level is the org (the part of `repo` before the first
   slash). The second level is the repo name without the org. The third level is one row for each running or
   queued run (workflow, branch or pull request, pool, time), so the row does not repeat the org and repo.
-  Each org and repo header shows its running and queued counts and the longest time in the group. Orgs are
+  Each org and repo header shows its running and queued job counts and the longest time in the group. The counts
+  are jobs: the widget sums `counts` of each run, so the org headers add up to the top Running and Queued tiles.
+  Orgs are
   open at first. Repos are collapsed at first, and a collapsed repo header still shows its running and queued
   counts and its longest time. Orgs go by running count (most first), then by the longest time, and so do repos.
   Runs keep their order inside a repo. A repo the user opens, or an org the user folds, keeps that state until
@@ -616,6 +618,14 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
   ]
 }
 ```
+
+A source can add more fields. `jobs` at the top has `running` and `queued`: the totals of all jobs, counted before
+the source cuts its run list. Each run can have `counts` (`running` and `queued`, the jobs of that run, counted
+before the source cuts its job list) and `repoKnown`. A job can have `phase` (`running`, `assigned` or
+`queued`): `assigned` counts as running. A run without `counts` counts as one job, by its `state`. When the
+listed runs hold fewer jobs than `jobs`, the summary line adds "+K jobs not listed". There is no "Other" row.
+A run with `repoKnown` set to `false` has only its owner in `repo`. It goes under that org, in the repo row
+"Repo not known".
 
 `state` of a run or job is `running` or `queued`. `state` of a step is `done`, `running`, `failed`, `skipped`
 or `pending`. `seconds` is the time that the run has run or waited. A bad value is dropped or replaced by a

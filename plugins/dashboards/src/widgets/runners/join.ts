@@ -5,6 +5,7 @@
  * A source with no `runs` panel still works: the rows of the queue panel are the list, with no tree.
  */
 import type {
+  JobCounts,
   PanelModel,
   PanelRun,
   PanelStatus,
@@ -37,6 +38,11 @@ export interface RunnerModel {
   stats: Stat[];
   /** The runs, running first (longest first), then queued (oldest first). Empty when the source has no `runs` panel. */
   runs: PanelRun[];
+  /**
+   * The jobs of the source that no listed run counts: the source cuts its run list at a fixed
+   * length. 0 when every job is listed, or when the source gave no job totals.
+   */
+  unlisted: number;
   /** True when the source serves the `runs` panel, so the list is a tree. */
   tree: boolean;
   /** The list when there is no tree. */
@@ -97,6 +103,9 @@ export function orderRuns(runs: ReadonlyArray<PanelRun>): PanelRun[] {
 /** The org label of a run whose repo name has no "org/" part. */
 export const NO_ORG = 'No org';
 
+/** The name of the repo row of the runs whose repo the source does not know, only their owner. */
+export const UNKNOWN_REPO = 'Repo not known';
+
 /** One repo with its runs. The runs keep the order they came in. */
 export interface RepoGroup {
   /** The org, then a slash, then the repo name. Unique in the list. */
@@ -104,13 +113,18 @@ export interface RepoGroup {
   /** The repo name without the org. */
   name: string;
   runs: PanelRun[];
+  /** Jobs that hold a slot: running, or assigned to a runner. */
   running: number;
+  /** Jobs that wait for a runner. */
   queued: number;
   /** The longest time in seconds: how long a run has run, or how long it has waited. */
   longest: number;
 }
 
-/** One org with its repos. */
+/**
+ * One org with its repos. `running` and `queued` count jobs, not runs. The sum over the orgs
+ * equals the totals of the source, except for the jobs of the runs that the source did not list.
+ */
 export interface OrgGroup {
   key: string;
   name: string;
@@ -127,6 +141,26 @@ export function splitRepo(full: string): { org: string; name: string } {
   return { org: full.slice(0, at), name: full.slice(at + 1) };
 }
 
+/**
+ * The org and the repo name of a run. A run whose repo is not known has only its owner in `repo`:
+ * it goes under that org, in a repo row that says the repo is not known.
+ */
+export function placeOf(run: Pick<PanelRun, 'repo' | 'repoKnown'>): { org: string; name: string } {
+  if (run.repoKnown !== false) return splitRepo(run.repo);
+  const at = run.repo.indexOf('/');
+  const owner = at > 0 ? run.repo.slice(0, at) : run.repo;
+  return { org: owner === '' ? NO_ORG : owner, name: UNKNOWN_REPO };
+}
+
+/**
+ * The jobs of a run. A run from an older source has no counts: it counts as one job, running or
+ * waiting, by the state of the run.
+ */
+export function jobCountsOf(run: PanelRun): JobCounts {
+  if (run.counts) return run.counts;
+  return run.state === 'running' ? { running: 1, queued: 0 } : { running: 0, queued: 1 };
+}
+
 interface Counted {
   running: number;
   queued: number;
@@ -134,8 +168,8 @@ interface Counted {
 }
 
 const tally = (runs: ReadonlyArray<PanelRun>): Counted => ({
-  running: runs.filter(r => r.state === 'running').length,
-  queued: runs.filter(r => r.state !== 'running').length,
+  running: runs.reduce((n, r) => n + jobCountsOf(r).running, 0),
+  queued: runs.reduce((n, r) => n + jobCountsOf(r).queued, 0),
   longest: runs.reduce((m, r) => Math.max(m, r.seconds), 0),
 });
 
@@ -143,13 +177,13 @@ const tally = (runs: ReadonlyArray<PanelRun>): Counted => ({
 const byBusy = (a: Counted, b: Counted): number => b.running - a.running || b.longest - a.longest;
 
 /**
- * Groups runs by org, then by repo name. Orgs and repos go by running count (most first), then by
- * the longest time. Runs keep their order inside a repo. Every run is in exactly one group.
+ * Groups runs by org, then by repo name. The counts are jobs, summed from the counts of each run.
+ * Orgs and repos go by running count (most first), then by the longest time. Runs keep their order inside a repo. Every run is in exactly one group.
  */
 export function groupRuns(runs: ReadonlyArray<PanelRun>): OrgGroup[] {
   const orgs = new Map<string, Map<string, PanelRun[]>>();
   for (const run of runs) {
-    const { org, name } = splitRepo(run.repo);
+    const { org, name } = placeOf(run);
     const repos = orgs.get(org) ?? new Map<string, PanelRun[]>();
     repos.set(name, [...(repos.get(name) ?? []), run]);
     orgs.set(org, repos);
@@ -254,6 +288,11 @@ export function joinRunners(input: {
   const oldest =
     queueStats.find(s => s.label.toLowerCase() === 'oldest') ?? stat('Oldest wait', '-');
   const runs = input.runs ? orderRuns(input.runs.runs) : [];
+  const totals = input.runs?.jobs;
+  const listed = tally(runs);
+  const unlisted = totals
+    ? Math.max(0, totals.running - listed.running) + Math.max(0, totals.queued - listed.queued)
+    : 0;
   const status = worst([
     ...(input.pools ? [input.pools.status] : []),
     ...(input.queue ? [input.queue.status] : []),
@@ -263,6 +302,7 @@ export function joinRunners(input: {
     pools,
     stats: [running, queued, free, poolCount, { ...oldest, label: 'Oldest wait' }],
     runs,
+    unlisted,
     tree: input.runs !== null,
     queue: queueRowsOf(input.queue),
     status,
