@@ -1,8 +1,8 @@
 /*
  * Draws the runner model (see `join.ts`): fixed stat tiles on top, one ring for each pool (use,
  * queued and free), then one scroll area with the list. With the `runs` panel the list is a tree:
- * an org, its repos, their runs, then the jobs and steps of a run. Orgs and repos are open by
- * default and a run is collapsed. A group the user folds stays folded only until the page reloads.
+ * an org, its repos, their runs, then the jobs and steps of a run. Orgs are open by default.
+ * Repos and runs are collapsed. A group the user flips stays flipped only until the page reloads.
  * Without the `runs` panel the list is the queue rows.
  * Every row is drawn: nothing folds into a "+N more" line. A link goes only to a dashboard tab.
  */
@@ -707,31 +707,33 @@ function GroupHeader(props: {
 }
 
 /**
- * The folded groups of each runner source. This lives in the page, not in storage: a tab switch
- * keeps the folds, and a reload opens every group again.
+ * The groups that the user flipped from their default, for each runner source. An org is open by
+ * default and a repo is folded by default, so a key here means the opposite of the default. This
+ * lives in the page, not in storage: a tab switch keeps it, and a reload goes back to the defaults.
  */
-const FOLDED = new Map<string, ReadonlySet<string>>();
+const FLIPPED = new Map<string, ReadonlySet<string>>();
 
-/** Forget every fold. Tests use it to start from an open list. */
+/** Forget every flip. Tests use it to start from the default state. */
 export function resetRunnerFolds(): void {
-  FOLDED.clear();
+  FLIPPED.clear();
 }
 
 /**
- * The runs as org groups, then repo groups, then run rows. A group is open until the user folds
- * it.
+ * The runs as org groups, then repo groups, then run rows. An org is open until the user folds it.
+ * A repo is folded until the user opens it. A folded repo header still shows its counts and its
+ * longest time.
  */
 function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): JSX.Element {
   const { sourceId } = props;
   const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
-  const [folded, setFoldedState] = React.useState<ReadonlySet<string>>(
-    () => FOLDED.get(sourceId) ?? new Set()
+  const [flipped, setFlippedState] = React.useState<ReadonlySet<string>>(
+    () => FLIPPED.get(sourceId) ?? new Set()
   );
-  const setFolded = React.useCallback(
+  const setFlipped = React.useCallback(
     (update: (prev: ReadonlySet<string>) => ReadonlySet<string>) =>
-      setFoldedState(prev => {
+      setFlippedState(prev => {
         const next = update(prev);
-        FOLDED.set(sourceId, next);
+        FLIPPED.set(sourceId, next);
         return next;
       }),
     [sourceId]
@@ -745,21 +747,21 @@ function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): 
       }),
     []
   );
-  const fold = React.useCallback(
+  const flip = React.useCallback(
     (key: string) =>
-      setFolded(prev => {
+      setFlipped(prev => {
         const next = new Set(prev);
         if (!next.delete(key)) next.add(key);
         return next;
       }),
-    [setFolded]
+    [setFlipped]
   );
   const groups = React.useMemo(() => groupRuns(props.runs), [props.runs]);
   return (
     <>
       {groups.map(org => {
         const orgKey = `org\u0000${org.key}`;
-        const orgOpen = !folded.has(orgKey);
+        const orgOpen = !flipped.has(orgKey);
         return (
           <React.Fragment key={orgKey}>
             <GroupHeader
@@ -767,12 +769,12 @@ function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): 
               group={org}
               depth={0}
               open={orgOpen}
-              toggle={() => fold(orgKey)}
+              toggle={() => flip(orgKey)}
             />
             {orgOpen &&
               org.repos.map(repo => {
                 const repoKey = `repo\u0000${repo.key}`;
-                const repoOpen = !folded.has(repoKey);
+                const repoOpen = flipped.has(repoKey);
                 return (
                   <React.Fragment key={repoKey}>
                     <GroupHeader
@@ -780,7 +782,7 @@ function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): 
                       group={repo}
                       depth={1}
                       open={repoOpen}
-                      toggle={() => fold(repoKey)}
+                      toggle={() => flip(repoKey)}
                     />
                     {repoOpen &&
                       repo.runs.map(run => (

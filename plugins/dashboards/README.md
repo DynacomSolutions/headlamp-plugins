@@ -565,10 +565,11 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
 - **With the `runs` panel the list is a tree**. The first level is the org (the part of `repo` before the first
   slash). The second level is the repo name without the org. The third level is one row for each running or
   queued run (workflow, branch or pull request, pool, time), so the row does not repeat the org and repo.
-  Each org and repo header shows its running and queued counts and the longest time in the group. Orgs and
-  repos are open at first. Orgs go by running count (most first), then by the longest time, and so do repos.
-  Runs keep their order inside a repo. A group the user folds stays folded until the page reloads, with no
-  storage. A repo name with no slash goes under the org "No org". Runs are collapsed at first. Open a run to see its jobs and open a job to see
+  Each org and repo header shows its running and queued counts and the longest time in the group. Orgs are
+  open at first. Repos are collapsed at first, and a collapsed repo header still shows its running and queued
+  counts and its longest time. Orgs go by running count (most first), then by the longest time, and so do repos.
+  Runs keep their order inside a repo. A repo the user opens, or an org the user folds, keeps that state until
+  the page reloads, with no storage. After a reload, and on the kiosk, orgs are open and repos are collapsed. A repo name with no slash goes under the org "No org". Runs are collapsed at first. Open a run to see its jobs and open a job to see
   its steps. A run row and a job row have a step bar with one segment for each step: done (green), running
   (amber, a soft pulse that stops when the user prefers reduced motion), failed (red), skipped (grey) and
   pending (faint). The bar is on its own line at the full row width. The text "step N of M" and the name of the current step are on the next line, cut with an ellipsis when too long, so the two never overlap. When the segments would be narrower than 4 px, the bar is one continuous strip with a block for each state, sized by its step count. Running runs come
