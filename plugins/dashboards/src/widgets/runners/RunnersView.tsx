@@ -5,6 +5,11 @@
  * Repos and runs are collapsed. A group the user flips stays flipped only until the page reloads.
  * Without the `runs` panel the list is the queue rows.
  * Every row is drawn: nothing folds into a "+N more" line. A link goes only to a dashboard tab.
+ *
+ * Two options change the look, so one tab can use the widget as a compact strip and another as a
+ * full list: `view` (`full`, `summary` for the tiles and rings only, `list` for the tree only) and
+ * `expand` (`all` opens every org, repo, run and job at first; the default opens only the orgs).
+ * An org and a repo show their icon when the icon map has one (see `icons.ts`).
  */
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
@@ -16,6 +21,7 @@ import { WidgetFooter } from '../footer';
 import type { PanelJob, PanelRun, PanelStep, Stat, StepState } from '../panels/model';
 import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
+import { type IconMap, orgIconFor, repoIconFor, useIconMap } from './icons';
 import {
   formatWait,
   groupRuns,
@@ -31,6 +37,23 @@ import {
   stepBarLayout,
   stepsOfRun,
 } from './join';
+
+/** What the widget draws: the tiles, the rings and the list, or only one part. */
+export type RunnersViewMode = 'full' | 'summary' | 'list';
+export const VIEW_MODES: ReadonlyArray<RunnersViewMode> = ['full', 'summary', 'list'];
+
+/** `all` opens every group, run and job at first. Anything else keeps the default. */
+export type RunnersExpand = 'default' | 'all';
+
+/** Reads the `view` option of a saved config. A missing or wrong value gives `full`. */
+export function viewOf(raw: unknown): RunnersViewMode {
+  return raw === 'summary' || raw === 'list' ? raw : 'full';
+}
+
+/** Reads the `expand` option of a saved config. A missing or wrong value gives `default`. */
+export function expandOf(raw: unknown): RunnersExpand {
+  return raw === 'all' ? 'all' : 'default';
+}
 
 const RING_SIZE = 46;
 const RING_STROKE = 6;
@@ -209,7 +232,7 @@ function Pools(props: { pools: RunnerPool[] }): JSX.Element {
 }
 
 /** The fixed stat tiles. Running, queued and free carry the colour of their ring arc. */
-function Tiles(props: { stats: Stat[] }): JSX.Element {
+function Tiles(props: { stats: Stat[]; small?: boolean }): JSX.Element {
   const tk = useTokens();
   const c = useRingColours();
   const mark = [c.running, c.queued, 'hatch'];
@@ -220,8 +243,10 @@ function Tiles(props: { stats: Stat[] }): JSX.Element {
           <Box
             data-stat-value
             sx={{
-              fontSize: 24,
+              fontSize: props.small ? 20 : 24,
               lineHeight: 1.1,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
               letterSpacing: '-0.01em',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap',
@@ -519,10 +544,11 @@ function RunRow(props: {
   link?: string;
   depth: number;
   open: boolean;
-  openJobs: ReadonlySet<string>;
+  /** Whether a run or job key is open. */
+  isOpen: (key: string) => boolean;
   toggle: (id: string) => void;
 }): JSX.Element {
-  const { run, link, depth, open, openJobs, toggle } = props;
+  const { run, link, depth, open, isOpen, toggle } = props;
   const tk = useTokens();
   const steps = stepsOfRun(run);
   const expandable = run.jobs.length > 0;
@@ -605,7 +631,7 @@ function RunRow(props: {
             key={job.id}
             job={job}
             depth={depth + 1}
-            open={openJobs.has(`${run.id}\u0000${job.id}`)}
+            open={isOpen(`${run.id}\u0000${job.id}`)}
             toggle={() => toggle(`${run.id}\u0000${job.id}`)}
           />
         ))}
@@ -623,14 +649,62 @@ export function countsText(g: { running: number; queued: number }): string {
 }
 
 /** The header of an org or a repo: chevron, name, the counts and the longest time. */
+/**
+ * The icon in front of an org or repo name, in a small tile. Without an icon the slot stays empty
+ * at the same size while another header has one, so the names stay aligned.
+ */
+export const GROUP_ICON_TILE = 22;
+export const GROUP_ICON_SIZE = 16;
+
+function GroupIcon(props: { src: string | undefined; name: string }): JSX.Element {
+  const tk = useTokens();
+  return (
+    <Box
+      data-group-icon-slot
+      sx={{
+        width: GROUP_ICON_TILE,
+        height: GROUP_ICON_TILE,
+        flex: 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: '6px',
+        bgcolor: props.src ? tk.hover : undefined,
+        boxShadow: props.src ? `inset 0 0 0 1px ${tk.line}` : undefined,
+      }}
+    >
+      {props.src && (
+        <Box
+          component="img"
+          data-group-icon
+          src={props.src}
+          alt=""
+          title={props.name}
+          sx={{
+            width: GROUP_ICON_SIZE,
+            height: GROUP_ICON_SIZE,
+            objectFit: 'contain',
+            borderRadius: '3px',
+            display: 'block',
+          }}
+        />
+      )}
+    </Box>
+  );
+}
+
 function GroupHeader(props: {
   kind: 'org' | 'repo';
   group: OrgGroup | RepoGroup;
   depth: number;
   open: boolean;
   toggle: () => void;
+  /** The icon address, or undefined. Used only when `slot` is true. */
+  icon?: string;
+  /** Draw the icon slot, even when this header has no icon. */
+  slot?: boolean;
 }): JSX.Element {
-  const { kind, group, depth, open, toggle } = props;
+  const { kind, group, depth, open, toggle, icon, slot = false } = props;
   const tk = useTokens();
   const c = useRingColours();
   return (
@@ -658,6 +732,7 @@ function GroupHeader(props: {
       }}
     >
       <Chevron open={open} show />
+      {slot && <GroupIcon src={icon} name={group.name} />}
       <Box
         data-group-name
         sx={{
@@ -707,9 +782,11 @@ function GroupHeader(props: {
 }
 
 /**
- * The groups that the user flipped from their default, for each runner source. An org is open by
- * default and a repo is folded by default, so a key here means the opposite of the default. This
- * lives in the page, not in storage: a tab switch keeps it, and a reload goes back to the defaults.
+ * The groups that the user flipped from their default, for each runner source and expand mode. An
+ * org is open by default and a repo is folded by default (all groups are open with `expand: all`),
+ * so a key here means the opposite of the default. This lives in the page, not in storage: a tab
+ * switch keeps it, and a reload goes back to the defaults. The mode is part of the key, so two tabs
+ * with different modes never flip each other's groups.
  */
 const FLIPPED = new Map<string, ReadonlySet<string>>();
 
@@ -721,26 +798,34 @@ export function resetRunnerFolds(): void {
 /**
  * The runs as org groups, then repo groups, then run rows. An org is open until the user folds it.
  * A repo is folded until the user opens it. A folded repo header still shows its counts and its
- * longest time.
+ * longest time. With `expandAll` every org, repo, run and job is open until the user folds it.
  */
-function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): JSX.Element {
-  const { sourceId } = props;
-  const [open, setOpen] = React.useState<ReadonlySet<string>>(new Set());
+function RunTree(props: {
+  runs: PanelRun[];
+  link?: string;
+  sourceId: string;
+  expandAll: boolean;
+  icons: IconMap;
+}): JSX.Element {
+  const { sourceId, expandAll, icons } = props;
+  const foldKey = `${sourceId}\u0000${expandAll ? 'all' : 'default'}`;
+  // The run and job rows that the user flipped. Without `expandAll` they are the open ones.
+  const [toggled, setToggled] = React.useState<ReadonlySet<string>>(new Set());
   const [flipped, setFlippedState] = React.useState<ReadonlySet<string>>(
-    () => FLIPPED.get(sourceId) ?? new Set()
+    () => FLIPPED.get(foldKey) ?? new Set()
   );
   const setFlipped = React.useCallback(
     (update: (prev: ReadonlySet<string>) => ReadonlySet<string>) =>
       setFlippedState(prev => {
         const next = update(prev);
-        FLIPPED.set(sourceId, next);
+        FLIPPED.set(foldKey, next);
         return next;
       }),
-    [sourceId]
+    [foldKey]
   );
   const toggle = React.useCallback(
     (id: string) =>
-      setOpen(prev => {
+      setToggled(prev => {
         const next = new Set(prev);
         if (!next.delete(id)) next.add(id);
         return next;
@@ -757,6 +842,17 @@ function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): 
     [setFlipped]
   );
   const groups = React.useMemo(() => groupRuns(props.runs), [props.runs]);
+  // One slot for every header as soon as one header has an icon, so the names stay aligned.
+  const slot = React.useMemo(
+    () =>
+      groups.some(
+        o =>
+          orgIconFor(o.name, icons) !== undefined ||
+          o.repos.some(r => repoIconFor(o.name, r.name, icons) !== undefined)
+      ),
+    [groups, icons]
+  );
+  const runOpen = (id: string): boolean => (expandAll ? !toggled.has(id) : toggled.has(id));
   return (
     <>
       {groups.map(org => {
@@ -770,11 +866,13 @@ function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): 
               depth={0}
               open={orgOpen}
               toggle={() => flip(orgKey)}
+              icon={orgIconFor(org.name, icons)}
+              slot={slot}
             />
             {orgOpen &&
               org.repos.map(repo => {
                 const repoKey = `repo\u0000${repo.key}`;
-                const repoOpen = flipped.has(repoKey);
+                const repoOpen = expandAll ? !flipped.has(repoKey) : flipped.has(repoKey);
                 return (
                   <React.Fragment key={repoKey}>
                     <GroupHeader
@@ -783,6 +881,8 @@ function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): 
                       depth={1}
                       open={repoOpen}
                       toggle={() => flip(repoKey)}
+                      icon={repoIconFor(org.name, repo.name, icons)}
+                      slot={slot}
                     />
                     {repoOpen &&
                       repo.runs.map(run => (
@@ -791,8 +891,8 @@ function RunTree(props: { runs: PanelRun[]; link?: string; sourceId: string }): 
                           run={run}
                           link={props.link}
                           depth={2}
-                          open={open.has(run.id)}
-                          openJobs={open}
+                          open={runOpen(run.id)}
+                          isOpen={runOpen}
                           toggle={toggle}
                         />
                       ))}
@@ -852,18 +952,35 @@ export function RunnersView(props: {
   model: RunnerModel;
   sourceId: string;
   editing: boolean;
+  /** What to draw. Default: the tiles, the rings and the list. */
+  view?: RunnersViewMode;
+  /** `all` opens every group, run and job at first. */
+  expand?: RunnersExpand;
 }): JSX.Element {
-  const { model, sourceId, editing } = props;
+  const { model, sourceId, editing, view = 'full', expand = 'default' } = props;
   const tk = useTokens();
   const resolveLink = useResolveLink();
   const root = useElementSize<HTMLDivElement>();
+  const icons = useIconMap();
   // Every link goes to the runner tab of the dashboard, or is dropped.
   const link = editing ? undefined : resolveLink(model.link, { panelId: 'runners', sourceId });
   const empty = model.tree ? model.runs.length === 0 : model.queue.length === 0;
+  const showSummary = view !== 'list';
+  const showList = view !== 'summary';
+  const unlisted = model.tree && model.unlisted > 0;
+  const summary = (
+    <>
+      <Box data-runners-tiles sx={{ flex: view === 'summary' ? '1 1 0' : 'none', minWidth: 0 }}>
+        <Tiles stats={model.stats} small={view === 'summary'} />
+      </Box>
+      {model.pools.length > 0 && <Pools pools={model.pools} />}
+    </>
+  );
   return (
     <Box
       ref={root.ref}
       data-runners
+      data-runners-view={view}
       sx={{
         display: 'flex',
         flexDirection: 'column',
@@ -874,30 +991,60 @@ export function RunnersView(props: {
         overflow: 'hidden',
       }}
     >
-      <Tiles stats={model.stats} />
-      {model.pools.length > 0 && <Pools pools={model.pools} />}
-      <ScrollArea label="Running and queued runs">
-        {empty ? (
-          <Box data-runners-empty sx={{ py: 1, fontSize: 13, color: tk.fg2 }}>
-            {EMPTY}
-          </Box>
-        ) : model.tree ? (
-          <RunTree runs={model.runs} link={link} sourceId={sourceId} />
-        ) : (
-          <QueueRows rows={model.queue} link={link} />
-        )}
-      </ScrollArea>
-      <WidgetFooter status={model.status}>
-        <span data-runners-summary>{model.summary}</span>
-        {model.tree && model.unlisted > 0 && (
-          <span
-            data-runners-unlisted
-            title="The source lists a limited number of runs. These jobs belong to runs that are not in the list. The tiles count them."
+      {showSummary &&
+        (view === 'summary' ? (
+          // The strip: the tiles and the rings side by side, in one band.
+          <Box
+            data-runners-strip
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+              minWidth: 0,
+              flex: '1 1 auto',
+              minHeight: 0,
+            }}
           >
-            {`, +${model.unlisted} ${model.unlisted === 1 ? 'job' : 'jobs'} not listed`}
-          </span>
-        )}
-      </WidgetFooter>
+            {summary}
+          </Box>
+        ) : (
+          summary
+        ))}
+      {showList && (
+        <ScrollArea label="Running and queued runs">
+          {empty ? (
+            <Box data-runners-empty sx={{ py: 1, fontSize: 13, color: tk.fg2 }}>
+              {EMPTY}
+            </Box>
+          ) : model.tree ? (
+            <RunTree
+              runs={model.runs}
+              link={link}
+              sourceId={sourceId}
+              expandAll={expand === 'all'}
+              icons={icons}
+            />
+          ) : (
+            <QueueRows rows={model.queue} link={link} />
+          )}
+        </ScrollArea>
+      )}
+      {/* The list view leaves the summary to the strip above it. A note about unlisted jobs stays. */}
+      {(view !== 'list' || unlisted) && (
+        <WidgetFooter status={model.status}>
+          {view !== 'list' && <span data-runners-summary>{model.summary}</span>}
+          {unlisted && (
+            <span
+              data-runners-unlisted
+              title="The source lists a limited number of runs. These jobs belong to runs that are not in the list. The tiles count them."
+            >
+              {`${view === 'list' ? '' : ', '}+${model.unlisted} ${
+                model.unlisted === 1 ? 'job' : 'jobs'
+              } not listed`}
+            </span>
+          )}
+        </WidgetFooter>
+      )}
     </Box>
   );
 }

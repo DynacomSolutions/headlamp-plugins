@@ -28,6 +28,9 @@ import { STATUS_WORD, StatusMark, useStatusColours } from './StatusMark';
 
 export { STATUS_WORD, StatusMark, useStatusColours };
 
+/** A compact tile row under this width in px draws its tiles in two columns. */
+export const NARROW_STRIP = 330;
+
 export const ringFormat =
   (ring: PanelRing) =>
   (v: number): string => {
@@ -168,7 +171,15 @@ export function PanelView({
       }}
     >
       {display.showStats && panel.stats.length > 0 && (
-        <StatTiles stats={panel.stats} width={root.size.width} />
+        <StatTiles
+          stats={panel.stats}
+          width={root.size.width}
+          compact={display.compact}
+          // A narrow compact tile row draws its tiles two by two, so no label is cut.
+          columns={
+            display.compact && root.size.width > 0 && root.size.width < NARROW_STRIP ? 2 : undefined
+          }
+        />
       )}
       {hasSeries &&
         (sharedPlot ? (

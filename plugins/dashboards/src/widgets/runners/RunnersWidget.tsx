@@ -16,11 +16,18 @@ import { usePanel, usePanelList } from '../panels/data';
 import { sourceOf } from '../panels/PanelPicker';
 import { useSourceLookup, useSources } from '../panels/sourcesConfig';
 import { joinRunners } from './join';
-import { RunnersView } from './RunnersView';
+import { expandOf, RunnersView, VIEW_MODES, viewOf } from './RunnersView';
 
 export interface RunnersConfig {
   /** The id of the runner panel source. */
   source: string;
+  /**
+   * What to draw: `full` (default: tiles, rings and list), `summary` (tiles and rings in one
+   * strip) or `list` (the tree only).
+   */
+  view?: 'full' | 'summary' | 'list';
+  /** `all` opens every org, repo, run and job at first. A missing value keeps the default (orgs open). */
+  expand?: 'all';
 }
 
 /** The panel ids that the runner source serves. `runs` is optional. */
@@ -101,7 +108,13 @@ export function RunnersWidget({
       )}
       {!none && (
         <Box sx={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}>
-          <RunnersView model={model} sourceId={sourceId} editing={!!editing} />
+          <RunnersView
+            model={model}
+            sourceId={sourceId}
+            editing={!!editing}
+            view={viewOf(config.view)}
+            expand={expandOf(config.expand)}
+          />
         </Box>
       )}
     </Box>
@@ -122,7 +135,7 @@ function RunnersSettings(props: WidgetSettingsProps<RunnersConfig>): JSX.Element
         label="Source"
         value={sourceId}
         helperText="The panel source that serves the pools and queue panels, and the optional runs panel."
-        onChange={e => onChange({ source: e.target.value })}
+        onChange={e => onChange({ ...config, source: e.target.value })}
       >
         {!source && (
           <MenuItem value={sourceId}>
@@ -134,6 +147,36 @@ function RunnersSettings(props: WidgetSettingsProps<RunnersConfig>): JSX.Element
             {s.title}
           </MenuItem>
         ))}
+      </TextField>
+      <TextField
+        select
+        size="small"
+        label="View"
+        value={viewOf(config.view)}
+        helperText="Full: tiles, rings and list. Summary: tiles and rings in one strip. List: the tree of runs only."
+        onChange={e => onChange({ ...config, view: e.target.value as RunnersConfig['view'] })}
+      >
+        {VIEW_MODES.map(v => (
+          <MenuItem key={v} value={v}>
+            {v === 'full' ? 'Full' : v === 'summary' ? 'Summary' : 'List'}
+          </MenuItem>
+        ))}
+      </TextField>
+      <TextField
+        select
+        size="small"
+        label="Open at first"
+        value={expandOf(config.expand)}
+        helperText="Default: the orgs are open and the repos are folded. All: every org, repo, run and job is open."
+        onChange={e => {
+          const next: RunnersConfig = { ...config };
+          if (e.target.value === 'all') next.expand = 'all';
+          else delete next.expand;
+          onChange(next);
+        }}
+      >
+        <MenuItem value="default">Orgs only</MenuItem>
+        <MenuItem value="all">Everything</MenuItem>
       </TextField>
     </Box>
   );

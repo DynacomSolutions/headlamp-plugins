@@ -30,7 +30,14 @@ import {
   stepBarLayout,
   stepsOfRun,
 } from './join';
-import { countsText, resetRunnerFolds, ringShares, RunnersView } from './RunnersView';
+import {
+  countsText,
+  expandOf,
+  resetRunnerFolds,
+  ringShares,
+  RunnersView,
+  viewOf,
+} from './RunnersView';
 
 afterEach(() => {
   cleanup();
@@ -966,5 +973,152 @@ describe('job counts in the group headers', () => {
       expect(model.stats.slice(0, 2).map(s => s.value)).toEqual(['9', '1']);
       expect(model.summary).toBe('2 pools, 9 running, 1 queued');
     });
+  });
+});
+
+describe('the expand and view options', () => {
+  const model = () => joinRunners({ pools, queue, runs: grouped });
+  const drawWith = (props: { expand?: 'all' | 'default'; view?: 'full' | 'summary' | 'list' }) =>
+    render(
+      <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+        <MemoryRouter>
+          <LinkContext.Provider value={LINKS}>
+            <RunnersView model={model()} sourceId="runners" editing={false} {...props} />
+          </LinkContext.Provider>
+        </MemoryRouter>
+      </ThemeProvider>
+    );
+  const open = (container: HTMLElement, sel: string) =>
+    [...container.querySelectorAll(sel)].map(e => e.getAttribute('aria-expanded'));
+
+  it('reads the options of a saved config and ignores a wrong value', () => {
+    expect(expandOf('all')).toBe('all');
+    expect(expandOf(undefined)).toBe('default');
+    expect(expandOf('everything')).toBe('default');
+    expect(viewOf('summary')).toBe('summary');
+    expect(viewOf('list')).toBe('list');
+    expect(viewOf('x')).toBe('full');
+    expect(viewOf(undefined)).toBe('full');
+  });
+
+  it('keeps the default without the option: orgs open, repos and runs folded', () => {
+    const { container } = drawWith({});
+    expect(new Set(open(container, '[data-group="org"]'))).toEqual(new Set(['true']));
+    expect(new Set(open(container, '[data-group="repo"]'))).toEqual(new Set(['false']));
+    expect(container.querySelector('[data-run]')).toBeNull();
+  });
+
+  it('with expand all opens every org, repo, run and job, with no collapse', () => {
+    const { container } = drawWith({ expand: 'all' });
+    expect(new Set(open(container, '[data-group]'))).toEqual(new Set(['true']));
+    expect(container.querySelectorAll('[data-run]')).toHaveLength(8);
+    expect(new Set(open(container, '[data-run]'))).toEqual(new Set(['true']));
+    expect(container.querySelectorAll('[data-job]')).toHaveLength(8);
+    expect(container.textContent).not.toMatch(/\d+ more|\bOther\b/);
+  });
+
+  it('with expand all a click still folds a repo, a run, and an org, and a click again reopens it', () => {
+    const { container } = drawWith({ expand: 'all' });
+    const repo = () => container.querySelector('[data-group-key="org-a/web"]')!;
+    fireEvent.click(repo());
+    expect(repo().getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-run="a3"]')).toBeNull();
+    fireEvent.click(repo());
+    expect(container.querySelector('[data-run="a3"]')).not.toBeNull();
+    fireEvent.click(container.querySelector('[data-run="a3"]')!);
+    expect(container.querySelector('[data-run="a3"]')!.getAttribute('aria-expanded')).toBe('false');
+    expect(container.querySelector('[data-job="a3-j"]')).toBeNull();
+    fireEvent.click(container.querySelector('[data-group="org"][data-group-key="org-c"]')!);
+    expect(container.querySelector('[data-group-key="org-c/tool"]')).toBeNull();
+  });
+
+  it('keeps the folds of an expanded tab apart from the folds of a default tab', () => {
+    const first = drawWith({ expand: 'all' });
+    fireEvent.click(first.container.querySelector('[data-group-key="org-a/web"]')!);
+    first.unmount();
+    const other = drawWith({});
+    expect(
+      other.container.querySelector('[data-group-key="org-a/web"]')!.getAttribute('aria-expanded')
+    ).toBe('false');
+    other.unmount();
+    const again = drawWith({ expand: 'all' });
+    expect(
+      again.container.querySelector('[data-group-key="org-a/web"]')!.getAttribute('aria-expanded')
+    ).toBe('false');
+  });
+
+  it('draws the list only, with no tiles and no rings, for the list view', () => {
+    const { container } = drawWith({ view: 'list', expand: 'all' });
+    expect(container.querySelector('[data-stats]')).toBeNull();
+    expect(container.querySelector('[data-pools]')).toBeNull();
+    expect(container.querySelector('[data-group="org"]')).not.toBeNull();
+  });
+
+  it('leaves the summary line to the strip in the list view, and keeps the unlisted note', () => {
+    const cut = parsePanel({
+      version: 1,
+      id: 'runs',
+      title: 'Runs',
+      status: 'ok',
+      summary: '',
+      jobs: { running: 10, queued: 5 },
+      runs: [{ ...run('c1', 'org-a/web', 'running', 5), counts: { running: 2, queued: 1 } }],
+    });
+    const draw = (view: 'full' | 'list') =>
+      render(
+        <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+          <MemoryRouter>
+            <LinkContext.Provider value={LINKS}>
+              <RunnersView
+                model={joinRunners({ pools, queue, runs: cut })}
+                sourceId="runners"
+                editing={false}
+                view={view}
+              />
+            </LinkContext.Provider>
+          </MemoryRouter>
+        </ThemeProvider>
+      ).container;
+    const list = draw('list');
+    expect(list.querySelector('[data-runners-summary]')).toBeNull();
+    expect(list.querySelector('[data-runners-unlisted]')?.textContent).toBe('+12 jobs not listed');
+    cleanup();
+    const full = draw('full');
+    expect(full.querySelector('[data-runners-summary]')).not.toBeNull();
+    expect(full.querySelector('[data-runners-unlisted]')?.textContent).toBe(
+      ', +12 jobs not listed'
+    );
+    cleanup();
+    // With every job listed the list view has no footer at all.
+    const whole = drawWith({ view: 'list' });
+    expect(whole.container.querySelector('[data-runners-summary]')).toBeNull();
+    expect(whole.container.querySelector('[data-runners-unlisted]')).toBeNull();
+  });
+
+  it('draws the tiles and the rings in one strip, and no list, for the summary view', () => {
+    const { container } = drawWith({ view: 'summary' });
+    expect(container.querySelector('[data-runners-strip] [data-stats]')).not.toBeNull();
+    expect(container.querySelector('[data-runners-strip] [data-pools]')).not.toBeNull();
+    expect(container.querySelector('[data-group]')).toBeNull();
+    expect(container.querySelector('[data-scroll-area]')).toBeNull();
+    expect(container.querySelectorAll('[data-pool]')).toHaveLength(2);
+  });
+
+  it('draws smaller tile values in the strip, so a long wait never touches a ring', () => {
+    const size = (view: 'full' | 'summary') =>
+      getComputedStyle(
+        drawWith({ view }).container.querySelector('[data-stat-value]') as HTMLElement
+      ).fontSize;
+    expect(size('full')).toBe('24px');
+    expect(size('summary')).toBe('20px');
+    cleanup();
+  });
+
+  it('draws the tiles, the rings and the list for the full view', () => {
+    const { container } = drawWith({ view: 'full' });
+    expect(container.querySelector('[data-stats]')).not.toBeNull();
+    expect(container.querySelector('[data-pools]')).not.toBeNull();
+    expect(container.querySelector('[data-group="org"]')).not.toBeNull();
+    expect(container.querySelector('[data-runners-strip]')).toBeNull();
   });
 });

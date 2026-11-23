@@ -40,6 +40,10 @@ export const tileSize = (stats: ReadonlyArray<Stat>, narrow: boolean): number =>
 
 /** The height of the tile row in px. */
 export const TILES_HEIGHT = 68;
+/** The same for a compact tile row: a smaller numeral, a tighter chip. */
+export const TILES_HEIGHT_COMPACT = 54;
+/** The numeral of a compact row is this share of the normal size. */
+export const COMPACT_SCALE = 0.8;
 
 /**
  * `textTiles` are the indexes of tiles whose value is a name, not a number (for example the active
@@ -61,14 +65,19 @@ export function StatTiles(props: {
    * stays the one of a tile with room (never the small size).
    */
   columns?: number;
+  /** Smaller numerals and a tighter chip, so the row needs less height. */
+  compact?: boolean;
 }): JSX.Element {
-  const { stats, width, textTiles = [], sizeFrom, weights: shares, columns } = props;
+  const { stats, width, textTiles = [], sizeFrom, weights: shares, columns, compact } = props;
   const tk = useTokens();
   const weight = (i: number): number => shares?.[i] ?? (textTiles.includes(i) ? 2 : 1);
   const weights = stats.reduce((n, _s, i) => n + weight(i), 0);
   const narrow = columns === undefined && width > 0 && width / Math.max(1, weights) < NARROW;
   const worst = worstStat(stats);
-  const size = tileSize(sizeFrom ?? stats.filter((_s, i) => !textTiles.includes(i)), narrow);
+  const size = Math.round(
+    tileSize(sizeFrom ?? stats.filter((_s, i) => !textTiles.includes(i)), narrow) *
+      (compact ? COMPACT_SCALE : 1)
+  );
   return (
     <Box
       data-stats
@@ -78,7 +87,7 @@ export function StatTiles(props: {
           ? {
               display: 'flex',
               gap: narrow ? '6px' : '10px',
-              height: TILES_HEIGHT,
+              height: compact ? TILES_HEIGHT_COMPACT : TILES_HEIGHT,
               flex: 'none',
               alignItems: 'flex-start',
               pt: '4px',
@@ -133,9 +142,9 @@ export function StatTiles(props: {
                 alignItems: 'center',
                 gap: '5px',
                 maxWidth: '100%',
-                mt: '6px',
+                mt: compact ? '3px' : '6px',
                 px: '7px',
-                py: '2px',
+                py: compact ? '1px' : '2px',
                 borderRadius: '10px',
                 fontSize: narrow ? 11.5 : 12.5,
                 lineHeight: 1.3,
