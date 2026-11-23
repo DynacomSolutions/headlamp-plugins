@@ -449,7 +449,10 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   shows nothing.
 - **Display options**: `showSummary` (default true) shows the status and summary line, `showStats` (default
   true) shows the stat tiles, and `rowLayout` is `list` (default, the table above) or `grouped-bars`. A saved
-  widget without these keys uses the defaults.
+  widget without these keys uses the defaults. `showRows` (default true) off leaves only the stat tiles and the
+  summary line, as a compact strip of the numbers of a panel. `compact` (default false) draws shorter rows
+  (42 px, not 52 px), a smaller gap and smaller tile numerals. A compact tile row in a widget under 330 px wide
+  draws its tiles in two columns, so no label is cut.
 - **Grouped bars**: rows are grouped by `label` (for example the account or identity), in order of first sight.
   A group is exactly one horizontal track from 0 to 100 %. Every row of the group is drawn on that same track, in
   the colour of its limit name (the row `detail`), at the `fraction` of the row. The fills overlap: the largest
@@ -580,6 +583,19 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
   first (longest first), then queued runs (longest wait first).
 - **Without the `runs` panel** the list is the rows of the `queue` panel: repository, pool, queued count and the
   oldest wait. There is no tree.
+- **Options**. `view` is `full` (default: tiles, rings and list), `summary` (the tiles and the rings side by side
+  in one strip, with no list) or `list` (the tree only, with no tiles and no rings; the summary line is left out
+  and only the "jobs not listed" note stays). `expand: "all"` opens every org, repo, run and job at first, so a
+  tab can show the whole queue. A click still folds any group. Without `expand` the defaults above apply. The
+  folds of an `expand: "all"` widget and of a default widget are kept apart, so two tabs never change each other.
+- **Org and repo icons**. A header shows a small icon when the icon map has one. The map is the ConfigMap
+  `uptime-icons` of the Uptime widget in the namespace `headlamp-dashboards`: a value is a small
+  `data:image/svg+xml` or `data:image/png` address, and a key is lower case. A ConfigMap key cannot hold a slash, so
+  the avatar of an org is the key `gh.<org>` and the own icon of a repo is `gh.<org>.<repo>`. A repo row takes its
+  own key, then a key with the repo name (the app icons of the Uptime widget, with the same suffix match), then the
+  avatar of its org. A repo that the source does not know has the avatar of its org. With no key there is no
+  icon: the widget never draws a made-up logo and never loads an icon from an external host. When one header has an
+  icon, every header keeps an empty slot of the same size, so the names line up.
 - **Links** go only to the dashboard tab whose id is the source id. With no such tab, or in edit mode, a row has
   no link.
 
