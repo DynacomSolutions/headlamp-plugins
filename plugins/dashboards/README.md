@@ -588,8 +588,8 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
   and only the "jobs not listed" note stays). `expand: "all"` opens every org, repo, run and job at first, so a
   tab can show the whole queue. A click still folds any group. Without `expand` the defaults above apply. The
   folds of an `expand: "all"` widget and of a default widget are kept apart, so two tabs never change each other.
-- **Org and repo icons**. A header shows a small icon when the icon map has one. The map is the ConfigMap
-  `uptime-icons` of the Uptime widget in the namespace `headlamp-dashboards`: a value is a small
+- **Org and repo icons**. A header shows a small icon when the icon map has one. The map is the two ConfigMaps
+  `runner-icons` (the `gh.` keys) and `uptime-icons` (the app icons of the Uptime widget), merged, in the namespace `headlamp-dashboards`: a value is a small
   `data:image/svg+xml` or `data:image/png` address, and a key is lower case. A ConfigMap key cannot hold a slash, so
   the avatar of an org is the key `gh.<org>` and the own icon of a repo is `gh.<org>.<repo>`. A repo row takes its
   own key, then a key with the repo name (the app icons of the Uptime widget, with the same suffix match), then the

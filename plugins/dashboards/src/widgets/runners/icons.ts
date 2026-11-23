@@ -1,8 +1,10 @@
 /*
- * The org and repo icons of the runner list. They come from the icon map that the Uptime widget
- * already uses: the ConfigMap `uptime-icons`, where each key is a name and each value is a small
- * `data:image/svg+xml` or `data:image/png` address. The map needs no Service proxy access. The
- * keys of a ConfigMap cannot hold a slash, so a runner icon uses a dotted key, in lower case:
+ * The org and repo icons of the runner list. They come from two ConfigMaps in the format that the
+ * Uptime widget already uses: `runner-icons` (the keys below) and `uptime-icons` (the app icons of
+ * the Uptime widget). Each key is a name and each value is a small `data:image/svg+xml` or
+ * `data:image/png` address. The maps need no Service proxy access. The two are merged, and a key
+ * of `runner-icons` wins. The keys of a ConfigMap cannot hold a slash, so a runner icon uses a
+ * dotted key, in lower case:
  *
  *   gh.<org>         the avatar of an org
  *   gh.<org>.<repo>  the own icon of a repo
@@ -20,7 +22,10 @@ import React from 'react';
 import { NO_ORG, splitRepo, UNKNOWN_REPO } from './join';
 
 export const ICON_MAP_NAMESPACE = 'headlamp-dashboards';
+/** The icon map of the Uptime widget: app icons. */
 export const ICON_MAP_NAME = 'uptime-icons';
+/** The icon map of the runner list: the `gh.` keys. It has the same format and the same limits. */
+export const RUNNER_ICON_MAP_NAME = 'runner-icons';
 /** The largest icon value that is accepted, in characters. */
 export const ICON_MAP_VALUE_MAX = 192 * 1024;
 export const ICON_CACHE_MS = 60_000;
@@ -101,10 +106,10 @@ export function clearIconMapCache(): void {
   cached = undefined;
 }
 
-async function readIconMap(): Promise<IconMap> {
+async function readConfigMap(name: string): Promise<IconMap> {
   try {
     const body = await ApiProxy.request(
-      `/api/v1/namespaces/${ICON_MAP_NAMESPACE}/configmaps/${ICON_MAP_NAME}`,
+      `/api/v1/namespaces/${ICON_MAP_NAMESPACE}/configmaps/${name}`,
       { method: 'GET' }
     );
     return iconMapFrom(body);
@@ -113,6 +118,15 @@ async function readIconMap(): Promise<IconMap> {
     if ((e as { status?: unknown })?.status !== 404) cached = undefined;
     return new Map();
   }
+}
+
+/** Both maps in one. A key of the runner map wins over the same key of the Uptime map. */
+async function readIconMap(): Promise<IconMap> {
+  const [apps, runner] = await Promise.all([
+    readConfigMap(ICON_MAP_NAME),
+    readConfigMap(RUNNER_ICON_MAP_NAME),
+  ]);
+  return new Map([...apps, ...runner]);
 }
 
 /** The icon map, shared by every widget for `ICON_CACHE_MS`. */

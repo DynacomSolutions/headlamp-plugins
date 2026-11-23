@@ -123,12 +123,14 @@ describe('reading the icon map', () => {
     const b = await fetchIconMap(1000 + ICON_CACHE_MS - 1);
     expect(a.get('gh.acme')).toBe(PNG);
     expect(b).toBe(a);
-    expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls[0][0]).toBe(
-      '/api/v1/namespaces/headlamp-dashboards/configmaps/uptime-icons'
-    );
-    await fetchIconMap(1000 + ICON_CACHE_MS);
+    // One read for each of the two ConfigMaps.
     expect(request).toHaveBeenCalledTimes(2);
+    expect(request.mock.calls.map(c => c[0]).sort()).toEqual([
+      '/api/v1/namespaces/headlamp-dashboards/configmaps/runner-icons',
+      '/api/v1/namespaces/headlamp-dashboards/configmaps/uptime-icons',
+    ]);
+    await fetchIconMap(1000 + ICON_CACHE_MS);
+    expect(request).toHaveBeenCalledTimes(4);
   });
 
   it('gives an empty map when the read fails, and reads again after a failure other than 404', async () => {
@@ -142,7 +144,27 @@ describe('reading the icon map', () => {
     request.mockRejectedValue({ status: 404 });
     expect((await fetchIconMap(1)).size).toBe(0);
     expect((await fetchIconMap(2)).size).toBe(0);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  it('merges the app icons of the Uptime map with the runner map, and the runner key wins', async () => {
+    request.mockImplementation(async (path: string) =>
+      path.endsWith('/runner-icons')
+        ? { data: { 'gh.acme': PNG, shared: PNG } }
+        : { data: { api: SVG, shared: SVG } }
+    );
+    const map = await fetchIconMap(5);
+    expect(map.get('gh.acme')).toBe(PNG);
+    expect(map.get('api')).toBe(SVG);
+    expect(map.get('shared')).toBe(PNG);
+  });
+
+  it('keeps the runner icons when the Uptime map is absent', async () => {
+    request.mockImplementation(async (path: string) => {
+      if (path.endsWith('/uptime-icons')) throw { status: 404 };
+      return { data: { 'gh.acme': PNG } };
+    });
+    expect((await fetchIconMap(9)).get('gh.acme')).toBe(PNG);
   });
 });
 
