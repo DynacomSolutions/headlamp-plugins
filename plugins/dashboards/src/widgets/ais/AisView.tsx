@@ -29,6 +29,7 @@ import { STATUS_WORD, StatusMark } from '../panels/StatusMark';
 import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
 import type { AisGroup, AisIdentity, AisJoint, AisLimit, AisModel } from './join';
+import { isModelLimit } from './join';
 
 /** A widget at least this wide draws the status key. A row at least WIDE_ROW wide draws wide columns. */
 export const WIDE_WIDTH = 640;
@@ -51,11 +52,14 @@ const BARS_MAX = 15;
 const clamp = (f: number): number => Math.min(1, Math.max(0, f));
 const RANK = { ok: 0, unknown: 1, warn: 2, crit: 3 } as const;
 
-/** The limit that sets the percentage of a line: the worst status, then the largest fraction. */
+/**
+ * The limit that sets the percentage of a line: the worst status, then the largest fraction.
+ * Model windows (for example "Weekly (Fable)") never set it. A line with only model windows has none.
+ */
 export function worstLimit(limits: ReadonlyArray<AisLimit>): AisLimit | undefined {
   let worst: AisLimit | undefined;
   for (const l of limits) {
-    if (l.fraction === undefined) continue;
+    if (l.fraction === undefined || isModelLimit(l.name)) continue;
     if (
       !worst ||
       RANK[l.status] > RANK[worst.status] ||
