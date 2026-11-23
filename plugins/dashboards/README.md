@@ -452,7 +452,7 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   widget without these keys uses the defaults. `showRows` (default true) off leaves only the stat tiles, the plot and the
   summary line, as a compact strip of the numbers of a panel. `compact` (default false) draws one line for each
   row, with the detail after the label, and smaller tile numerals. A compact tile row in a widget under 330 px
-  wide draws its tiles in two columns, so no label is cut. The panel widgets of the RunWarden tab use both.
+  wide draws its tiles in two columns, so no label is cut. The panel widgets of the RunWarden tab use both. `orgIcons` (default false) puts an icon before each row whose label is `org/repo`: the repo icon, else the org avatar, from the icon map described under the runner widget. A row with another label has an empty slot.
 - **Grouped bars**: rows are grouped by `label` (for example the account or identity), in order of first sight.
   A group is exactly one horizontal track from 0 to 100 %. Every row of the group is drawn on that same track, in
   the colour of its limit name (the row `detail`), at the `fraction` of the row. The fills overlap: the largest
@@ -588,8 +588,8 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
   and only the "jobs not listed" note stays). `expand: "all"` opens every org, repo, run and job at first, so a
   tab can show the whole queue. A click still folds any group. Without `expand` the defaults above apply. The
   folds of an `expand: "all"` widget and of a default widget are kept apart, so two tabs never change each other.
-- **Org and repo icons**. A header shows a small icon when the icon map has one. The map is the ConfigMap
-  `uptime-icons` of the Uptime widget in the namespace `headlamp-dashboards`: a value is a small
+- **Org and repo icons**. A header shows a small icon when the icon map has one. The map is the two ConfigMaps
+  `runner-icons` (the `gh.` keys) and `uptime-icons` (the app icons of the Uptime widget), merged, in the namespace `headlamp-dashboards`: a value is a small
   `data:image/svg+xml` or `data:image/png` address, and a key is lower case. A ConfigMap key cannot hold a slash, so
   the avatar of an org is the key `gh.<org>` and the own icon of a repo is `gh.<org>.<repo>`. A repo row takes its
   own key, then a key with the repo name (the app icons of the Uptime widget, with the same suffix match), then the

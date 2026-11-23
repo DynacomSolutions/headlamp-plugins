@@ -33,6 +33,7 @@ export interface PanelConfig extends SourcePanelConfig {
   seriesUnit?: string;
   compact?: boolean;
   showRows?: boolean;
+  orgIcons?: boolean;
 }
 
 export function PanelWidget({
@@ -120,6 +121,12 @@ const DISPLAY_FIELDS: ConfigField[] = [
   { key: 'showSummary', label: 'Show summary line', type: 'boolean' },
   { key: 'showStats', label: 'Show stat tiles', type: 'boolean' },
   { key: 'showRows', label: 'Show rows', type: 'boolean' },
+  {
+    key: 'orgIcons',
+    label: 'Org and repo icons',
+    type: 'boolean',
+    help: 'An icon before each row whose label is org/repo: the repo icon, else the org avatar, from the icon map.',
+  },
   {
     key: 'compact',
     label: 'Compact rows',

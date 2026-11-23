@@ -14,6 +14,7 @@ import { ScrollArea } from '../../components/ScrollArea';
 import { useResolveLink } from '../../links';
 import { WidgetFooter } from '../footer';
 import { useElementSize } from '../promql/useElementSize';
+import { iconForLabel, useIconMap } from '../runners/icons';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import { isEmptyPanel, PanelModel, PanelRing, ringToSunburst } from './model';
 import { PanelBars } from './PanelBars';
@@ -69,6 +70,8 @@ export interface PanelDisplay {
   compact?: boolean;
   /** The rows of the panel. Default on. Off keeps the stat tiles, the plot and the summary only. */
   showRows?: boolean;
+  /** An icon in front of each row whose label is `org/repo`: the repo icon, else the org avatar. Default off. */
+  orgIcons?: boolean;
 }
 
 export const DEFAULT_DISPLAY: PanelDisplay = {
@@ -86,6 +89,7 @@ export function displayOf(config: {
   seriesUnit?: unknown;
   compact?: unknown;
   showRows?: unknown;
+  orgIcons?: unknown;
 }): PanelDisplay {
   const limit =
     typeof config.seriesLimit === 'number' && config.seriesLimit > 0
@@ -99,6 +103,7 @@ export function displayOf(config: {
     showStats: config.showStats !== false,
     ...(config.compact === true ? { compact: true } : {}),
     ...(config.showRows === false ? { showRows: false } : {}),
+    ...(config.orgIcons === true ? { orgIcons: true } : {}),
     rowLayout:
       config.rowLayout === 'grouped-bars' || config.rowLayout === 'stacked-lanes'
         ? config.rowLayout
@@ -133,6 +138,12 @@ export function PanelView({
   );
   const root = useElementSize<HTMLDivElement>();
   const rowsBox = useElementSize<HTMLDivElement>();
+  // The icon map is read once for a minute and shared, so a widget without `orgIcons` asks for nothing new.
+  const iconMap = useIconMap(display.orgIcons === true);
+  const nameIcon = React.useMemo(
+    () => (display.orgIcons ? (r: { label: string }) => iconForLabel(r.label, iconMap) : undefined),
+    [display.orgIcons, iconMap]
+  );
   // The bars and lanes views keep their own legend fixed and scroll only their rows.
   const showRows = display.showRows !== false;
   const ownScroll = showRows && display.rowLayout !== 'list' && panel.rows.length > 0;
@@ -250,6 +261,7 @@ export function PanelView({
                 editing={editing}
                 source={source}
                 swatch={swatch}
+                nameIcon={nameIcon}
               />
             )}
             {panel.tables.length > 0 && <PanelTables tables={panel.tables} />}
