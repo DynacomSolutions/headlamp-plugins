@@ -11,9 +11,9 @@
  * The other groupings are a `group` series label, the first word of the check name and the check type.
  * `auto` takes the app when any check has one, then the namespace, then the name.
  *
- * The app and group groupings then merge the groups of one project (see `projectKeys`): `ergon`,
- * `ergon-lite-hub` and `ergon-cross-preview` are one group `ergon`, and `t3-cluster` and `t3code` are one
- * group `t3`. The rule reads the first word of the check name and the route, never a list of names.
+ * The app and group groupings then merge the groups of one project (see `projectKeys`): `acme`,
+ * `acme-lite-hub` and `acme-cross-preview` are one group `acme`, and `beta-cluster` and `betacode` are one
+ * group `beta`. The rule reads the first word of the check name and the route, never a list of names.
  */
 import { Check, CountSummary, HistoryGrid, Status, summarise } from './model';
 import { appLabelOf, type Backend, endpointsOf, type Placement } from './routes';
@@ -163,7 +163,7 @@ export function groupKeyOf(
   }
 }
 
-/** The words of a name, lower case: `ergon-lite.example` gives `ergon`, `lite`, `example`. */
+/** The words of a name, lower case: `acme-lite.example` gives `acme`, `lite`, `example`. */
 const wordsOfRaw = (name: string): string[] => name.split(/[.-]+/).filter(Boolean);
 const wordsOf = (name: string): string[] => wordsOfRaw(name.toLowerCase());
 
@@ -192,14 +192,14 @@ function identitiesOf(c: KeyedCheck, placements: Placements): { ids: string[]; s
 
 /**
  * The group key of every check after the projects merge. A project is the first word of the check name
- * (`ergon-lite.example.com` gives `ergon`, `t3.eu2.example.com` gives `t3`). A check is tied to it when its
+ * (`acme-lite.example.com` gives `acme`, `beta.eu2.example.com` gives `beta`). A check is tied to it when its
  * group key or, in a shared namespace, its Service or route name starts with that word. A key that holds the
- * word as a whole word (`static-site-ergon-storybook`) also counts when another check already has the word as
+ * word as a whole word (`static-site-acme-storybook`) also counts when another check already has the word as
  * its key. The checks of a project then share one group when they come from two or more different keys, or
  * when they all sit in a shared key (a namespace that holds many apps, such as `dev`) and are two or more.
  * A check that no route, app label or group label places keeps its own name. A project with one key and one
  * check, or whose checks an app label places apart, is not merged: the
- * `headlamp` Service of the dashboard stays out of `headlamp-agent`.
+ * `console` Service of the dashboard stays out of `console-agent`.
  */
 export function projectKeys(
   entries: KeyedCheck[],

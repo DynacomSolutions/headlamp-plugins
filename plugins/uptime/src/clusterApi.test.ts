@@ -129,20 +129,20 @@ describe('icons of the project groups', () => {
   const icon = (n: string) => `data:image/svg+xml;utf8,<svg id="${n}"/>`;
   const keys = [
     'cloudflare',
-    'dynacom',
-    'dynacom-dev-watcher',
-    'ergon',
-    'headlamp-agent',
+    'corp',
+    'corp-dev-watcher',
+    'acme',
+    'console-agent',
     'lidarr',
-    'momento',
+    'zeta',
     'plex',
     'qui',
     'radarr',
-    'runwarden',
+    'gamma',
     'sonarr',
-    't3',
-    'walt',
-    'playarr',
+    'beta',
+    'delta',
+    'orbit',
     'whisparr',
   ];
   const map = iconMapFrom({ data: Object.fromEntries(keys.map(k => [k, icon(k)])) });
@@ -153,16 +153,16 @@ describe('icons of the project groups', () => {
 
   it('covers the groups that start with the project name', () => {
     expect(mapIconFor('cloudflare-dns', map)).toBe(icon('cloudflare'));
-    expect(mapIconFor('runwarden-live', map)).toBe(icon('runwarden'));
-    expect(mapIconFor('t3-cluster', map)).toBe(icon('t3'));
-    expect(mapIconFor('ergon-lite-hub', map)).toBe(icon('ergon'));
+    expect(mapIconFor('gamma-live', map)).toBe(icon('gamma'));
+    expect(mapIconFor('beta-cluster', map)).toBe(icon('beta'));
+    expect(mapIconFor('acme-lite-hub', map)).toBe(icon('acme'));
   });
 
   it('takes the longest key, and never an icon for a name that only shares letters', () => {
-    expect(mapIconFor('dynacom-dev-watcher', map)).toBe(icon('dynacom-dev-watcher'));
-    expect(mapIconFor('dynacom-registry', map)).toBe(icon('dynacom'));
-    expect(mapIconFor('t3code', map)).toBeUndefined();
-    expect(mapIconFor('headlamp', map)).toBeUndefined();
-    expect(mapIconFor('kokoro-tts', map)).toBeUndefined();
+    expect(mapIconFor('corp-dev-watcher', map)).toBe(icon('corp-dev-watcher'));
+    expect(mapIconFor('corp-registry', map)).toBe(icon('corp'));
+    expect(mapIconFor('betacode', map)).toBeUndefined();
+    expect(mapIconFor('console', map)).toBeUndefined();
+    expect(mapIconFor('sigma-tts', map)).toBeUndefined();
   });
 });

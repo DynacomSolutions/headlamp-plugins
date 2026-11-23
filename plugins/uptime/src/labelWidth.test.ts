@@ -30,12 +30,12 @@ describe('label column width', () => {
     const w = labelColumnWidth(
       [
         { text: 'plex', font: regular },
-        { text: 'static-site-ergon', font: bold, extra: 30 },
+        { text: 'static-site-acme', font: bold, extra: 30 },
         { text: 'x'.repeat(12), font: regular },
       ],
       { context: ctx }
     );
-    expect(w).toBe(17 * 7 + 30 + 4);
+    expect(w).toBe(16 * 7 + 30 + 4);
   });
 
   it('never goes under the minimum or over the maximum', () => {

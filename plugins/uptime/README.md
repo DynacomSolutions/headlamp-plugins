@@ -66,13 +66,13 @@ InternalIP or ExternalIP in `/api/v1/nodes`) groups under the node name, with a
 server glyph, and any other address groups under the check name. There is never an "Other", "Ungrouped" or "Not in cluster" group.
 
 The `app` and `group` groupings then merge the groups of one project. A project
-is the first word of the check name (`ergon-lite.example.com` gives `ergon`). A
+is the first word of the check name (`acme-lite.example.com` gives `acme`). A
 check is tied to it when its group key, or in a shared namespace (a route with
 no app label) its Service or route name, starts with that word. The checks of a
 project share one group when they come from two or more keys, or when two or
-more sit in one shared namespace. So `ergon`, `ergon-lite-hub` and
-`ergon-cross-preview` are one group `ergon`, and `t3-cluster` and `t3code` are
-one group `t3`. A check with an app label keeps its app, and a check that
+more sit in one shared namespace. So `acme`, `acme-lite-hub` and
+`acme-cross-preview` are one group `acme`, and `beta-cluster` and `betacode` are
+one group `beta`. A check with an app label keeps its app, and a check that
 nothing places keeps its own name.
 
 Every group is listed, failing groups first, and no group folds into a "N more

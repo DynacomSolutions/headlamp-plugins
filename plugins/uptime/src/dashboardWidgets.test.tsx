@@ -487,9 +487,9 @@ describe('uptime.targets projects', () => {
   it('lists all the checks of one project under one group with its count and worst status', async () => {
     const routes = {
       httproutes: [
-        ['ergon', 'ergon', 'ergon'],
-        ['ergon-lite', 'ergon-lite-hub', 'ergon-lite-hub'],
-        ['ergon-lite', 'ergon-lite-push', 'ergon-lite-push'],
+        ['acme', 'acme', 'acme'],
+        ['acme-lite', 'acme-lite-hub', 'acme-lite-hub'],
+        ['acme-lite', 'acme-lite-push', 'acme-lite-push'],
       ].map(([namespace, name, app]) => ({
         metadata: { namespace, name, labels: { 'app.kubernetes.io/name': app } },
         spec: { hostnames: [`${name}.example.com`] },
@@ -499,15 +499,15 @@ describe('uptime.targets projects', () => {
     };
     fetchRouteLists.mockResolvedValue({ routes, errors: [] });
     queryMetrics.mockResolvedValue([
-      s('ergon', 'eu', 1, { instance: 'https://ergon.example.com/' }),
-      s('ergon-lite-hub', 'eu', 0, { instance: 'https://ergon-lite-hub.example.com/' }),
-      s('ergon-lite-push', 'eu', 1, { instance: 'https://ergon-lite-push.example.com/' }),
+      s('acme', 'eu', 1, { instance: 'https://acme.example.com/' }),
+      s('acme-lite-hub', 'eu', 0, { instance: 'https://acme-lite-hub.example.com/' }),
+      s('acme-lite-push', 'eu', 1, { instance: 'https://acme-lite-push.example.com/' }),
     ]);
     view(<Widget {...props({})} />);
     await flush();
     const headers = screen.getAllByRole('button');
     expect(headers).toHaveLength(1);
-    expect(headers[0].querySelector('p')?.textContent).toBe('ergon');
+    expect(headers[0].querySelector('p')?.textContent).toBe('acme');
     expect(headers[0].querySelector('[data-uptime-count]')?.textContent).toBe('3 · 1 down');
     expect(document.querySelector('[data-uptime-group]')?.getAttribute('data-uptime-group')).toBe(
       'down'

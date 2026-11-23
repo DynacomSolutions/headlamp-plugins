@@ -19,6 +19,7 @@ import { alpha, useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { TimeAxis, useWidth } from './AxisCells';
 import { fetchClusterInfo } from './clusterApi';
 import {
   registerDashboardWidget,
@@ -56,7 +57,6 @@ import {
 import { fetchRouteLists } from './routeApi';
 import { buildRoutes, placeChecks, Route } from './routes';
 import { ScrollArea } from './ScrollArea';
-import { TimeAxis, useWidth } from './AxisCells';
 import { zoneName } from './timeAxis';
 
 export interface UptimeWidgetConfig {
