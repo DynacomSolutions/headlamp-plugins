@@ -388,13 +388,13 @@ describe('projects: one group for all the apps of a project', () => {
       { name: 'acme-lite', namespace: 'acme-lite', app: 'acme-lite-hub' },
       { name: 'acme-lite-push', namespace: 'acme-lite', app: 'acme-lite-push' },
       { name: 'acme-storybook', namespace: 'vault', app: 'static-site-acme-storybook' },
-      { name: 'orbit', namespace: 'orbit', backend: 'shadow-orbit-eu4' },
-      { name: 'orbit-eu3', namespace: 'orbit', backend: 'shadow-orbit-eu3' },
+      { name: 'orbit', namespace: 'orbit', backend: 'shadow-orbit-n4' },
+      { name: 'orbit-n3', namespace: 'orbit', backend: 'shadow-orbit-n3' },
       { name: 'orbit-vnc', namespace: 'orbit-vnc', app: 'orbit-vnc' },
       { name: 'orbit-wall', namespace: 'dev', backend: 'orbit-wall-legend' },
-      { name: 'beta.eu2.example.com', namespace: 'beta-cluster', backend: 'beta-eu2' },
+      { name: 'beta.n2.example.com', namespace: 'beta-cluster', backend: 'beta-n2' },
       { name: 'beta.hq.example.com', namespace: 'beta-cluster', backend: 'beta-hq' },
-      { name: 'beta-host.hq0.example.com', namespace: 'betacode', backend: 'betacode-host' },
+      { name: 'beta-host.site0.example.com', namespace: 'betacode', backend: 'betacode-host' },
       { name: 'delta', namespace: 'deltaai', app: 'delta' },
       { name: 'delta-browser', namespace: 'delta-browser', app: 'delta-browser' },
       { name: 'gamma', namespace: 'gamma' },
@@ -410,7 +410,7 @@ describe('projects: one group for all the apps of a project', () => {
       'zeta',
     ]);
     expect(groups.acme).toHaveLength(6);
-    expect(groups.orbit).toEqual(['orbit', 'orbit-eu3', 'orbit-vnc', 'orbit-wall']);
+    expect(groups.orbit).toEqual(['orbit', 'orbit-n3', 'orbit-vnc', 'orbit-wall']);
     expect(groups.beta).toHaveLength(3);
     expect(groups.delta).toEqual(['delta', 'delta-browser']);
     expect(groups.gamma).toEqual(['gamma', 'gamma-live']);

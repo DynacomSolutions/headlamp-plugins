@@ -192,7 +192,7 @@ function identitiesOf(c: KeyedCheck, placements: Placements): { ids: string[]; s
 
 /**
  * The group key of every check after the projects merge. A project is the first word of the check name
- * (`acme-lite.example.com` gives `acme`, `beta.eu2.example.com` gives `beta`). A check is tied to it when its
+ * (`acme-lite.example.com` gives `acme`, `beta.n2.example.com` gives `beta`). A check is tied to it when its
  * group key or, in a shared namespace, its Service or route name starts with that word. A key that holds the
  * word as a whole word (`static-site-acme-storybook`) also counts when another check already has the word as
  * its key. The checks of a project then share one group when they come from two or more different keys, or
