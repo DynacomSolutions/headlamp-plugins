@@ -77,8 +77,8 @@ describe('source and paths', () => {
     );
   });
   it('takes settings over defaults and reads the mode', () => {
-    const s = resolveSource({ poolMode: 'ON', poolNamespace: 'ci', poolService: 'rw', poolPort: 'http' });
-    expect(s).toMatchObject({ mode: 'on', namespace: 'ci', service: 'rw', port: 'http' });
+    const s = resolveSource({ poolMode: 'ON', poolNamespace: 'ci', poolService: 'pool', poolPort: 'http' });
+    expect(s).toMatchObject({ mode: 'on', namespace: 'ci', service: 'pool', port: 'http' });
     expect(resolveSource({ poolMode: 'off' }).mode).toBe('off');
     expect(resolveSource({ poolMode: 'nonsense' }).mode).toBe('auto');
   });

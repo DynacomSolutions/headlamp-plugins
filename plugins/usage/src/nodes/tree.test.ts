@@ -799,7 +799,7 @@ describe('Runner pool runner hierarchy', () => {
   });
   const job = (over: Partial<NonNullable<RunnerInfo['job']>> = {}): RunnerInfo => ({
     tenant: 'ExampleOrg..dotrepo',
-    pool: 'rw-linux',
+    pool: 'pool-linux',
     role: 'runner',
     job: {
       owner: 'ExampleOrg',
@@ -819,7 +819,7 @@ describe('Runner pool runner hierarchy', () => {
     n.children.length ? n.children.flatMap(leaves) : [n];
 
   it('nests owner / label, repo, workflow, job, run and containers', () => {
-    const ns = nsNode([pod('rw-a', 5, job())]);
+    const ns = nsNode([pod('pool-a', 5, job())]);
     expect(ns.key).toBe(`k8s/ns:${NS}`);
     const chain: SunNode[] = [];
     let cur = ns;
@@ -836,7 +836,7 @@ describe('Runner pool runner hierarchy', () => {
       ['container', 'runner'],
     ]);
     expect(chain[chain.length - 1].key).toBe(
-      `k8s/ns:${NS}/rw:ExampleOrg|linux-runners/repo:.dotrepo/wf:CI/job:build/run:42/pod:rw-a/c:runner`
+      `k8s/ns:${NS}/runner:ExampleOrg|linux-runners/repo:.dotrepo/wf:CI/job:build/run:42/pod:pool-a/c:runner`
     );
     expect(chain.every(c => c.value === 5)).toBe(true);
   });
@@ -851,25 +851,25 @@ describe('Runner pool runner hierarchy', () => {
 
   it('groups a pod with labels but no job under Waiting for job', () => {
     const ns = nsNode([
-      pod('rw-b', 2, { tenant: 'ExampleOrg..dotrepo', pool: 'rw-linux', role: 'runner' }),
+      pod('pool-b', 2, { tenant: 'ExampleOrg..dotrepo', pool: 'pool-linux', role: 'runner' }),
     ]);
     const group = ns.children[0];
-    expect(group.label).toBe('ExampleOrg / rw-linux');
+    expect(group.label).toBe('ExampleOrg / pool-linux');
     expect(group.children[0].label).toBe('.dotrepo');
     const waiting = group.children[0].children[0];
     expect(waiting.label).toBe('Waiting for job');
     expect(waiting.children[0].kind).toBe('pod');
-    expect(waiting.children[0].label).toBe('rw-b');
+    expect(waiting.children[0].label).toBe('pool-b');
     expect(waiting.children[0].children[0].key).toBe(
-      `k8s/ns:${NS}/rw:ExampleOrg|rw-linux/repo:.dotrepo/wf:~waiting/pod:rw-b/c:runner`
+      `k8s/ns:${NS}/runner:ExampleOrg|pool-linux/repo:.dotrepo/wf:~waiting/pod:pool-b/c:runner`
     );
   });
 
   it('groups a warm pod under Warm pool and its pool', () => {
-    const ns = nsNode([pod('rw-w', 1, { tenant: '', pool: 'rw-linux', role: 'warm' })]);
+    const ns = nsNode([pod('pool-w', 1, { tenant: '', pool: 'pool-linux', role: 'warm' })]);
     expect(ns.children[0].label).toBe('Warm pool');
-    expect(ns.children[0].children[0].label).toBe('rw-linux');
-    expect(ns.children[0].children[0].children[0].label).toBe('rw-w');
+    expect(ns.children[0].children[0].label).toBe('pool-linux');
+    expect(ns.children[0].children[0].children[0].label).toBe('pool-w');
   });
 
   it('keeps pod and container for a pod with no Runner pool data', () => {
@@ -881,11 +881,11 @@ describe('Runner pool runner hierarchy', () => {
 
   it('keeps the namespace total and unique, URL-safe keys', () => {
     const pods = [
-      pod('rw-a', 5, job()),
-      pod('rw-c', 3, job({ runId: '43' })),
-      pod('rw-d', 4, job({ workflow: 'Release / deploy', job: 'a b' })),
-      pod('rw-b', 2, { tenant: 'ExampleOrg..dotrepo', pool: 'rw-linux', role: 'runner' }),
-      pod('rw-w', 1, { tenant: '', pool: 'rw-linux', role: 'warm' }),
+      pod('pool-a', 5, job()),
+      pod('pool-c', 3, job({ runId: '43' })),
+      pod('pool-d', 4, job({ workflow: 'Release / deploy', job: 'a b' })),
+      pod('pool-b', 2, { tenant: 'ExampleOrg..dotrepo', pool: 'pool-linux', role: 'runner' }),
+      pod('pool-w', 1, { tenant: '', pool: 'pool-linux', role: 'warm' }),
       pod('plain', 6),
     ];
     for (const r of ['cpu', 'memory'] as const) {

@@ -145,8 +145,8 @@ describe('Runner pool runner info', () => {
   const base = {
     kubeCpuCapacity: [s({ node: 'n1' }, 4)],
     podCpu: [
-      s(pod('acme-runners', 'rw-a'), 1),
-      s(pod('acme-runners', 'rw-b'), 1),
+      s(pod('acme-runners', 'pool-a'), 1),
+      s(pod('acme-runners', 'pool-b'), 1),
       s(pod('other', 'x'), 1),
     ],
   };
@@ -154,9 +154,9 @@ describe('Runner pool runner info', () => {
     s(
       {
         namespace: 'acme-runners',
-        pod: 'rw-a',
+        pod: 'pool-a',
         label_acme_io_tenant: 'ExampleOrg..dotrepo',
-        label_acme_io_pool: 'rw-linux',
+        label_acme_io_pool: 'pool-linux',
         label_acme_io_role: 'runner',
       },
       1
@@ -166,10 +166,10 @@ describe('Runner pool runner info', () => {
     s(
       {
         namespace: 'acme-runners',
-        pod: 'rw-a',
+        pod: 'pool-a',
         owner: 'ExampleOrg',
         repo: '.dotrepo',
-        pool: 'rw-linux',
+        pool: 'pool-linux',
         runs_on: 'linux-runners',
         workflow: 'CI',
         job: 'build',
@@ -200,10 +200,10 @@ describe('Runner pool runner info', () => {
 
   it('attaches labels and job info to pods', () => {
     const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels, runnerJobs: jobs }), 'acme');
-    const a = n.pods.find(p => p.pod === 'rw-a');
+    const a = n.pods.find(p => p.pod === 'pool-a');
     expect(a?.runner).toEqual({
       tenant: 'ExampleOrg..dotrepo',
-      pool: 'rw-linux',
+      pool: 'pool-linux',
       role: 'runner',
       job: {
         owner: 'ExampleOrg',
@@ -214,14 +214,14 @@ describe('Runner pool runner info', () => {
         runId: '42',
       },
     });
-    expect(n.pods.find(p => p.pod === 'rw-b')?.runner).toBeUndefined();
+    expect(n.pods.find(p => p.pod === 'pool-b')?.runner).toBeUndefined();
     expect(n.pods.find(p => p.pod === 'x')?.runner).toBeUndefined();
   });
 
   it('treats an empty job result as no job info', () => {
     const [n] = assembleNodeMetrics(results({ ...base, runnerLabels: labels }), 'acme');
-    const a = n.pods.find(p => p.pod === 'rw-a');
+    const a = n.pods.find(p => p.pod === 'pool-a');
     expect(a?.runner?.job).toBeUndefined();
-    expect(a?.runner?.pool).toBe('rw-linux');
+    expect(a?.runner?.pool).toBe('pool-linux');
   });
 });

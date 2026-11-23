@@ -452,7 +452,7 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   widget without these keys uses the defaults. `showRows` (default true) off leaves only the stat tiles, the plot and the
   summary line, as a compact strip of the numbers of a panel. `compact` (default false) draws one line for each
   row, with the detail after the label, and smaller tile numerals. A compact tile row in a widget under 330 px
-  wide draws its tiles in two columns, so no label is cut. The panel widgets of the RunWarden tab use both. `orgIcons` (default false) puts an icon before each row whose label is `org/repo`: the repo icon, else the org avatar, from the icon map described under the runner widget. A row with another label has an empty slot.
+  wide draws its tiles in two columns, so no label is cut. The panel widgets of the runner pool tab use both. `orgIcons` (default false) puts an icon before each row whose label is `org/repo`: the repo icon, else the org avatar, from the icon map described under the runner widget. A row with another label has an empty slot.
 - **Grouped bars**: rows are grouped by `label` (for example the account or identity), in order of first sight.
   A group is exactly one horizontal track from 0 to 100 %. Every row of the group is drawn on that same track, in
   the colour of its limit name (the row `detail`), at the `fraction` of the row. The fills overlap: the largest
