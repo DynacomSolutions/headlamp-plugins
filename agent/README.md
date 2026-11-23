@@ -199,6 +199,27 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
   one diagnosis per activation, limited to `AGENT_MAX_DIAGNOSES_PER_HOUR`
   (default 6). Diagnoses run one at a time. A resolved alert marks its
   diagnoses resolved.
+- **One open diagnosis for each alert**: the fingerprint is the identity. When
+  the same alert fires again (a new `startsAt`, for example after a vmalert
+  restart), the firing joins the open diagnosis. It adds one to `fires` and sets
+  `lastFiredAt`. A failed open diagnosis does not take it in, so a new run can
+  retry. Then the newer diagnosis folds the older open ones.
+- **Reconcile**: vmalert forgets its alerts when it restarts, so a resolved
+  notification can be lost. Every `AGENT_RECONCILE_SECONDS` (default 60) and at
+  start, one pod (the holder of the `reconcile` lease in the store) folds open
+  duplicates of one fingerprint (the newest stays open, the older ones get
+  `resolvedAt` and `resolvedNote`). It then reads `VMALERT_URL`
+  (`/api/v1/alerts` and `/api/v1/rules`) and resolves each open webhook
+  diagnosis whose alert is neither firing nor pending. Alerts match by
+  fingerprint, or by alert name and one label set inside the other. It
+  resolves nothing when vmalert is unreadable, when its group has not run a
+  recent evaluation, or in the first 2 minutes of a diagnosis. Diagnoses that a
+  person or an outside agent reported stay open.
+- **Metrics**: `GET /metrics` (Prometheus text). `headlamp_agent_diagnoses_open{severity}`,
+  `headlamp_agent_reconcile_runs_total{result}`, `headlamp_agent_reconcile_resolved_total`,
+  `headlamp_agent_reconcile_folded_total`, `headlamp_agent_alert_repeats_merged_total`,
+  `headlamp_agent_resolve_notifications_total`, `headlamp_agent_reconcile_vmalert_alerts`
+  and `headlamp_agent_reconcile_last_success_timestamp_seconds`.
 - **API**: `POST /api/diagnoses {"alert": {...}}`.
 - **ACP**: `headlamp-agent acp` runs the engine in the host and takes its tools
   from the MCP server. It streams each tool call, the thinking and the report

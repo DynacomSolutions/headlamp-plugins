@@ -19,6 +19,8 @@ import { LaunchError, LaunchService } from './launch/service.js';
 import { LaunchStore, type Launch } from './launch/store.js';
 import { T3Client, tokenFromFile } from './t3/client.js';
 import { PushError, PushService } from './push/service.js';
+import { Metrics } from './metrics.js';
+import { Reconciler, readVmalert } from './reconcile.js';
 
 const MAX_BODY = 1024 * 1024;
 
@@ -429,6 +431,15 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   const mcpNode = toNodeHandler(mcp);
   let ready = true;
   let rerunTurn: Promise<void> = Promise.resolve();
+  const metrics = new Metrics();
+  // Keeps open diagnoses in step with vmalert. A resolved notification can be lost (a vmalert restart forgets its alerts).
+  const reconciler = new Reconciler({
+    store,
+    snapshot: config.vmalertUrl ? () => readVmalert(config.vmalertUrl) : undefined,
+    metrics,
+    intervalMs: config.reconcileSeconds * 1000,
+    log,
+  });
 
   runner.start();
 
@@ -442,6 +453,14 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         return void (await mcpNode(req, res));
       }
       if (path === '/healthz') return send(res, 200, { ok: true });
+      if (path === '/metrics' && req.method === 'GET') {
+        metrics.clear('headlamp_agent_diagnoses_open');
+        const counts = new Map<string, number>([['critical', 0], ['warning', 0], ['info', 0]]);
+        for (const d of await store.openSummaries()) counts.set(d.alert.severity || 'none', (counts.get(d.alert.severity || 'none') ?? 0) + 1);
+        for (const [severity, n] of counts) metrics.set('headlamp_agent_diagnoses_open', { severity }, n);
+        res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'cache-control': 'no-store' });
+        return void res.end(metrics.render());
+      }
       if (path === '/readyz') return send(res, ready ? 200 : 503, { ok: ready });
       if (path === '/') {
         return send(res, 200, {
@@ -459,10 +478,17 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         let started = 0;
         for (const { alert, resolved } of alerts) {
           if (resolved) {
+            metrics.inc('headlamp_agent_resolve_notifications_total');
             await store.markResolved(alert.fingerprint, alert.endsAt ?? new Date().toISOString());
             continue;
           }
           if ((await store.findByFingerprint(alert.fingerprint, alert.startsAt)) || (await store.get(diagnosisIdFor(alert.fingerprint, alert.startsAt)))) continue;
+          // The same alert fired again (vmalert restarted, or the alert flapped): it joins the open diagnosis. A failed one does not take it in, so a new run can retry.
+          const open = await store.findOpenByFingerprint(alert.fingerprint);
+          if (open && open.status !== 'failed') {
+            if (await store.attachFire(open.id, alert.startsAt)) metrics.inc('headlamp_agent_alert_repeats_merged_total');
+            continue;
+          }
           const verdict = await gate.wants(alert);
           if (!verdict.ok) continue;
           if (!runner.configured) {
@@ -483,6 +509,9 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           gate.record();
           await runner.enqueue(alert, 'webhook', undefined, model);
           started++;
+          // A race (two pods) or a failed older run can leave other open ones of this fingerprint. The newest stays.
+          const folded = (await store.foldDuplicates(alert.fingerprint).catch(() => undefined))?.folded ?? 0;
+          if (folded) metrics.inc('headlamp_agent_reconcile_folded_total', {}, folded);
         }
         if (started) log('info', 'alerts received', { alerts: alerts.length, started });
         return send(res, 200, { status: 'success', started });
@@ -729,6 +758,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : config.port;
   log('info', 'listening', { port, tools: runtime.registry.tools.size, modelConfigured: runner.configured });
+  reconciler.start();
 
   return {
     port,
@@ -739,6 +769,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       server.closeIdleConnections();
       chats.shutdown();
       await launches.shutdown();
+      await reconciler.stop();
       await runner.drain();
       await mcp.close();
       if (!deps.store) await store.close();
