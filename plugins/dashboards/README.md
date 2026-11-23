@@ -449,10 +449,10 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   shows nothing.
 - **Display options**: `showSummary` (default true) shows the status and summary line, `showStats` (default
   true) shows the stat tiles, and `rowLayout` is `list` (default, the table above) or `grouped-bars`. A saved
-  widget without these keys uses the defaults. `showRows` (default true) off leaves only the stat tiles and the
-  summary line, as a compact strip of the numbers of a panel. `compact` (default false) draws shorter rows
-  (42 px, not 52 px), a smaller gap and smaller tile numerals. A compact tile row in a widget under 330 px wide
-  draws its tiles in two columns, so no label is cut.
+  widget without these keys uses the defaults. `showRows` (default true) off leaves only the stat tiles, the plot and the
+  summary line, as a compact strip of the numbers of a panel. `compact` (default false) draws one line for each
+  row, with the detail after the label, and smaller tile numerals. A compact tile row in a widget under 330 px
+  wide draws its tiles in two columns, so no label is cut. The panel widgets of the RunWarden tab use both.
 - **Grouped bars**: rows are grouped by `label` (for example the account or identity), in order of first sight.
   A group is exactly one horizontal track from 0 to 100 %. Every row of the group is drawn on that same track, in
   the colour of its limit name (the row `detail`), at the `fraction` of the row. The fills overlap: the largest
