@@ -31,6 +31,8 @@ export interface PanelConfig extends SourcePanelConfig {
   rowLayout?: RowLayout;
   seriesLimit?: number;
   seriesUnit?: string;
+  compact?: boolean;
+  showRows?: boolean;
 }
 
 export function PanelWidget({
@@ -117,6 +119,13 @@ const DISPLAY_FIELDS: ConfigField[] = [
   },
   { key: 'showSummary', label: 'Show summary line', type: 'boolean' },
   { key: 'showStats', label: 'Show stat tiles', type: 'boolean' },
+  { key: 'showRows', label: 'Show rows', type: 'boolean' },
+  {
+    key: 'compact',
+    label: 'Compact rows',
+    type: 'boolean',
+    help: 'One line for each row, with less padding, so a long list needs less height.',
+  },
   {
     key: 'rowLayout',
     label: 'Row layout',
@@ -133,7 +142,13 @@ const DISPLAY_FIELDS: ConfigField[] = [
 function PanelSettings(props: WidgetSettingsProps<PanelConfig>): JSX.Element {
   const { config, onChange } = props;
   // A saved widget with no display options shows the defaults, so the form shows them too.
-  const shown = { ...DEFAULT_DISPLAY, ...displayOf(config), ...config };
+  const shown = {
+    ...DEFAULT_DISPLAY,
+    showRows: true,
+    compact: false,
+    ...displayOf(config),
+    ...config,
+  };
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
       <SourcePanelPicker {...props} />
