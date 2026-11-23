@@ -489,7 +489,9 @@ needed.
   first. An identity that is in no pool goes under the real name of its provider. There is no "Other" group,
   no top N and no "+N more" row.
 - **One thin line for each identity**: its name on the left, its limit windows as thin bars one above the
-  other, and at the end the highest window as a small percentage in its status colour. The colour of a bar is
+  other, and at the end the highest window as a small percentage in its status colour. A model window, such as "Weekly (Fable)",
+  has a bar but never counts in this percentage or in any status. A line with only model windows has no
+  percentage. The colour of a bar is
   the colour of its window in the legend, so no window name is written on a line. A login that needs
   attention (expiring, expired) shows a small status icon before the name and tints the line. A login that is
   fine shows nothing. A small dot after the name marks the served member of a pool, and a small ring marks
