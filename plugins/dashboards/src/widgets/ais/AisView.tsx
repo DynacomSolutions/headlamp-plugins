@@ -43,12 +43,12 @@ export const STACK_TILE_COLUMNS = 3;
 /** True when the widget is narrow: the stat tiles in a grid, no status key. */
 export const isStacked = (width: number): boolean => width > 0 && width < STACK_WIDTH;
 /** The height of an identity line and of the pool line, in px. */
-export const LINE_HEIGHT = 20;
-export const POOL_LINE_HEIGHT = 38;
-const GROUP_HEIGHT = 22;
+export const LINE_HEIGHT = 24;
+export const POOL_LINE_HEIGHT = 42;
+const GROUP_HEIGHT = 27;
 /** The most px of one bar, and of all the bars of a line. */
 const BAR_MAX = 6;
-const BARS_MAX = 15;
+const BARS_MAX = 18;
 const clamp = (f: number): number => Math.min(1, Math.max(0, f));
 const RANK = { ok: 0, unknown: 1, warn: 2, crit: 3 } as const;
 
@@ -204,7 +204,7 @@ function GroupHeader(props: {
         gridColumn: '1 / -1',
         flex: 'none',
         px: 1.5,
-        pt: '5px',
+        pt: '8px',
         minWidth: 0,
         ...(stacked
           ? { flexWrap: 'wrap', columnGap: 1, rowGap: 0, pb: '2px' }
@@ -342,7 +342,7 @@ function IdentityLine(props: {
         sx={{
           display: 'grid',
           gridTemplateColumns: `${
-            pool ? (wide ? 250 : 200) : wide ? 200 : 128
+            pool ? (wide ? 250 : 200) : wide ? 200 : 148
           }px minmax(40px, 1fr) 40px`,
           columnGap: '10px',
           alignItems: 'center',

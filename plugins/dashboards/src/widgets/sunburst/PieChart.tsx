@@ -37,6 +37,15 @@ export interface PieChartProps {
   kiosk?: boolean;
 }
 
+/** The least width of a legend column, the gap between columns and the height of a legend row, in px. */
+const LEGEND_COLUMN = 250;
+const LEGEND_GAP = 16;
+const ROW = 18;
+
+/** The number of legend columns that fit in a width. */
+export const legendColumns = (width: number): number =>
+  Math.max(1, Math.floor((width + LEGEND_GAP) / (LEGEND_COLUMN + LEGEND_GAP)));
+
 export function PieChart({
   slices,
   groupIndex,
@@ -83,7 +92,17 @@ export function PieChart({
   const bh = box.size.height;
   const side = bw > 0 && bh > 0 && bw / bh > 1.15;
   const head = 44;
-  const pieSize = side ? Math.min(bh - head, bw * 0.5) : Math.min(bw, (bh - head) * 0.55);
+  // The legend is a grid of columns that are at least LEGEND_COLUMN px wide. Under the pie it is as
+  // tall as its rows need, and the pie takes all the rest. If the rows need more, the legend scrolls.
+  const underColumns = legendColumns(bw);
+  const underHeight = Math.ceil(slices.length / underColumns) * ROW;
+  const pieSize = side
+    ? Math.min(bh - head, bw * 0.5)
+    : Math.min(bw, Math.max((bh - head) * 0.55, bh - head - underHeight - 10));
+  const legendWidth = side ? bw - pieSize - 10 : bw;
+  const columns = legendColumns(legendWidth);
+  // A narrow column drops the group text, so the name keeps its room. The tooltip names the group.
+  const showGroup = (legendWidth + LEGEND_GAP) / columns - LEGEND_GAP >= 300;
 
   return (
     <Box
@@ -159,13 +178,26 @@ export function PieChart({
           ))}
         </svg>
         <ScrollArea label={`${title} legend`} sx={{ alignSelf: 'stretch', flex: '1 1 0' }}>
-          <Box component="ul" data-pie-legend sx={{ listStyle: 'none', m: 0, p: 0 }}>
+          <Box
+            component="ul"
+            data-pie-legend
+            data-columns={columns}
+            sx={{
+              listStyle: 'none',
+              m: 0,
+              p: 0,
+              display: 'grid',
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              columnGap: `${LEGEND_GAP}px`,
+              alignContent: 'start',
+            }}
+          >
             {slices.map(s => (
               <li key={s.key} data-legend-row={s.key}>
                 <ButtonBase
                   onClick={() => select(s.key)}
                   {...hover(s.key)}
-                  title={`${s.label}: ${s.valueText} (${share(s.value)})`}
+                  title={`${s.label}, ${s.group}: ${s.valueText} (${share(s.value)})`}
                   focusRipple={false}
                   disableRipple={kiosk}
                   sx={{
@@ -173,8 +205,8 @@ export function PieChart({
                     width: '100%',
                     alignItems: 'center',
                     gap: '6px',
-                    height: 20,
-                    fontSize: 12.5,
+                    height: ROW,
+                    fontSize: 12,
                     textAlign: 'left',
                     outline: 'none',
                     '&.Mui-focusVisible': { outline: kiosk ? 'none' : undefined },
@@ -184,8 +216,8 @@ export function PieChart({
                     component="span"
                     aria-hidden
                     sx={{
-                      width: 8,
-                      height: 8,
+                      width: 7,
+                      height: 7,
                       borderRadius: '1px',
                       flex: 'none',
                       bgcolor: colours.get(s.key),
@@ -204,17 +236,19 @@ export function PieChart({
                   >
                     {s.label}
                   </Box>
-                  <Box
-                    component="span"
-                    sx={{ color: 'text.secondary', fontSize: 11.5, whiteSpace: 'nowrap' }}
-                  >
-                    {s.group}
-                  </Box>
+                  {showGroup && (
+                    <Box
+                      component="span"
+                      sx={{ color: 'text.secondary', fontSize: 11, whiteSpace: 'nowrap' }}
+                    >
+                      {s.group}
+                    </Box>
+                  )}
                   <Box
                     component="span"
                     sx={{
                       fontWeight: 700,
-                      minWidth: 48,
+                      minWidth: 44,
                       textAlign: 'right',
                       fontVariantNumeric: 'tabular-nums',
                     }}
@@ -225,7 +259,7 @@ export function PieChart({
                     component="span"
                     sx={{
                       color: 'text.secondary',
-                      minWidth: 38,
+                      minWidth: 36,
                       textAlign: 'right',
                       fontVariantNumeric: 'tabular-nums',
                     }}
