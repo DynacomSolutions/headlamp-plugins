@@ -3,7 +3,8 @@ import { cleanup, fireEvent, render } from '@testing-library/react';
 import React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parsePanel } from '../panels/model';
-import { PieChart } from '../sunburst/PieChart';
+import { legendHeight } from '../sunburst/NodeSunburstChart';
+import { legendColumns, PieChart } from '../sunburst/PieChart';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import {
   accountsNote,
@@ -419,6 +420,48 @@ describe('PieChart', () => {
     const c = draw();
     fireEvent.click(c.querySelector('[data-legend-row="b"] button') as Element);
     expect(c.querySelector('[data-pie-head]')?.textContent).toContain('app-b: 10');
+  });
+});
+
+describe('chart legends', () => {
+  it('fits as many pie legend columns as the width allows, at least one', () => {
+    expect(legendColumns(0)).toBe(1);
+    expect(legendColumns(249)).toBe(1);
+    expect(legendColumns(516)).toBe(2);
+    expect(legendColumns(790)).toBe(3);
+  });
+  it('names the group in the tooltip of a pie legend row', () => {
+    const c = render(
+      themed(
+        <PieChart
+          slices={[{ key: 'a', label: 'app-a', group: 'Claude', value: 90, valueText: '90' }]}
+          groupIndex={g => providerIndex(g, [])}
+          title="Tokens"
+          totalText="90 tokens"
+        />
+      )
+    ).container;
+    expect(c.querySelector('[data-legend-row="a"] button')?.getAttribute('title')).toContain(
+      'app-a, Claude: 90'
+    );
+  });
+  it('sizes the sunburst legend from its rows: nodes fill the columns row by row', () => {
+    const node = (key: string, cats: number, capacity: number, used: number) => ({
+      key,
+      label: key,
+      capacity,
+      used,
+      categories: Array.from({ length: cats }, (_, i) => ({
+        key: `${key}${i}`,
+        label: `${key}${i}`,
+        value: 1,
+      })),
+    });
+    // a: 1 + 2 lines, b: 1 + 1 lines + 1 free line, c: 1 line. 15 px a line, 7 px between rows.
+    const nodes = [node('a', 2, 3, 3), node('b', 1, 5, 1), node('c', 0, 1, 1)];
+    expect(legendHeight(nodes, 1)).toBe((3 + 3 + 1) * 15 + 2 * 7);
+    expect(legendHeight(nodes, 2)).toBe(3 * 15 + 1 * 15 + 7);
+    expect(legendHeight([], 2)).toBe(0);
   });
 });
 

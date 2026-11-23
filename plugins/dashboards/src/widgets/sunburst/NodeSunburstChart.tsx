@@ -11,11 +11,33 @@ import Box from '@mui/material/Box';
 import ButtonBase from '@mui/material/ButtonBase';
 import React from 'react';
 import { useElementSize } from '../promql/useElementSize';
-import { freeKey, nodeSpan } from './geometry';
+import { freeKey, nodeSpan, SunburstNode } from './geometry';
 import { LegendSwatch } from './LegendSwatch';
 import { categoryArcId, freeArcId, freeOf, nodeArcId, NodeRing, useNodeColours } from './NodeRing';
 import { percent } from './shared';
 import type { SunburstChartProps } from './SunburstChart';
+
+const LINE = 15;
+const NODE_GAP = 7;
+/** The gap between the ring and the legend that sits under it, in px. */
+const RING_GAP = 10;
+
+/**
+ * The height of the legend, in px, for a number of columns. The nodes fill the columns row by row.
+ * A node is one line, one line for each category and one line for its free capacity.
+ */
+export function legendHeight(nodes: ReadonlyArray<SunburstNode>, columns: number): number {
+  const lines = nodes.map(
+    n => 1 + n.categories.filter(c => c.value > 0).length + (freeOf(n) > 0 ? 1 : 0)
+  );
+  let total = 0;
+  let rows = 0;
+  for (let i = 0; i < lines.length; i += Math.max(1, columns)) {
+    total += Math.max(...lines.slice(i, i + Math.max(1, columns))) * LINE;
+    rows += 1;
+  }
+  return total + Math.max(0, rows - 1) * NODE_GAP;
+}
 
 export function NodeSunburstChart({
   data,
@@ -49,15 +71,17 @@ export function NodeSunburstChart({
   const bh = box.size.height;
   const side = bw > 0 && bh > 0 && bw / bh > 1.15;
   const legend = !hideLegend && nodes.length > 0;
+  // Under the ring the legend is as tall as its rows need. The ring takes all the rest, so a tall
+  // box shows a big ring and a tight legend, never a small ring with a gap under it.
+  const underColumns = bw >= 330 ? 2 : 1;
+  const underHeight = legend && !side ? legendHeight(nodes, underColumns) : 0;
   const ringSize = !legend
     ? Math.min(bw, bh)
     : side
     ? Math.min(bh, bw * 0.55)
-    : Math.min(bw, bh * 0.6);
+    : Math.min(bw, Math.max(bh * 0.6, bh - underHeight - RING_GAP));
   const legendWidth = side ? bw - ringSize - 10 : bw;
   const columns = legendWidth >= 330 ? 2 : 1;
-  const LINE = 15;
-  const NODE_GAP = 7;
 
   const row = (
     key: string,
@@ -130,6 +154,8 @@ export function NodeSunburstChart({
         display: 'flex',
         flexDirection: side ? 'row' : 'column',
         alignItems: 'center',
+        // Under the ring, the ring and the legend sit together in the middle, never apart.
+        justifyContent: side ? undefined : 'center',
         gap: 1.25,
         height: '100%',
         minHeight: 0,
@@ -156,7 +182,7 @@ export function NodeSunburstChart({
             listStyle: 'none',
             m: 0,
             p: 0,
-            flex: '1 1 0',
+            flex: side ? '1 1 0' : '0 1 auto',
             minWidth: 0,
             minHeight: 0,
             width: '100%',
