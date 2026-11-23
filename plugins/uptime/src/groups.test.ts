@@ -338,3 +338,160 @@ describe('a raw IP is not a group name', () => {
     expect(groups[0].node).toBe(false);
   });
 });
+
+describe('projects: one group for all the apps of a project', () => {
+  interface Spec {
+    name: string;
+    namespace: string;
+    /** The app label of the route, empty for a shared namespace. */
+    app?: string;
+    backend?: string;
+    route?: string;
+  }
+  // A check at a route: the placement app is the app label, else the namespace (see routes.ts).
+  const world = (specs: Spec[]) => {
+    const checks = specs.map(s => check(s.name, 'up'));
+    const placements: Placements = new Map(
+      specs.map(s => [
+        s.name,
+        {
+          namespace: s.namespace,
+          app: s.app || s.namespace,
+          route: {
+            kind: 'httproute' as const,
+            namespace: s.namespace,
+            name: s.route ?? s.backend ?? s.name,
+            host: `${s.name}.example.com`,
+            path: '/',
+            exact: false,
+            labels: s.app ? { 'app.kubernetes.io/name': s.app } : {},
+            backend: s.backend
+              ? { namespace: s.namespace, name: s.backend, port: '80' }
+              : undefined,
+          },
+        },
+      ])
+    );
+    return { checks, placements };
+  };
+  const groupsOf = (specs: Spec[]) => {
+    const { checks, placements } = world(specs);
+    const { groups } = buildGroups(checks, 'auto', grid3, false, placements);
+    return Object.fromEntries(groups.map(g => [g.key, g.checks.map(c => c.name).sort()]));
+  };
+
+  it('puts every ergon, playarr, t3 and walt check under one group', () => {
+    const groups = groupsOf([
+      { name: 'ergon', namespace: 'ergon', app: 'ergon' },
+      { name: 'ergon-cluster', namespace: 'ergon-cluster', app: 'ergon' },
+      { name: 'ergon-cross-preview', namespace: 'ergon-cross-preview' },
+      { name: 'ergon-lite', namespace: 'ergon-lite', app: 'ergon-lite-hub' },
+      { name: 'ergon-lite-push', namespace: 'ergon-lite', app: 'ergon-lite-push' },
+      { name: 'ergon-storybook', namespace: 'hoarddb', app: 'static-site-ergon-storybook' },
+      { name: 'playarr', namespace: 'playarr', backend: 'shadow-playarr-eu4' },
+      { name: 'playarr-eu3', namespace: 'playarr', backend: 'shadow-playarr-eu3' },
+      { name: 'playarr-vnc', namespace: 'playarr-vnc', app: 'playarr-vnc' },
+      { name: 'playarr-wall', namespace: 'dev', backend: 'playarr-wall-legend' },
+      { name: 't3.eu2.example.com', namespace: 't3-cluster', backend: 't3-eu2' },
+      { name: 't3.hq.example.com', namespace: 't3-cluster', backend: 't3-hq' },
+      { name: 't3-host.hq0.example.com', namespace: 't3code', backend: 't3code-host' },
+      { name: 'walt', namespace: 'waltai', app: 'walt' },
+      { name: 'walt-browser', namespace: 'walt-browser', app: 'walt-browser' },
+      { name: 'runwarden', namespace: 'runwarden' },
+      { name: 'runwarden-live', namespace: 'runwarden-live' },
+      { name: 'momento', namespace: 'momento' },
+    ]);
+    expect(Object.keys(groups).sort()).toEqual([
+      'ergon',
+      'momento',
+      'playarr',
+      'runwarden',
+      't3',
+      'walt',
+    ]);
+    expect(groups.ergon).toHaveLength(6);
+    expect(groups.playarr).toEqual(['playarr', 'playarr-eu3', 'playarr-vnc', 'playarr-wall']);
+    expect(groups.t3).toHaveLength(3);
+    expect(groups.walt).toEqual(['walt', 'walt-browser']);
+    expect(groups.runwarden).toEqual(['runwarden', 'runwarden-live']);
+  });
+
+  it('splits a shared namespace by the project that two or more of its checks name', () => {
+    const groups = groupsOf([
+      { name: 'ais.example.com', namespace: 'dev', backend: 'ais' },
+      { name: 'ais-gateway.example.com', namespace: 'dev', backend: 'ais-gateway' },
+      { name: 'nazare-data', namespace: 'dev', backend: 'nazare-data' },
+      { name: 'nazare-data-ui', namespace: 'dev', backend: 'nazare-data-ui' },
+      { name: 'storagepod-blog', namespace: 'dev', backend: 'dynacom-solutions-storagepod-blog' },
+    ]);
+    expect(groups).toEqual({
+      ais: ['ais-gateway.example.com', 'ais.example.com'],
+      nazare: ['nazare-data', 'nazare-data-ui'],
+      dev: ['storagepod-blog'],
+    });
+  });
+
+  it('keeps an app that its own app label places, even when a Service shares the word', () => {
+    // The dashboard check is named `headlamp` and its Service too, but its route says app k8s-dashboard.
+    const groups = groupsOf([
+      { name: 'headlamp-agent', namespace: 'headlamp-agent', app: 'headlamp-agent' },
+      { name: 'headlamp', namespace: 'k8s', app: 'k8s-dashboard', backend: 'headlamp' },
+      { name: 'k8s', namespace: 'k8s', app: 'k8s-dashboard' },
+    ]);
+    expect(groups).toEqual({
+      'headlamp-agent': ['headlamp-agent'],
+      'k8s-dashboard': ['headlamp', 'k8s'],
+    });
+  });
+
+  it('keeps a chrome tenant out of the project with the same name', () => {
+    const groups = groupsOf([
+      { name: 'myriad', namespace: 'myriad', app: 'myriad' },
+      { name: 'myriad.chrome.example.com', namespace: 'chrome-mcp', app: 'chrome-mcp' },
+      { name: 'swap.chrome.example.com', namespace: 'chrome-mcp', app: 'chrome-mcp' },
+    ]);
+    expect(groups).toEqual({
+      myriad: ['myriad'],
+      'chrome-mcp': ['myriad.chrome.example.com', 'swap.chrome.example.com'],
+    });
+  });
+
+  it('never makes a group of one project with one key and one check, and never an Other group', () => {
+    const groups = groupsOf([
+      {
+        name: 'static-site-check',
+        namespace: 'static-sites',
+        app: 'static-site-static-site-check',
+      },
+      { name: 'cluster-artifacts', namespace: 'cluster-artifacts', app: 'cluster-artifacts' },
+    ]);
+    expect(Object.keys(groups).sort()).toEqual([
+      'cluster-artifacts',
+      'static-site-static-site-check',
+    ]);
+    expect(Object.keys(groups).some(k => /other/i.test(k))).toBe(false);
+  });
+
+  it('keeps the worst status and the count of the merged group', () => {
+    const checks = [check('ergon', 'up'), check('ergon-lite', 'down'), check('ergon-push', 'up')];
+    const placements = placed({
+      ergon: ['ergon', 'ergon'],
+      'ergon-lite': ['ergon-lite', 'ergon-lite'],
+      'ergon-push': ['ergon-lite', 'ergon-push'],
+    });
+    const { groups } = buildGroups(checks, 'auto', grid3, false, placements);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ key: 'ergon', status: 'down' });
+    expect(groups[0].counts).toMatchObject({ up: 2, down: 1 });
+  });
+
+  it('does not merge when the user groups by namespace or by name', () => {
+    const checks = [check('ergon', 'up'), check('ergon-lite', 'up')];
+    const placements = placed({ ergon: ['a', 'ergon'], 'ergon-lite': ['b', 'ergon-lite'] });
+    expect(
+      buildGroups(checks, 'namespace', grid3, false, placements)
+        .groups.map(g => g.key)
+        .sort()
+    ).toEqual(['a', 'b']);
+  });
+});

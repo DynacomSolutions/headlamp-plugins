@@ -123,3 +123,46 @@ describe('fetchClusterInfo', () => {
     expect((await info.icons).size).toBe(0);
   });
 });
+
+describe('icons of the project groups', () => {
+  // The keys of the icon map for these apps: a key also covers the groups that start with it and a dash.
+  const icon = (n: string) => `data:image/svg+xml;utf8,<svg id="${n}"/>`;
+  const keys = [
+    'cloudflare',
+    'dynacom',
+    'dynacom-dev-watcher',
+    'ergon',
+    'headlamp-agent',
+    'lidarr',
+    'momento',
+    'plex',
+    'qui',
+    'radarr',
+    'runwarden',
+    'sonarr',
+    't3',
+    'walt',
+    'playarr',
+    'whisparr',
+  ];
+  const map = iconMapFrom({ data: Object.fromEntries(keys.map(k => [k, icon(k)])) });
+
+  it('finds the icon of every project group by its own key', () => {
+    for (const k of keys) expect(mapIconFor(k, map)).toBe(icon(k));
+  });
+
+  it('covers the groups that start with the project name', () => {
+    expect(mapIconFor('cloudflare-dns', map)).toBe(icon('cloudflare'));
+    expect(mapIconFor('runwarden-live', map)).toBe(icon('runwarden'));
+    expect(mapIconFor('t3-cluster', map)).toBe(icon('t3'));
+    expect(mapIconFor('ergon-lite-hub', map)).toBe(icon('ergon'));
+  });
+
+  it('takes the longest key, and never an icon for a name that only shares letters', () => {
+    expect(mapIconFor('dynacom-dev-watcher', map)).toBe(icon('dynacom-dev-watcher'));
+    expect(mapIconFor('dynacom-registry', map)).toBe(icon('dynacom'));
+    expect(mapIconFor('t3code', map)).toBeUndefined();
+    expect(mapIconFor('headlamp', map)).toBeUndefined();
+    expect(mapIconFor('kokoro-tts', map)).toBeUndefined();
+  });
+});
