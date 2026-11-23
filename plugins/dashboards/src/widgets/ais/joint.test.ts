@@ -52,6 +52,28 @@ describe('jointLimits', () => {
     expect(j.reporting).toBe(2);
   });
 
+  it('sets the joint status by the other windows: a full model window does not count', () => {
+    const j = jointLimits([
+      member('a', [limit('Weekly', 0.4), limit('Weekly (Fable)', 1, { status: 'crit' })]),
+    ]);
+    expect(j.status).toBe('ok');
+    // The model window stays in the list, with its own value and status.
+    expect(byName(j, 'Weekly (Fable)')?.fraction).toBe(1);
+    expect(byName(j, 'Weekly (Fable)')?.status).toBe('crit');
+    expect(byName(j, 'Weekly')?.status).toBe('ok');
+  });
+
+  it('sets the joint status by the weekly value, warn included', () => {
+    const j = jointLimits([member('a', [limit('Weekly', 0.85), limit('Weekly (Fable)', 1)])]);
+    expect(j.status).toBe('warn');
+  });
+
+  it('has an unknown joint status when only model windows report', () => {
+    const j = jointLimits([member('a', [limit('Weekly (Fable)', 1)])]);
+    expect(j.status).toBe('unknown');
+    expect(j.limits).toHaveLength(1);
+  });
+
   it('keeps the display order of the windows and drops a window that nobody reports', () => {
     const j = jointLimits([
       member('a', [limit('Monthly', 0.1), limit('Weekly', 0.1), limit('5-hour', 0.1)]),

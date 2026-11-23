@@ -23,7 +23,7 @@ import {
   WIDE_WIDTH,
   worstLimit,
 } from './AisView';
-import { joinAis } from './join';
+import { isModelLimit, joinAis } from './join';
 
 afterEach(cleanup);
 
@@ -338,9 +338,13 @@ describe('AisView console view', () => {
     expect(row.querySelector('[data-segment="Weekly"]')?.getAttribute('data-fill')).toBe(
       String((1 + 0.4 + 0.07) / 3)
     );
-    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('100%');
-    expect(row.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('crit');
-    expect(row.getAttribute('data-row-status')).toBe('crit');
+    // The full Fable window does not count: the line shows the Weekly total.
+    expect(row.querySelector('[data-segment="Weekly (Fable)"]')?.getAttribute('data-fill')).toBe(
+      '1'
+    );
+    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('49%');
+    expect(row.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('ok');
+    expect(row.getAttribute('data-row-status')).toBe('ok');
   });
 
   it('marks a member that reports no data for a window', () => {
@@ -405,6 +409,95 @@ describe('worstLimit', () => {
     ]);
     expect(w?.name).toBe('c');
     expect(worstLimit([])).toBeUndefined();
+  });
+});
+
+describe('model windows', () => {
+  const panel = (id: string, rows: ReturnType<typeof lim>[]) =>
+    parsePanel({ version: 1, id, title: id, status: 'ok', summary: '', stats: [], rows });
+  const only = (rows: ReturnType<typeof lim>[]) => joinAis({ limits: panel('limits', rows) });
+  const draw = (m: ReturnType<typeof joinAis>) =>
+    render(wrap(<AisView model={m} sourceId="ais-console" kiosk={false} editing={false} />))
+      .container;
+
+  it('knows a model window by the model in brackets at the end of its name', () => {
+    expect(isModelLimit('Weekly (Fable)')).toBe(true);
+    expect(isModelLimit('weekly (Opus 4)')).toBe(true);
+    expect(isModelLimit('Weekly')).toBe(false);
+    expect(isModelLimit('5-hour')).toBe(false);
+    expect(isModelLimit('(Fable) Weekly')).toBe(false);
+  });
+
+  it('keeps a model window out of worstLimit', () => {
+    const w = worstLimit([
+      { name: 'Weekly', value: '40%', fraction: 0.4, status: 'ok' },
+      { name: 'Weekly (Fable)', value: '100%', fraction: 1, status: 'crit' },
+    ]);
+    expect(w?.name).toBe('Weekly');
+    expect(
+      worstLimit([{ name: 'Weekly (Fable)', value: '100%', fraction: 1, status: 'crit' }])
+    ).toBeUndefined();
+  });
+
+  it('sets the percentage and the status of a line by the other windows, and still draws the bar', () => {
+    const m = only([
+      lim('Anthropic / blue', 'Weekly', 0.4),
+      lim('Anthropic / blue', 'Weekly (Fable)', 1, 'crit'),
+    ]);
+    expect(m.groups[0].members[0].status).toBe('ok');
+    expect(m.status).toBe('ok');
+    const c = draw(m);
+    const row = c.querySelector('[data-ais-row="anthropic/blue"]') as HTMLElement;
+    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('40%');
+    expect(row.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('ok');
+    expect(row.querySelectorAll('[data-lane]')).toHaveLength(2);
+    expect(row.querySelector('[data-segment="Weekly (Fable)"]')?.getAttribute('data-fill')).toBe(
+      '1'
+    );
+  });
+
+  it('shows a warning by the weekly value when the weekly window warns', () => {
+    const m = only([
+      lim('Anthropic / blue', 'Weekly', 0.85, 'warn'),
+      lim('Anthropic / blue', 'Weekly (Fable)', 1, 'crit'),
+    ]);
+    expect(m.groups[0].members[0].status).toBe('warn');
+    expect(m.status).toBe('warn');
+  });
+
+  it('shows no percentage for an identity with only model windows, and keeps the bar', () => {
+    const m = only([lim('Anthropic / blue', 'Weekly (Fable)', 1, 'crit')]);
+    expect(m.groups[0].members[0].status).toBe('ok');
+    expect(m.status).toBe('ok');
+    const row = draw(m).querySelector('[data-ais-row="anthropic/blue"]') as HTMLElement;
+    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('');
+    expect(row.querySelector('[data-segment="Weekly (Fable)"]')?.getAttribute('data-fill')).toBe(
+      '1'
+    );
+  });
+
+  it('chooses the pool member and the pool status by the other windows', () => {
+    const limitsPanel = panel('limits', [
+      lim('Anthropic / blue', 'Weekly', 0.4),
+      lim('Anthropic / blue', 'Weekly (Fable)', 1, 'crit'),
+      lim('Anthropic / red', 'Weekly', 0.5),
+    ]);
+    const swap = parsePanel({
+      version: 1,
+      id: 'claude-swap',
+      title: 'Swap',
+      status: 'ok',
+      summary: '',
+      stats: [],
+      rows: [
+        { label: 'pool-one / blue', detail: 'Active, weekly', value: '40%', status: 'ok' },
+        { label: 'pool-one / red', detail: 'Idle, weekly', value: '50%', status: 'ok' },
+      ],
+    });
+    const g = joinAis({ limits: limitsPanel, swap }).groups[0];
+    expect(g.poolStatus).toBe('ok');
+    expect(g.joint?.status).toBe('ok');
+    expect(g.joint?.limits.map(l => l.name)).toContain('Weekly (Fable)');
   });
 });
 

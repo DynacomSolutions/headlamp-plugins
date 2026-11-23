@@ -40,7 +40,7 @@ export interface AisJoint {
   /** The members that report at least one window. */
   reporting: number;
   limits: AisJointLimit[];
-  /** The joint status: the worst of the joint windows. */
+  /** The joint status: the worst of the joint windows. Model windows do not count. */
   status: PanelStatus;
 }
 
@@ -68,7 +68,7 @@ export interface AisIdentity {
    * pool. Absent when the agents data says nothing about the pool.
    */
   serving?: boolean;
-  /** The worst status of the login state and the limits. */
+  /** The worst status of the login state and the limits. Model windows do not count. */
   status: PanelStatus;
   /** The raw link of the first row that names the identity. The widget maps it to a dashboard tab. */
   link?: string;
@@ -153,6 +153,17 @@ export const JOINT_CRIT = 0.95;
 export const jointStatus = (fraction: number): PanelStatus =>
   fraction >= JOINT_CRIT ? 'crit' : fraction >= JOINT_WARN ? 'warn' : 'ok';
 
+/**
+ * A model window is a limit for one model, such as "Weekly (Fable)": its name ends with the model
+ * in brackets. The AIS source has no model field, so the name is the only sign. A model window
+ * stays visible, but it never counts towards the total of an identity, a pool or the widget.
+ */
+export const isModelLimit = (name: string): boolean => /\([^()]+\)\s*$/.test(name);
+
+/** The windows that count towards a total: every window that is not a model window. */
+export const overallLimits = <T extends { name: string }>(limits: ReadonlyArray<T>): T[] =>
+  limits.filter(l => !isModelLimit(l.name));
+
 const unit = (f: number): number => Math.min(1, Math.max(0, f));
 const percent = (f: number): string => `${Math.round(unit(f) * 100)}%`;
 
@@ -202,9 +213,9 @@ export function jointLimits(members: ReadonlyArray<AisIdentity>): AisJoint {
     reporting: members.filter(m => m.limits.some(l => l.fraction !== undefined)).length,
     limits,
     status:
-      limits.length === 0
+      overallLimits(limits).length === 0
         ? 'unknown'
-        : limits.reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
+        : overallLimits(limits).reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
   };
 }
 
@@ -316,7 +327,10 @@ export function joinAis(panels: AisPanels): AisModel {
   }
 
   for (const d of drafts.values()) {
-    d.status = d.limits.reduce<PanelStatus>((s, l) => worse(s, l.status), d.login?.status ?? 'ok');
+    d.status = overallLimits(d.limits).reduce<PanelStatus>(
+      (s, l) => worse(s, l.status),
+      d.login?.status ?? 'ok'
+    );
   }
 
   const all = Array.from(drafts.values());
@@ -362,7 +376,9 @@ export function joinAis(panels: AisPanels): AisModel {
       serving,
       poolLimits: limitsOf?.limits,
       poolLimitsOf: limitsOf?.name,
-      poolStatus: limitsOf?.limits.reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok'),
+      poolStatus: limitsOf
+        ? overallLimits(limitsOf.limits).reduce<PanelStatus>((s, l) => worse(s, l.status), 'ok')
+        : undefined,
       joint: jointLimits(members),
       link: poolLink.get(pool),
     };
