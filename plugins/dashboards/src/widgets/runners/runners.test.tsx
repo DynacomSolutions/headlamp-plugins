@@ -1104,6 +1104,16 @@ describe('the expand and view options', () => {
     expect(container.querySelectorAll('[data-pool]')).toHaveLength(2);
   });
 
+  it('draws smaller tile values in the strip, so a long wait never touches a ring', () => {
+    const size = (view: 'full' | 'summary') =>
+      getComputedStyle(
+        drawWith({ view }).container.querySelector('[data-stat-value]') as HTMLElement
+      ).fontSize;
+    expect(size('full')).toBe('24px');
+    expect(size('summary')).toBe('20px');
+    cleanup();
+  });
+
   it('draws the tiles, the rings and the list for the full view', () => {
     const { container } = drawWith({ view: 'full' });
     expect(container.querySelector('[data-stats]')).not.toBeNull();

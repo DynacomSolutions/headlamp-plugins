@@ -232,7 +232,7 @@ function Pools(props: { pools: RunnerPool[] }): JSX.Element {
 }
 
 /** The fixed stat tiles. Running, queued and free carry the colour of their ring arc. */
-function Tiles(props: { stats: Stat[] }): JSX.Element {
+function Tiles(props: { stats: Stat[]; small?: boolean }): JSX.Element {
   const tk = useTokens();
   const c = useRingColours();
   const mark = [c.running, c.queued, 'hatch'];
@@ -243,8 +243,10 @@ function Tiles(props: { stats: Stat[] }): JSX.Element {
           <Box
             data-stat-value
             sx={{
-              fontSize: 24,
+              fontSize: props.small ? 20 : 24,
               lineHeight: 1.1,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
               letterSpacing: '-0.01em',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap',
@@ -969,7 +971,7 @@ export function RunnersView(props: {
   const summary = (
     <>
       <Box data-runners-tiles sx={{ flex: view === 'summary' ? '1 1 0' : 'none', minWidth: 0 }}>
-        <Tiles stats={model.stats} />
+        <Tiles stats={model.stats} small={view === 'summary'} />
       </Box>
       {model.pools.length > 0 && <Pools pools={model.pools} />}
     </>
