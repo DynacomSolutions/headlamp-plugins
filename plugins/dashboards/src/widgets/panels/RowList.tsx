@@ -42,6 +42,10 @@ export const VALUE_FONT_WEIGHT = 400;
 
 export const ROW_HEIGHT = 52;
 export const ROW_GAP = 6;
+/** The compact row: one line, no gap. A row with an icon needs the height of the icon tile. */
+export const COMPACT_ROW_HEIGHT = 30;
+export const COMPACT_ROW_HEIGHT_ICON = 34;
+export const COMPACT_VALUE_FONT_SIZE = 15;
 
 /** Every row, the worst first. Nothing folds and nothing is left out. */
 export function orderRows(rows: PanelRow[]): PanelRow[] {
@@ -79,20 +83,24 @@ export function RowList(props: {
   source?: PanelSource;
   /** The colour of the plot line that belongs to a row. It shows as a short line before the row. */
   swatch?: (row: PanelRow) => string | undefined;
+  /** One line for each row, with the detail after the label, and no gap between rows. */
+  compact?: boolean;
 }): JSX.Element {
-  const { rows, width = 0, editing, source, swatch } = props;
+  const { rows, width = 0, editing, source, swatch, compact = false } = props;
   const tk = useTokens();
   const items = React.useMemo(() => orderRows(rows), [rows]);
   // Under 360 px a bar would leave the label no room.
   const withBar = (width === 0 || width >= 360) && items.some(isInformative);
   const withIcon = source !== undefined && rows.some(r => r.icon !== undefined);
+  const rowHeight = !compact ? ROW_HEIGHT : withIcon ? COMPACT_ROW_HEIGHT_ICON : COMPACT_ROW_HEIGHT;
   return (
     <Box
       data-rows
+      data-compact={compact ? '' : undefined}
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        gap: `${ROW_GAP}px`,
+        gap: compact ? 0 : `${ROW_GAP}px`,
         minWidth: 0,
         fontSize: 13,
       }}
@@ -107,9 +115,9 @@ export function RowList(props: {
             sx={{
               display: 'flex',
               alignItems: 'center',
-              gap: 1.5,
-              height: ROW_HEIGHT,
-              px: 1.5,
+              gap: compact ? 1 : 1.5,
+              height: rowHeight,
+              px: compact ? 1 : 1.5,
               flex: 'none',
               minWidth: 0,
               // Square corners: a band and the list end in a straight edge.
@@ -130,14 +138,21 @@ export function RowList(props: {
                 <RowIcon source={source} icon={r.icon} />
               </Box>
             )}
-            <Box sx={{ flex: '1 1 0', minWidth: 0 }}>
+            <Box
+              sx={{
+                flex: '1 1 0',
+                minWidth: 0,
+                ...(compact ? { display: 'flex', alignItems: 'baseline', gap: 1 } : {}),
+              }}
+            >
               <Box
                 title={r.label}
                 sx={{
-                  fontSize: 16,
+                  fontSize: compact ? 14 : 16,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
+                  ...(compact ? { flex: 'none', maxWidth: '55%' } : {}),
                 }}
               >
                 <Label row={r} editing={editing} />
@@ -147,11 +162,12 @@ export function RowList(props: {
                   title={r.detail}
                   sx={{
                     color: tk.fg2,
-                    fontSize: 12.5,
+                    fontSize: compact ? 12 : 12.5,
                     lineHeight: 1.2,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
+                    ...(compact ? { flex: '1 1 0', minWidth: 0 } : {}),
                   }}
                 >
                   {r.detail}
@@ -170,7 +186,7 @@ export function RowList(props: {
                 fontVariantNumeric: 'tabular-nums',
                 // One size and weight for every value in every list. It never follows the
                 // status, the rank or the length of the text.
-                fontSize: VALUE_FONT_SIZE,
+                fontSize: compact ? COMPACT_VALUE_FONT_SIZE : VALUE_FONT_SIZE,
                 fontWeight: VALUE_FONT_WEIGHT,
                 lineHeight: 1,
               }}

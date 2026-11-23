@@ -62,6 +62,10 @@ export interface PanelDisplay {
   seriesLimit?: number;
   /** The unit that the plot shows after its numbers, for example `s`. */
   seriesUnit?: string;
+  /** One line for each row, with less padding. Default off. */
+  compact?: boolean;
+  /** The rows of the panel. Default on. Off keeps the stat tiles, the plot and the summary only. */
+  showRows?: boolean;
 }
 
 export const DEFAULT_DISPLAY: PanelDisplay = {
@@ -77,6 +81,8 @@ export function displayOf(config: {
   rowLayout?: unknown;
   seriesLimit?: unknown;
   seriesUnit?: unknown;
+  compact?: unknown;
+  showRows?: unknown;
 }): PanelDisplay {
   const limit =
     typeof config.seriesLimit === 'number' && config.seriesLimit > 0
@@ -88,6 +94,8 @@ export function displayOf(config: {
     ...(unit !== '' ? { seriesUnit: unit } : {}),
     showSummary: config.showSummary !== false,
     showStats: config.showStats !== false,
+    ...(config.compact === true ? { compact: true } : {}),
+    ...(config.showRows === false ? { showRows: false } : {}),
     rowLayout:
       config.rowLayout === 'grouped-bars' || config.rowLayout === 'stacked-lanes'
         ? config.rowLayout
@@ -123,7 +131,8 @@ export function PanelView({
   const root = useElementSize<HTMLDivElement>();
   const rowsBox = useElementSize<HTMLDivElement>();
   // The bars and lanes views keep their own legend fixed and scroll only their rows.
-  const ownScroll = display.rowLayout !== 'list' && panel.rows.length > 0;
+  const showRows = display.showRows !== false;
+  const ownScroll = showRows && display.rowLayout !== 'list' && panel.rows.length > 0;
   const hasSeries = panel.series.length > 0;
   const plotWidth = root.size.width;
   const plotHeight = Math.max(90, Math.min(220, Math.round(root.size.height * 0.42)));
@@ -193,7 +202,9 @@ export function PanelView({
             ))}
           </Box>
         ))}
-      {(panel.rings.length > 0 || panel.tables.length > 0 || (!ownScroll && rows.length > 0)) && (
+      {(panel.rings.length > 0 ||
+        panel.tables.length > 0 ||
+        (showRows && !ownScroll && rows.length > 0)) && (
         <ScrollArea
           label="Rows"
           sx={ownScroll ? { flex: '0 1 auto', maxHeight: '45%' } : undefined}
@@ -220,8 +231,9 @@ export function PanelView({
                 ))}
               </Box>
             )}
-            {!ownScroll && rows.length > 0 && (
+            {showRows && !ownScroll && rows.length > 0 && (
               <RowList
+                compact={display.compact}
                 rows={rows}
                 width={rowsBox.size.width}
                 editing={editing}

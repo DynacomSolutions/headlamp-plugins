@@ -3,6 +3,8 @@ import { aisAgentsWidget, aisGatewayWidget } from './ais/AisChartWidgets';
 import { aisWidget } from './ais/AisWidget';
 import { clockWidget } from './ClockWidget';
 import { headerWidget } from './HeaderWidget';
+import { hoardDetailWidget } from './hoarddb/HoardDetailWidget';
+import { hoardSummaryWidget } from './hoarddb/HoardSummaryWidget';
 import { hoardWidget } from './hoarddb/HoardWidget';
 import { issuesWidget } from './issues/IssuesWidget';
 import { k8sReportWidget } from './k8s/K8sReportWidget';
@@ -23,6 +25,8 @@ export function registerBuiltinWidgets(store: WidgetStore): void {
   store.registerWidget(aisGatewayWidget);
   store.registerWidget(runnersWidget);
   store.registerWidget(hoardWidget);
+  store.registerWidget(hoardSummaryWidget);
+  store.registerWidget(hoardDetailWidget);
   for (const w of PANEL_WIDGETS) store.registerWidget(w);
   for (const w of PROMQL_WIDGETS) store.registerWidget(w);
   for (const w of NETFLOW_WIDGETS) store.registerWidget(w);
