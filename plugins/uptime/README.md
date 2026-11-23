@@ -65,9 +65,24 @@ check name. A raw IP address is never a group name: the address of a node (its
 InternalIP or ExternalIP in `/api/v1/nodes`) groups under the node name, with a
 server glyph, and any other address groups under the check name. There is never an "Other", "Ungrouped" or "Not in cluster" group.
 
+The `app` and `group` groupings then merge the groups of one project. A project
+is the first word of the check name (`ergon-lite.example.com` gives `ergon`). A
+check is tied to it when its group key, or in a shared namespace (a route with
+no app label) its Service or route name, starts with that word. The checks of a
+project share one group when they come from two or more keys, or when two or
+more sit in one shared namespace. So `ergon`, `ergon-lite-hub` and
+`ergon-cross-preview` are one group `ergon`, and `t3-cluster` and `t3code` are
+one group `t3`. A check with an app label keeps its app, and a check that
+nothing places keeps its own name.
+
 Every group is listed, failing groups first, and no group folds into a "N more
-up" row. Each group is one row: the icon of the app, the worst status, the
-counts, its own history strip and the availability. Groups start collapsed
+up" row. Each group is one thin row: the icon of the app, the worst status, the
+name with the count of its checks, its own history strip and the availability.
+A time axis above the list draws the same cells as the strips, with the local
+clock for a day and the day (`Mon 23`) for a week or more. A day boundary is
+bold. Each strip cell has a tooltip with its exact start, end and status in the
+browser time zone. The label column is as wide as the longest label on screen,
+up to 300 px, and a longer label ends in an ellipsis with a tooltip. Groups start collapsed
 (`expanded` off). A click, or Enter on the focused row, opens a group to show
 each of its checks with its own strip. With `expanded` on, every group starts
 open. A thin divider line under each row, the same line as the other row lists
