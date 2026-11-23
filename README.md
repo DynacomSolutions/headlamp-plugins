@@ -1,8 +1,8 @@
 # headlamp-plugins
 
-Thirteen plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
+Fourteen plugins that bring everyday cluster operations into [Headlamp](https://headlamp.dev/):
 spot slow disks, see where CI jobs are running, find application URLs, manage
-notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, see where CPU, memory, disk and network go, check uptime from several sites, read incident diagnoses, and build dashboards of widgets.
+notifications, understand agent memory pressure, track component updates, browse container registry contents, track VM images, watch server temperatures and power, see where CPU, memory, disk and network go, check uptime from several sites, watch the check-in of every recurring job, read incident diagnoses, and build dashboards of widgets.
 
 Built with `@kinvolk/headlamp-plugin` (TypeScript + React). Install the plugins
 you need; each has its own release archive and configuration.
@@ -20,6 +20,7 @@ you need; each has its own release archive and configuration.
 | [Node hardware](#node-hardware) | See server temperatures and estimated power draw per node | [Queries and metrics](plugins/node-hardware/README.md) |
 | [Usage](#usage) | Break down CPU, memory, disk and network usage by namespace, workload, Service, node or label | [Queries and the label join](plugins/usage/README.md) |
 | [Uptime](#uptime) | Check HTTP, TCP, TLS, DNS and ICMP targets from several sites, with history | [Labels and scrape config](plugins/uptime/README.md) |
+| [Workflows](#workflows) | Watch every recurring job of an app and its CronJobs and workloads: status, last success, failures, next due | [Contract, settings and RBAC](plugins/workflows/README.md) |
 | [Incidents](#incidents) | Read the agent's alert diagnoses, rendered from A2UI | [Settings, RBAC and the renderer](plugins/incidents/README.md) |
 | [Dashboards](#dashboards) | Build, save and view dashboards of widgets in tabs and sections | [Storage, URLs and the widget contract](plugins/dashboards/README.md) |
 
@@ -233,6 +234,23 @@ Needs blackbox_exporter probe series with `target`, `location`, `type` and
 `policy` labels in a Prometheus-compatible query endpoint. See the
 [setup guide](plugins/uptime/README.md).
 
+### Workflows
+
+A summary bar counts failing workflows, overdue workflows, failing CronJobs and
+unhealthy workloads. One table lists every recurring job of an app, grouped by
+app, with its status, last run, last success, failures in a row, expected
+interval and next due. CronJobs from kube-state-metrics sit in the same table. A
+second table lists the Deployments and StatefulSets of the same namespaces, with
+ready replicas, restarts in 24 hours, the last exit code and crash loops. Failing
+rows sort first. A Dashboards widget shows the same bar and the failing rows.
+
+**Example:** a service restarts in a loop for days and nothing tells you. Open
+**Workflows**: the summary bar is red, the workload shows `crash loop` with its
+last exit code, and every job that depends on it is `overdue`.
+
+Needs `<prefix>_workflow_*` series that the app exports, kube-state-metrics, and a
+Prometheus-compatible query endpoint. See the [setup guide](plugins/workflows/README.md).
+
 ### Incidents
 
 List the alert diagnoses made by the read-only headlamp-agent, newest first,
@@ -266,14 +284,14 @@ ConfigMaps in the dashboards namespace, and to change them to edit. See the
 Each plugin is distributed as a versioned GitHub Release archive containing
 the built `main.js`, its `package.json`, and any plugin assets. The alerting
 archive also includes its service worker.
-The release contains thirteen plugin archives and thirteen checksum lines.
+The release contains fourteen plugin archives and fourteen checksum lines.
 
 ## Creating a release
 
 Push a strict semantic-version tag such as `v1.2.3` or `v1.2.3-rc.1` to
 create a release. The workflow stages the tag version in each plugin's
 `package.json` and `package-lock.json` in its job workspace without committing
-those changes, then creates and uploads thirteen plugin archives plus
+those changes, then creates and uploads fourteen plugin archives plus
 `SHA256SUMS`. Tags containing a hyphen publish as prereleases.
 
 ## Installing a release
