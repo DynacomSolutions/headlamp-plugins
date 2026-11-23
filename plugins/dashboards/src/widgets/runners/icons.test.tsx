@@ -16,11 +16,13 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 
 import { LinkContext } from '../../links';
 import { parsePanel } from '../panels/model';
+import { DEFAULT_DISPLAY, PanelView } from '../panels/PanelView';
 import {
   clearIconMapCache,
   fetchIconMap,
   ICON_CACHE_MS,
   ICON_MAP_VALUE_MAX,
+  iconForLabel,
   iconMapFrom,
   mapIconFor,
   orgIconFor,
@@ -227,5 +229,65 @@ describe('the icons in the runner list', () => {
     for (const img of container.querySelectorAll('[data-group-icon]')) {
       expect(img.getAttribute('src')).toMatch(/^data:image\/(png|svg\+xml);/);
     }
+  });
+});
+
+describe('the icon of an org/repo label', () => {
+  it('gives the repo icon, else the org avatar, and none for other labels', () => {
+    expect(iconForLabel('acme/web', MAP)).toBe(SVG);
+    expect(iconForLabel('acme/docs', MAP)).toBe(PNG);
+    expect(iconForLabel('nobody/docs', MAP)).toBeUndefined();
+    expect(iconForLabel('rw-linux', MAP)).toBeUndefined();
+    expect(iconForLabel('acme/web 12 failed', MAP)).toBeUndefined();
+    expect(iconForLabel('', MAP)).toBeUndefined();
+  });
+});
+
+describe('the icons in a panel list', () => {
+  const panel = parsePanel({
+    version: 1,
+    id: 'failures',
+    title: 'Failures',
+    status: 'ok',
+    summary: '',
+    rows: [
+      { label: 'acme/web', detail: '1 failed', value: '5%', status: 'warn' },
+      { label: 'acme/docs', detail: '0 failed', value: '0%', status: 'ok' },
+      { label: 'nobody/tool', detail: '0 failed', value: '0%', status: 'ok' },
+    ],
+  });
+  const draw = (orgIcons: boolean) =>
+    render(
+      <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+        <MemoryRouter>
+          <PanelView
+            panel={panel}
+            kiosk={false}
+            editing={false}
+            display={{ ...DEFAULT_DISPLAY, orgIcons }}
+          />
+        </MemoryRouter>
+      </ThemeProvider>
+    ).container;
+
+  it('shows the repo icon or the org avatar on each row, and an empty slot when there is none', async () => {
+    request.mockResolvedValue({ data: { 'gh.acme': PNG, 'gh.acme.web': SVG } });
+    const c = draw(true);
+    const src = (i: number) =>
+      c.querySelectorAll('[data-row]')[i]?.querySelector('[data-group-icon]')?.getAttribute('src');
+    await waitFor(() => expect(c.querySelector('[data-group-icon]')).not.toBeNull());
+    // The rows come worst first: acme/web (warn), then acme/docs, then nobody/tool.
+    expect(src(0)).toBe(SVG);
+    expect(src(1)).toBe(PNG);
+    expect(src(2)).toBeUndefined();
+    expect(c.querySelectorAll('[data-row] [data-group-icon-slot]')).toHaveLength(3);
+  });
+
+  it('shows no icon, and reads no map, when the option is off', async () => {
+    request.mockResolvedValue({ data: { 'gh.acme': PNG } });
+    const c = draw(false);
+    await Promise.resolve();
+    expect(request).not.toHaveBeenCalled();
+    expect(c.querySelector('[data-group-icon-slot]')).toBeNull();
   });
 });

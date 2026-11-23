@@ -17,7 +17,7 @@
  */
 import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
-import { NO_ORG, UNKNOWN_REPO } from './join';
+import { NO_ORG, splitRepo, UNKNOWN_REPO } from './join';
 
 export const ICON_MAP_NAMESPACE = 'headlamp-dashboards';
 export const ICON_MAP_NAME = 'uptime-icons';
@@ -87,6 +87,13 @@ export function repoIconFor(org: string, repo: string, map: IconMap): string | u
   return orgIconFor(org, map);
 }
 
+/** The icon of a label such as `org/repo`: the repo icon, else the org avatar. Other labels have none. */
+export function iconForLabel(label: string, map: IconMap): string | undefined {
+  const { org, name } = splitRepo(label.trim());
+  if (org === NO_ORG || /\s/.test(label.trim())) return undefined;
+  return repoIconFor(org, name, map);
+}
+
 let cached: { at: number; map: Promise<IconMap> } | undefined;
 
 /** Forgets the cached read. Tests use it. */
@@ -116,10 +123,11 @@ export function fetchIconMap(now: number = Date.now()): Promise<IconMap> {
 
 const EMPTY: IconMap = new Map();
 
-/** The icon map, empty until it is read. */
-export function useIconMap(): IconMap {
+/** The icon map, empty until it is read. With `enabled` false nothing is read. */
+export function useIconMap(enabled = true): IconMap {
   const [map, setMap] = React.useState<IconMap>(EMPTY);
   React.useEffect(() => {
+    if (!enabled) return undefined;
     let live = true;
     fetchIconMap().then(m => {
       if (live && m.size > 0) setMap(m);
@@ -127,6 +135,6 @@ export function useIconMap(): IconMap {
     return () => {
       live = false;
     };
-  }, []);
+  }, [enabled]);
   return map;
 }

@@ -9,6 +9,7 @@
 import Box from '@mui/material/Box';
 import React from 'react';
 import { InternalLink } from '../../links';
+import { GroupIcon } from '../runners/GroupIcon';
 import type { PanelRow, PanelStatus } from './model';
 import { RowIcon } from './RowIcon';
 import type { PanelSource } from './sources';
@@ -85,13 +86,17 @@ export function RowList(props: {
   swatch?: (row: PanelRow) => string | undefined;
   /** One line for each row, with the detail after the label, and no gap between rows. */
   compact?: boolean;
+  /** An icon address for a row (for example the org avatar of an `org/repo` label), or undefined. */
+  nameIcon?: (row: PanelRow) => string | undefined;
 }): JSX.Element {
-  const { rows, width = 0, editing, source, swatch, compact = false } = props;
+  const { rows, width = 0, editing, source, swatch, compact = false, nameIcon } = props;
   const tk = useTokens();
   const items = React.useMemo(() => orderRows(rows), [rows]);
   // Under 360 px a bar would leave the label no room.
   const withBar = (width === 0 || width >= 360) && items.some(isInformative);
   const withIcon = source !== undefined && rows.some(r => r.icon !== undefined);
+  // One slot for every row as soon as one row has an icon, so the labels stay aligned.
+  const withNameIcon = nameIcon !== undefined && rows.some(r => nameIcon(r) !== undefined);
   const rowHeight = !compact ? ROW_HEIGHT : withIcon ? COMPACT_ROW_HEIGHT_ICON : COMPACT_ROW_HEIGHT;
   return (
     <Box
@@ -133,6 +138,7 @@ export function RowList(props: {
               />
             )}
             <StatusMark status={r.status} size={16} />
+            {withNameIcon && <GroupIcon src={nameIcon?.(r)} name={r.label} />}
             {withIcon && (
               <Box data-row-icon-cell sx={{ display: 'flex' }}>
                 <RowIcon source={source} icon={r.icon} />
