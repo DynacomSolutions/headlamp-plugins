@@ -83,13 +83,21 @@ describe('list query string', () => {
     const q = {
       status: 'failed' as const,
       severity: 'critical' as const,
-      openOnly: true,
+      openOnly: false,
       q: 'disk full',
       sel: ['id-1', 'id-2'],
     };
     const text = listQueryString(q);
-    expect(text).toBe('?status=failed&severity=critical&open=1&q=disk+full&sel=id-1,id-2');
+    expect(text).toBe('?status=failed&severity=critical&resolved=1&q=disk+full&sel=id-1,id-2');
     expect(parseListQuery(text)).toEqual(q);
+  });
+  it('shows open incidents only unless the URL asks for resolved ones', () => {
+    expect(DEFAULT_LIST_QUERY.openOnly).toBe(true);
+    expect(parseListQuery('').openOnly).toBe(true);
+    expect(parseListQuery('?resolved=1').openOnly).toBe(false);
+    // A link from before the change ("?open=1") is the default view.
+    expect(parseListQuery('?open=1').openOnly).toBe(true);
+    expect(listQueryString({ ...DEFAULT_LIST_QUERY, openOnly: false })).toBe('?resolved=1');
   });
   it('ignores unknown values, repeats and blanks, and caps the selection', () => {
     const many = Array.from({ length: 30 }, (_, i) => `i${i}`).join(',');

@@ -233,7 +233,7 @@ export const incidentListWidget: WidgetDefinition<IncidentListConfig> = {
       key: 'openOnly',
       label: 'Hide resolved',
       type: 'boolean',
-      help: 'Shows only the diagnoses whose alert is still firing.',
+      help: 'On by default: the list shows only the diagnoses whose alert is still firing or pending. Turn it off to see resolved ones too.',
     },
   ],
   Component: IncidentListWidget,

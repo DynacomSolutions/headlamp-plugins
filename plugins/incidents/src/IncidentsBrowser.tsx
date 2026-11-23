@@ -222,16 +222,16 @@ export function IncidentsBrowser(props: {
           sx={{ flex: '1 1 160px', minWidth: 120, maxWidth: 320 }}
         />
         <FormControlLabel
-          label="Open only"
+          label="Show resolved"
           control={
             <Checkbox
               size="small"
-              checked={query.openOnly}
-              onChange={e => setQuery({ ...query, openOnly: e.target.checked })}
+              checked={!query.openOnly}
+              onChange={e => setQuery({ ...query, openOnly: !e.target.checked })}
             />
           }
         />
-        {(query.status !== 'all' || query.severity !== 'all' || query.openOnly || query.q) && (
+        {(query.status !== 'all' || query.severity !== 'all' || !query.openOnly || query.q) && (
           <Button
             size="small"
             color="inherit"

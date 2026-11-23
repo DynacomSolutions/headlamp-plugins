@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   backendUrl,
+  DEFAULT_FILTER,
   DiagnosisSummary,
   filterDiagnoses,
   parseDetail,
@@ -71,6 +72,18 @@ describe('parsing', () => {
   });
 });
 
+describe('fires', () => {
+  it('reads how many times an alert fired into one diagnosis, one when it is absent', () => {
+    const rows = parseList({
+      diagnoses: [
+        { id: 'a', createdAt: '2026-11-23T01:00:00Z', alert: { name: 'A' }, fires: 8 },
+        { id: 'b', createdAt: '2026-11-23T00:00:00Z', alert: { name: 'B' } },
+      ],
+    });
+    expect(rows.map(r => r.fires)).toEqual([8, 1]);
+  });
+});
+
 describe('widget filters and summary', () => {
   const d = (over: Partial<DiagnosisSummary>): DiagnosisSummary => ({
     id: 'x',
@@ -90,15 +103,28 @@ describe('widget filters and summary', () => {
     d({ id: '3', severity: 'info', status: 'failed', resolved: true }),
     d({ id: '4', severity: '', status: 'queued' }),
   ];
+  const all = { openOnly: false };
+  it('shows open incidents only by default, and resolved ones when asked', () => {
+    expect(DEFAULT_FILTER.openOnly).toBe(true);
+    expect(filterDiagnoses(list, {}).map(x => x.id)).toEqual(['1', '2', '4']);
+    expect(filterDiagnoses(list, all).map(x => x.id)).toEqual(['1', '2', '3', '4']);
+  });
+  it('counts only the open incidents by default, so the header matches the alert chips', () => {
+    const open = summariseDiagnoses(filterDiagnoses(list, {}));
+    expect(open.total).toBe(3);
+    expect(open.resolved).toBe(0);
+    expect(open.bySeverity).toEqual({ critical: 1, warning: 1, other: 1 });
+  });
   it('filters by status, severity group and resolved', () => {
-    expect(filterDiagnoses(list, {}).map(x => x.id)).toEqual(['1', '2', '3', '4']);
-    expect(filterDiagnoses(list, { status: 'running' }).map(x => x.id)).toEqual(['2']);
-    expect(filterDiagnoses(list, { severity: 'warning' }).map(x => x.id)).toEqual(['2']);
-    expect(filterDiagnoses(list, { severity: 'other' }).map(x => x.id)).toEqual(['3', '4']);
+    expect(filterDiagnoses(list, { ...all, status: 'running' }).map(x => x.id)).toEqual(['2']);
+    expect(filterDiagnoses(list, { ...all, severity: 'warning' }).map(x => x.id)).toEqual(['2']);
+    expect(filterDiagnoses(list, { ...all, severity: 'other' }).map(x => x.id)).toEqual(['3', '4']);
+    expect(filterDiagnoses(list, { severity: 'other' }).map(x => x.id)).toEqual(['4']);
     expect(filterDiagnoses(list, { openOnly: true }).map(x => x.id)).toEqual(['1', '2', '4']);
   });
   it('ignores unknown filter keys from an old saved config', () => {
-    expect(filterDiagnoses(list, { status: undefined } as any)).toHaveLength(4);
+    expect(filterDiagnoses(list, { status: undefined } as any)).toHaveLength(3);
+    expect(filterDiagnoses(list, { status: undefined, openOnly: false } as any)).toHaveLength(4);
   });
   it('counts by severity and status', () => {
     expect(summariseDiagnoses(list)).toEqual({

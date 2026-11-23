@@ -97,14 +97,36 @@ const counter = () => screen.getByRole('toolbar', { name: 'Selection' }).textCon
 const order = ['AlertF', 'AlertE', 'AlertD', 'AlertC', 'AlertB', 'AlertA'];
 
 describe('Incidents page selection', () => {
-  it('has a checkbox for every row and starts with nothing selected', async () => {
+  it('shows the open incidents only at first, and starts with nothing selected', async () => {
     view();
     await screen.findByRole('checkbox', { name: 'Select AlertA' });
-    expect(screen.getAllByRole('checkbox', { name: /^Select Alert/ })).toHaveLength(6);
-    expect(counter()).toContain('6 shown');
+    // AlertC is resolved, so the default list has five rows.
+    expect(screen.getAllByRole('checkbox', { name: /^Select Alert/ })).toHaveLength(5);
+    expect(screen.queryByRole('checkbox', { name: 'Select AlertC' })).toBeNull();
+    expect(counter()).toContain('5 shown');
     expect(
       (screen.getByRole('button', { name: 'Chat about 0 incidents' }) as HTMLButtonElement).disabled
     ).toBe(true);
+  });
+
+  it('has a visible toggle that adds the resolved incidents, and keeps it in the URL', async () => {
+    view();
+    await screen.findByRole('checkbox', { name: 'Select AlertA' });
+    const toggle = screen.getByLabelText('Show resolved') as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    fireEvent.click(toggle);
+    expect(where()).toBe('/incidents?resolved=1');
+    expect(screen.getAllByRole('checkbox', { name: /^Select Alert/ })).toHaveLength(6);
+    expect(counter()).toContain('6 shown');
+    fireEvent.click(screen.getByLabelText('Show resolved'));
+    expect(where()).toBe('/incidents');
+    expect(screen.getAllByRole('checkbox', { name: /^Select Alert/ })).toHaveLength(5);
+  });
+
+  it('opens the list with the resolved incidents when the URL asks for them', async () => {
+    view('/incidents?resolved=1');
+    await screen.findByRole('checkbox', { name: 'Select AlertC' });
+    expect(screen.getAllByRole('checkbox', { name: /^Select Alert/ })).toHaveLength(6);
   });
 
   it('counts the selection, keeps it in the query string and clears it', async () => {
@@ -115,12 +137,12 @@ describe('Incidents page selection', () => {
     expect(where()).toBe('/incidents?sel=2,4');
     expect((box('AlertB') as HTMLInputElement).checked).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
-    expect(counter()).toContain('6 shown');
+    expect(counter()).toContain('5 shown');
     expect(where()).toBe('/incidents');
   });
 
   it('opens with the selection of the URL', async () => {
-    view('/incidents?sel=1,3');
+    view('/incidents?sel=1,3&resolved=1');
     await screen.findByRole('checkbox', { name: 'Select AlertA' });
     expect(counter()).toContain('2 selected');
     expect((box('AlertC') as HTMLInputElement).checked).toBe(true);
@@ -134,7 +156,7 @@ describe('Incidents page selection', () => {
   });
 
   it('selects a range with Shift+click, from the last toggled row', async () => {
-    view();
+    view('/incidents?resolved=1');
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Select AlertE' }));
     fireEvent.click(box('AlertB'), { shiftKey: true });
     expect(counter()).toContain('4 selected');
@@ -183,14 +205,14 @@ describe('Incidents page selection', () => {
     fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'AlertD' } });
     expect(where()).toBe('/incidents?q=AlertD');
     expect(screen.getAllByRole('checkbox', { name: /^Select Alert/ })).toHaveLength(1);
-    fireEvent.click(screen.getByLabelText('Open only'));
-    expect(where()).toContain('open=1');
+    fireEvent.click(screen.getByLabelText('Show resolved'));
+    expect(where()).toContain('resolved=1');
     fireEvent.click(screen.getByRole('button', { name: 'Reset filters' }));
     expect(where()).toBe('/incidents');
   });
 
   it('shows no folded or "Other" row, and keeps every row in one scrolling list', async () => {
-    view();
+    view('/incidents?resolved=1');
     await screen.findByRole('checkbox', { name: 'Select AlertA' });
     expect(screen.queryByText(/\+\s?\d+ more/)).toBeNull();
     expect(screen.queryByText(/^Other$/)).toBeNull();
@@ -214,7 +236,7 @@ describe('Incidents page selection', () => {
 
 describe('Chat about several incidents', () => {
   it('creates one chat with all the selected ids and opens it by its id', async () => {
-    view();
+    view('/incidents?resolved=1');
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Select AlertA' }));
     fireEvent.click(box('AlertC'));
     fireEvent.click(box('AlertF'));

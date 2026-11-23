@@ -54,6 +54,8 @@ export interface DiagnosisSummary {
   likelyCause: string;
   confidence: string;
   resolved: boolean;
+  /** How many times the alert fired while this diagnosis was open. One diagnosis holds every re-fire of its alert. */
+  fires?: number;
 }
 
 export interface DiagnosisFix {
@@ -98,6 +100,7 @@ export function parseList(json: unknown): DiagnosisSummary[] {
         likelyCause: str(result.likelyCause) || str(d.error),
         confidence: str(result.confidence),
         resolved: !!d.resolvedAt,
+        fires: typeof d.fires === 'number' && d.fires > 1 ? Math.floor(d.fires) : 1,
       };
     })
     .filter(d => d.id)
@@ -152,11 +155,11 @@ export function severityColour(severity: string): SeverityColour {
 export interface IncidentFilter {
   status: Status | 'all';
   severity: 'critical' | 'warning' | 'other' | 'all';
-  /** Hide diagnoses whose alert is resolved. */
+  /** Hide diagnoses whose alert is resolved. The default: the list shows what is open now. */
   openOnly: boolean;
 }
 
-export const DEFAULT_FILTER: IncidentFilter = { status: 'all', severity: 'all', openOnly: false };
+export const DEFAULT_FILTER: IncidentFilter = { status: 'all', severity: 'all', openOnly: true };
 
 /** `critical` and `warning` match themselves. `other` matches every other severity, including none. */
 export function severityGroup(severity: string): 'critical' | 'warning' | 'other' {
