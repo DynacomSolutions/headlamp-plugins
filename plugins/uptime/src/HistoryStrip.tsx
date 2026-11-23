@@ -8,6 +8,7 @@ import { Theme, useTheme } from '@mui/material/styles';
 import Tooltip from '@mui/material/Tooltip';
 import React from 'react';
 import { bucketSeverity, formatPercent } from './model';
+import { bucketSpan, formatSpan } from './timeAxis';
 
 /**
  * The bucket colours for each mode. They are fixed, not read from the theme: the kiosk theme draws
@@ -43,9 +44,22 @@ export interface HistoryStripProps {
   tooltips?: 'rich' | 'native';
 }
 
-function cellTitle(startSec: number, stepSec: number, i: number, v: number | undefined): string {
-  return `${new Date((startSec + i * stepSec) * 1000).toLocaleString()}: ${
-    v === undefined ? 'no data' : formatPercent(v)
+const BUCKET_WORD = { ok: 'Up', warn: 'Degraded', crit: 'Down', none: 'No data' } as const;
+
+/**
+ * The tooltip of a cell: its exact start and end in the browser time zone, its status and its availability.
+ * Cell `i` covers the step that ends at its point, as the range query averages it (see timeAxis.ts).
+ */
+export function cellTitle(
+  startSec: number,
+  stepSec: number,
+  i: number,
+  v: number | undefined
+): string {
+  const { fromSec, toSec } = bucketSpan({ startSec, stepSec }, i);
+  const status = BUCKET_WORD[bucketSeverity(v)];
+  return `${formatSpan(fromSec, toSec)}: ${status}${
+    v === undefined ? '' : `, ${formatPercent(v)}`
   }`;
 }
 

@@ -11,8 +11,8 @@ import { groupBackends } from './groups';
 import { backendIconUrl } from './iconApi';
 
 /** The tile around the icon, and the icon inside it, in px. */
-export const ICON_TILE = 24;
-export const ICON_SIZE = 18;
+export const ICON_TILE = 20;
+export const ICON_SIZE = 16;
 
 /** Where the icon of a group comes from: the icon map, the node glyph, or the app's own start page. */
 export type IconSource = 'map' | 'node' | 'page';
@@ -136,8 +136,8 @@ export function GroupIcon(props: {
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        borderRadius: '7px',
-        fontSize: 12.5,
+        borderRadius: '6px',
+        fontSize: 11,
         fontWeight: 600,
         lineHeight: 1,
         color: dark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)',

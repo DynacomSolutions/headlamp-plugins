@@ -16,7 +16,7 @@ vi.mock('./clusterApi', async importOriginal => ({
   fetchClusterInfo,
 }));
 
-import { normaliseConfig, uptimeTargetsWidget } from './dashboardWidgets';
+import { countsShort, normaliseConfig, uptimeTargetsWidget } from './dashboardWidgets';
 
 const NOW_MS = 1_800_000_000_000;
 const s = (target: string, location: string, up: number, extra: Record<string, string> = {}) => ({
@@ -214,7 +214,13 @@ describe('uptime.targets widget', () => {
     const headers = screen.getAllByRole('button');
     expect(headers).toHaveLength(2);
     expect(headers[0].textContent).toContain('web');
-    expect(headers[0].textContent).toContain('2 · 1 down · 1 up');
+    // One line: the name, then the count of the checks and of each status that is not up.
+    expect(headers[0].querySelector('[data-uptime-count]')?.textContent).toBe('2 · 1 down');
+    expect(headers[1].querySelector('[data-uptime-count]')?.textContent).toBe('1');
+    // The full count is the tooltip of the label.
+    expect(headers[0].querySelector('[title]')?.getAttribute('title')).toBe(
+      'web: 2 · 1 down · 1 up'
+    );
     expect(headers[1].textContent).toContain('db');
     expect(document.body.textContent).not.toMatch(/\bmore\b/);
     expect(document.querySelector('[data-uptime-fold]')).toBeNull();
@@ -415,6 +421,97 @@ describe('uptime.targets widget', () => {
     expect(document.querySelector('[data-widget-summary]')).toBeTruthy();
     expect(getComputedStyle(area).overflowY).toBe('auto');
     expect(getComputedStyle(area).overscrollBehavior).toBe('contain');
+  });
+});
+
+describe('uptime.targets time axis and compact rows', () => {
+  it('draws one axis above the list, outside the scroll area, with the cells of the strips', async () => {
+    const { container } = view(<Widget {...props({}, { kiosk: true })} />);
+    await flush();
+    const axes = container.querySelectorAll('[data-uptime-axis]');
+    expect(axes).toHaveLength(1);
+    const axis = axes[0] as HTMLElement;
+    const area = container.querySelector('[data-scroll-area]') as HTMLElement;
+    expect(area.contains(axis)).toBe(false);
+    // The axis comes before the scroll area in the same box, so it stays in view while the groups scroll.
+    const list = container.querySelector('[data-uptime-list]') as HTMLElement;
+    expect(list.firstElementChild?.contains(axis)).toBe(true);
+    expect(list.contains(area)).toBe(true);
+    // The same number of cells as a strip: a tick lines up with a cell.
+    const strip = screen.getByLabelText(/^web: Down, the worst of 2 checks/);
+    expect(axis.children.length).toBe(strip.children.length);
+    const labels = [...container.querySelectorAll('[data-uptime-tick-label]')].map(
+      e => e.textContent ?? ''
+    );
+    expect(labels.length).toBeGreaterThan(2);
+    expect(labels.every(t => /^\d\d:\d\d$|^[A-Z][a-z]{2} \d{1,2}$|^1 [A-Z][a-z]{2}$/.test(t))).toBe(
+      true
+    );
+    expect(document.body.textContent).toMatch(/Local time .*last 24 h/);
+  });
+
+  it('gives the strip cells a tooltip with the start, the end and the status', async () => {
+    view(<Widget {...props({})} />);
+    await flush();
+    const cells = screen.getByLabelText(/^web: Down, the worst of 2 checks/).children;
+    expect(cells[0].getAttribute('title')).toMatch(
+      /\d\d:\d\d to \d\d:\d\d: (Up|Degraded|Down|No data)/
+    );
+  });
+
+  it('sets the label column to the longest label, and keeps it between the minimum and maximum', async () => {
+    const { container } = view(<Widget {...props({})} />);
+    await flush();
+    const list = container.querySelector('[data-uptime-list]') as HTMLElement;
+    const px = Number(list.style.getPropertyValue('--uptime-name-col').replace('px', ''));
+    expect(px).toBeGreaterThanOrEqual(72);
+    expect(px).toBeLessThanOrEqual(300);
+  });
+
+  it('counts a group on one line: the checks, then each status that is not up', () => {
+    const group = (
+      counts: Partial<Record<'up' | 'down' | 'degraded' | 'unknown', number>>,
+      n: number
+    ) =>
+      ({
+        checks: new Array(n),
+        counts: { up: 0, down: 0, degraded: 0, unknown: 0, ...counts },
+      } as never);
+    expect(countsShort(group({ up: 7 }, 7))).toBe('7');
+    expect(countsShort(group({ up: 5, down: 1, degraded: 1 }, 7))).toBe('7 · 1 down · 1 degraded');
+    expect(countsShort(group({ unknown: 2 }, 2))).toBe('2 · 2 no data');
+  });
+});
+
+describe('uptime.targets projects', () => {
+  it('lists all the checks of one project under one group with its count and worst status', async () => {
+    const routes = {
+      httproutes: [
+        ['acme', 'acme', 'acme'],
+        ['acme-lite', 'acme-lite-hub', 'acme-lite-hub'],
+        ['acme-lite', 'acme-lite-push', 'acme-lite-push'],
+      ].map(([namespace, name, app]) => ({
+        metadata: { namespace, name, labels: { 'app.kubernetes.io/name': app } },
+        spec: { hostnames: [`${name}.example.com`] },
+      })),
+      ingresses: [],
+      mappings: [],
+    };
+    fetchRouteLists.mockResolvedValue({ routes, errors: [] });
+    queryMetrics.mockResolvedValue([
+      s('acme', 'eu', 1, { instance: 'https://acme.example.com/' }),
+      s('acme-lite-hub', 'eu', 0, { instance: 'https://acme-lite-hub.example.com/' }),
+      s('acme-lite-push', 'eu', 1, { instance: 'https://acme-lite-push.example.com/' }),
+    ]);
+    view(<Widget {...props({})} />);
+    await flush();
+    const headers = screen.getAllByRole('button');
+    expect(headers).toHaveLength(1);
+    expect(headers[0].querySelector('p')?.textContent).toBe('acme');
+    expect(headers[0].querySelector('[data-uptime-count]')?.textContent).toBe('3 · 1 down');
+    expect(document.querySelector('[data-uptime-group]')?.getAttribute('data-uptime-group')).toBe(
+      'down'
+    );
   });
 });
 

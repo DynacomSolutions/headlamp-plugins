@@ -19,6 +19,7 @@ import { alpha, useTheme } from '@mui/material/styles';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { createPortal } from 'react-dom';
+import { TimeAxis, useWidth } from './AxisCells';
 import { fetchClusterInfo } from './clusterApi';
 import {
   registerDashboardWidget,
@@ -26,7 +27,7 @@ import {
   WidgetDefinition,
   WidgetProps,
 } from './dashboardsContract';
-import { GroupIcon, type GroupIconInfo, useGroupIcons } from './GroupIcon';
+import { GroupIcon, type GroupIconInfo, ICON_TILE, useGroupIcons } from './GroupIcon';
 import {
   buildGroups,
   gridFor,
@@ -40,6 +41,7 @@ import {
   WidgetRange,
 } from './groups';
 import { HistoryStrip } from './HistoryStrip';
+import { type Label, labelColumnWidth, textWidth } from './labelWidth';
 import { PROBE_JOB, queryMetrics, queryRange } from './metrics';
 import {
   buildChecks,
@@ -55,6 +57,7 @@ import {
 import { fetchRouteLists } from './routeApi';
 import { buildRoutes, placeChecks, Route } from './routes';
 import { ScrollArea } from './ScrollArea';
+import { zoneName } from './timeAxis';
 
 export interface UptimeWidgetConfig {
   groupBy: GroupBy;
@@ -95,10 +98,14 @@ const STATUS_LABEL: Record<Status, string> = {
 };
 
 /**
- * One column layout for the group header and the check lines, so the lines of a group and of its
- * checks start and end at the same place: marker, status, name, history line, availability.
+ * One column layout for the axis, the group header and the check lines, so they start and end at the same
+ * place: marker, status, label, history line, availability. The label column is as wide as the longest label
+ * on screen (see labelWidth.ts), set in `--uptime-name-col`, so the history line gets the rest of the width.
  */
-const ROW_COLUMNS = '16px 92px minmax(0, 38%) minmax(64px, 1fr) 56px';
+const ROW_COLUMNS = '14px 84px var(--uptime-name-col, 30%) minmax(64px, 1fr) 46px';
+/** The gap between the columns and the padding at the two ends of a row, in theme spacing units. */
+const ROW_GAP = 0.75;
+const ROW_PX = 0.5;
 
 /**
  * A narrow widget (3 grid columns on a small screen) has no room for five columns in one line. The
@@ -109,7 +116,7 @@ const ROW_COLUMNS = '16px 92px minmax(0, 38%) minmax(64px, 1fr) 56px';
 const NARROW = '@container uptime (max-width: 459px)';
 const NARROW_ROW = {
   [NARROW]: {
-    gridTemplateColumns: '16px minmax(0, 1fr) auto',
+    gridTemplateColumns: '14px minmax(0, 1fr) auto',
     gridTemplateAreas: '"lead name pct" "lead strip strip"',
     rowGap: 0.25,
     py: 0.25,
@@ -417,9 +424,9 @@ function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; k
         display: 'grid',
         gridTemplateColumns: ROW_COLUMNS,
         alignItems: 'center',
-        columnGap: 1,
-        px: 1,
-        minHeight: kiosk ? 32 : 26,
+        columnGap: ROW_GAP,
+        px: ROW_PX,
+        minHeight: kiosk ? 20 : 18,
         minWidth: 0,
         ...NARROW_ROW,
       }}
@@ -439,6 +446,7 @@ function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; k
         title={check.instance ? `${check.name}: ${check.instance}` : check.name}
         sx={{
           gridColumn: '3',
+          lineHeight: 1.25,
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap',
@@ -477,7 +485,7 @@ function CheckLine(props: { check: Check; grid: HistoryGrid; startSec: number; k
         sx={{
           gridColumn: '5',
           textAlign: 'right',
-          pl: 1,
+          lineHeight: 1.25,
           [NARROW]: { gridColumn: 'auto', gridArea: 'pct' },
         }}
       >
@@ -496,6 +504,15 @@ function countsText(group: UptimeGroup): string {
   return `${group.checks.length} · ${parts.join(' · ')}`;
 }
 
+/** The count that stands after the name of a group: the checks, then each status that is not up. */
+export function countsShort(group: UptimeGroup): string {
+  const parts: string[] = [String(group.checks.length)];
+  if (group.counts.down) parts.push(`${group.counts.down} down`);
+  if (group.counts.degraded) parts.push(`${group.counts.degraded} degraded`);
+  if (group.counts.unknown) parts.push(`${group.counts.unknown} no data`);
+  return parts.join(' · ');
+}
+
 /** The status word with its shape in a small tinted chip. It folds away in a narrow widget (see NARROW). */
 function StatusChip({ status }: { status: Status }): JSX.Element {
   const { fill } = useHues();
@@ -506,10 +523,10 @@ function StatusChip({ status }: { status: Status }): JSX.Element {
         display: 'flex',
         alignItems: 'center',
         gap: '5px',
-        px: '8px',
-        py: '2px',
+        px: '7px',
+        py: '1px',
         borderRadius: '10px',
-        fontSize: 12.5,
+        fontSize: 12,
         lineHeight: 1.3,
         bgcolor: fill(status),
         [NARROW]: { display: 'none' },
@@ -548,10 +565,11 @@ function GroupBlock(props: {
           display: 'grid',
           gridTemplateColumns: ROW_COLUMNS,
           alignItems: 'center',
-          columnGap: 1,
+          columnGap: ROW_GAP,
           width: '100%',
-          minHeight: kiosk ? 40 : 32,
-          px: 1,
+          minHeight: kiosk ? 26 : 24,
+          px: ROW_PX,
+          py: 0,
           ...NARROW_ROW,
           border: 0,
           borderRadius: 0,
@@ -588,51 +606,47 @@ function GroupBlock(props: {
         </Box>
         <StatusChip status={group.status} />
         <Box
+          title={`${group.key}: ${countsText(group)}`}
           sx={{
             minWidth: 0,
             display: 'flex',
             alignItems: 'center',
-            gap: 1,
+            gap: 0.75,
             [NARROW]: { gridArea: 'name' },
           }}
         >
           <GroupIcon name={group.key} info={icon} dark={dark} />
-          <Box sx={{ minWidth: 0, flex: '1 1 0' }}>
-            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, minWidth: 0 }}>
-              <Box
-                sx={{ display: 'none', [NARROW]: { display: 'inline-flex' }, alignSelf: 'center' }}
-              >
-                <Dot status={group.status} />
-              </Box>
-              <Typography
-                variant="body2"
-                title={group.key}
-                sx={{
-                  fontWeight: 600,
-                  minWidth: 0,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  [NARROW]: { whiteSpace: 'normal', overflowWrap: 'anywhere' },
-                }}
-              >
-                {group.key}
-              </Typography>
-            </Box>
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              component="div"
-              sx={{
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                [NARROW]: { whiteSpace: 'normal' },
-              }}
-            >
-              {countsText(group)}
-            </Typography>
+          <Box
+            sx={{
+              display: 'none',
+              [NARROW]: { display: 'inline-flex' },
+              alignSelf: 'center',
+            }}
+          >
+            <Dot status={group.status} />
           </Box>
+          <Typography
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              lineHeight: 1.25,
+              minWidth: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              [NARROW]: { whiteSpace: 'normal', overflowWrap: 'anywhere' },
+            }}
+          >
+            {group.key}
+          </Typography>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            data-uptime-count=""
+            sx={{ flex: 'none', lineHeight: 1.25, whiteSpace: 'nowrap' }}
+          >
+            {countsShort(group)}
+          </Typography>
         </Box>
         <Box sx={{ minWidth: 0, [NARROW]: { gridArea: 'strip', pr: 1 } }}>
           <HistoryStrip
@@ -650,7 +664,11 @@ function GroupBlock(props: {
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ textAlign: 'right', pl: 1, [NARROW]: { gridArea: 'pct', alignSelf: 'start' } }}
+          sx={{
+            textAlign: 'right',
+            lineHeight: 1.25,
+            [NARROW]: { gridArea: 'pct', alignSelf: 'start' },
+          }}
         >
           {formatPercent(meanAvailability(group.history))}
         </Typography>
@@ -789,6 +807,108 @@ function Scroller(props: { kiosk: boolean; children: React.ReactNode }): JSX.Ele
   );
 }
 
+/** The scrollbar width of the list. The axis keeps the same room on its right, so it lines up with the strips. */
+function useScrollGutter(ref: React.RefObject<HTMLElement>): number {
+  const [gutter, setGutter] = React.useState(0);
+  // The widths of the scroll area: with the always-visible scrollbar, `offsetWidth - clientWidth` is its width.
+  const width = useWidth(ref);
+  React.useLayoutEffect(() => {
+    const el = ref.current?.querySelector<HTMLElement>('[data-scroll-area]');
+    if (el) setGutter(Math.max(0, el.offsetWidth - el.clientWidth));
+  }, [ref, width]);
+  return gutter;
+}
+
+/**
+ * The width of the label column, from the labels that are on screen: every group (icon, name in bold and count)
+ * and the checks of the groups that are open. It is the longest of them, within a minimum and a maximum.
+ */
+function useNameColumn(groups: UptimeGroup[], isOpen: (key: string) => boolean): number {
+  const theme = useTheme();
+  const family = String(theme.typography.fontFamily ?? 'sans-serif');
+  const px = (size: unknown, fallback: number): number => {
+    const m = /^([\d.]+)(rem|px)?$/.exec(String(size ?? ''));
+    if (!m) return fallback;
+    return m[2] === 'px' ? Number(m[1]) : Number(m[1]) * 16;
+  };
+  const body = px(theme.typography.body2.fontSize, 14);
+  const caption = px(theme.typography.caption.fontSize, 12);
+  const open = groups.map(g => isOpen(g.key));
+  const signature = `${family}|${body}|${caption}|${groups
+    .map(
+      (g, i) => `${g.key}:${countsShort(g)}:${open[i] ? g.checks.map(c => c.name).join(',') : ''}`
+    )
+    .join('|')}`;
+  return React.useMemo(() => {
+    const regular = { sizePx: body, weight: 400, family };
+    const bold = { sizePx: body, weight: 600, family };
+    const small = { sizePx: caption, weight: 400, family };
+    const labels: Label[] = [];
+    groups.forEach((g, i) => {
+      // The icon, a gap, the name, a gap and the count make one line.
+      labels.push({
+        text: g.key,
+        font: bold,
+        extra: ICON_TILE + 12 + textWidth(countsShort(g), small),
+      });
+      if (open[i]) for (const c of g.checks) labels.push({ text: c.name, font: regular });
+    });
+    return labelColumnWidth(labels);
+    // `signature` covers the groups, the open state and the fonts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signature]);
+}
+
+/** The axis row above the list: the same columns as the rows, with the zone name where the labels are. */
+function AxisRow(props: { grid: HistoryGrid; startSec: number; gutter: number }): JSX.Element {
+  const { grid, startSec, gutter } = props;
+  const { line } = useHues();
+  return (
+    <Box
+      data-uptime-axis-row=""
+      sx={{
+        flex: 'none',
+        display: 'grid',
+        gridTemplateColumns: ROW_COLUMNS,
+        alignItems: 'end',
+        columnGap: ROW_GAP,
+        pl: ROW_PX,
+        pr: ROW_PX,
+        boxShadow: `inset 0 -1px 0 ${line}`,
+        // The scrollbar of the list takes the width at the right of the rows. The axis keeps it free too.
+        mr: `${gutter}px`,
+        [NARROW]: {
+          gridTemplateColumns: '14px minmax(0, 1fr)',
+          gridTemplateAreas: '". strip"',
+        },
+      }}
+    >
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          gridColumn: '1 / 4',
+          lineHeight: 1,
+          pb: '3px',
+          whiteSpace: 'nowrap',
+          [NARROW]: { display: 'none' },
+        }}
+      >
+        Local time {zoneName(startSec)}, last {gridLabel(grid)}
+      </Typography>
+      <Box
+        sx={{
+          gridColumn: '4',
+          minWidth: 0,
+          [NARROW]: { gridColumn: 'auto', gridArea: 'strip', pr: 1 },
+        }}
+      >
+        <TimeAxis startSec={startSec} stepSec={grid.stepSec} buckets={grid.buckets} />
+      </Box>
+    </Box>
+  );
+}
+
 function TargetGroups(props: {
   groups: UptimeGroup[];
   icons: ReadonlyMap<string, GroupIconInfo>;
@@ -816,6 +936,10 @@ function TargetGroups(props: {
       return next;
     });
   const startSec = historyStart(props.at ? props.at / 1000 : Date.now() / 1000, grid);
+  const isOpen = (key: string) => expandedByDefault !== flipped.has(key);
+  const nameCol = useNameColumn(groups, isOpen);
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const gutter = useScrollGutter(listRef);
   const failingGroups = groups.filter(g => g.status === 'down' || g.status === 'degraded').length;
   const counts = React.useMemo(() => {
     const c: Record<Status, number> = { up: 0, degraded: 0, down: 0, unknown: 0 };
@@ -829,7 +953,7 @@ function TargetGroups(props: {
       group={g}
       grid={grid}
       startSec={startSec}
-      expanded={expandedByDefault !== flipped.has(g.key)}
+      expanded={isOpen(g.key)}
       onToggle={() => toggle(g.key)}
       kiosk={kiosk}
       icon={props.icons.get(g.key)}
@@ -866,7 +990,17 @@ function TargetGroups(props: {
           {groups.length === 0 && props.onlyFailing && (
             <Alert severity="success">No group is failing.</Alert>
           )}
-          <ScrollArea label="Uptime groups">{groups.map(renderGroup)}</ScrollArea>
+          <Box
+            ref={listRef}
+            data-uptime-list=""
+            style={{ '--uptime-name-col': `${nameCol}px` } as React.CSSProperties}
+            sx={{ flex: '1 1 0', minHeight: 0, display: 'flex', flexDirection: 'column' }}
+          >
+            <AxisRow grid={grid} startSec={startSec} gutter={gutter} />
+            <ScrollArea label="Uptime groups" sx={{ scrollbarGutter: 'stable' }}>
+              {groups.map(renderGroup)}
+            </ScrollArea>
+          </Box>
           <FooterLine footer={props.footer} status={summaryStatus}>
             {counts.up} up, {counts.degraded} degraded, {counts.down} down, {counts.unknown} no
             data. {groups.length} groups by {props.resolved}, {failingGroups} failing, last{' '}

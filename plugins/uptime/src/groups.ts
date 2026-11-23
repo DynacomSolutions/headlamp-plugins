@@ -10,9 +10,13 @@
  * check name. There is never an "Other", "Ungrouped" or "Not in cluster" bucket.
  * The other groupings are a `group` series label, the first word of the check name and the check type.
  * `auto` takes the app when any check has one, then the namespace, then the name.
+ *
+ * The app and group groupings then merge the groups of one project (see `projectKeys`): `acme`,
+ * `acme-lite-hub` and `acme-cross-preview` are one group `acme`, and `beta-cluster` and `betacode` are one
+ * group `beta`. The rule reads the first word of the check name and the route, never a list of names.
  */
 import { Check, CountSummary, HistoryGrid, Status, summarise } from './model';
-import { type Backend, endpointsOf, type Placement } from './routes';
+import { appLabelOf, type Backend, endpointsOf, type Placement } from './routes';
 
 /** The placement of each check that a route serves, by check name. */
 export type Placements = ReadonlyMap<string, Placement>;
@@ -159,6 +163,79 @@ export function groupKeyOf(
   }
 }
 
+/** The words of a name, lower case: `acme-lite.example` gives `acme`, `lite`, `example`. */
+const wordsOfRaw = (name: string): string[] => name.split(/[.-]+/).filter(Boolean);
+const wordsOf = (name: string): string[] => wordsOfRaw(name.toLowerCase());
+
+export interface KeyedCheck {
+  check: Check;
+  key: string;
+}
+
+/**
+ * The names that tie a check to a project, lower case, and whether its key is a shared one. A check that its
+ * series label or its route app label places has only its group key, and that key was set on purpose. A check
+ * in a shared namespace (a route with no app label) has the Service and the route name too,
+ * because the namespace says little, and its key is shared.
+ */
+function identitiesOf(c: KeyedCheck, placements: Placements): { ids: string[]; shared: boolean } {
+  const placement = placements.get(c.check.name);
+  const placed = labelOf(c.check, 'app') ?? labelOf(c.check, 'group');
+  const strong = !!placed || (!!placement && appLabelOf(placement.route.labels) !== '');
+  const ids = [c.key];
+  if (!strong && placement) {
+    ids.push(placement.route.name);
+    if (placement.route.backend) ids.push(placement.route.backend.name);
+  }
+  return { ids: ids.map(s => s.toLowerCase()), shared: !strong && !!placement };
+}
+
+/**
+ * The group key of every check after the projects merge. A project is the first word of the check name
+ * (`acme-lite.example.com` gives `acme`, `beta.n2.example.com` gives `beta`). A check is tied to it when its
+ * group key or, in a shared namespace, its Service or route name starts with that word. A key that holds the
+ * word as a whole word (`static-site-acme-storybook`) also counts when another check already has the word as
+ * its key. The checks of a project then share one group when they come from two or more different keys, or
+ * when they all sit in a shared key (a namespace that holds many apps, such as `dev`) and are two or more.
+ * A check that no route, app label or group label places keeps its own name. A project with one key and one
+ * check, or whose checks an app label places apart, is not merged: the
+ * `console` Service of the dashboard stays out of `console-agent`.
+ */
+export function projectKeys(
+  entries: KeyedCheck[],
+  placements: Placements = NO_PLACEMENTS
+): Map<Check, string> {
+  const out = new Map<Check, string>(entries.map(e => [e.check, e.key]));
+  const keys = new Set(entries.map(e => e.key.toLowerCase()));
+  const families = new Map<string, { entry: KeyedCheck; shared: boolean }[]>();
+  for (const entry of entries) {
+    const word = wordsOf(entry.check.name)[0];
+    if (!word || word.length < 2) continue;
+    // A check that nothing places keeps its own name: two probes of unrelated hosts are not one project.
+    if (
+      !placements.has(entry.check.name) &&
+      !(labelOf(entry.check, 'app') ?? labelOf(entry.check, 'group'))
+    )
+      continue;
+    const { ids, shared } = identitiesOf(entry, placements);
+    const tied =
+      ids.some(id => id.startsWith(word)) || (keys.has(word) && wordsOf(ids[0]).includes(word));
+    if (!tied) continue;
+    const list = families.get(word) ?? [];
+    list.push({ entry, shared });
+    families.set(word, list);
+  }
+  for (const members of families.values()) {
+    const distinct = new Set(members.map(m => m.entry.key.toLowerCase()));
+    const sharedOnly = members.length >= 2 && members.every(m => m.shared);
+    if (distinct.size < 2 && !sharedOnly) continue;
+    // The group takes the word as the first check spells it.
+    const name = wordsOfRaw(members[0].entry.check.name)[0];
+    for (const m of members) out.set(m.entry.check, name);
+  }
+  return out;
+}
+
 /** Worst status wins: down, then degraded, then up. Unknown only when no check has data. */
 export function worstStatus(checks: Check[]): Status {
   if (checks.some(c => c.status === 'down')) return 'down';
@@ -203,9 +280,13 @@ export function buildGroups(
   nodes: NodeAddresses = NO_NODES
 ): { groups: UptimeGroup[]; resolved: Exclude<GroupBy, 'auto'> } {
   const resolved = resolveGroupBy(groupBy, checks, placements);
+  const own = checks.map(c => ({ check: c, key: groupKeyOf(c, resolved, placements, nodes) }));
+  // The app and group groupings merge the groups of one project. The others do what they say.
+  const merged =
+    resolved === 'app' || resolved === 'group' ? projectKeys(own, placements) : undefined;
   const byKey = new Map<string, Check[]>();
-  for (const c of checks) {
-    const key = groupKeyOf(c, resolved, placements, nodes);
+  for (const { check: c, key: ownKey } of own) {
+    const key = merged?.get(c) ?? ownKey;
     const list = byKey.get(key);
     if (list) list.push(c);
     else byKey.set(key, [c]);

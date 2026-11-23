@@ -123,3 +123,46 @@ describe('fetchClusterInfo', () => {
     expect((await info.icons).size).toBe(0);
   });
 });
+
+describe('icons of the project groups', () => {
+  // The keys of the icon map for these apps: a key also covers the groups that start with it and a dash.
+  const icon = (n: string) => `data:image/svg+xml;utf8,<svg id="${n}"/>`;
+  const keys = [
+    'cloudflare',
+    'corp',
+    'corp-dev-watcher',
+    'acme',
+    'console-agent',
+    'lidarr',
+    'zeta',
+    'plex',
+    'qui',
+    'radarr',
+    'gamma',
+    'sonarr',
+    'beta',
+    'delta',
+    'orbit',
+    'whisparr',
+  ];
+  const map = iconMapFrom({ data: Object.fromEntries(keys.map(k => [k, icon(k)])) });
+
+  it('finds the icon of every project group by its own key', () => {
+    for (const k of keys) expect(mapIconFor(k, map)).toBe(icon(k));
+  });
+
+  it('covers the groups that start with the project name', () => {
+    expect(mapIconFor('cloudflare-dns', map)).toBe(icon('cloudflare'));
+    expect(mapIconFor('gamma-live', map)).toBe(icon('gamma'));
+    expect(mapIconFor('beta-cluster', map)).toBe(icon('beta'));
+    expect(mapIconFor('acme-lite-hub', map)).toBe(icon('acme'));
+  });
+
+  it('takes the longest key, and never an icon for a name that only shares letters', () => {
+    expect(mapIconFor('corp-dev-watcher', map)).toBe(icon('corp-dev-watcher'));
+    expect(mapIconFor('corp-registry', map)).toBe(icon('corp'));
+    expect(mapIconFor('betacode', map)).toBeUndefined();
+    expect(mapIconFor('console', map)).toBeUndefined();
+    expect(mapIconFor('sigma-tts', map)).toBeUndefined();
+  });
+});

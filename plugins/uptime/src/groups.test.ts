@@ -338,3 +338,160 @@ describe('a raw IP is not a group name', () => {
     expect(groups[0].node).toBe(false);
   });
 });
+
+describe('projects: one group for all the apps of a project', () => {
+  interface Spec {
+    name: string;
+    namespace: string;
+    /** The app label of the route, empty for a shared namespace. */
+    app?: string;
+    backend?: string;
+    route?: string;
+  }
+  // A check at a route: the placement app is the app label, else the namespace (see routes.ts).
+  const world = (specs: Spec[]) => {
+    const checks = specs.map(s => check(s.name, 'up'));
+    const placements: Placements = new Map(
+      specs.map(s => [
+        s.name,
+        {
+          namespace: s.namespace,
+          app: s.app || s.namespace,
+          route: {
+            kind: 'httproute' as const,
+            namespace: s.namespace,
+            name: s.route ?? s.backend ?? s.name,
+            host: `${s.name}.example.com`,
+            path: '/',
+            exact: false,
+            labels: s.app ? { 'app.kubernetes.io/name': s.app } : {},
+            backend: s.backend
+              ? { namespace: s.namespace, name: s.backend, port: '80' }
+              : undefined,
+          },
+        },
+      ])
+    );
+    return { checks, placements };
+  };
+  const groupsOf = (specs: Spec[]) => {
+    const { checks, placements } = world(specs);
+    const { groups } = buildGroups(checks, 'auto', grid3, false, placements);
+    return Object.fromEntries(groups.map(g => [g.key, g.checks.map(c => c.name).sort()]));
+  };
+
+  it('puts every acme, orbit, beta and delta check under one group', () => {
+    const groups = groupsOf([
+      { name: 'acme', namespace: 'acme', app: 'acme' },
+      { name: 'acme-cluster', namespace: 'acme-cluster', app: 'acme' },
+      { name: 'acme-cross-preview', namespace: 'acme-cross-preview' },
+      { name: 'acme-lite', namespace: 'acme-lite', app: 'acme-lite-hub' },
+      { name: 'acme-lite-push', namespace: 'acme-lite', app: 'acme-lite-push' },
+      { name: 'acme-storybook', namespace: 'vault', app: 'static-site-acme-storybook' },
+      { name: 'orbit', namespace: 'orbit', backend: 'shadow-orbit-n4' },
+      { name: 'orbit-n3', namespace: 'orbit', backend: 'shadow-orbit-n3' },
+      { name: 'orbit-vnc', namespace: 'orbit-vnc', app: 'orbit-vnc' },
+      { name: 'orbit-wall', namespace: 'dev', backend: 'orbit-wall-legend' },
+      { name: 'beta.n2.example.com', namespace: 'beta-cluster', backend: 'beta-n2' },
+      { name: 'beta.hq.example.com', namespace: 'beta-cluster', backend: 'beta-hq' },
+      { name: 'beta-host.site0.example.com', namespace: 'betacode', backend: 'betacode-host' },
+      { name: 'delta', namespace: 'deltaai', app: 'delta' },
+      { name: 'delta-browser', namespace: 'delta-browser', app: 'delta-browser' },
+      { name: 'gamma', namespace: 'gamma' },
+      { name: 'gamma-live', namespace: 'gamma-live' },
+      { name: 'zeta', namespace: 'zeta' },
+    ]);
+    expect(Object.keys(groups).sort()).toEqual([
+      'acme',
+      'beta',
+      'delta',
+      'gamma',
+      'orbit',
+      'zeta',
+    ]);
+    expect(groups.acme).toHaveLength(6);
+    expect(groups.orbit).toEqual(['orbit', 'orbit-n3', 'orbit-vnc', 'orbit-wall']);
+    expect(groups.beta).toHaveLength(3);
+    expect(groups.delta).toEqual(['delta', 'delta-browser']);
+    expect(groups.gamma).toEqual(['gamma', 'gamma-live']);
+  });
+
+  it('splits a shared namespace by the project that two or more of its checks name', () => {
+    const groups = groupsOf([
+      { name: 'tools.example.com', namespace: 'dev', backend: 'tools' },
+      { name: 'tools-gateway.example.com', namespace: 'dev', backend: 'tools-gateway' },
+      { name: 'omega-data', namespace: 'dev', backend: 'omega-data' },
+      { name: 'omega-data-ui', namespace: 'dev', backend: 'omega-data-ui' },
+      { name: 'blogpod-blog', namespace: 'dev', backend: 'docs-site-blogpod-blog' },
+    ]);
+    expect(groups).toEqual({
+      tools: ['tools-gateway.example.com', 'tools.example.com'],
+      omega: ['omega-data', 'omega-data-ui'],
+      dev: ['blogpod-blog'],
+    });
+  });
+
+  it('keeps an app that its own app label places, even when a Service shares the word', () => {
+    // The dashboard check is named `console` and its Service too, but its route says app k8s-dashboard.
+    const groups = groupsOf([
+      { name: 'console-agent', namespace: 'console-agent', app: 'console-agent' },
+      { name: 'console', namespace: 'k8s', app: 'k8s-dashboard', backend: 'console' },
+      { name: 'k8s', namespace: 'k8s', app: 'k8s-dashboard' },
+    ]);
+    expect(groups).toEqual({
+      'console-agent': ['console-agent'],
+      'k8s-dashboard': ['console', 'k8s'],
+    });
+  });
+
+  it('keeps a chrome tenant out of the project with the same name', () => {
+    const groups = groupsOf([
+      { name: 'atlas', namespace: 'atlas', app: 'atlas' },
+      { name: 'atlas.chrome.example.com', namespace: 'browser-pool', app: 'browser-pool' },
+      { name: 'swap.chrome.example.com', namespace: 'browser-pool', app: 'browser-pool' },
+    ]);
+    expect(groups).toEqual({
+      atlas: ['atlas'],
+      'browser-pool': ['atlas.chrome.example.com', 'swap.chrome.example.com'],
+    });
+  });
+
+  it('never makes a group of one project with one key and one check, and never an Other group', () => {
+    const groups = groupsOf([
+      {
+        name: 'static-site-check',
+        namespace: 'static-sites',
+        app: 'static-site-static-site-check',
+      },
+      { name: 'cluster-artifacts', namespace: 'cluster-artifacts', app: 'cluster-artifacts' },
+    ]);
+    expect(Object.keys(groups).sort()).toEqual([
+      'cluster-artifacts',
+      'static-site-static-site-check',
+    ]);
+    expect(Object.keys(groups).some(k => /other/i.test(k))).toBe(false);
+  });
+
+  it('keeps the worst status and the count of the merged group', () => {
+    const checks = [check('acme', 'up'), check('acme-lite', 'down'), check('acme-push', 'up')];
+    const placements = placed({
+      acme: ['acme', 'acme'],
+      'acme-lite': ['acme-lite', 'acme-lite'],
+      'acme-push': ['acme-lite', 'acme-push'],
+    });
+    const { groups } = buildGroups(checks, 'auto', grid3, false, placements);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ key: 'acme', status: 'down' });
+    expect(groups[0].counts).toMatchObject({ up: 2, down: 1 });
+  });
+
+  it('does not merge when the user groups by namespace or by name', () => {
+    const checks = [check('acme', 'up'), check('acme-lite', 'up')];
+    const placements = placed({ acme: ['a', 'acme'], 'acme-lite': ['b', 'acme-lite'] });
+    expect(
+      buildGroups(checks, 'namespace', grid3, false, placements)
+        .groups.map(g => g.key)
+        .sort()
+    ).toEqual(['a', 'b']);
+  });
+});
