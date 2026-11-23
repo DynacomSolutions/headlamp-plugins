@@ -91,7 +91,7 @@ export interface ListQuery extends IncidentFilter {
 export const DEFAULT_LIST_QUERY: ListQuery = {
   status: 'all',
   severity: 'all',
-  openOnly: false,
+  openOnly: true,
   q: '',
   sel: [],
 };
@@ -117,7 +117,8 @@ export function parseListQuery(search: string): ListQuery {
     severity: SEVERITIES.includes(severity as (typeof SEVERITIES)[number])
       ? (severity as ListQuery['severity'])
       : 'all',
-    openOnly: p.get('open') === '1',
+    // The default view is open incidents only. `?resolved=1` adds the resolved ones. A link with `?open=1` is the default view.
+    openOnly: p.get('resolved') !== '1',
     q: p.get('q') ?? '',
     sel,
   };
@@ -128,7 +129,7 @@ export function listQueryString(query: ListQuery): string {
   const p = new URLSearchParams();
   if (query.status !== 'all') p.set('status', query.status);
   if (query.severity !== 'all') p.set('severity', query.severity);
-  if (query.openOnly) p.set('open', '1');
+  if (!query.openOnly) p.set('resolved', '1');
   if (query.q.trim()) p.set('q', query.q.trim());
   if (query.sel.length) p.set('sel', query.sel.join(','));
   const text = p.toString().replace(/%2C/g, ',');

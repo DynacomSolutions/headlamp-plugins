@@ -45,6 +45,9 @@ const DIAGNOSES = [
   diag('3', 'OldAlert', 'info', 'failed', true),
 ];
 
+/** The widget with its resolved diagnoses shown: the default config, with the hide-resolved setting off. */
+const SHOW_ALL = { ...incidentListWidget.defaultConfig, openOnly: false };
+
 const filters = { namespaces: [], nodes: [], labelSelector: '', range: '1h' as const };
 const props = (config: any, over: any = {}) => ({
   instanceId: 'w',
@@ -118,7 +121,7 @@ describe('registration', () => {
     expect(incidentListWidget.defaultConfig).toEqual({
       status: 'all',
       severity: 'all',
-      openOnly: false,
+      openOnly: true,
     });
     expect(incidentChatWidget.defaultConfig).toEqual({});
   });
@@ -127,7 +130,7 @@ describe('registration', () => {
 describe('incidents.list', () => {
   const List = incidentListWidget.Component;
   it('shows the summary and the rows, and reports the refresh', async () => {
-    const p = props(incidentListWidget.defaultConfig);
+    const p = props(SHOW_ALL);
     view(<List {...p} />);
     expect(await screen.findByText('HighCPU')).toBeTruthy();
     expect(screen.getByText(/^3 incidents\./)).toBeTruthy();
@@ -136,8 +139,19 @@ describe('incidents.list', () => {
     expect(screen.getAllByText(/1 running/)).toHaveLength(2);
     expect(p.reportRefreshed).toHaveBeenCalled();
   });
+  it('shows the open incidents only by default, and the resolved ones when the setting is off', async () => {
+    view(<List {...props(incidentListWidget.defaultConfig)} />);
+    await screen.findByText('HighCPU');
+    expect(screen.queryByText('OldAlert')).toBeNull();
+    expect(screen.getByText(/^2 incidents\./)).toBeTruthy();
+    expect(document.querySelector('[data-count="critical"]')?.textContent).toBe('1');
+    cleanup();
+    view(<List {...props(SHOW_ALL)} />);
+    expect(await screen.findByText('OldAlert')).toBeTruthy();
+    expect(screen.getByText(/^3 incidents\./)).toBeTruthy();
+  });
   it('keeps the summary outside the scrolling list', async () => {
-    const { container } = view(<List {...props(incidentListWidget.defaultConfig)} />);
+    const { container } = view(<List {...props(SHOW_ALL)} />);
     await screen.findByText('HighCPU');
     const scroller = container.querySelector('[data-scroll-area]') as HTMLElement;
     expect(scroller.contains(screen.getByText(/^3 incidents\./))).toBe(false);
@@ -167,19 +181,19 @@ describe('incidents.list', () => {
     expect(await screen.findByText(/No diagnoses match the filters/)).toBeTruthy();
   });
   it('opens the incident page when there is no chat widget', async () => {
-    view(<List {...props(incidentListWidget.defaultConfig)} />);
+    view(<List {...props(SHOW_ALL)} />);
     await openGroup('HighCPU');
     const link = await screen.findByRole('link', { name: 'cause HighCPU' });
     expect(link.getAttribute('href')).toBe('/c/test/incident/1');
   });
   it('turns the links off while editing', async () => {
-    view(<List {...props(incidentListWidget.defaultConfig, { editing: true })} />);
+    view(<List {...props(SHOW_ALL, { editing: true })} />);
     await openGroup('HighCPU');
     expect(screen.getByText('cause HighCPU')).toBeTruthy();
     expect(screen.queryByRole('link', { name: 'cause HighCPU' })).toBeNull();
   });
   it('fetches on the refresh signal only, not on a rerender', async () => {
-    const p = props(incidentListWidget.defaultConfig);
+    const p = props(SHOW_ALL);
     const { rerender } = view(<List {...p} />);
     await screen.findByText('HighCPU');
     expect(diagnosisCalls()).toHaveLength(1);
@@ -197,7 +211,7 @@ describe('incidents.list', () => {
     await waitFor(() => expect(diagnosisCalls()).toHaveLength(2));
   });
   it('runs a failed diagnosis again from its row and fetches the rows again', async () => {
-    view(<List {...props(incidentListWidget.defaultConfig)} />);
+    view(<List {...props(SHOW_ALL)} />);
     await openGroup('OldAlert');
     const button = await screen.findByRole('button', { name: 'Run again: OldAlert' });
     expect(screen.getAllByRole('button', { name: /Run again/ })).toHaveLength(1);
@@ -217,19 +231,19 @@ describe('incidents.list', () => {
       if (params?.method === 'POST') throw new Error('{"error":"No model is configured"}');
       return { total: 3, diagnoses: DIAGNOSES };
     });
-    view(<List {...props(incidentListWidget.defaultConfig)} />);
+    view(<List {...props(SHOW_ALL)} />);
     await openGroup('OldAlert');
     fireEvent.click(await screen.findByRole('button', { name: 'Run again: OldAlert' }));
     expect((await screen.findByRole('alert')).textContent).toBe('No model is configured');
   });
   it('has no re-run button while editing', async () => {
-    view(<List {...props(incidentListWidget.defaultConfig, { editing: true })} />);
+    view(<List {...props(SHOW_ALL, { editing: true })} />);
     await openGroup('OldAlert');
     expect(screen.getByText('cause OldAlert')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Run again/ })).toBeNull();
   });
   it('keeps the last data when a refresh fails', async () => {
-    const p = props(incidentListWidget.defaultConfig);
+    const p = props(SHOW_ALL);
     const { rerender } = view(<List {...p} />);
     await screen.findByText('HighCPU');
     request.mockRejectedValue(new Error('proxy down'));
@@ -285,7 +299,7 @@ describe('list and chat on one dashboard', () => {
     view(
       <>
         <div data-testid="list">
-          <List {...props(incidentListWidget.defaultConfig, { kiosk })} />
+          <List {...props(SHOW_ALL, { kiosk })} />
         </div>
         <div data-testid="chat">
           <Chat {...props({}, { kiosk })} />
@@ -397,14 +411,14 @@ describe('incidents.list last good data', () => {
 
   it('writes the rows after a fetch, and the next mount shows them at once with no spinner', async () => {
     const cache = memoryCache();
-    const first = view(<List {...props(incidentListWidget.defaultConfig, { cache })} />);
+    const first = view(<List {...props(SHOW_ALL, { cache })} />);
     await first.findByText('HighCPU');
     expect(cache.peek()).toBeDefined();
     cleanup();
 
     // The next load: the server never answers. The rows come from the cache in the first render.
     request.mockImplementation(() => new Promise(() => undefined));
-    view(<List {...props(incidentListWidget.defaultConfig, { cache })} />);
+    view(<List {...props(SHOW_ALL, { cache })} />);
     expect(screen.getByText('HighCPU')).toBeTruthy();
     expect(screen.queryByLabelText('Loading')).toBeNull();
     expect(screen.getByText(/^3 incidents\./)).toBeTruthy();
@@ -414,12 +428,12 @@ describe('incidents.list last good data', () => {
     request.mockImplementation(() => new Promise(() => undefined));
     const cache = memoryCache();
     cache.write({ key: 'another address', rows: [] });
-    view(<List {...props(incidentListWidget.defaultConfig, { cache })} />);
+    view(<List {...props(SHOW_ALL, { cache })} />);
     expect(screen.getByLabelText('Loading')).toBeTruthy();
     cleanup();
     const bad = memoryCache();
     bad.write('not an object');
-    view(<List {...props(incidentListWidget.defaultConfig, { cache: bad })} />);
+    view(<List {...props(SHOW_ALL, { cache: bad })} />);
     expect(screen.getByLabelText('Loading')).toBeTruthy();
   });
 });

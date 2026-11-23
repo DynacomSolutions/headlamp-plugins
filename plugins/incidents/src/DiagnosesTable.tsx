@@ -38,7 +38,11 @@ function formatTime(iso: string): string {
  * line sits under the likely cause and no data is lost.
  */
 function DetailLine({ d }: { d: DiagnosisSummary }) {
-  const parts = [d.confidence ? `${d.confidence} confidence` : '', d.source].filter(Boolean);
+  const parts = [
+    d.confidence ? `${d.confidence} confidence` : '',
+    d.source,
+    d.fires && d.fires > 1 ? `fired ${d.fires} times` : '',
+  ].filter(Boolean);
   if (parts.length === 0) return null;
   return (
     <Box

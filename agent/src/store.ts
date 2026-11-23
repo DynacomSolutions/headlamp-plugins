@@ -89,6 +89,15 @@ export abstract class DiagnosisStore {
   /** How many diagnoses a person ran again that are still queued or running. */
   abstract countOpenReruns(): Promise<number>;
   abstract findByFingerprint(fingerprint: string, startsAt: string): Promise<Diagnosis | undefined>;
+  /** The newest diagnosis of this fingerprint that is not resolved. */
+  abstract findOpenByFingerprint(fingerprint: string): Promise<Diagnosis | undefined>;
+  /** Every diagnosis that is not resolved, newest first, as the list shows it. */
+  abstract openSummaries(): Promise<DiagnosisSummary[]>;
+  /**
+   * Take or renew a named lease for this process. True when this process holds it for `ttlMs` more.
+   * False when another process holds it with a live lease. One pod then runs the reconcile loop, the others skip.
+   */
+  abstract acquireLease(name: string, ttlMs: number): Promise<boolean>;
   /** Fingerprints of firing alerts that have an unresolved diagnosis: ids to mark as resolved. */
   protected abstract unresolvedIds(fingerprint: string): Promise<string[]>;
   /**
@@ -116,13 +125,80 @@ export abstract class DiagnosisStore {
     }
   }
 
+  /** Resolve one open diagnosis, by any pod. False when it is gone or already resolved. */
+  resolveOpen(id: string, at: string, note: string): Promise<boolean> {
+    return this.update(id, d => (d && !d.resolvedAt ? { ...d, resolvedAt: at, resolvedNote: note } : undefined), { force: true });
+  }
+
+  /**
+   * An alert fired again (a new activation) while this diagnosis is open: count it, and do not start another one.
+   * Returns false when nothing changed: the diagnosis is resolved or gone, or `startsAt` is not newer than the last activation.
+   */
+  attachFire(id: string, startsAt: string): Promise<boolean> {
+    return this.update(
+      id,
+      d => {
+        if (!d || d.resolvedAt) return undefined;
+        const last = Date.parse(d.lastFiredAt ?? d.alert.startsAt);
+        const next = Date.parse(startsAt);
+        if (Number.isFinite(last) && Number.isFinite(next) && next <= last) return undefined;
+        return { ...d, fires: (d.fires ?? 1) + 1, lastFiredAt: startsAt };
+      },
+      { force: true },
+    );
+  }
+
+  /**
+   * Fold open webhook diagnoses that share a fingerprint: the newest stays open and takes the count of fires,
+   * each older one is resolved with a note, at the time its successor started. With `fingerprint` only that one is folded.
+   * Safe to run again and from two pods: a resolved record is never touched, and the count only grows.
+   */
+  async foldDuplicates(fingerprint?: string): Promise<{ groups: number; folded: number }> {
+    const groups = new Map<string, DiagnosisSummary[]>();
+    for (const d of await this.openSummaries()) {
+      const fp = d.alert.fingerprint;
+      if (d.source !== 'webhook' || !fp || (fingerprint !== undefined && fp !== fingerprint)) continue;
+      const list = groups.get(fp) ?? [];
+      list.push(d);
+      groups.set(fp, list);
+    }
+    let folded = 0;
+    let merged = 0;
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      group.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+      const keep = group[0]!;
+      let done = 0;
+      for (let i = 1; i < group.length; i++) {
+        const at = group[i - 1]!.createdAt;
+        if (await this.resolveOpen(group[i]!.id, at, `Folded into ${keep.id}: the same alert fired again.`)) done++;
+      }
+      if (done === 0) continue;
+      merged++;
+      folded += done;
+      const total = group.reduce((n, d) => n + (d.fires ?? 1), 0);
+      const lastMs = Math.max(...group.map(d => Date.parse(d.lastFiredAt ?? d.alert.startsAt)).filter(Number.isFinite));
+      await this.update(
+        keep.id,
+        d => (d && !d.resolvedAt ? { ...d, fires: Math.max(d.fires ?? 1, total), ...(Number.isFinite(lastMs) ? { lastFiredAt: laterOf(d.lastFiredAt, new Date(lastMs).toISOString()) } : {}) } : undefined),
+        { force: true },
+      );
+    }
+    return { groups: merged, folded };
+  }
+
   /** The decision `update` takes before it writes. Returns the record to write, or undefined to write nothing. */
   protected decide(current: Diagnosis | undefined, fn: (current: Diagnosis | undefined) => Diagnosis | undefined, options: UpdateOptions): Diagnosis | undefined {
     if (options.exclusive && current) return undefined;
     let next = fn(current);
     if (!next) return undefined;
     if (!options.force && current && (current.status === 'queued' || current.status === 'running') && current.owner && current.owner !== next.owner && !this.expired(current)) return undefined;
-    if (current?.resolvedAt && !next.resolvedAt) next = { ...next, resolvedAt: current.resolvedAt };
+    if (current) {
+      // A writer that holds an older copy (the runner) must not drop what another pod added meanwhile.
+      if (next.fires === undefined && current.fires !== undefined) next = { ...next, fires: current.fires };
+      if (next.lastFiredAt === undefined && current.lastFiredAt !== undefined) next = { ...next, lastFiredAt: current.lastFiredAt };
+      if (current.resolvedAt && !next.resolvedAt) next = { ...next, resolvedAt: current.resolvedAt, ...(next.resolvedNote === undefined && current.resolvedNote !== undefined ? { resolvedNote: current.resolvedNote } : {}) };
+    }
     return next;
   }
 }
@@ -170,6 +246,25 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
 
   async findByFingerprint(fingerprint: string, startsAt: string): Promise<Diagnosis | undefined> {
     return this.sorted().find(d => d.alert.fingerprint === fingerprint && d.alert.startsAt === startsAt);
+  }
+
+  async findOpenByFingerprint(fingerprint: string): Promise<Diagnosis | undefined> {
+    return this.sorted().find(d => d.alert.fingerprint === fingerprint && !d.resolvedAt);
+  }
+
+  async openSummaries(): Promise<DiagnosisSummary[]> {
+    return this.sorted()
+      .filter(d => !d.resolvedAt)
+      .map(summarize);
+  }
+
+  private readonly leases = new Map<string, { owner: string; until: number }>();
+
+  async acquireLease(name: string, ttlMs: number): Promise<boolean> {
+    const held = this.leases.get(name);
+    if (held && held.owner !== this.owner && held.until > this.now()) return false;
+    this.leases.set(name, { owner: this.owner, until: this.now() + ttlMs });
+    return true;
   }
 
   protected async unresolvedIds(fingerprint: string): Promise<string[]> {
@@ -221,12 +316,24 @@ const SCHEMA = [
   'CREATE INDEX IF NOT EXISTS diagnoses_fingerprint_idx ON diagnoses (fingerprint, starts_at)',
   "CREATE INDEX IF NOT EXISTS diagnoses_open_idx ON diagnoses (created_at) WHERE status IN ('queued', 'running')",
   "CREATE INDEX IF NOT EXISTS diagnoses_webhook_idx ON diagnoses (created_at) WHERE source = 'webhook'",
+  'CREATE INDEX IF NOT EXISTS diagnoses_unresolved_idx ON diagnoses (created_at DESC, id DESC) WHERE NOT resolved',
+  `CREATE TABLE IF NOT EXISTS agent_leases (
+    name text PRIMARY KEY,
+    owner text NOT NULL,
+    until timestamptz NOT NULL
+  )`,
   ...PUSH_SCHEMA,
 ];
 
 /** Any 64-bit number. Two pods that start together take this advisory lock, so only one creates the schema. */
 const SCHEMA_LOCK = 7_483_920_115;
 const SUMMARY_SQL = "(data - 'a2ui' - 'evidence') || jsonb_build_object('evidenceCount', jsonb_array_length(COALESCE(data->'evidence', '[]'::jsonb)))";
+
+/** The later of two ISO times. A missing or invalid one loses. */
+function laterOf(a: string | undefined, b: string): string {
+  const x = a ? Date.parse(a) : NaN;
+  return Number.isFinite(x) && x >= Date.parse(b) ? (a as string) : b;
+}
 
 function created(d: Diagnosis, now: number): Date {
   const t = Date.parse(d.createdAt);
@@ -346,6 +453,29 @@ export class PgDiagnosisStore extends DiagnosisStore {
   async findByFingerprint(fingerprint: string, startsAt: string): Promise<Diagnosis | undefined> {
     const r = await this.db.query('SELECT data FROM diagnoses WHERE fingerprint = $1 AND starts_at = $2 ORDER BY created_at DESC LIMIT 1', [fingerprint, startsAt]);
     return r.rows[0]?.data as Diagnosis | undefined;
+  }
+
+  async findOpenByFingerprint(fingerprint: string): Promise<Diagnosis | undefined> {
+    const r = await this.db.query('SELECT data FROM diagnoses WHERE fingerprint = $1 AND NOT resolved ORDER BY created_at DESC, id DESC LIMIT 1', [fingerprint]);
+    return r.rows[0]?.data as Diagnosis | undefined;
+  }
+
+  async openSummaries(): Promise<DiagnosisSummary[]> {
+    const r = await this.db.query(`SELECT ${SUMMARY_SQL} AS d FROM diagnoses WHERE NOT resolved ORDER BY created_at DESC, id DESC`);
+    return r.rows.map(row => row.d as DiagnosisSummary);
+  }
+
+  async acquireLease(name: string, ttlMs: number): Promise<boolean> {
+    const now = this.now();
+    // One statement: take the lease when it is free, expired or ours. No row comes back when another process holds it.
+    const r = await this.db.query(
+      `INSERT INTO agent_leases (name, owner, until) VALUES ($1, $2, $3)
+       ON CONFLICT (name) DO UPDATE SET owner = EXCLUDED.owner, until = EXCLUDED.until
+       WHERE agent_leases.owner = EXCLUDED.owner OR agent_leases.until <= $4
+       RETURNING owner`,
+      [name, this.owner, new Date(now + ttlMs), new Date(now)],
+    );
+    return (r.rowCount ?? r.rows.length) > 0;
   }
 
   protected async unresolvedIds(fingerprint: string): Promise<string[]> {

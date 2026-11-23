@@ -30,6 +30,8 @@ export interface Config {
   maxChatTurns: number;
   /** Launches that may be open (pending or active) at once. Finished launches are never dropped. */
   maxLaunches: number;
+  /** Seconds between two reconcile runs (open diagnoses against vmalert). */
+  reconcileSeconds: number;
   models: ModelRoutesConfig;
   diagnosis: DiagnosisConfig;
   launch: LaunchConfig;
@@ -286,6 +288,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: (env.DATABASE_URL ?? '').trim(),
     maxChatTurns: int(env.AGENT_MAX_CHAT_TURNS, 3),
     maxLaunches: int(env.AGENT_MAX_LAUNCHES, 200),
+    reconcileSeconds: int(env.AGENT_RECONCILE_SECONDS, 60),
     models: loadModelRoutes(env),
     diagnosis: {
       toolBudget: int(env.AGENT_TOOL_BUDGET, 10),

@@ -70,6 +70,12 @@ export interface Diagnosis {
   host?: string;
   alert: Alert;
   resolvedAt?: string;
+  /** Why the diagnosis was resolved when no resolve notification did it: a fold into a newer one, or an alert that vmalert no longer has. */
+  resolvedNote?: string;
+  /** How many times the alert fired (activations, each with a new `startsAt`) while this diagnosis was open. Absent means once. */
+  fires?: number;
+  /** The `startsAt` (ISO) of the latest activation that this diagnosis took in. */
+  lastFiredAt?: string;
   result?: DiagnosisResult;
   evidence: EvidenceItem[];
   toolCalls: number;
