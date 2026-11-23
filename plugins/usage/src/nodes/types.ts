@@ -2,7 +2,7 @@
 export interface RunnerInfo {
   /** Tenant label `Owner.Repo` as given, '' when the pod has none (a warm pod). */
   tenant: string;
-  /** Pool label, for example `rw-linux`. */
+  /** Pool label, for example `pool-linux`. */
   pool: string;
   /** Pod role: runner, warm or job. */
   role: string;

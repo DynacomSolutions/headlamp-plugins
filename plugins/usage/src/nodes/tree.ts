@@ -114,7 +114,7 @@ function fitChildren(parent: SunNode): void {
   for (const c of parent.children) fitChildren(c);
 }
 
-const rwIcon = {
+const runnerIcon = {
   runner: { kind: 'mdi', name: 'dns' },
   repo: { kind: 'simple-icons', name: 'github' },
   workflow: { kind: 'mdi', name: 'code-braces' },
@@ -153,11 +153,11 @@ function runnerPath(r: RunnerInfo): RunnerPath | null {
     const jb = job.job || UNKNOWN;
     return {
       rings: [
-        { key: `rw:${owner}|${label}`, label: `${owner} / ${label}`, kind: 'runner', icon: rwIcon.runner },
-        { key: `repo:${repo}`, label: repo, kind: 'repo', icon: rwIcon.repo },
-        { key: `wf:${wf}`, label: wf, kind: 'workflow', icon: rwIcon.workflow },
-        { key: `job:${jb}`, label: jb, kind: 'job', icon: rwIcon.job },
-        { key: `run:${job.runId || UNKNOWN}`, label: `#${job.runId || UNKNOWN}`, kind: 'run', icon: rwIcon.run },
+        { key: `runner:${owner}|${label}`, label: `${owner} / ${label}`, kind: 'runner', icon: runnerIcon.runner },
+        { key: `repo:${repo}`, label: repo, kind: 'repo', icon: runnerIcon.repo },
+        { key: `wf:${wf}`, label: wf, kind: 'workflow', icon: runnerIcon.workflow },
+        { key: `job:${jb}`, label: jb, kind: 'job', icon: runnerIcon.job },
+        { key: `run:${job.runId || UNKNOWN}`, label: `#${job.runId || UNKNOWN}`, kind: 'run', icon: runnerIcon.run },
       ],
       podLeaf: true,
     };
@@ -169,9 +169,9 @@ function runnerPath(r: RunnerInfo): RunnerPath | null {
     const repo = t.repo || tenant;
     return {
       rings: [
-        { key: `rw:${owner}|${label}`, label: `${owner} / ${label}`, kind: 'runner', icon: rwIcon.runner },
-        { key: `repo:${repo}`, label: repo, kind: 'repo', icon: rwIcon.repo },
-        { key: 'wf:~waiting', label: WAITING, kind: 'workflow', icon: rwIcon.workflow },
+        { key: `runner:${owner}|${label}`, label: `${owner} / ${label}`, kind: 'runner', icon: runnerIcon.runner },
+        { key: `repo:${repo}`, label: repo, kind: 'repo', icon: runnerIcon.repo },
+        { key: 'wf:~waiting', label: WAITING, kind: 'workflow', icon: runnerIcon.workflow },
       ],
       podLeaf: false,
     };
@@ -179,8 +179,8 @@ function runnerPath(r: RunnerInfo): RunnerPath | null {
   if (pool || r.role === 'warm') {
     return {
       rings: [
-        { key: 'rw:~warm', label: 'Warm pool', kind: 'runner', icon: rwIcon.warm },
-        { key: `pool:${pool || UNKNOWN}`, label: pool || UNKNOWN, kind: 'runner', icon: rwIcon.warm },
+        { key: 'runner:~warm', label: 'Warm pool', kind: 'runner', icon: runnerIcon.warm },
+        { key: `pool:${pool || UNKNOWN}`, label: pool || UNKNOWN, kind: 'runner', icon: runnerIcon.warm },
       ],
       podLeaf: false,
     };

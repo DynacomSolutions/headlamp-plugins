@@ -259,7 +259,7 @@ describe('the icon of an org/repo label', () => {
     expect(iconForLabel('acme/web', MAP)).toBe(SVG);
     expect(iconForLabel('acme/docs', MAP)).toBe(PNG);
     expect(iconForLabel('nobody/docs', MAP)).toBeUndefined();
-    expect(iconForLabel('rw-linux', MAP)).toBeUndefined();
+    expect(iconForLabel('pool-linux', MAP)).toBeUndefined();
     expect(iconForLabel('acme/web 12 failed', MAP)).toBeUndefined();
     expect(iconForLabel('', MAP)).toBeUndefined();
   });
