@@ -29,7 +29,7 @@ const HOUR = 3_600_000;
 const iso = (ms: number) => new Date(ms).toISOString();
 
 function labelsOf(name: string, extra: Record<string, string> = {}): Record<string, string> {
-  return { alertname: name, severity: 'critical', namespace: 'waltai', deployment: name.toLowerCase(), ...extra };
+  return { alertname: name, severity: 'critical', namespace: 'shop', deployment: name.toLowerCase(), ...extra };
 }
 
 function diagnosis(id: string, extra: Partial<Diagnosis> & { name?: string; labels?: Record<string, string>; startsAt?: string } = {}): Diagnosis {
@@ -107,13 +107,13 @@ describe('isPresent', () => {
     const d = diagnosis('a');
     const withExtra = snapshot([{ name: 'KubeDeploymentDown', labels: labelsOf('KubeDeploymentDown', { cluster: 'main' }) }]);
     expect(isPresent(d, withExtra, new Set())).toBe(true);
-    const fewer = diagnosis('b', { labels: { alertname: 'KubeDeploymentDown', severity: 'critical', namespace: 'waltai' } });
+    const fewer = diagnosis('b', { labels: { alertname: 'KubeDeploymentDown', severity: 'critical', namespace: 'shop' } });
     expect(isPresent(fewer, snapshot([{ name: 'KubeDeploymentDown' }]), new Set())).toBe(true);
   });
 
   it('does not match another deployment of the same alert', () => {
     const d = diagnosis('a');
-    const other = snapshot([{ name: 'KubeDeploymentDown', labels: labelsOf('KubeDeploymentDown', { deployment: 'walt-api' }) }]);
+    const other = snapshot([{ name: 'KubeDeploymentDown', labels: labelsOf('KubeDeploymentDown', { deployment: 'shop-api' }) }]);
     expect(isPresent(d, other, new Set())).toBe(false);
   });
 });
@@ -227,14 +227,14 @@ describe('Reconciler', () => {
 });
 
 describe('foldDuplicates (the start migration)', () => {
-  const labels = labelsOf('KubeDeploymentDown', { deployment: 'walt-engine' });
+  const labels = labelsOf('KubeDeploymentDown', { deployment: 'shop-engine' });
   const eight = (store: DiagnosisStore) =>
     Promise.all(Array.from({ length: 8 }, (_, i) => store.put(diagnosis(`d${i}`, { labels, startsAt: iso(NOW - (10 - i) * HOUR) }))));
 
   it('keeps the newest open, resolves the rest at the time each was replaced, and sums the fires', async () => {
     const store = new MemoryDiagnosisStore({ now: () => NOW });
     await eight(store);
-    await store.put(diagnosis('other', { labels: labelsOf('KubeDeploymentDown', { deployment: 'walt-api' }) }));
+    await store.put(diagnosis('other', { labels: labelsOf('KubeDeploymentDown', { deployment: 'shop-api' }) }));
     await store.put(diagnosis('manual', { labels, source: 'api', startsAt: iso(NOW - HOUR) }));
     expect(await store.foldDuplicates()).toEqual({ groups: 1, folded: 7 });
     const open = (await store.openSummaries()).map(d => d.id).sort();
@@ -257,7 +257,7 @@ describe('foldDuplicates (the start migration)', () => {
 
   it('folds only one fingerprint when asked', async () => {
     const store = new MemoryDiagnosisStore({ now: () => NOW });
-    const other = labelsOf('KubeDeploymentDown', { deployment: 'walt-api' });
+    const other = labelsOf('KubeDeploymentDown', { deployment: 'shop-api' });
     await store.put(diagnosis('a1', { labels, startsAt: iso(NOW - 3 * HOUR) }));
     await store.put(diagnosis('a2', { labels, startsAt: iso(NOW - 2 * HOUR) }));
     await store.put(diagnosis('b1', { labels: other, startsAt: iso(NOW - 3 * HOUR) }));
@@ -291,7 +291,7 @@ describe('PostgreSQL store', () => {
     let clock = NOW;
     const a = await podStore(db, { owner: 'A', now: () => clock });
     const b = await podStore(db, { owner: 'B', now: () => clock });
-    const labels = labelsOf('KubeDeploymentDown', { deployment: 'walt-engine' });
+    const labels = labelsOf('KubeDeploymentDown', { deployment: 'shop-engine' });
     for (let i = 0; i < 4; i++) await a.put(diagnosis(`d${i}`, { labels, startsAt: iso(NOW - (6 - i) * HOUR) }));
     await a.put(diagnosis('done', { name: 'Other', resolvedAt: iso(NOW - HOUR) }));
     expect((await b.findOpenByFingerprint(fingerprint(labels)))?.id).toBe('d3');
@@ -343,7 +343,7 @@ describe('the alert webhook', () => {
   }
 
   const post = (port: number, alerts: unknown[]) => fetch(`http://127.0.0.1:${port}/api/v2/alerts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(alerts) });
-  const labels = { alertname: 'KubeDeploymentDown', severity: 'critical', namespace: 'waltai', deployment: 'walt-engine' };
+  const labels = { alertname: 'KubeDeploymentDown', severity: 'critical', namespace: 'shop', deployment: 'shop-engine' };
   const firing = (startsAt: string) => ({ labels, startsAt, endsAt: '2099-01-01T00:00:00Z' });
   const resolved = (startsAt: string) => ({ labels, startsAt, endsAt: '2026-01-01T00:00:00Z' });
   const until = async (check: () => boolean | Promise<boolean>) => {
