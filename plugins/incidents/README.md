@@ -11,7 +11,7 @@ is read-only.
   done, failed), likely cause (or the error), confidence, source and whether the
   alert is resolved. It refreshes every 15 seconds and lists every diagnosis (it reads all pages).
   Click a row to open it. The filters (status, severity, search, open only) and the selection are
-  query strings (`?status=failed&severity=critical&q=disk&open=1&sel=<id>,<id>`). A change replaces the
+  query strings (`?status=failed&severity=critical&q=disk&resolved=1&sel=<id>,<id>`). A change replaces the
   history entry, so Back leaves the page and the URL alone shows the same view.
   The table scrolls inside the page. Its header, the filters and the selection bar stay fixed.
   A failed row has a "Run again" button. It calls
@@ -81,7 +81,7 @@ layout change. The Incidents pages are unchanged.
   reports), so the summary counts the real total and never the first page only.
 - The summary counts the rows that the filters leave. The summary shows each severity that is not
   `critical` or `warning` by its own name (for example `info`, or `unrated` for none), never as one
-  "other" count. The `other` filter value (shown as "Info, none and unrated") matches all of them. `openOnly` hides the diagnoses whose alert is resolved.
+  "other" count. The `other` filter value (shown as "Info, none and unrated") matches all of them. `openOnly` (on by default) hides the diagnoses whose alert is resolved, so the counts match the alert chips. The Incidents page has a "Show resolved" box (`?resolved=1`). A link with `?open=1` shows the default view.
 - When a dashboard has both widgets, a click on a list row selects that incident for the chat
   (the alert name link still opens the incident page). A second click on the same row clears it.
   The chat then talks about that incident (`diagnosisId`). Each incident keeps its own chat while the
