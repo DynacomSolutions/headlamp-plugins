@@ -95,6 +95,13 @@ afterEach(() => {
   selectIncident(null);
 });
 
+/** Opens the group of an alert and returns its header. Every group is closed at first. */
+const openGroup = async (alert: string): Promise<HTMLElement> => {
+  const header = (await screen.findByText(alert)).closest('[data-incident-group]') as HTMLElement;
+  fireEvent.click(header);
+  return header;
+};
+
 const diagnosisCalls = () => calls.filter(c => c.url.includes('/api/diagnoses'));
 
 describe('registration', () => {
@@ -125,7 +132,8 @@ describe('incidents.list', () => {
     expect(await screen.findByText('HighCPU')).toBeTruthy();
     expect(screen.getByText(/^3 incidents\./)).toBeTruthy();
     expect(document.querySelector('[data-count="critical"]')?.textContent).toBe('1');
-    expect(screen.getByText(/1 running/)).toBeTruthy();
+    // The summary and the header of the DiskFull group both count the running analysis.
+    expect(screen.getAllByText(/1 running/)).toHaveLength(2);
     expect(p.reportRefreshed).toHaveBeenCalled();
   });
   it('keeps the summary outside the scrolling list', async () => {
@@ -134,7 +142,12 @@ describe('incidents.list', () => {
     const scroller = container.querySelector('[data-scroll-area]') as HTMLElement;
     expect(scroller.contains(screen.getByText(/^3 incidents\./))).toBe(false);
     expect(scroller.contains(screen.getByText('HighCPU'))).toBe(true);
-    // Every row is inside it, so the last card can be reached by scroll.
+    // Every group is inside it, and its rows too once the group is open, so the last card scrolls.
+    expect(scroller.querySelectorAll('[data-incident-group]')).toHaveLength(3);
+    expect(scroller.querySelectorAll('[data-incident-row]')).toHaveLength(0);
+    for (const h of Array.from(scroller.querySelectorAll('[data-incident-group]'))) {
+      fireEvent.click(h);
+    }
     expect(scroller.querySelectorAll('[data-incident-row]')).toHaveLength(3);
     expect(document.body.textContent).not.toMatch(/\bmore\b|\bother\b/i);
   });
@@ -155,13 +168,15 @@ describe('incidents.list', () => {
   });
   it('opens the incident page when there is no chat widget', async () => {
     view(<List {...props(incidentListWidget.defaultConfig)} />);
-    const link = await screen.findByRole('link', { name: 'HighCPU' });
+    await openGroup('HighCPU');
+    const link = await screen.findByRole('link', { name: 'cause HighCPU' });
     expect(link.getAttribute('href')).toBe('/c/test/incident/1');
   });
   it('turns the links off while editing', async () => {
     view(<List {...props(incidentListWidget.defaultConfig, { editing: true })} />);
-    await screen.findByText('HighCPU');
-    expect(screen.queryByRole('link', { name: 'HighCPU' })).toBeNull();
+    await openGroup('HighCPU');
+    expect(screen.getByText('cause HighCPU')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'cause HighCPU' })).toBeNull();
   });
   it('fetches on the refresh signal only, not on a rerender', async () => {
     const p = props(incidentListWidget.defaultConfig);
@@ -183,6 +198,7 @@ describe('incidents.list', () => {
   });
   it('runs a failed diagnosis again from its row and fetches the rows again', async () => {
     view(<List {...props(incidentListWidget.defaultConfig)} />);
+    await openGroup('OldAlert');
     const button = await screen.findByRole('button', { name: 'Run again: OldAlert' });
     expect(screen.getAllByRole('button', { name: /Run again/ })).toHaveLength(1);
     const before = diagnosisCalls().filter(c => c.method === 'GET').length;
@@ -202,12 +218,14 @@ describe('incidents.list', () => {
       return { total: 3, diagnoses: DIAGNOSES };
     });
     view(<List {...props(incidentListWidget.defaultConfig)} />);
+    await openGroup('OldAlert');
     fireEvent.click(await screen.findByRole('button', { name: 'Run again: OldAlert' }));
     expect((await screen.findByRole('alert')).textContent).toBe('No model is configured');
   });
   it('has no re-run button while editing', async () => {
     view(<List {...props(incidentListWidget.defaultConfig, { editing: true })} />);
-    await screen.findByText('OldAlert');
+    await openGroup('OldAlert');
+    expect(screen.getByText('cause OldAlert')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Run again/ })).toBeNull();
   });
   it('keeps the last data when a refresh fails', async () => {
@@ -283,7 +301,10 @@ describe('list and chat on one dashboard', () => {
 
   it('selects the incident for the chat on a row click instead of navigating', async () => {
     both();
-    const row = (await screen.findByText('HighCPU')).closest('[data-incident-row]') as HTMLElement;
+    await openGroup('HighCPU');
+    const row = (await screen.findByText('cause HighCPU')).closest(
+      '[data-incident-row]'
+    ) as HTMLElement;
     expect(within(row).queryByRole('link')).toBeTruthy();
     fireEvent.click(row);
     expect(await screen.findByText('About incident: HighCPU')).toBeTruthy();
@@ -295,8 +316,9 @@ describe('list and chat on one dashboard', () => {
 
   it('creates the chat with the selected incident and sends the message', async () => {
     both();
+    await openGroup('HighCPU');
     fireEvent.click(
-      (await screen.findByText('HighCPU')).closest('[data-incident-row]') as HTMLElement
+      (await screen.findByText('cause HighCPU')).closest('[data-incident-row]') as HTMLElement
     );
     await screen.findByText('About incident: HighCPU');
     const box = screen.getByLabelText('Message') as HTMLTextAreaElement;
