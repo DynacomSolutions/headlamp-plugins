@@ -12,7 +12,7 @@ import { enrolSchema, StorageNotifications, subscriptionSchema, disabledCoverage
 import { StorageReconciler } from './reconcile.js';
 import { StorageIncident } from './service.js';
 import { HttpScanner } from './transport.js';
-import { answerSchema, approvalSchema, decisionSchema, filesystemPoliciesSchema, investigationSchema, messageSchema, reconcileSchema, StorageError, type FilesystemPolicy } from './types.js';
+import { answerSchema, approvalSchema, decisionSchema, filesystemPoliciesSchema, investigationSchema, messageSchema, partialScanScopesSchema, reconcileSchema, StorageError, type ExpectedScopes, type FilesystemPolicy } from './types.js';
 
 const base = '/api/storage';
 const empty = {
@@ -32,6 +32,7 @@ type HttpHelpers = {
 type Settings = {
   urls: ReadonlyMap<string, URL>;
   filesystemPolicies: ReadonlyMap<string, FilesystemPolicy[]>;
+  partialScanScopes: ReadonlyMap<string, ExpectedScopes>;
   scannerToken: () => string;
   reconcileToken: () => string;
   cluster: string;
@@ -77,9 +78,25 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     throw new Error('Invalid storage operator configuration');
   }
   const applyEnabled = env.STORAGE_APPLY_ENABLED === 'true';
+  const holderEvidenceExpected = applyEnabled || disposable.size > 0 || env.STORAGE_EXPECT_HOLDER_EVIDENCE !== 'false';
+  let partialScanScopes: ReadonlyMap<string, ExpectedScopes>;
+  try {
+    const scopesFile = env.STORAGE_PARTIAL_SCAN_SCOPES_FILE;
+    const scopes = scopesFile ? partialScanScopesSchema.parse(JSON.parse(readFileSync(scopesFile, 'utf8'))) : {};
+    partialScanScopes = new Map(Object.entries(scopes));
+    for (const node of partialScanScopes.keys()) {
+      const policies = filesystemPolicies.get(node) ?? [];
+      if (holderEvidenceExpected || !urls.has(node) || !policies.length || policies.some(policy => policy.device === undefined)) {
+        throw new Error('Partial scans require a contained scanner with exact filesystem policies');
+      }
+    }
+  } catch {
+    throw new Error('Invalid storage partial scan scope configuration');
+  }
   return {
     urls,
     filesystemPolicies,
+    partialScanScopes,
     humanGroups: new Set(groups),
     authority: notificationAuthority(env),
     scannerToken: tokenFile(env.STORAGE_SCANNER_TOKEN_FILE),
@@ -87,7 +104,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     cluster: env.STORAGE_HEADLAMP_CLUSTER ?? '',
     disposable,
     applyEnabled,
-    holderEvidenceExpected: applyEnabled || disposable.size > 0 || env.STORAGE_EXPECT_HOLDER_EVIDENCE !== 'false',
+    holderEvidenceExpected,
   };
 }
 
@@ -108,7 +125,7 @@ export async function storageHttp(deps: HttpHelpers & {
 
   async function start(configured: Settings, db: StorageStore) {
     await db.init(now());
-    const scanner = new HttpScanner(configured.urls, configured.scannerToken);
+    const scanner = new HttpScanner(configured.urls, configured.scannerToken, new Set(configured.partialScanScopes.keys()));
     const apply = new StorageApply({ store: db, scanner, now, enabled: configured.applyEnabled, disposable: configured.disposable });
     const notifications = new StorageNotifications({ store: db, now, push, authority: configured.authority });
     notifications.start();
@@ -116,6 +133,7 @@ export async function storageHttp(deps: HttpHelpers & {
     const reconcile = new StorageReconciler({
       store: db, scanner, now, metrics, nodes: new Set(nodes), filesystemPolicies: configured.filesystemPolicies,
       holderEvidenceExpected: configured.holderEvidenceExpected,
+      partialScanScopes: configured.partialScanScopes,
     });
     return { apply, notifications, reconcile, db, service: new StorageIncident({ store: db, now, apply, notifications, nodes }) };
   }
