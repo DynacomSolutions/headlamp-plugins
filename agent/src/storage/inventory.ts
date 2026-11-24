@@ -105,9 +105,15 @@ function makeSnapshot(
 ): Snapshot {
   const reserves = triggers.flatMap(t => t.reserveBytes === undefined ? [] : [t.reserveBytes]);
   const criticals = triggers.flatMap(t => t.criticalBytes === undefined ? [] : [t.criticalBytes]);
-  const reserveBytes = policies.length ? Math.max(...policies.map(policy => policy.reserveBytes))
+  const overrides = policies.filter(policy => 'reserveBytes' in policy);
+  const gib = 1024 ** 3;
+  const generalReserve = Math.min(Math.max(Math.floor(fs.totalBytes / 20), 24 * gib),
+    2048 * gib, Math.floor(fs.totalBytes / 4));
+  const reserveBytes = overrides.length ? Math.max(...overrides.map(policy => policy.reserveBytes))
+    : policies.length ? generalReserve
     : reserves.length ? Math.max(...reserves) : previous?.current.reserveBytes ?? Math.ceil(fs.totalBytes / 10);
-  const criticalBytes = Math.min(reserveBytes, policies.length ? Math.max(...policies.map(policy => policy.criticalBytes))
+  const criticalBytes = Math.min(reserveBytes, overrides.length ? Math.max(...overrides.map(policy => policy.criticalBytes))
+    : policies.length ? Math.floor(generalReserve / 2)
     : criticals.length ? Math.max(...criticals) : previous?.current.criticalBytes ?? reserveBytes);
   return {
     id: randomUUID(),
@@ -170,7 +176,7 @@ export async function ingestScan(
   policies: FilesystemPolicy[],
   now: number,
   cooldownMs: number,
-): Promise<{ complete: boolean; matched: boolean; observed: DriveState[] }> {
+): Promise<{ inventoryComplete: boolean; matched: boolean; observed: DriveState[] }> {
   const filesystems = scan.filesystems.map(fs => ({ fs, scope: filesystemScope(scan.node, fs) })).sort((a, b) => a.scope.localeCompare(b.scope));
   const aliasScopes = new Map<string, Set<string>>();
   function addAlias(key: string, scope: string) {
@@ -183,7 +189,7 @@ export async function ingestScan(
     for (const { device, mountpoint } of fs.aliases ?? []) addAlias(aliasKey(device, mountpoint), scope);
   }
   const aliases = new Map([...aliasScopes].flatMap(([key, scopes]) => scopes.size === 1 ? [[key, [...scopes][0]] as const] : []));
-  // The mounted policy names a path on its node. Metrics triggers still require both labels.
+  // Policies with a device require the exact exporter pair.
   const policyScopes = new Map<string, Set<string>>();
   for (const { fs, scope } of filesystems) {
     for (const mount of [fs.mount, ...(fs.aliases ?? []).map(alias => alias.mountpoint)]) {
@@ -195,7 +201,8 @@ export async function ingestScan(
   const policiesByScope = new Map<string, FilesystemPolicy[]>();
   let coveredPolicies = 0;
   for (const policy of policies) {
-    const scopes = policyScopes.get(policy.mount);
+    const scopes = policy.device === undefined ? policyScopes.get(policy.mount)
+      : aliasScopes.get(aliasKey(policy.device, policy.mount));
     if (scopes?.size !== 1) continue;
     const [scope] = scopes;
     const matched = policiesByScope.get(scope) ?? [];
@@ -293,5 +300,5 @@ export async function ingestScan(
     await updateCleanupNotice(tx, state, decisions, now);
     observed.push(state);
   }
-  return { complete, matched: scopes.every(Boolean), observed };
+  return { inventoryComplete, matched: scopes.every(Boolean), observed };
 }

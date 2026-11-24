@@ -14,6 +14,7 @@ const META: Record<string, Meta> = {
   headlamp_agent_storage_scan_total: { type: 'counter', help: 'Storage scanner executions by result.' },
   headlamp_agent_storage_last_full_scan_timestamp_seconds: { type: 'gauge', help: 'Unix time of the last complete daily scan by node.' },
   headlamp_agent_storage_reconcile_last_success_timestamp_seconds: { type: 'gauge', help: 'Unix time of the last successful storage scan reconcile.' },
+  headlamp_agent_storage_holder_evidence_expected: { type: 'gauge', help: 'Whether storage scans must collect host process evidence.' },
   headlamp_agent_storage_receipts: { type: 'gauge', help: 'Storage plan receipts by status.' },
   headlamp_agent_storage_push_authority: { type: 'gauge', help: 'Current storage notification authority status. Exactly one status is 1.' },
   headlamp_agent_storage_push_registered_recipients: { type: 'gauge', help: 'Devices with a verified current storage grant, or NaN without a decision.' },

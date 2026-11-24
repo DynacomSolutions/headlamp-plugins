@@ -87,6 +87,7 @@ type NodeFixture = {
 
 async function fixture(options: {
   disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; authorityConfigured?: boolean;
+  contained?: boolean; policyMount?: string; policyDevice?: string;
 } = {}) {
   const dir = mkdtempSync(join(process.env.STORAGE_TEST_FIXTURE_ROOT ?? tmpdir(), 'storage-incident-fixture-'));
   dispose.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -212,10 +213,17 @@ async function fixture(options: {
   const scannerFile = join(dir, 'scanner-token');
   const machineFile = join(dir, 'reconcile-token');
   const kubeTokenFile = join(dir, 'headlamp-service-token');
+  const policiesFile = join(dir, 'filesystem-policies.json');
   writeFileSync(map, JSON.stringify(addresses));
   writeFileSync(scannerFile, scanner, { mode: 0o600 });
   writeFileSync(machineFile, machine, { mode: 0o600 });
   writeFileSync(kubeTokenFile, headlampAccount, { mode: 0o600 });
+  if (options.policyMount) {
+    writeFileSync(policiesFile, JSON.stringify({
+      [nodes[0]]: [options.policyDevice ? { mount: options.policyMount, device: options.policyDevice }
+        : { mount: options.policyMount, reserveGiB: 100, criticalGiB: 50, growth1hGiB: 20, growth6hGiB: 60 }],
+    }));
+  }
   const env: NodeJS.ProcessEnv = options.disabled ? {} : {
     STORAGE_SCANNERS_FILE: map,
     STORAGE_SCANNER_TOKEN_FILE: scannerFile,
@@ -229,6 +237,8 @@ async function fixture(options: {
     } : {}),
     STORAGE_APPLY_ENABLED: options.disposable ? 'true' : 'false',
     STORAGE_DISPOSABLE_SCANNERS: options.disposable ? nodes[0] : '',
+    ...(options.contained ? { STORAGE_EXPECT_HOLDER_EVIDENCE: 'false' } : {}),
+    ...(options.policyMount ? { STORAGE_FILESYSTEM_POLICIES_FILE: policiesFile } : {}),
   };
   const config = { ...loadConfig({}), host: '127.0.0.1', port: 0, kubeApi, kubeTokenFile, dataDir: join(dir, 'state'), allowedOrigins: [origin], reconcileSeconds: 0 };
   const sent: PushAttempt[] = [];
@@ -477,6 +487,74 @@ describe('Storage incident normal entry points', () => {
     expect((await f.reconcile()).status).toBe(200);
     expect(f.seenScans).toEqual([]);
     expect((await f.call('/metrics', { token: false })).data).toContain('headlamp_agent_storage_reconcile_last_success_timestamp_seconds 1767227400');
+  });
+
+  it('accepts contained inventory without recording a complete daily scan', async () => {
+    const f = await fixture({ contained: true, policyMount: '/', policyDevice: '/dev/md3' });
+    const fixtureNode = f.nodeFixtures.get(nodes[0])!;
+    const project = {
+      ...fs('project', '/', 20), totalBytes: 1000 * 1024 ** 3,
+      aliases: [{ device: '/dev/md3', mountpoint: '/' }],
+    };
+    const observation = {
+      execution: 'shadow' as const, complete: false, inventoryComplete: true,
+      filesystems: [project], items: [item('build', project.id)],
+    };
+    fixtureNode.scan = () => observation;
+    const trigger = { node: nodes[0], device: '/dev/md3', mount: '/', reason: 'capacity' };
+    const readMetrics = async () => String((await f.call('/metrics', { token: false })).data);
+    const scanRow = async () => (await f.db.query(
+      'SELECT result, last_full_at FROM storage_incident_scans WHERE node = $1', [nodes[0]],
+    )).rows[0];
+    const successMetric = 'headlamp_agent_storage_reconcile_last_success_timestamp_seconds';
+    const fullMetric = `headlamp_agent_storage_last_full_scan_timestamp_seconds{node="${nodes[0]}"}`;
+
+    expect(await f.reconcile([trigger])).toEqual({ status: 200, data: { ok: true } });
+    expect(await scanRow()).toEqual({ result: 'incomplete', last_full_at: null });
+    const { drives } = await f.parent();
+    const drive = drives.find((d: { filesystemId: string }) => d.filesystemId === project.id);
+    expect(drive).toMatchObject({
+      status: 'incomplete', applyEnabled: false, eligibleCount: 0,
+      complete: false, inventoryComplete: true, holderEvidenceComplete: false, reserveBytes: 50 * 1024 ** 3, criticalBytes: 25 * 1024 ** 3,
+    });
+    expect(await readMetrics()).toContain(`${successMetric} 1767227400\n`);
+    expect(await readMetrics()).toContain(`${fullMetric} 0\n`);
+    expect(await readMetrics()).toContain('headlamp_agent_storage_holder_evidence_expected 0\n');
+
+    f.advance(60_000);
+    expect((await f.reconcile([{ ...trigger, device: '/dev/md4' }])).status).toBe(503);
+    for (const degraded of [
+      { ...observation, inventoryComplete: false },
+      { ...observation, execution: undefined },
+      { ...observation, execution: 'disposable' as const },
+      { ...observation, filesystems: [fs('other', '/other')], items: [] },
+      { ...observation, filesystems: [{ ...project, aliases: [{ device: '/dev/md4', mountpoint: '/' }] }] },
+    ]) {
+      fixtureNode.scan = () => degraded;
+      expect((await f.reconcile()).status).toBe(503);
+      expect(await scanRow()).toEqual({ result: 'incomplete', last_full_at: null });
+    }
+    fixtureNode.status = 503;
+    expect((await f.reconcile()).status).toBe(503);
+    expect(await scanRow()).toEqual({ result: 'error', last_full_at: null });
+    expect(await readMetrics()).toContain(`${successMetric} 1767227400\n`);
+    expect(await readMetrics()).toContain(`${fullMetric} 0\n`);
+
+    fixtureNode.status = undefined;
+    fixtureNode.scan = () => observation;
+    f.seenScans.length = 0;
+    expect((await f.reconcile()).status).toBe(200);
+    expect(f.seenScans).toEqual([nodes[0]]);
+    expect(await readMetrics()).toContain(`${successMetric} 1767227460\n`);
+    expect(await scanRow()).toEqual({ result: 'incomplete', last_full_at: null });
+
+    f.advance(24 * 60 * 60_000);
+    fixtureNode.scan = () => ({ ...observation, complete: true });
+    expect((await f.reconcile()).status).toBe(200);
+    expect(await scanRow()).toMatchObject({ result: 'complete' });
+    expect(await readMetrics()).toContain(`${fullMetric} 1767313860\n`);
+    expect(f.applyCalls).toEqual([]);
+    expect(f.sent).toEqual([]);
   });
 
   it('keeps records private, resets Keep on material change, and blocks production approval', async () => {

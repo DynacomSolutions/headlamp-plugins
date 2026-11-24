@@ -19,6 +19,7 @@ export class StorageReconciler {
     nodes: ReadonlySet<string>;
     metrics: Metrics;
     filesystemPolicies?: ReadonlyMap<string, FilesystemPolicy[]>;
+    holderEvidenceExpected?: boolean;
     now: () => number;
   }) {}
 
@@ -71,16 +72,20 @@ export class StorageReconciler {
         await tx.query("SET LOCAL statement_timeout = '45s'");
         if (!await tx.ownsScan(node, owner, now())) throw new RequestDeadlineError();
         const policies = filesystemPolicies?.get(node) ?? [];
-        const { complete, matched, observed } = await ingestScan(tx, scan, work.due, policies, received, COOLDOWN_MS);
+        const { inventoryComplete, matched, observed } = await ingestScan(tx, scan, work.due, policies, received, COOLDOWN_MS);
         for (const state of observed) await raiseScanQuestion(tx, state, await tx.list<Decision>('decision', state.drive.id), received);
         const finished = now();
         if (finished >= deadline || finished >= work.started + SCAN_LEASE_MS) throw new RequestDeadlineError();
-        const result = complete && matched ? 'complete' : 'incomplete';
-        await tx.finishScan(node, owner, result, finished, result === 'complete' && work.full ? scannedAt : undefined);
-        return result;
+        const complete = scan.complete && inventoryComplete && matched;
+        const status = complete ? 'complete' : 'incomplete';
+        await tx.finishScan(node, owner, status, finished, complete && work.full ? scannedAt : undefined);
+        // A contained shadow scan can report inventory without proving host process coverage.
+        const accepted = complete || (this.deps.holderEvidenceExpected === false && scan.execution === 'shadow'
+          && inventoryComplete && matched && scan.filesystems.length > 0);
+        return { status, accepted };
       });
-      metrics.inc('headlamp_agent_storage_scan_total', { result });
-      return result === 'complete';
+      metrics.inc('headlamp_agent_storage_scan_total', { result: result.status });
+      return result.accepted;
     } catch (error) {
       const code = (error as { code?: string } | undefined)?.code;
       const result: ScanResult = error instanceof RequestDeadlineError || code === '57014' || code === '25P04' ? 'timeout' : 'error';
