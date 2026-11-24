@@ -603,6 +603,51 @@ describe('Storage incident normal entry points', () => {
     expect(f.sent).toEqual([]);
   });
 
+  it('rejects a due v1 scan without filesystem evidence and retries without triggers', async () => {
+    const f = await fixture();
+    const [node] = nodes;
+    const source = f.nodeFixtures.get(node)!;
+    const evidence = {
+      complete: true, inventoryComplete: true, filesystems: [fs('main', '/data', 900)], items: [item('one', 'main')],
+    };
+    source.scan = () => evidence;
+    const scanRow = async () => (await f.db.query(
+      'SELECT result, last_full_at, checks FROM storage_incident_scans WHERE node = $1', [node],
+    )).rows[0];
+    const success = 'headlamp_agent_storage_reconcile_last_success_timestamp_seconds';
+    expect((await f.reconcile()).status).toBe(200);
+    const initial = await scanRow();
+    expect(initial.last_full_at).toEqual(new Date('2026-01-01T00:30:00Z'));
+    const drive = (await f.parent()).drives.find((row: { node: string }) => row.node === node);
+    expect((await f.details(drive.id)).items).toMatchObject([{ eligible: true }]);
+
+    f.advance(24 * 60 * 60_000);
+    source.scan = () => ({ ...evidence, filesystems: [], items: [] });
+    expect(await f.reconcile()).toMatchObject({ status: 503, data: { ok: false } });
+    const rejected = { policy: 'not_required', trigger: 'not_required', acceptance: 'rejected' };
+    expect(await scanRow()).toMatchObject({ result: 'incomplete', last_full_at: initial.last_full_at, checks: rejected });
+    expect((await f.parent()).scans.find((row: { node: string }) => row.node === node))
+      .toMatchObject({ status: 'incomplete', checks: rejected });
+    const stale = await f.details(drive.id);
+    expect(stale.current).toMatchObject({ complete: false, inventoryComplete: false, eligibleCount: 0, checks: rejected });
+    expect(stale.items).toMatchObject([{ eligible: false }]);
+    expect(await f.readMetrics()).toContain(`${success} 1767227400\n`);
+
+    f.advance(60_000);
+    f.scanPaths.length = 0;
+    source.scan = () => evidence;
+    expect(await f.reconcile()).toEqual({ status: 200, data: { ok: true } });
+    expect(f.scanPaths).toEqual([[node, '/v1/scan']]);
+    expect(await scanRow()).toMatchObject({
+      result: 'complete', last_full_at: new Date('2026-01-02T00:31:00Z'), checks: { acceptance: 'full' },
+    });
+    const recovered = await f.details(drive.id);
+    expect(recovered.current).toMatchObject({ complete: true, eligibleCount: 1 });
+    expect(recovered.items).toMatchObject([{ eligible: true }]);
+    expect(await f.readMetrics()).toContain(`${success} 1767313860\n`);
+    expect(f.applyCalls).toEqual([]);
+  });
+
   it('preserves historical scan and snapshot fields without adding outcomes', async () => {
     const f = await fixture();
     expect((await f.reconcile()).status).toBe(200);

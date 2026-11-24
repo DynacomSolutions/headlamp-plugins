@@ -214,10 +214,10 @@ export async function ingestScan(
   }
   const policiesMatched = coveredPolicies === policies.length;
   const inventoryComplete = scan.inventoryComplete === true && policiesMatched;
-  const complete = scan.complete && inventoryComplete;
+  const hasFilesystems = filesystems.length > 0;
+  const complete = scan.complete && inventoryComplete && hasFilesystems;
   const scopes = triggers.map(trigger => aliases.get(triggerKey(trigger)));
   const matched = scopes.every(Boolean);
-  const hasFilesystems = filesystems.length > 0;
   const configuredOmission = scan.version === 2 && expected !== undefined && hasFilesystems
     && scan.inventoryCoverage.filesystemInventoryComplete
     && Object.keys(scan.inventoryCoverage.scopes).length === Object.keys(expected).length
