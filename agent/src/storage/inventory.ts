@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { StorageQueries } from './store.js';
-import { clean, needsMergeEvidence, type Decision, type DriveState, type FilesystemPolicy, type InternalItem, type Notice, type ScannerScan, type ScanItem, type Snapshot, type Trigger } from './types.js';
+import { clean, needsMergeEvidence, scanObjectIdentity, type Decision, type DriveState, type ExpectedScopes, type FilesystemPolicy, type InternalItem, type Notice, type ScanChecks, type ScannerScan, type ScanItem, type Snapshot, type Trigger } from './types.js';
 
 type Filesystem = ScannerScan['filesystems'][number];
 export type StorageNotice = Notice & { external: boolean; externalItemId?: string; stage?: string; critical?: boolean };
@@ -176,7 +176,9 @@ export async function ingestScan(
   policies: FilesystemPolicy[],
   now: number,
   cooldownMs: number,
-): Promise<{ inventoryComplete: boolean; policiesMatched: boolean; matched: boolean; observed: DriveState[] }> {
+  contained: boolean,
+  expected?: ExpectedScopes,
+): Promise<{ checks: ScanChecks; observed: DriveState[] }> {
   const filesystems = scan.filesystems.map(fs => ({ fs, scope: filesystemScope(scan.node, fs) })).sort((a, b) => a.scope.localeCompare(b.scope));
   const aliasScopes = new Map<string, Set<string>>();
   function addAlias(key: string, scope: string) {
@@ -212,9 +214,25 @@ export async function ingestScan(
   }
   const policiesMatched = coveredPolicies === policies.length;
   const inventoryComplete = scan.inventoryComplete === true && policiesMatched;
-  const complete = scan.complete && inventoryComplete;
-  await tx.putAliases(scan.node, complete ? [...aliases] : []);
+  const hasFilesystems = filesystems.length > 0;
+  const complete = scan.complete && inventoryComplete && hasFilesystems;
   const scopes = triggers.map(trigger => aliases.get(triggerKey(trigger)));
+  const matched = scopes.every(Boolean);
+  const configuredOmission = scan.version === 2 && expected !== undefined && hasFilesystems
+    && scan.inventoryCoverage.filesystemInventoryComplete
+    && Object.keys(scan.inventoryCoverage.scopes).length === Object.keys(expected).length
+    && Object.entries(expected).every(([scope, state]) => scan.inventoryCoverage.scopes[scope] === state);
+  const containedInventory = contained && scan.execution === 'shadow' && inventoryComplete && matched && hasFilesystems;
+  const omissionOnly = contained && configuredOmission && policiesMatched && matched;
+  const checks: ScanChecks = {
+    inventory: configuredOmission ? 'configured_omission' : scan.inventoryComplete === undefined ? 'unknown'
+      : scan.inventoryComplete ? 'complete' : 'incomplete',
+    policy: !policies.length ? 'not_required' : policiesMatched ? 'matched' : 'unmatched',
+    trigger: !triggers.length ? 'not_required' : matched ? 'matched' : 'unmatched',
+    // V2 fixes complete to false, independent of the holder check.
+    holder: scan.version === 2 ? 'unknown' : scan.complete ? 'complete' : 'unavailable',
+    acceptance: complete && matched ? 'full' : containedInventory ? 'contained' : omissionOnly ? 'configured_omission' : 'rejected',
+  };
   const triggersByScope = new Map<string, Trigger[]>();
   for (const [index, scope] of scopes.entries()) {
     if (!scope) continue;
@@ -228,6 +246,7 @@ export async function ingestScan(
     items.push(item);
     itemsByFs.set(item.filesystemId, items);
   }
+  await tx.putAliases(scan.node, complete ? [...aliases] : []);
   const observed: DriveState[] = [];
   const foundScopes = new Set(filesystems.map(entry => entry.scope));
   const missing = (await tx.scopesOnNode(scan.node)).filter(scope => !foundScopes.has(scope));
@@ -238,7 +257,7 @@ export async function ingestScan(
     await tx.drive(last.drive.id, true);
     const snapshot = {
       ...last.current, id: randomUUID(), scannedAt: scan.scannedAt, complete: false,
-      holderEvidenceComplete: scan.complete, inventoryComplete: false, eligibleCount: 0,
+      holderEvidenceComplete: scan.complete, inventoryComplete: false, eligibleCount: 0, checks,
     };
     const drive = { ...last.drive, ...snapshot, id: last.drive.id, status: 'incomplete' as const };
     await tx.putSnapshot(drive.id, snapshot);
@@ -260,7 +279,7 @@ export async function ingestScan(
       if (complete && due.length) await tx.markCooldown(scope, now);
       continue;
     }
-    const snapshot = makeSnapshot(scan, inventoryComplete, fs, previous, due, policiesByScope.get(scope) ?? []);
+    const snapshot = { ...makeSnapshot(scan, inventoryComplete, fs, previous, due, policiesByScope.get(scope) ?? []), checks };
     const source = scan.execution ?? 'shadow';
     const state: DriveState = {
       drive: {
@@ -279,12 +298,10 @@ export async function ingestScan(
       shared: fs.shared === true,
     };
     const found = itemsByFs.get(fs.id) ?? [];
-    const keyed = found.map(item => ({ item, key: hash([scan.node, item.category, item.objectKey ?? (item.path || item.id)]) }));
-    const uniqueKeys = new Set(keyed.map(entry => entry.key));
-    if (uniqueKeys.size !== keyed.length) throw new Error('Scanner sent duplicate object identities');
+    const keyed = found.map(item => ({ item, key: hash([scan.node, item.category, scanObjectIdentity(item)]) }));
     // The drive row must exist before the stable item IDs can refer to it.
     if (!previous) await tx.putDrive(scope, state);
-    const ids = await tx.itemIds(id, [...uniqueKeys]);
+    const ids = await tx.itemIds(id, keyed.map(({ key }) => key));
     state.items = keyed.map(({ item, key }) => normalizeItem(item, scan.node, ids.get(key)!, complete));
     const decisions = await tx.list<Decision>('decision', id);
     snapshot.itemCount = state.items.length;
@@ -301,5 +318,5 @@ export async function ingestScan(
     await updateCleanupNotice(tx, state, decisions, now);
     observed.push(state);
   }
-  return { inventoryComplete, policiesMatched, matched: scopes.every(Boolean), observed };
+  return { checks, observed };
 }

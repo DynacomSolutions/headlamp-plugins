@@ -12,7 +12,7 @@ import { StorageReconciler } from '../src/storage/reconcile.js';
 import { StorageIncident } from '../src/storage/service.js';
 import { StorageQueries, StorageStore } from '../src/storage/store.js';
 import { HttpScanner, requestJson } from '../src/storage/transport.js';
-import { filesystemPoliciesSchema, reconcileSchema, type FilesystemPolicy, type Scan } from '../src/storage/types.js';
+import { filesystemPoliciesSchema, reconcileSchema, type ExpectedScopes, type FilesystemPolicy, type Scan, type ScannerScan } from '../src/storage/types.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -33,9 +33,9 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function listen(handle: (response: ServerResponse) => void): Promise<URL> {
+async function listen(handle: (response: ServerResponse) => void, path = '/v1/scan'): Promise<URL> {
   const server = createServer((req, res) => {
-    if (req.url === '/v1/scan' && req.headers.authorization === 'Bearer ' + token) handle(res);
+    if (req.url === path && req.headers.authorization === 'Bearer ' + token) handle(res);
     else res.writeHead(404).end();
   });
   server.listen(0, '127.0.0.1');
@@ -48,7 +48,7 @@ async function listen(handle: (response: ServerResponse) => void): Promise<URL> 
   });
   const address = server.address();
   if (typeof address !== 'object' || !address) throw new Error('Fixture listener did not start');
-  return new URL('http://127.0.0.1:' + address.port + '/v1/scan');
+  return new URL('http://127.0.0.1:' + address.port + path);
 }
 
 function clock() {
@@ -78,6 +78,7 @@ async function fixture(
   nodeNames: string[],
   serve: (node: string, res: ServerResponse, at: number) => void,
   filesystemPolicies?: ReadonlyMap<string, FilesystemPolicy[]>,
+  partialScanScopes?: ReadonlyMap<string, ExpectedScopes>,
 ) {
   const db = pgliteDb();
   dispose.push(() => db.close());
@@ -88,18 +89,21 @@ async function fixture(
   const urls = new Map(await Promise.all(nodeNames.map(async node => [node, await listen(res => {
     calls.push(node);
     serve(node, res, now());
-  })] as const)));
-  const scanner = new HttpScanner(urls, () => token);
+  }, partialScanScopes?.has(node) ? '/v2/scan' : '/v1/scan')] as const)));
+  const scanner = new HttpScanner(urls, () => token, new Set(partialScanScopes?.keys()));
   const apply = new StorageApply({ store, scanner, now, disposable: new Set(nodeNames), enabled: true });
   const push = new PushService({ store: new MemoryPushStore() });
   const notificationDeps = { store, push, now };
   const notifications = new StorageNotifications(notificationDeps);
-  const reconciler = new StorageReconciler({ store, scanner, nodes: new Set(nodeNames), metrics: new Metrics(), now, filesystemPolicies });
+  const reconciler = new StorageReconciler({
+    store, scanner, nodes: new Set(nodeNames), metrics: new Metrics(), now, filesystemPolicies,
+    partialScanScopes, holderEvidenceExpected: !partialScanScopes,
+  });
   const incident = new StorageIncident({ store, apply, notifications, now, nodes: nodeNames });
   return { store, incident, reconciler, apply, calls };
 }
 
-function send(res: ServerResponse, data: Scan) {
+function send(res: ServerResponse, data: ScannerScan) {
   res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(data));
 }
 
@@ -152,6 +156,36 @@ describe('Storage scanner contract', () => {
     expect(await f.store.aliases(affected)).toEqual([]);
     expect((await f.incident.drive(drive.id)).items[0]).toMatchObject({ eligible: false });
     expect(f.calls.filter(node => node === peer)).toHaveLength(1);
+  });
+
+  it('requires a filesystem for configured omission without policies or triggers', async () => {
+    const { now, advance } = clock();
+    const [node] = nodes;
+    const scopes: ExpectedScopes = { '.data/first-owner': 'omitted', '.worktrees/first-owner': 'complete' };
+    const partialScanScopes = new Map([[node, scopes]]);
+    let filesystems: Scan['filesystems'] = [];
+    let items: Scan['items'] = [];
+    // HTTP settings require policies. Exercise the reconciler directly to test its own evidence check.
+    const f = await fixture(now, [node], (name, res, at) => send(res, {
+      ...scan(name, at), version: 2, execution: 'shadow', complete: false, inventoryComplete: false,
+      filesystems, items, inventoryCoverage: { scopes, filesystemInventoryComplete: true },
+    }), undefined, partialScanScopes);
+    const rejected = {
+      inventory: 'incomplete', policy: 'not_required', trigger: 'not_required', holder: 'unknown', acceptance: 'rejected',
+    };
+    expect(await f.reconciler.run([])).toBe(false);
+    expect(await f.store.scanState(node, now())).toMatchObject({ status: 'incomplete', lastFullAt: 0, checks: rejected });
+    expect((await f.incident.parent()).drives).toEqual([]);
+
+    advance(60_000);
+    filesystems = scan(node, now()).filesystems;
+    items = [item('cache')];
+    expect(await f.reconciler.run([])).toBe(true);
+    const accepted = { ...rejected, inventory: 'configured_omission', acceptance: 'configured_omission' };
+    expect(await f.store.scanState(node, now())).toMatchObject({ status: 'incomplete', lastFullAt: 0, checks: accepted });
+    const [drive] = (await f.incident.parent()).drives;
+    expect(drive).toMatchObject({ complete: false, eligibleCount: 0, applyEnabled: false, checks: accepted });
+    expect((await f.incident.drive(drive.id)).items).toMatchObject([{ eligible: false }]);
   });
 
   it('uses the mounted thresholds on the daily scan and requires coverage of the exact policy mount', async () => {
@@ -222,7 +256,10 @@ describe('Storage scanner contract', () => {
     send(res, data);
     expect(await reconcile).toBe(true);
     const parent = await f.incident.parent();
-    expect(parent.scans).toEqual([{ node: nodes[0], status: 'complete', completedAt: new Date(start + 940_000).toISOString() }]);
+    expect(parent.scans).toEqual([{
+      node: nodes[0], status: 'complete', completedAt: new Date(start + 940_000).toISOString(),
+      checks: { inventory: 'complete', policy: 'not_required', trigger: 'not_required', holder: 'complete', acceptance: 'full' },
+    }]);
     expect(parent.drives[0]).toMatchObject({ scannedAt: data.scannedAt, itemCount: 3240, eligibleCount: 3240, applyEnabled: true });
 
     const { id } = parent.drives[0];
@@ -314,7 +351,9 @@ describe('Storage scanner contract', () => {
     expect(await f.store.transaction(tx => tx.ownsScan(node, owner, now()))).toBe(false);
     const retry = f.reconciler.run([]);
     const res = await response.promise;
-    await f.store.finishScan(node, owner, 'error', now());
+    await f.store.finishScan(node, owner, 'error', now(), {
+      inventory: 'unknown', policy: 'unknown', trigger: 'unknown', holder: 'unknown', acceptance: 'scanner_error',
+    });
     expect((await f.incident.parent()).scans[0].status).toBe('running');
     send(res, scan(node, now()));
     expect(await retry).toBe(true);

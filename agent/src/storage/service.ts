@@ -57,7 +57,7 @@ export class StorageIncident {
       store.parent(), store.driveSummaries(), store.list<StorageNotice>('notice'), notifications.coverage(),
       store.scanStates(nodes, now),
     ]);
-    const scans = scanStates.map(({ node, status, completedAt }) => ({ node, status, completedAt }));
+    const scans = scanStates.map(({ node, status, completedAt, checks }) => ({ node, status, completedAt, checks }));
     const completeNodes = new Set(scans.filter(scan => scan.status === 'complete').map(scan => scan.node));
     return {
       enabled: true,
