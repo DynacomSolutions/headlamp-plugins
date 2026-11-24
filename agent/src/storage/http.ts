@@ -39,6 +39,7 @@ type Settings = {
   authority?: NotificationAuthority;
   disposable: ReadonlySet<string>;
   applyEnabled: boolean;
+  holderEvidenceExpected: boolean;
 };
 
 function settings(env: NodeJS.ProcessEnv): Settings | undefined {
@@ -75,6 +76,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   } catch {
     throw new Error('Invalid storage operator configuration');
   }
+  const applyEnabled = env.STORAGE_APPLY_ENABLED === 'true';
   return {
     urls,
     filesystemPolicies,
@@ -84,7 +86,8 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     reconcileToken: tokenFile(env.STORAGE_RECONCILE_TOKEN_FILE),
     cluster: env.STORAGE_HEADLAMP_CLUSTER ?? '',
     disposable,
-    applyEnabled: env.STORAGE_APPLY_ENABLED === 'true',
+    applyEnabled,
+    holderEvidenceExpected: applyEnabled || disposable.size > 0 || env.STORAGE_EXPECT_HOLDER_EVIDENCE !== 'false',
   };
 }
 
@@ -112,6 +115,7 @@ export async function storageHttp(deps: HttpHelpers & {
     const nodes = [...configured.urls.keys()];
     const reconcile = new StorageReconciler({
       store: db, scanner, now, metrics, nodes: new Set(nodes), filesystemPolicies: configured.filesystemPolicies,
+      holderEvidenceExpected: configured.holderEvidenceExpected,
     });
     return { apply, notifications, reconcile, db, service: new StorageIncident({ store: db, now, apply, notifications, nodes }) };
   }
@@ -219,6 +223,7 @@ export async function storageHttp(deps: HttpHelpers & {
       }
       const current = await store.metrics();
       metrics.set('headlamp_agent_storage_reconcile_last_success_timestamp_seconds', {}, current.lastSuccess);
+      metrics.set('headlamp_agent_storage_holder_evidence_expected', {}, Number(active.holderEvidenceExpected));
       const byNode = new Map(current.scans.map(scan => [scan.node, scan.at]));
       for (const node of active.urls.keys()) metrics.set('headlamp_agent_storage_last_full_scan_timestamp_seconds', { node }, byNode.get(node) ?? 0);
       const counts = new Map(current.receipts.map(row => [row.status, row.count]));

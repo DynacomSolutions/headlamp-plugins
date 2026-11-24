@@ -68,15 +68,18 @@ const GIB = 1024 ** 3;
 const gib = z.number().int().min(0).max(Math.floor(Number.MAX_SAFE_INTEGER / GIB));
 const filesystemPolicy = z.object({
   mount,
+  device: label.optional(),
   reserveGiB: gib,
   criticalGiB: gib,
   growth1hGiB: gib,
   growth6hGiB: gib,
 }).strict().refine(policy => policy.criticalGiB <= policy.reserveGiB).transform(policy => ({
-  mount: policy.mount, reserveBytes: policy.reserveGiB * GIB, criticalBytes: policy.criticalGiB * GIB,
+  mount: policy.mount, device: policy.device, reserveBytes: policy.reserveGiB * GIB, criticalBytes: policy.criticalGiB * GIB,
 }));
-export type FilesystemPolicy = z.infer<typeof filesystemPolicy>;
-export const filesystemPoliciesSchema = z.record(name, z.array(filesystemPolicy).max(500)
+const filesystemSelection = z.object({ mount, device: label }).strict();
+const filesystemRule = z.union([filesystemPolicy, filesystemSelection]);
+export type FilesystemPolicy = z.infer<typeof filesystemRule>;
+export const filesystemPoliciesSchema = z.record(name, z.array(filesystemRule).max(500)
   .refine(rows => unique(rows.map(row => row.mount))));
 
 export const reconcileSchema = z.object({ triggers: z.array(triggerSchema).max(500) }).strict();
