@@ -338,46 +338,92 @@ describe('Storage scanner contract', () => {
     const source = 'nfs.example:/export/team share';
     const id = 'network:nfs4:' + source;
     const primary = { device: source, mountpoint: '/srv/team share' };
-    const escaped = { device: 'nfs.example:/Exports//Team\\040\tqueue\nready', mountpoint: '/srv/Team\\040\tqueue\nready ' };
+    const escaped = { device: 'nfs.example:/Exports//Team\\040\tqueue\nready\\tail', mountpoint: '/srv/Team\\040\tqueue\nready ' };
+    // The scanner already decoded each mountinfo escape once before it sent JSON.
+    const encodedSource = 'nfs.example:/Exports//Team\\134040\\011queue\\012ready\\134tail';
+    const encodedMount = '/srv/Team\\134040\\011queue\\012ready\\040';
+    const escapedId = 'network:nfs4:' + escaped.device;
     const peer = { device: source, mountpoint: '/srv/peer' };
     const f = await fixture(now, nodes, (node, res, at) => send(res, scan(node, at, {
       filesystems: [{
         id, shared: true, fsType: 'nfs4', device: source, mount: node === nodes[0] ? primary.mountpoint : peer.mountpoint,
-        totalBytes: 1000, availableBytes: 80, aliases: node === nodes[0] ? [primary, escaped] : [peer],
-      }],
+        totalBytes: 1000, availableBytes: 80, aliases: [node === nodes[0] ? primary : peer],
+      }, ...(node === nodes[0] ? [{
+        id: escapedId, shared: true, fsType: 'nfs4', device: escaped.device, mount: escaped.mountpoint,
+        totalBytes: 1000, availableBytes: 80, aliases: [escaped],
+      }] : [])],
     })));
     function trigger(node: string, alias: typeof primary, reserveBytes: number) {
       return { node, device: alias.device, mount: alias.mountpoint, reason: 'capacity', reserveBytes };
     }
     const run = (...triggers: ReturnType<typeof trigger>[]) => f.reconciler.run(reconcileSchema.parse({ triggers }).triggers);
     expect(await run(trigger(nodes[0], primary, 150))).toBe(true);
-    const [drive] = (await f.incident.parent()).drives;
-    expect(drive).toMatchObject({ filesystemId: id, reserveBytes: 150 });
+    const original = (await f.incident.parent()).drives.find(drive => drive.filesystemId === id)!;
+    expect(original).toMatchObject({ filesystemId: id, reserveBytes: 150 });
     expect(await run(trigger(nodes[1], peer, 175))).toBe(true);
     expect(f.calls).toHaveLength(2);
+    const sharedScope = JSON.stringify(['shared', id]);
+    expect(await f.store.aliases(nodes[0])).toContainEqual([JSON.stringify([primary.device, primary.mountpoint]), sharedScope]);
+    expect(await f.store.aliases(nodes[1])).toContainEqual([JSON.stringify([peer.device, peer.mountpoint]), sharedScope]);
 
     advance(16 * 60_000);
     expect(await run(trigger(nodes[0], escaped, 200))).toBe(true);
     const good = await f.incident.parent();
-    expect(good.drives).toHaveLength(1);
-    expect(good.drives[0]).toMatchObject({ id: drive.id, filesystemId: id, reserveBytes: 200 });
-    expect((await f.store.aliases(nodes[0])).map(([key]) => key)).toContain(JSON.stringify([escaped.device, escaped.mountpoint]));
+    expect(good.drives).toHaveLength(2);
+    expect(good.drives.find(drive => drive.id === original.id)).toMatchObject({ filesystemId: id });
+    const escapedScope = JSON.stringify(['shared', escapedId]);
+    expect(await f.store.aliases(nodes[0])).toContainEqual([JSON.stringify([escaped.device, escaped.mountpoint]), escapedScope]);
+    const escapedDrive = (await f.store.byScope(escapedScope))!;
+    expect(escapedDrive.current.reserveBytes).toBe(200);
     const wrongPairs = [
+      { device: 'nfs.example:/export/team\\040share', mountpoint: primary.mountpoint },
+      { ...escaped, device: encodedSource },
+      { ...escaped, mountpoint: encodedMount },
       { device: escaped.device, mountpoint: primary.mountpoint },
       { device: primary.device, mountpoint: escaped.mountpoint },
       { ...escaped, device: escaped.device.replace('\\040', ' ') },
       { ...escaped, mountpoint: escaped.mountpoint.replace('\\040', ' ') },
       { ...escaped, mountpoint: escaped.mountpoint.trimEnd() },
       { ...escaped, mountpoint: '/host' + escaped.mountpoint },
-      { ...escaped, device: escaped.device.toLowerCase().replace('//', '/') },
+      { ...escaped, device: escaped.device.toLowerCase() },
+      { ...escaped, device: escaped.device.replace('//', '/') },
       primary,
     ];
     for (const [index, alias] of wrongPairs.entries()) {
       const node = index === wrongPairs.length - 1 ? nodes[1] : nodes[0];
       expect(await run(trigger(node, alias, 900))).toBe(false);
-      expect((await f.incident.parent()).drives[0].reserveBytes).toBe(200);
+      expect((await f.store.drive(escapedDrive.drive.id))?.current.reserveBytes).toBe(200);
+      expect((await f.store.drive(original.id))?.current.reserveBytes).toBe(150);
     }
     expect(reconcileSchema.safeParse({ triggers: [{ node: nodes[0], mount: primary.mountpoint, reason: 'capacity' }] }).success).toBe(false);
+  });
+
+  it('does not use an alias reported for two different filesystems', async () => {
+    const { now, advance } = clock();
+    const node = nodes[0];
+    const alias = { device: 'server:/export', mountpoint: '/srv/team share' };
+    const shared = { shared: true, mount: alias.mountpoint, device: alias.device, totalBytes: 1000, availableBytes: 500 };
+    const filesystems = [
+      { ...shared, id: 'network:nfs4:server:/export', fsType: 'nfs4', aliases: [alias] },
+      { ...shared, id: 'network:nfs:server:/export', fsType: 'nfs', aliases: [] as typeof alias[] },
+    ];
+    const f = await fixture(now, [node], (name, res, at) => send(res, scan(name, at, { filesystems })));
+    const run = (reserveBytes: number) => f.reconciler.run(reconcileSchema.parse({
+      triggers: [{ node, device: alias.device, mount: alias.mountpoint, reason: 'capacity', reserveBytes }],
+    }).triggers);
+    expect(await run(200)).toBe(true);
+    expect(await f.store.aliases(node)).toContainEqual([
+      JSON.stringify([alias.device, alias.mountpoint]), JSON.stringify(['shared', filesystems[0].id]),
+    ]);
+
+    advance(16 * 60_000);
+    filesystems[1].aliases.push(alias);
+    expect(await run(900)).toBe(false);
+    const parent = await f.incident.parent();
+    expect(parent.scans[0].status).toBe('incomplete');
+    expect(parent.drives.map(drive => drive.reserveBytes).sort((a, b) => a - b)).toEqual([100, 200]);
+    expect((await f.store.aliases(node)).map(([key]) => key)).not.toContain(JSON.stringify([alias.device, alias.mountpoint]));
+    expect(f.calls).toEqual([node, node]);
   });
 
   it('requires verified inactivity and keeps stable proof apart from the scanner ID', async () => {
