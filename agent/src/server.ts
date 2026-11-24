@@ -86,6 +86,8 @@ export class Runner {
   private running: string | undefined;
   private renewTimer: NodeJS.Timeout | undefined;
   private scanTimer: NodeJS.Timeout | undefined;
+  private renewal: Promise<void> | undefined;
+  private scanTask: Promise<void> | undefined;
 
   constructor(
     private readonly runtime: Runtime,
@@ -102,8 +104,11 @@ export class Runner {
 
   /** Look for abandoned diagnoses now and every 30 s. */
   start(): void {
-    void this.scan();
-    this.scanTimer = setInterval(() => void this.scan(), SCAN_MS);
+    const tick = () => {
+      this.scanTask ??= this.scan().finally(() => { this.scanTask = undefined; });
+    };
+    tick();
+    this.scanTimer = setInterval(tick, SCAN_MS);
     this.scanTimer.unref();
   }
 
@@ -118,6 +123,7 @@ export class Runner {
     try {
       const stale = (await this.store.stale()).filter(d => !this.held.has(d.id));
       for (const listed of stale) {
+        if (this.draining) break;
         try {
           let taken: Diagnosis | undefined;
           // Decided on the record as stored now: the other pod may have renewed the lease meanwhile.
@@ -156,6 +162,7 @@ export class Runner {
     this.draining = true;
     if (this.scanTimer) clearInterval(this.scanTimer);
     this.scanTimer = undefined;
+    await this.scanTask;
     for (const id of [...this.held]) {
       if (id === this.running) continue;
       try {
@@ -167,6 +174,7 @@ export class Runner {
     }
     while (this.pending > 0) await this.chain;
     this.stopRenewing();
+    await this.renewal;
   }
 
   private async renew(): Promise<void> {
@@ -254,7 +262,9 @@ export class Runner {
     this.pending++;
     this.held.add(queued.id);
     if (!this.renewTimer) {
-      this.renewTimer = setInterval(() => void this.renew(), RENEW_MS);
+      this.renewTimer = setInterval(() => {
+        this.renewal ??= this.renew().finally(() => { this.renewal = undefined; });
+      }, RENEW_MS);
       this.renewTimer.unref();
     }
     this.chain = this.chain.then(async () => {
@@ -396,7 +406,7 @@ async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
 }
 
 /** `deps.store` replaces the diagnosis store, for tests. The caller then closes it. */
-export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number } = {}): Promise<{ close(): Promise<void>; port: number }> {
+export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}): Promise<{ close(): Promise<void>; port: number }> {
   const store = deps.store ?? (await openDiagnosisStore(config.databaseUrl, config.dataDir, (message, extra) => log('info', message, extra)));
   const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
   const runtime = new Runtime(config, store, launchStore);
@@ -427,12 +437,12 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     t3: config.launch.t3Url && config.launch.t3TokenFile ? new T3Client({ url: config.launch.t3Url, readToken: tokenFromFile(config.launch.t3TokenFile) }) : undefined,
     log,
   });
-  void launches.resume().catch(error => log('error', 'launch resume failed', { error: String(error) }));
   // Webhook diagnoses in the shared store, so a rollout or a second pod does not reset the hourly cap.
   const gate = new AlertGate(config.diagnosis, since => store.countStartedSince(since));
   const mcp = await mcpHandler(runtime, store, version);
   const mcpNode = toNodeHandler(mcp);
-  let ready = true;
+  let ready = false;
+  let draining = false;
   let rerunTurn: Promise<void> = Promise.resolve();
   const metrics = new Metrics();
   const storage = await storageHttp({
@@ -448,19 +458,22 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     log,
   });
 
-  runner.start();
-
-  const server = createServer(async (req, res) => {
+  const handleRequest = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const path = url.pathname.replace(/\/+$/, '') || '/';
     try {
+      if (path === '/healthz') return send(res, 200, { ok: true });
+      if (path === '/readyz') return send(res, ready ? 200 : 503, { ok: ready });
+      if (draining) {
+        res.setHeader('connection', 'close');
+        return send(res, 503, { error: 'Agent is draining' });
+      }
       if (path === '/mcp') {
         const origin = req.headers.origin;
         if (origin && !config.allowedOrigins.includes(origin)) return send(res, 403, { jsonrpc: '2.0', error: { code: -32600, message: 'Origin not allowed' } });
         return void (await mcpNode(req, res));
       }
       if (await storage.route(req, res, path)) return;
-      if (path === '/healthz') return send(res, 200, { ok: true });
       if (path === '/metrics' && req.method === 'GET') {
         await storage.metrics();
         metrics.clear('headlamp_agent_diagnoses_open');
@@ -470,7 +483,6 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'cache-control': 'no-store' });
         return void res.end(metrics.render());
       }
-      if (path === '/readyz') return send(res, ready ? 200 : 503, { ok: ready });
       if (path === '/') {
         return send(res, 200, {
           name: 'headlamp-agent',
@@ -763,30 +775,78 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       const message = storageRoute && status === 500 ? 'Storage request failed' : error instanceof Error ? error.message : String(error);
       if (!res.headersSent) send(res, status, { error: message });
     }
+  };
+
+  // A socket can close while its request still uses the store.
+  const requests = new Set<Promise<void>>();
+  const server = createServer((req, res) => {
+    const request = handleRequest(req, res);
+    requests.add(request);
+    void request.then(
+      () => requests.delete(request),
+      error => {
+        requests.delete(request);
+        res.destroy(error instanceof Error ? error : undefined);
+      },
+    );
   });
 
-  await new Promise<void>(resolve => server.listen(config.port, config.host, resolve));
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : config.port;
-  log('info', 'listening', { port, tools: runtime.registry.tools.size, modelConfigured: runner.configured });
-  reconciler.start();
-
-  return {
-    port,
-    async close() {
-      ready = false;
-      // Stop accepting connections, then let the running diagnosis finish. No timer: the platform kill is the only limit.
-      const closed = new Promise<void>(resolve => server.close(() => resolve()));
-      server.closeIdleConnections();
-      chats.shutdown();
-      await launches.shutdown();
-      await reconciler.stop();
-      await runner.drain();
-      await mcp.close();
+  async function drain(): Promise<void> {
+    if (server.listening) {
+      const closed = new Promise<void>((resolve, reject) =>
+        server.close(error => error ? reject(error) : resolve()));
       server.closeIdleConnections();
       await closed;
-      await storage.drain();
-      if (!deps.store) await store.close();
-    },
-  };
+    }
+    await Promise.allSettled(requests);
+    await launches.shutdown();
+    await reconciler.stop();
+    await chats.drain();
+    await runner.drain();
+    await storage.drain();
+    await mcp.close();
+    if (!deps.store) await store.close();
+  }
+
+  let closing: Promise<void> | undefined;
+  function close(): Promise<void> {
+    ready = false;
+    draining = true;
+    return closing ??= drain();
+  }
+
+  let port: number;
+  try {
+    deps.signal?.throwIfAborted();
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(config.port, config.host, () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('HTTP listener has no TCP address');
+    port = address.port;
+    const bound = address.address;
+    const host = bound === '0.0.0.0' ? '127.0.0.1' : bound === '::' ? '[::1]' :
+      address.family === 'IPv6' ? `[${bound}]` : bound;
+    const response = await fetch(`http://${host}:${port}/api/diagnoses?limit=1`, {
+      signal: AbortSignal.any([AbortSignal.timeout(10_000), ...(deps.signal ? [deps.signal] : [])]),
+    });
+    if (!response.ok) throw new Error(`HTTP warm render failed (${response.status})`);
+    const page = await response.json();
+    if (!Array.isArray(page.diagnoses)) throw new Error('HTTP warm render returned an invalid page');
+    deps.signal?.throwIfAborted();
+    ready = true;
+  } catch (error) {
+    await close();
+    throw error;
+  }
+
+  runner.start();
+  void launches.resume().catch(error => log('error', 'launch resume failed', { error: String(error) }));
+  reconciler.start();
+  log('info', 'listening', { port, tools: runtime.registry.tools.size, modelConfigured: runner.configured });
+  return { port, close };
 }
