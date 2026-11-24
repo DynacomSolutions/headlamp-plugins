@@ -66,13 +66,30 @@ const identitySchema = z.object({
 });
 const accessSchema = z.object({ status: z.object({ allowed: z.boolean(), denied: z.boolean().optional(), evaluationError: z.string().optional() }) });
 
-export function operatorAuth(config: Pick<Config, 'kubeApi' | 'kubeCaFile' | 'allowedOrigins'>, headlampCluster: string) {
-  return async (req: IncomingMessage, verb: OperatorVerb) => {
+const userInfoSchema = z.object({ sub: z.string().min(1), groups: z.array(z.string()) });
+const REVIEW_LIMIT = 64 * 1024;
+
+export type Operator = {
+  name: string;
+  checkBody(data: unknown): void;
+  verifyDelivery?: () => Promise<boolean>;
+};
+
+export function operatorAuth(
+  config: Pick<Config, 'kubeApi' | 'kubeCaFile' | 'allowedOrigins'>,
+  headlampCluster: string,
+  humanGroups: ReadonlySet<string>,
+  userInfo?: URL,
+) {
+  const isMember = (groups: string[]) => groups.some(group => humanGroups.has(group));
+
+  return async (req: IncomingMessage, verb: OperatorVerb): Promise<Operator> => {
     const explicit = req.headers['x-storage-operator-token'];
     const standard = req.headers.authorization;
     const direct = explicit ?? standard;
     const token = direct === undefined ? cookieBearer(req.headers.cookie, headlampCluster) : bearer(direct);
     if (!token) throw new StorageError(401, 'Operator authentication required');
+    if (!humanGroups.size) throw new StorageError(403, 'Operator membership is not configured');
     if (verb !== 'get') {
       const origin = req.headers.origin;
       if ((origin || direct === undefined) && (!origin || !config.allowedOrigins.includes(origin))) {
@@ -106,36 +123,57 @@ export function operatorAuth(config: Pick<Config, 'kubeApi' | 'kubeCaFile' | 'al
           body: { apiVersion: `${group}/v1`, kind, ...(spec ? { spec } : {}) },
           ca,
           timeoutMs: SELF_REVIEW_TIMEOUT_MS,
-          limit: 64 * 1024,
+          limit: REVIEW_LIMIT,
         });
       } catch {
         throw new StorageError(503, 'Operator verification is unavailable');
       }
     }
 
-    const identity = await review('authentication.k8s.io', 'selfsubjectreviews', 'SelfSubjectReview');
-    if (identity.status === 401) throw new StorageError(401, 'Operator authentication failed');
-    if (identity.status === 403) throw new StorageError(403, 'Operator identity is not permitted');
-    const parsed = identitySchema.safeParse(identity.data);
-    if (!parsed.success) throw new StorageError(503, 'Operator verification is unavailable');
-    const user = parsed.data.status.userInfo;
-    if (user.username === token || user.username.startsWith('system:') || !user.groups.includes('system:authenticated') || user.groups.some(group => group.startsWith('system:serviceaccounts'))) {
-      throw new StorageError(403, 'A human operator is required');
+    async function identity() {
+      const response = await review('authentication.k8s.io', 'selfsubjectreviews', 'SelfSubjectReview');
+      if (response.status === 401) throw new StorageError(401, 'Operator authentication failed');
+      if (response.status === 403) throw new StorageError(403, 'Operator identity is not permitted');
+      const parsed = identitySchema.safeParse(response.data);
+      if (!parsed.success) throw new StorageError(503, 'Operator verification is unavailable');
+      const user = parsed.data.status.userInfo;
+      if (user.username === token || user.username.startsWith('system:') || !user.groups.includes('system:authenticated')
+        || user.groups.some(group => group.startsWith('system:serviceaccounts')) || !isMember(user.groups)) {
+        throw new StorageError(403, 'Approved human operator membership is required');
+      }
+      return user.username;
     }
 
-    const access = await review('authorization.k8s.io', 'selfsubjectaccessreviews', 'SelfSubjectAccessReview', {
-      resourceAttributes: { group: STORAGE_RBAC_GROUP, resource: 'incidents', verb },
-    });
-    if (access.status === 401) throw new StorageError(401, 'Operator authentication failed');
-    if (access.status === 403) throw new StorageError(403, 'Operator permission required');
-    const auth = accessSchema.safeParse(access.data);
-    if (!auth.success || auth.data.status.evaluationError) throw new StorageError(503, 'Operator verification is unavailable');
-    if (!auth.data.status.allowed || auth.data.status.denied) throw new StorageError(403, 'Operator permission required');
+    async function authorise(requested: OperatorVerb) {
+      const access = await review('authorization.k8s.io', 'selfsubjectaccessreviews', 'SelfSubjectAccessReview', {
+        resourceAttributes: { group: STORAGE_RBAC_GROUP, resource: 'incidents', verb: requested },
+      });
+      if (access.status === 401) throw new StorageError(401, 'Operator authentication failed');
+      if (access.status === 403) throw new StorageError(403, 'Operator permission required');
+      const auth = accessSchema.safeParse(access.data);
+      if (!auth.success || auth.data.status.evaluationError) throw new StorageError(503, 'Operator verification is unavailable');
+      if (!auth.data.status.allowed || auth.data.status.denied) throw new StorageError(403, 'Operator permission required');
+    }
+
+    const name = await identity();
+    await authorise(verb);
     return {
-      name: user.username,
+      name,
       checkBody(data: unknown) {
         if (JSON.stringify(data).includes(token)) throw new StorageError(400, 'Remove the login credential from the request');
       },
+      verifyDelivery: verb === 'update' && userInfo ? async () => {
+        try {
+          if (await identity() !== name) return false;
+          const response = await requestJson(userInfo, { token, timeoutMs: SELF_REVIEW_TIMEOUT_MS, limit: REVIEW_LIMIT });
+          const issuer = userInfoSchema.safeParse(response.data);
+          if (!issuer.success || !isMember(issuer.data.groups)) return false;
+          await Promise.all([authorise('get'), authorise('update')]);
+          return true;
+        } catch {
+          return false;
+        }
+      } : undefined,
     };
   };
 }

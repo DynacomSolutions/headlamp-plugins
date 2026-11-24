@@ -3,7 +3,7 @@ import type { StorageQueries } from './store.js';
 import { clean, needsMergeEvidence, type Decision, type DriveState, type InternalItem, type Notice, type Scan, type ScanItem, type Snapshot, type Trigger } from './types.js';
 
 type Filesystem = Scan['filesystems'][number];
-export type StorageNotice = Notice & { external: boolean; externalItemId?: string; critical?: boolean };
+export type StorageNotice = Notice & { external: boolean; externalItemId?: string; stage?: string; critical?: boolean };
 const hash = (values: unknown[]) => createHash('sha256').update(JSON.stringify(values)).digest('hex');
 const MAX_SCAN_AGE_MS = 24 * 60 * 60_000;
 
@@ -118,29 +118,42 @@ function makeSnapshot(scan: Scan, fs: Filesystem, previous: DriveState | undefin
   };
 }
 
-export async function updateCleanupNotice(tx: StorageQueries, state: DriveState, decisions: Decision[], now: number): Promise<StorageNotice | undefined> {
+function pressureEpisode(snapshot: Snapshot, previous?: DriveState['episode']): DriveState['episode'] {
+  if (!snapshot.complete) return previous;
+  if (!snapshot.critical && snapshot.availableBytes >= snapshot.reserveBytes) return;
+  const episode = previous ?? { id: randomUUID() };
+  if (snapshot.critical && !episode.critical) return { ...episode, critical: randomUUID() };
+  return episode;
+}
+
+export function pressureStage(state: DriveState): string | undefined {
+  return state.episode?.critical ?? state.episode?.id;
+}
+
+export async function updateCleanupNotice(tx: StorageQueries, state: DriveState, decisions: Decision[], now: number): Promise<void> {
   if (!state.current.complete) return;
+  const stage = pressureStage(state);
   const eligible = itemViews(state, decisions, now).filter(item => item.eligible);
   const existing = (await tx.list<StorageNotice>('notice', state.drive.id)).find(notice => notice.kind === 'cleanup');
-  if (!eligible.length) {
-    if (existing) await tx.clearNotice(existing.id);
-    return;
-  }
+  const replaced = Boolean(stage && existing?.stage !== stage);
+  if (existing && (replaced || !eligible.length)) await tx.clearNotice(existing.id);
+  if (!eligible.length) return;
+
   const eligibleIds = new Set(eligible.map(item => item.id));
   const external = state.items.some(item => item.visibility === 'jev' && eligibleIds.has(item.id));
-  if (existing && existing.external === external && existing.eligibleCount === eligible.length && existing.critical === state.current.critical) return;
+  const retained = replaced ? undefined : existing;
+  if (retained && retained.stage === stage && retained.external === external && retained.eligibleCount === eligible.length) return;
   const notice: StorageNotice = {
-    id: existing?.id ?? randomUUID(),
+    id: retained?.id ?? stage ?? randomUUID(),
     driveId: state.drive.id,
     kind: 'cleanup',
-    createdAt: existing?.createdAt ?? new Date(now).toISOString(),
+    createdAt: retained?.createdAt ?? new Date(now).toISOString(),
     eligibleCount: eligible.length,
     external,
-    critical: state.current.critical,
+    stage,
   };
-  if (existing) await tx.updateRecord('notice', notice);
+  if (retained) await tx.updateRecord('notice', notice);
   else await tx.insert(state.drive.id, 'notice', notice);
-  return external && (!existing?.external || (notice.critical && !existing.critical)) ? notice : undefined;
 }
 
 export async function ingestScan(
@@ -219,6 +232,7 @@ export async function ingestScan(
         applyEnabled: false,
       },
       current: snapshot,
+      episode: pressureEpisode(snapshot, previous?.episode),
       items: [],
       execution: source,
       shared: fs.shared === true,

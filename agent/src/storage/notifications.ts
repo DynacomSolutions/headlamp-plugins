@@ -2,11 +2,13 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { PushService } from '../push/service.js';
 import type { Metrics } from '../metrics.js';
-import { itemViews, type StorageNotice } from './inventory.js';
+import type { Operator } from './auth.js';
+import { itemViews, pressureStage, scanIsFresh, type StorageNotice } from './inventory.js';
 import type { StorageQueries, StorageStore } from './store.js';
 import { StorageError, type Decision, type DriveState } from './types.js';
 
 const GRANT_MS = 30 * 24 * 60 * 60_000;
+const SESSION_MS = 15 * 60_000;
 const RETRY_MS = 5 * 60_000;
 const ATTEMPT_MS = 60_000;
 const MAX_ATTEMPTS = 3;
@@ -36,43 +38,81 @@ export type Delivery = {
 };
 export type CoverageStatus = 'private' | 'disabled' | 'no_recipients' | 'pending' | 'accepted' | 'failed' | 'partial';
 
+type Verification = {
+  grant: string;
+  until: number;
+  verify: NonNullable<Operator['verifyDelivery']>;
+  timer: NodeJS.Timeout;
+};
+
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const keyOf = (device: { endpoint: string; auth: string; p256dh: string }) => digest(JSON.stringify([device.endpoint, device.auth, device.p256dh]));
 
 export class StorageNotifications {
   private running: Promise<void> | undefined;
   private rerun = false;
+  private readonly verifiers = new Map<string, Verification>();
 
-  constructor(private readonly deps: { store: StorageStore; push: PushService; now: () => number }) {}
+  constructor(private readonly deps: {
+    store: StorageStore;
+    push: PushService;
+    now: () => number;
+    issuerConfigured: boolean;
+  }) {}
 
   private get enabled() {
-    return this.deps.push.enabled;
+    return this.deps.push.enabled && this.deps.issuerConfigured;
   }
 
-  async enrol(request: z.infer<typeof enrolSchema>, actor: string) {
+  private forget(subscriptionId: string, expected?: Verification) {
+    const current = this.verifiers.get(subscriptionId);
+    if (!current || (expected && current !== expected)) return;
+    clearTimeout(current.timer);
+    this.verifiers.delete(subscriptionId);
+  }
+
+  private verifier(row: Registration): Verification | undefined {
+    const current = this.verifiers.get(row.subscriptionId);
+    if (current?.grant === row.grant && current.until > this.deps.now()) return current;
+  }
+
+  async enrol(request: z.infer<typeof enrolSchema>, operator: Operator) {
     const { store, push, now } = this.deps;
     const { subscriptionId, enabled, auth, urls } = request;
-    const device = enabled && await push.storageDevice(subscriptionId);
-    await store.transaction(async tx => {
+    const actor = operator.name;
+    if (!enabled) {
+      await store.transaction(async tx => {
+        await tx.lock(`recipient:${subscriptionId}`);
+        if ((await tx.registration(subscriptionId))?.actor !== actor) return;
+        await tx.removeRegistration(subscriptionId);
+        this.forget(subscriptionId);
+      });
+      return { subscriptionId, enabled };
+    }
+
+    const verify = operator.verifyDelivery;
+    if (!this.enabled || !verify) throw new StorageError(503, 'Storage notification verification is unavailable');
+    const device = await push.storageDevice(subscriptionId);
+    if (!device || !auth || !urls || !timingSafeEqual(Buffer.from(digest(device.auth)), Buffer.from(digest(auth)))) {
+      throw new StorageError(403, 'Device subscription could not be verified');
+    }
+    if (!await verify()) throw new StorageError(403, 'Current storage notification entitlement could not be verified');
+
+    const key = keyOf(device);
+    const grant = await store.transaction(async tx => {
       await tx.lock(`recipient:${subscriptionId}`);
       const previous = await tx.registration(subscriptionId);
-      if (!enabled) {
-        if (previous?.actor === actor) await tx.removeRegistration(subscriptionId);
-        return;
-      }
-      if (!this.enabled) throw new StorageError(503, 'Storage notifications are disabled');
-      if (!device || !auth || !urls || !timingSafeEqual(Buffer.from(digest(device.auth)), Buffer.from(digest(auth)))) {
-        throw new StorageError(403, 'Device subscription could not be verified');
-      }
-      const key = keyOf(device);
-      const sameDevice = previous?.key === key && Date.parse(previous.until) > now();
+      const at = now();
+      const sameDevice = previous?.key === key && Date.parse(previous.until) > at;
       if (sameDevice && previous.actor !== actor) throw new StorageError(409, 'Device already has an operator enrolment');
-      await tx.saveRegistration({
-        subscriptionId, actor, grant: sameDevice ? previous.grant : randomUUID(),
-        key, urls, until: new Date(now() + GRANT_MS).toISOString(),
-      });
+      const grant = sameDevice ? previous.grant : randomUUID();
+      await tx.saveRegistration({ subscriptionId, actor, grant, key, urls, until: new Date(at + GRANT_MS).toISOString() });
+      return grant;
     });
-    if (enabled) this.kick();
+    this.forget(subscriptionId);
+    const timer = setTimeout(() => this.forget(subscriptionId), SESSION_MS).unref();
+    this.verifiers.set(subscriptionId, { grant, verify, timer, until: now() + SESSION_MS });
+    this.kick();
     return { subscriptionId, enabled };
   }
 
@@ -81,16 +121,16 @@ export class StorageNotifications {
     const device = current?.actor === actor && await this.deps.push.storageDevice(subscriptionId);
     return {
       subscriptionId,
-      enabled: Boolean(this.enabled && device && current && current.key === keyOf(device) && Date.parse(current.until) > this.deps.now()),
+      enabled: Boolean(this.enabled && device && current && current.key === keyOf(device)
+        && Date.parse(current.until) > this.deps.now() && this.verifier(current)),
     };
   }
 
   private async recipients(tx: StorageQueries): Promise<Registration[]> {
-    const now = this.deps.now();
-    const candidates = await tx.registrations(now);
+    const candidates = await tx.registrations(this.deps.now());
     const devices = await this.deps.push.storageDevices();
     const keys = new Map(devices.map(device => [device.id, keyOf(device)]));
-    return candidates.filter(row => keys.get(row.subscriptionId) === row.key);
+    return candidates.filter(row => keys.get(row.subscriptionId) === row.key && this.verifier(row));
   }
 
   async coverage() {
@@ -100,7 +140,7 @@ export class StorageNotifications {
   async project(notices: StorageNotice[], chatId: string) {
     const { store } = this.deps;
     const deliveryById = new Map((await store.deliverySummaries(notices.map(notice => notice.id))).map(row => [row.id, row]));
-    return notices.map(({ external, externalItemId: _externalItemId, critical: _critical, ...notice }) => {
+    return notices.map(({ external, externalItemId: _externalItemId, stage: _stage, critical: _legacyCritical, ...notice }) => {
       const totals = deliveryById.get(notice.id);
       const providerAccepted = totals?.accepted ?? 0;
       const failed = totals?.failed ?? 0;
@@ -133,6 +173,7 @@ export class StorageNotifications {
 
   async drain(): Promise<void> {
     while (this.running) await this.running;
+    for (const id of this.verifiers.keys()) this.forget(id);
   }
 
   private async deliver(): Promise<void> {
@@ -155,7 +196,7 @@ export class StorageNotifications {
   }
 
   private async send(old: Delivery): Promise<void> {
-    const { store, push, now } = this.deps;
+    const { store, now } = this.deps;
     const at = now();
     const attempt = await store.claimDelivery(old, at);
     if (!attempt) return;
@@ -163,32 +204,24 @@ export class StorageNotifications {
     let result = 'authorisation_or_notice_withdrawn';
     let next = at;
     try {
-      const [notice, registration, device] = await Promise.all([
-        store.get<StorageNotice>('notice', attempt.noticeId), store.registration(attempt.subscriptionId),
-        push.storageDevice(attempt.subscriptionId),
-      ]);
-      if (notice?.external && registration?.grant === attempt.grant && Date.parse(registration.until) > at && device && registration.key === keyOf(device)) {
-        const current = await store.drive(notice.driveId);
-        const decisions = notice.kind === 'cleanup' ? await store.list<Decision>('decision', notice.driveId) : [];
-        if (!current || !this.externalStillAllowed(current, notice, decisions, at)) {
-          await store.finishDelivery(attempt, status, result, next);
-          return;
-        }
-        const id = notice.questionId ?? notice.id;
-        const url = registration.urls[notice.kind].replace('{driveId}', notice.driveId).replace('{id}', id);
-        const provider = await push.sendStorageNotice(device, {
-          kind: 'storage',
-          title: notice.kind === 'question' ? 'Storage incident question' : 'Storage cleanup available',
-          body: notice.kind === 'question' ? 'Open the incident to answer the question.' : 'Open the incident to review the cleanup finding.',
-          url,
-          tag: `storage-${id}`,
-        }, digest(id).slice(0, 30));
-        result = provider.outcome === 'http' ? String(provider.status) : provider.outcome;
-        if (provider.outcome === 'http' && provider.status >= 200 && provider.status < 300) status = 'accepted';
-        if (attempt.attempts < MAX_ATTEMPTS && (provider.outcome === 'rate_limited'
-            || (provider.outcome === 'http' && (provider.status === 429 || provider.status >= 500)))) {
-          status = 'pending';
-          next = now() + RETRY_MS * attempt.attempts;
+      const registration = await store.registration(attempt.subscriptionId);
+      const verifier = registration?.grant === attempt.grant ? this.verifier(registration) : undefined;
+      const verified = verifier && await verifier.verify();
+      if (verifier && !verified) this.forget(attempt.subscriptionId, verifier);
+      if (verified && verifier) {
+        const provider = await this.sendVerified(attempt, verifier);
+        if (provider) {
+          result = provider.outcome === 'http' ? String(provider.status) : provider.outcome;
+          if (provider.outcome === 'http' && provider.status >= 200 && provider.status < 300) status = 'accepted';
+          if (attempt.attempts < MAX_ATTEMPTS && (provider.outcome === 'rate_limited'
+              || (provider.outcome === 'http' && (provider.status === 429 || provider.status >= 500)))) {
+            status = 'pending';
+            next = now() + RETRY_MS * attempt.attempts;
+          }
+          if (provider.outcome === 'http' && [404, 410].includes(provider.status)) {
+            // Keep provider errors in the storage workflow.
+            this.forget(attempt.subscriptionId, verifier);
+          }
         }
       }
     } catch {
@@ -197,8 +230,35 @@ export class StorageNotifications {
     await store.finishDelivery(attempt, status, result, next);
   }
 
+  private async sendVerified(attempt: Delivery, verifier: Verification) {
+    const { store, push, now } = this.deps;
+    const [notice, registration, device] = await Promise.all([
+      store.get<StorageNotice>('notice', attempt.noticeId), store.registration(attempt.subscriptionId),
+      push.storageDevice(attempt.subscriptionId),
+    ]);
+    if (!notice?.external || registration?.grant !== attempt.grant || !device || registration.key !== keyOf(device)) return;
+    const [current, decisions] = await Promise.all([
+      store.drive(notice.driveId),
+      notice.kind === 'cleanup' ? store.list<Decision>('decision', notice.driveId) : [],
+    ]);
+    const at = now();
+    if (this.verifier(registration) !== verifier || Date.parse(registration.until) <= at
+      || !current || !this.externalStillAllowed(current, notice, decisions, at)) return;
+    const id = notice.questionId ?? notice.id;
+    const url = registration.urls[notice.kind].replace('{driveId}', notice.driveId).replace('{id}', id);
+    return push.sendStorageNotice(device, {
+      kind: 'storage',
+      title: notice.kind === 'question' ? 'Storage incident question' : 'Storage cleanup available',
+      body: notice.kind === 'question' ? 'Open the incident to answer the question.' : 'Open the incident to review the cleanup finding.',
+      url,
+      tag: `storage-${notice.id}`,
+    }, digest(notice.id).slice(0, 30));
+  }
+
   private externalStillAllowed(state: DriveState, notice: StorageNotice, decisions: Decision[], now: number): boolean {
-    if (!state.current.complete) return false;
+    if (!scanIsFresh(state, now)) return false;
+    if (notice.stage && notice.stage !== pressureStage(state)) return false;
+    if (notice.kind === 'cleanup' && notice.stage !== pressureStage(state)) return false;
     if (notice.kind === 'question') return state.items.some(item => item.visibility === 'jev' && item.id === notice.externalItemId);
     const eligible = new Set(itemViews(state, decisions, now).filter(item => item.eligible).map(item => item.id));
     return state.items.some(item => item.visibility === 'jev' && eligible.has(item.id));

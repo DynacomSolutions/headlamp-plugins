@@ -4,10 +4,35 @@ import { itemViews, scanIsFresh, updateCleanupNotice, type StorageNotice } from 
 import type { StorageApply } from './apply.js';
 import type { StorageNotifications } from './notifications.js';
 import type { StorageQueries, StorageStore } from './store.js';
-import { clean, StorageError, type Chat, type Child, type Decision, type DecisionRequest, type DriveState, type Evidence, type Investigation } from './types.js';
+import { clean, StorageError, type Chat, type ChatTranscript, type Checkpoint, type Child, type Decision, type DecisionRequest, type DriveState, type Evidence, type Investigation, type Question } from './types.js';
 
 const CHAT_TAIL = 24;
 const COMPACT_AT = 48;
+const CHECKPOINT_ENTRIES = 16;
+const CHECKPOINT_TEXT_CHARS = 280;
+
+function checkpointIds(ids: string[], recent: (string[] | undefined)[]): string[] {
+  return [...new Set([...ids.slice(-CHECKPOINT_ENTRIES), ...recent.flatMap(entry => entry ?? [])])].slice(-CHECKPOINT_ENTRIES);
+}
+
+async function checkpointContext(tx: StorageQueries, evidenceIds: string[], questionIds: string[]) {
+  const [evidence, decisions, questions, receipts] = await Promise.all([
+    tx.checkpointRecords<Evidence>('evidence', CHECKPOINT_ENTRIES, evidenceIds),
+    tx.checkpointRecords<Decision>('decision', CHECKPOINT_ENTRIES),
+    tx.checkpointRecords<Question>('question', CHECKPOINT_ENTRIES, questionIds),
+    tx.checkpointReceipts(CHECKPOINT_ENTRIES),
+  ]);
+  return {
+    evidence: evidence.map(({ id, driveId, kind, snapshotId, summary }) =>
+      ({ id, driveId, kind, snapshotId, summary: summary.slice(0, CHECKPOINT_TEXT_CHARS) })),
+    decisions: decisions.map(({ id, driveId, itemId, decision, until, createdAt }) =>
+      ({ id, driveId, itemId, decision, until, createdAt })),
+    questions: questions.map(({ id, driveId, text, answer }) =>
+      ({ id, driveId, text: text.slice(0, CHECKPOINT_TEXT_CHARS), answer: answer?.slice(0, CHECKPOINT_TEXT_CHARS) })),
+    receipts: receipts.map(({ id, driveId, itemId, status, reason, bytes }) =>
+      ({ id, driveId, itemId, status, reason: reason.slice(0, CHECKPOINT_TEXT_CHARS), bytes })),
+  };
+}
 
 export class StorageIncident {
   constructor(private readonly deps: {
@@ -161,19 +186,33 @@ export class StorageIncident {
         });
       }
       const active = await tx.messages(previous?.through_seq ?? '0');
-      if (active.length <= COMPACT_AT) return { id, messages: active.map(row => row.data), checkpoint: previous?.data ?? null };
-      const archived = active.slice(0, -CHAT_TAIL);
-      const last = archived.at(-1)!;
-      const checkpoint = {
-        throughMessageId: last.data.id,
-        messageCount: (previous?.data.messageCount ?? 0) + archived.length,
-        evidenceIds: [...new Set([...(previous?.data.evidenceIds ?? []), ...archived.flatMap(row => row.data.evidenceIds ?? [])])],
-        questionIds: [...new Set([...(previous?.data.questionIds ?? []), ...archived.flatMap(row => row.data.questionIds ?? [])])],
-      };
-      await tx.putCheckpoint(last.seq, checkpoint);
-      return { id, messages: active.slice(-CHAT_TAIL).map(row => row.data), checkpoint };
+      const archived = active.length > COMPACT_AT ? active.slice(0, -CHAT_TAIL) : [];
+      const last = archived.at(-1);
+      let checkpoint: Checkpoint | null = previous?.data ?? null;
+      if (last || (checkpoint && !checkpoint.evidence)) {
+        const evidenceIds = checkpointIds(previous?.data.evidenceIds ?? [], archived.map(row => row.data.evidenceIds));
+        const questionIds = checkpointIds(previous?.data.questionIds ?? [], archived.map(row => row.data.questionIds));
+        checkpoint = {
+          throughMessageId: last?.data.id ?? previous!.data.throughMessageId,
+          messageCount: (previous?.data.messageCount ?? 0) + archived.length,
+          evidenceIds,
+          questionIds,
+          ...await checkpointContext(tx, evidenceIds, questionIds),
+        };
+        await tx.putCheckpoint(last?.seq ?? previous!.through_seq, checkpoint);
+      }
+      return { id, messages: active.slice(archived.length).map(row => row.data), checkpoint };
     });
     if (request) notifications.kick();
     return result;
+  }
+
+  async transcript(id: string, before: string | undefined, limit: number): Promise<ChatTranscript> {
+    const { store } = this.deps;
+    if ((await store.parent()).chatId !== id) throw new StorageError(404, 'Storage chat not found');
+    const rows = await store.transcript(before, limit + 1);
+    if (!rows) throw new StorageError(404, 'Transcript message not found');
+    const messages = rows.slice(0, limit).reverse().map(row => row.data);
+    return { id, messages, nextBefore: rows.length > limit ? messages[0].id : null };
   }
 }

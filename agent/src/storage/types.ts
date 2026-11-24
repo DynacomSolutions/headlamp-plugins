@@ -135,6 +135,7 @@ export type DriveState = {
   items: InternalItem[];
   execution: 'shadow' | 'disposable';
   shared: boolean;
+  episode?: { id: string; critical?: string };
 };
 export type Decision = DecisionRequest & { id: string; createdAt: string; by: string; material: string };
 export type Question = { id: string; driveId: string; itemId?: string; text: string; createdAt: string; answer?: string; answeredAt?: string; answeredBy?: string };
@@ -177,7 +178,17 @@ export type ChatMessage = {
   evidenceIds?: string[];
   questionIds?: string[];
 };
-export type Checkpoint = { throughMessageId: string; messageCount: number; evidenceIds: string[]; questionIds: string[] };
+export type Checkpoint = {
+  throughMessageId: string;
+  messageCount: number;
+  evidenceIds: string[];
+  questionIds: string[];
+  evidence: Array<Pick<Evidence, 'id' | 'kind' | 'snapshotId' | 'summary'> & { driveId: string }>;
+  decisions: Array<Pick<Decision, 'id' | 'itemId' | 'decision' | 'until' | 'createdAt'> & { driveId: string }>;
+  questions: Array<Pick<Question, 'id' | 'driveId' | 'text' | 'answer'>>;
+  receipts: Array<Pick<Receipt, 'id' | 'driveId' | 'itemId' | 'status' | 'reason' | 'bytes'>>;
+};
+export type ChatTranscript = { id: string; messages: ChatMessage[]; nextBefore: string | null };
 export type Chat = { id: string; messages: ChatMessage[]; checkpoint: Checkpoint | null };
 
 export class StorageError extends Error {

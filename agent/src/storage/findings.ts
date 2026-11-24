@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { SurfaceBuilder, surfaceId } from '../a2ui/index.js';
-import { itemViews, type StorageNotice } from './inventory.js';
+import { itemViews, pressureStage, type StorageNotice } from './inventory.js';
 import type { StorageQueries } from './store.js';
 import { StorageError, type Child, type Decision, type DriveState, type Evidence, type Investigation, type Question } from './types.js';
 
@@ -13,7 +13,7 @@ export function publicQuestion({ fingerprint: _fingerprint, ...question }: Store
 export async function raiseQuestion(
   tx: StorageQueries,
   state: DriveState,
-  options: { text: string; fingerprint: string; itemId?: string; external: boolean; now: number },
+  options: { text: string; fingerprint: string; itemId?: string; external: boolean; stage?: string; now: number },
 ): Promise<Question> {
   const { drive } = state;
   const questions = await tx.list<StoredQuestion>('question', drive.id);
@@ -35,7 +35,7 @@ export async function raiseQuestion(
     questionId: question.id,
     external: options.external,
     externalItemId: options.external ? options.itemId : undefined,
-    critical: state.current.critical,
+    stage: options.stage,
   };
   await tx.insert(drive.id, 'question', question);
   await tx.insert(drive.id, 'notice', notice);
@@ -43,12 +43,23 @@ export async function raiseQuestion(
 }
 
 export async function raiseScanQuestion(tx: StorageQueries, state: DriveState, decisions: Decision[], now: number): Promise<void> {
-  if (!state.current.complete || state.current.availableBytes > state.current.reserveBytes) return;
-  if (itemViews(state, decisions, now).some(item => item.eligible)) return;
+  if (!state.current.complete) return;
+  const stage = pressureStage(state);
+  const notices = await tx.list<StorageNotice>('notice', state.drive.id);
+  for (const notice of notices) {
+    if (notice.kind !== 'question') continue;
+    const question = !notice.stage && notice.questionId ? await tx.get<StoredQuestion>('question', notice.questionId) : undefined;
+    const legacy = question?.fingerprint === 'below-reserve-without-cleanup';
+    if (legacy || (notice.stage && notice.stage !== stage)) await tx.clearNotice(notice.id);
+  }
+  if (!stage || itemViews(state, decisions, now).some(item => item.eligible)) return;
   const item = state.items.find(item => item.visibility === 'jev' && !item.eligible);
   await raiseQuestion(tx, state, {
-    text: 'The drive is below its reserve and has no eligible cleanup. Which workload or retention policy should be reviewed?',
-    fingerprint: 'below-reserve-without-cleanup',
+    text: state.episode?.critical
+      ? 'The drive reached critical capacity and has no eligible cleanup. Which workload or retention policy should be reviewed?'
+      : 'The drive is below its reserve and has no eligible cleanup. Which workload or retention policy should be reviewed?',
+    fingerprint: `below-reserve-without-cleanup:${stage}`,
+    stage,
     external: Boolean(item),
     itemId: item?.id,
     now,

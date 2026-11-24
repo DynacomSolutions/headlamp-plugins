@@ -33,6 +33,8 @@ type Settings = {
   scannerToken: () => string;
   reconcileToken: () => string;
   cluster: string;
+  humanGroups: ReadonlySet<string>;
+  userInfo?: URL;
   disposable: ReadonlySet<string>;
   applyEnabled: boolean;
 };
@@ -55,8 +57,26 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   if (!env.STORAGE_SCANNER_TOKEN_FILE || !env.STORAGE_RECONCILE_TOKEN_FILE) throw new Error('Storage token files are required');
   const disposable = new Set((env.STORAGE_DISPOSABLE_SCANNERS ?? '').split(',').map(node => node.trim()).filter(Boolean));
   if ([...disposable].some(node => !urls.has(node))) throw new Error('Invalid disposable scanner configuration');
+  let groups: string[];
+  let userInfo: URL | undefined;
+  try {
+    const group = z.string().min(1).max(1024).refine(value => value === value.trim() && !value.startsWith('system:'));
+    groups = z.array(group).max(100).parse(JSON.parse(env.STORAGE_OPERATOR_GROUPS || '[]'));
+    if (env.STORAGE_OPERATOR_USERINFO_URL) {
+      userInfo = new URL(env.STORAGE_OPERATOR_USERINFO_URL);
+      const loopback = ['127.0.0.1', '[::1]'].includes(userInfo.hostname);
+      if (userInfo.username || userInfo.password || userInfo.search || userInfo.hash
+        || (userInfo.protocol !== 'https:' && !(userInfo.protocol === 'http:' && loopback && env.NODE_ENV === 'test'))) {
+        throw new Error('invalid issuer endpoint');
+      }
+    }
+  } catch {
+    throw new Error('Invalid storage operator configuration');
+  }
   return {
     urls,
+    humanGroups: new Set(groups),
+    userInfo,
     scannerToken: tokenFile(env.STORAGE_SCANNER_TOKEN_FILE),
     reconcileToken: tokenFile(env.STORAGE_RECONCILE_TOKEN_FILE),
     cluster: env.STORAGE_HEADLAMP_CLUSTER ?? '',
@@ -84,7 +104,7 @@ export async function storageHttp(deps: HttpHelpers & {
     await db.init(now());
     const scanner = new HttpScanner(configured.urls, configured.scannerToken);
     const apply = new StorageApply({ store: db, scanner, now, enabled: configured.applyEnabled, disposable: configured.disposable });
-    const notifications = new StorageNotifications({ store: db, now, push });
+    const notifications = new StorageNotifications({ store: db, now, push, issuerConfigured: Boolean(configured.userInfo) });
     const nodes = [...configured.urls.keys()];
     const reconcile = new StorageReconciler({ store: db, scanner, now, metrics, nodes: new Set(nodes) });
     return { apply, notifications, reconcile, db, service: new StorageIncident({ store: db, now, apply, notifications, nodes }) };
@@ -102,7 +122,7 @@ export async function storageHttp(deps: HttpHelpers & {
     return parsed.data;
   }
 
-  const auth = operatorAuth(config, active?.cluster ?? '');
+  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.userInfo);
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {
     const method = req.method;
@@ -135,7 +155,7 @@ export async function storageHttp(deps: HttpHelpers & {
     }
     if (parent) return { data: await service.parent() };
     if (kind === 'notifications') {
-      if (method === 'POST' && parts.length === 2) return { data: await notifications.enrol(await operatorBody(enrolSchema), operator.name) };
+      if (method === 'POST' && parts.length === 2) return { data: await notifications.enrol(await operatorBody(enrolSchema), operator) };
       if (method === 'GET' && parts.length === 3) return { data: await notifications.device(validId(subscriptionSchema, id), operator.name) };
     }
     if (kind === 'drives' && id) {
@@ -153,6 +173,13 @@ export async function storageHttp(deps: HttpHelpers & {
     if (kind === 'chat' && id) {
       const chatId = validId(uuid, id);
       if (method === 'GET' && parts.length === 3) return { data: await service.chat(chatId) };
+      if (method === 'GET' && action === 'transcript') {
+        const query = new URL(req.url ?? '/', 'http://example.com').searchParams;
+        const before = query.get('before');
+        const limit = query.get('limit') ?? '24';
+        if (!/^(?:[1-9]|1\d|2[0-4])$/.test(limit)) throw new StorageError(400, 'Transcript limit must be between 1 and 24');
+        return { data: await service.transcript(chatId, before === null ? undefined : validId(uuid, before), Number(limit)) };
+      }
       if (method === 'POST' && action === 'messages') return { data: await service.chat(chatId, await operatorBody(messageSchema)) };
     }
     if (kind === 'questions' && id && action === 'answer' && method === 'POST') {

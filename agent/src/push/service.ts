@@ -105,6 +105,7 @@ export function publicView(r: PushSubscriptionRecord) {
 export class PushService {
   private readonly now: () => number;
   private readonly sent = new Map<string, number[]>();
+  private readonly storageSent = new Map<string, number[]>();
   private readonly keys?: VapidKeys;
   private readonly maxPerWindow: number;
   private readonly windowMs: number;
@@ -199,6 +200,7 @@ export class PushService {
     this.checkId(id);
     await this.deps.store.delete(id);
     this.sent.delete(id);
+    this.storageSent.delete(id);
   }
 
   /** The page reports the chat it shows (visible), or null (hidden or left the chat). */
@@ -253,11 +255,9 @@ export class PushService {
   > {
     if (!this.keys) return { outcome: 'disabled' };
     if (!endpointAllowed(r.endpoint, this.deps.extraHosts)) return { outcome: 'delivery_unverified' };
-    if (!this.allow(r.id)) return { outcome: 'rate_limited' };
+    if (!this.allow(r.id, this.storageSent)) return { outcome: 'rate_limited' };
     try {
       const result = await sendWebPush(r, payload, this.keys, { fetch: this.deps.fetch, now: this.now(), topic });
-      if (result.gone) await this.deps.store.delete(r.id).catch(() => undefined);
-      else await this.deps.store.recordResult(r.id, this.now(), result.status >= 200 && result.status < 300 ? 'ok' : String(result.status)).catch(() => undefined);
       return { outcome: 'http', status: result.status };
     } catch {
       return { outcome: 'delivery_unverified' };
@@ -265,15 +265,15 @@ export class PushService {
   }
 
   /** The device is inside its rate limit: counts this push when it is. */
-  private allow(id: string): boolean {
+  private allow(id: string, sent = this.sent): boolean {
     const t = this.now();
-    const recent = (this.sent.get(id) ?? []).filter(at => t - at < this.windowMs);
+    const recent = (sent.get(id) ?? []).filter(at => t - at < this.windowMs);
     if (recent.length >= this.maxPerWindow) {
-      this.sent.set(id, recent);
+      sent.set(id, recent);
       return false;
     }
     recent.push(t);
-    this.sent.set(id, recent);
+    sent.set(id, recent);
     return true;
   }
 

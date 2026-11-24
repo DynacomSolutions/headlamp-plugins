@@ -90,6 +90,7 @@ const SCHEMA = [
     seq bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     data jsonb NOT NULL
   )`,
+  "CREATE INDEX IF NOT EXISTS storage_incident_messages_id ON storage_incident_messages ((data->>'id'))",
   `CREATE TABLE IF NOT EXISTS storage_incident_checkpoints (
     singleton boolean PRIMARY KEY CHECK (singleton),
     through_seq bigint NOT NULL,
@@ -263,6 +264,28 @@ export class StorageQueries {
 
   async messages(through: string): Promise<MessageRow[]> {
     return (await this.query('SELECT seq, data FROM storage_incident_messages WHERE seq > $1 ORDER BY seq', [through])).rows as MessageRow[];
+  }
+
+  async transcript(before: string | undefined, limit: number): Promise<MessageRow[] | undefined> {
+    if (before) {
+      const { rows } = await this.query("SELECT seq FROM storage_incident_messages WHERE data->>'id' = $1", [before]);
+      if (!rows[0]) return;
+      return (await this.query('SELECT seq, data FROM storage_incident_messages WHERE seq < $1 ORDER BY seq DESC LIMIT $2',
+        [rows[0].seq, limit])).rows as MessageRow[];
+    }
+    return (await this.query('SELECT seq, data FROM storage_incident_messages ORDER BY seq DESC LIMIT $1', [limit])).rows as MessageRow[];
+  }
+
+  async checkpointRecords<T>(
+    kind: 'evidence' | 'decision' | 'question', limit: number, linkedIds: string[] = [],
+  ): Promise<Array<T & { driveId: string }>> {
+    const { rows } = await this.query(`SELECT data, drive_id FROM storage_incident_records WHERE kind = $1
+      ORDER BY (id = ANY($3::uuid[])) DESC, seq DESC LIMIT $2`, [kind, limit, linkedIds]);
+    return rows.map(row => ({ ...row.data as T, driveId: String(row.drive_id) }));
+  }
+
+  async checkpointReceipts(limit: number): Promise<Receipt[]> {
+    return this.records<Receipt>("SELECT data FROM storage_incident_receipts ORDER BY data->>'updatedAt' DESC, id DESC LIMIT $1", [limit]);
   }
 
   async checkpoint(): Promise<{ through_seq: string; data: Checkpoint } | undefined> {

@@ -25,6 +25,8 @@ const origin = 'https://example.com';
 const nodes = Array.from({ length: 6 }, (_, i) => `worker-${i + 1}`);
 const api = '/api/storage';
 const rbac = 'storage.incidents.example.com';
+const operatorGroup = 'fixture-human-operators';
+const automation = 'fixture-automation-credential';
 const dispose: Array<() => void | Promise<void>> = [];
 
 afterEach(async () => {
@@ -73,7 +75,9 @@ type NodeFixture = {
   status?: number;
 };
 
-async function fixture(options: { disposable?: boolean; pushEnabled?: boolean; disabled?: boolean } = {}) {
+async function fixture(options: {
+  disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; issuerConfigured?: boolean;
+} = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'storage-incident-fixture-'));
   dispose.push(() => rmSync(dir, { recursive: true, force: true }));
   const db = pgliteDb();
@@ -86,6 +90,16 @@ async function fixture(options: { disposable?: boolean; pushEnabled?: boolean; d
     reply(res, 200, {});
   });
   let redirect = false;
+  let operatorMember = true;
+  let issuerStatus = 200;
+  let issuerGroups = [operatorGroup];
+  const revokedVerbs = new Set<string>();
+  const issuerChecks: (string | undefined)[] = [];
+  const issuer = await listener(async (req, res) => {
+    issuerChecks.push(req.headers.authorization);
+    if (req.url !== '/userinfo' || req.headers.authorization !== `Bearer ${human}`) return reply(res, 401, {});
+    reply(res, issuerStatus, { sub: 'fixture-operator', groups: issuerGroups });
+  });
   const kubeApi = await listener(async (req, res) => {
     const token = req.headers.authorization;
     const path = req.url ?? '';
@@ -96,20 +110,24 @@ async function fixture(options: { disposable?: boolean; pushEnabled?: boolean; d
       res.end();
       return;
     }
-    const valid = [human, viewer, serviceAccount, headlampAccount].includes(token?.slice(7) ?? '');
+    const valid = [human, viewer, serviceAccount, headlampAccount, automation].includes(token?.slice(7) ?? '');
     if (!valid) return reply(res, 401, {});
     if (path.endsWith('/selfsubjectreviews')) {
       const username = token === `Bearer ${serviceAccount}` ? 'system:serviceaccount:example:viewer'
         : token === `Bearer ${headlampAccount}` ? 'system:serviceaccount:example:headlamp'
-          : token === `Bearer ${human}` ? 'fixture-operator' : 'fixture-reader';
+          : token === `Bearer ${human}` ? 'fixture-operator'
+            : token === `Bearer ${automation}` ? 'fixture-automation' : 'fixture-reader';
       const groups = ['system:authenticated'];
-      if (username.startsWith('system:')) groups.push('system:serviceaccounts');
+      if (username.startsWith('system:')) groups.push('system:serviceaccounts', operatorGroup);
+      else if (username === 'fixture-automation' || (username === 'fixture-operator' && !operatorMember)) groups.push(`${operatorGroup}-other`);
+      else groups.push(operatorGroup);
       return reply(res, 201, { status: { userInfo: { username, groups } } });
     }
     const spec = input.spec as { resourceAttributes?: { group?: string; resource?: string; verb?: string } };
     const attrs = spec?.resourceAttributes;
     const allowed = path.endsWith('/selfsubjectaccessreviews') && attrs?.group === rbac && attrs.resource === 'incidents'
-      && (token === `Bearer ${human}` || attrs.verb === 'get');
+      && !revokedVerbs.has(attrs.verb ?? '')
+      && (token === `Bearer ${human}` || token === `Bearer ${automation}` || attrs.verb === 'get');
     return reply(res, 201, { status: { allowed } });
   });
   let at = Date.parse('2026-01-01T00:30:00Z');
@@ -151,6 +169,10 @@ async function fixture(options: { disposable?: boolean; pushEnabled?: boolean; d
     STORAGE_SCANNER_TOKEN_FILE: scannerFile,
     STORAGE_RECONCILE_TOKEN_FILE: machineFile,
     STORAGE_HEADLAMP_CLUSTER: 'example',
+    ...(options.operatorGroups === null ? {} : { STORAGE_OPERATOR_GROUPS: JSON.stringify(options.operatorGroups ?? [operatorGroup]) }),
+    ...(options.pushEnabled && options.issuerConfigured !== false
+      ? { STORAGE_OPERATOR_USERINFO_URL: `${issuer}/userinfo`, NODE_ENV: 'test' }
+      : {}),
     STORAGE_APPLY_ENABLED: options.disposable ? 'true' : 'false',
     STORAGE_DISPOSABLE_SCANNERS: options.disposable ? nodes[0] : '',
   };
@@ -188,6 +210,9 @@ async function fixture(options: { disposable?: boolean; pushEnabled?: boolean; d
   const details = async (id: string) => (await call(`${api}/incident/drives/${id}`)).data;
   return {
     db, reviews, seenScans, applyCalls, scannerAuth, nodeFixtures, sent, env, getUrl, parent, details, reconcile, call,
+    issuerChecks, revokedVerbs,
+    issuer(status: number, groups = [operatorGroup]) { issuerStatus = status; issuerGroups = groups; },
+    operatorMembership(enabled: boolean) { operatorMember = enabled; },
     onScan(fn: typeof onScan) { onScan = fn; },
     onApply(fn: typeof apply) { apply = fn; },
     provider(status: number) { providerStatus = status; },
@@ -277,6 +302,12 @@ describe('Storage incident normal entry points', () => {
     expect((await f.call('/metrics', { token: false })).data).toContain('headlamp_agent_storage_push_registered_recipients 0');
   });
 
+  it.each([{ groups: null }, { groups: ['fixture-unrelated-group'] }])('denies human access with membership configuration $groups', async ({ groups }) => {
+    const f = await fixture({ operatorGroups: groups });
+    expect((await f.call(`${api}/incident`)).status).toBe(403);
+    expect(f.reviews.every(review => review.path.endsWith('/selfsubjectreviews'))).toBe(true);
+  });
+
   it('verifies named humans, exact RBAC and HttpOnly proxy requests without using a service account fallback', async () => {
     const f = await fixture();
     const logs = vi.spyOn(process.stdout, 'write');
@@ -291,6 +322,13 @@ describe('Storage incident normal entry points', () => {
     expect(f.reviews.map(review => review.token)).toEqual([`Bearer ${invalid}`]);
     expect((await f.call(endpoint, { token: serviceAccount })).status).toBe(403);
     expect((await f.call(endpoint, { token: headlampAccount })).status).toBe(403);
+    expect((await f.call(endpoint, { token: automation })).status).toBe(403);
+    f.operatorMembership(false);
+    expect((await f.call(endpoint)).status).toBe(403);
+    f.operatorMembership(true);
+    f.revokedVerbs.add('get');
+    expect((await f.call(endpoint)).status).toBe(403);
+    f.revokedVerbs.clear();
     expect((await f.call(`${api}/incident`, { token: viewer })).status).toBe(200);
     const chat = `${api}/incident/chat/${blank.incident.chatId}`;
     const message = `${chat}/messages`;
@@ -675,6 +713,8 @@ describe('Storage incident normal entry points', () => {
     await f.restart();
     expect((await f.reconcile()).status).toBe(200);
     expect(f.sent).toHaveLength(2);
+    expect((await f.call(`${registration}/${device.id}`)).data.enabled).toBe(false);
+    expect((await f.call(registration, { data: grant })).status).toBe(200);
     f.provider(201);
     f.advance(5 * 60_000);
     expect((await f.reconcile()).status).toBe(200);
@@ -731,7 +771,7 @@ describe('Storage incident normal entry points', () => {
     });
     f.advance(16 * 60_000);
     expect((await f.reconcile([{ node: nodes[1], filesystemId: 'failure-disk', reason: 'capacity' }])).status).toBe(200);
-    f.provider(400);
+    f.provider(410);
     expect((await f.call(registration, { data: grant })).status).toBe(200);
     await vi.waitFor(async () => {
       const notice = (await f.parent()).notices.find((row: { delivery: { status: string } }) => row.delivery.status === 'failed');
@@ -740,14 +780,162 @@ describe('Storage incident normal entry points', () => {
       });
     });
     expect(f.sent).toHaveLength(5);
+    expect(await f.call(`/api/push/subscriptions/${device.id}`, { token: false })).toEqual({
+      status: 200, data: subscribe.data,
+    });
+    expect(JSON.stringify((await f.db.query('SELECT * FROM storage_incident_push_registrations')).rows)).not.toContain(human);
+  });
+
+  it('disables storage enrolment without a current membership verifier', async () => {
+    const f = await fixture({ pushEnabled: true, issuerConfigured: false });
+    expect((await f.parent()).notifications.enabled).toBe(false);
+    const device = pushDevice();
+    expect((await f.call(`${api}/incident/notifications`, {
+      data: { subscriptionId: device.id, enabled: true, auth: device.keys.auth, urls: noticeUrls },
+    })).status).toBe(503);
+  });
+
+  it.each(['issuer membership', 'issuer unavailable', 'RBAC get', 'RBAC update', 'restart', 'expiry'])(
+    'suppresses storage retry after %s',
+    async loss => {
+      const f = await fixture({ pushEnabled: true });
+      f.nodeFixtures.get(nodes[0])!.scan = () => ({
+        filesystems: [fs('main', '/data')], items: [item('cleanup', 'main')], complete: true,
+      });
+      expect((await f.reconcile()).status).toBe(200);
+      const device = pushDevice();
+      const generic = `/api/push/subscriptions/${device.id}`;
+      const registration = `${api}/incident/notifications`;
+      const subscribed = await f.call(generic, { token: false, data: {
+        subscription: { endpoint: device.endpoint, keys: device.keys },
+        urls: { incident: '/c/example/incidents/{id}', chat: '/c/example/incidents/chat/{id}' },
+      } });
+      expect(subscribed.status).toBe(200);
+      f.provider(503);
+      expect((await f.call(registration, { data: {
+        subscriptionId: device.id, enabled: true, auth: device.keys.auth, urls: noticeUrls,
+      } })).status).toBe(200);
+      const outcomes = async () => (await f.db.query(
+        'SELECT attempt, result FROM storage_incident_push_attempts ORDER BY attempt',
+      )).rows;
+      await vi.waitFor(async () => expect(await outcomes()).toEqual([{ attempt: 1, result: '503' }]));
+      expect(f.issuerChecks).toEqual([human, human].map(token => `Bearer ${token}`));
+      if (loss === 'issuer membership') f.issuer(200, [`${operatorGroup}-other`]);
+      if (loss === 'issuer unavailable') f.issuer(503);
+      if (loss === 'RBAC get') f.revokedVerbs.add('get');
+      if (loss === 'RBAC update') f.revokedVerbs.add('update');
+      if (loss === 'restart') await f.restart();
+      f.provider(201);
+      f.advance((loss === 'expiry' ? 15 : 5) * 60_000);
+      expect((await f.reconcile()).status).toBe(200);
+      await vi.waitFor(async () => expect(await outcomes()).toEqual([
+        { attempt: 1, result: '503' },
+        { attempt: 2, result: 'authorisation_or_notice_withdrawn' },
+      ]));
+      expect(f.sent).toHaveLength(1);
+      expect(await f.call(generic, { token: false })).toEqual(subscribed);
+      expect((await f.call(`${registration}/${device.id}`)).data.enabled).toBe(loss === 'RBAC get' ? undefined : false);
+    },
+  );
+
+  it('sends one notice per pressure stage and preserves answers across recurrence', async () => {
+    const f = await fixture({ pushEnabled: true });
+    const device = pushDevice();
+    expect((await f.call(`/api/push/subscriptions/${device.id}`, { token: false, data: {
+      subscription: { endpoint: device.endpoint, keys: device.keys },
+      urls: { incident: '/c/example/incidents/{id}', chat: '/c/example/incidents/chat/{id}' },
+    } })).status).toBe(200);
+    const renew = async () => expect((await f.call(`${api}/incident/notifications`, { data: {
+      subscriptionId: device.id, enabled: true, auth: device.keys.auth, urls: noticeUrls,
+    } })).status).toBe(200);
+
+    let available = 50;
+    let complete = true;
+    const names = ['cleanup-disk', 'question-disk'];
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({
+      filesystems: names.map(id => fs(id, `/${id}`, available)),
+      items: [item('cleanup', names[0]), item('question', names[1], { inUse: true })],
+      complete,
+    });
+    const triggers = names.map(filesystemId => ({
+      node: nodes[0], filesystemId, reason: 'capacity', reserveBytes: 100, criticalBytes: 20,
+    }));
+    const scan = async (status = 200) => {
+      f.advance(16 * 60_000);
+      await renew();
+      expect((await f.reconcile(triggers)).status).toBe(status);
+    };
+    const current = async (count: number) => {
+      await vi.waitFor(async () => {
+        expect(f.sent).toHaveLength(count);
+        const rows = (await f.db.query(
+          "SELECT count(*)::int AS total FROM storage_incident_push_deliveries WHERE status = 'accepted'",
+        )).rows;
+        expect(rows).toEqual([{ total: count }]);
+      });
+      const { notices } = await f.parent();
+      return {
+        cleanup: notices.find((n: { kind: string }) => n.kind === 'cleanup'),
+        question: notices.find((n: { kind: string }) => n.kind === 'question'),
+      };
+    };
+    const answer = (id: string, text: string) => f.call(`${api}/incident/questions/${id}/answer`, { data: { answer: text } });
+
+    await scan();
+    const first = await current(2);
+    expect((await answer(first.question.questionId, 'Check initial retention.')).status).toBe(200);
+    await scan();
+    expect((await current(2)).cleanup.id).toBe(first.cleanup.id);
+    expect((await current(2)).question).toBeUndefined();
+
+    available = 10;
+    await scan();
+    const critical = await current(4);
+    expect(critical.cleanup.id).not.toBe(first.cleanup.id);
+    expect(critical.question.questionId).not.toBe(first.question.questionId);
+    expect((await answer(critical.question.questionId, 'Check emergency retention.')).status).toBe(200);
+
+    available = 900;
+    complete = false;
+    await scan(503);
+    complete = true;
+    available = 10;
+    await scan();
+    expect((await current(4)).cleanup.id).toBe(critical.cleanup.id);
+    expect((await current(4)).question).toBeUndefined();
+
+    available = 900;
+    await scan();
+    expect((await current(4)).cleanup.id).toBe(critical.cleanup.id);
+    expect((await current(4)).question).toBeUndefined();
+    available = 50;
+    await scan();
+    const recurrent = await current(6);
+    expect(new Set([first.cleanup.id, critical.cleanup.id, recurrent.cleanup.id]).size).toBe(3);
+    expect(new Set([first.question.questionId, critical.question.questionId, recurrent.question.questionId]).size).toBe(3);
+    expect(new Set(f.sent.map(attempt => attempt.headers.get('topic'))).size).toBe(6);
+    expect((await f.details(recurrent.question.driveId)).questions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: first.question.questionId, answer: 'Check initial retention.' }),
+      expect.objectContaining({ id: critical.question.questionId, answer: 'Check emergency retention.' }),
+      expect.objectContaining({ id: recurrent.question.questionId }),
+    ]));
+    await scan();
+    expect((await current(6)).question.id).toBe(recurrent.question.id);
   });
 
   it('keeps structured investigations, compaction links and question answers in the parent database', async () => {
-    const f = await fixture();
+    const f = await fixture({ disposable: true });
+    const receiptReason = 'Verified by the scanner. '.repeat(15).trim();
+    f.onApply((request, node) => ({ status: 200, data: {
+      ...request, node, receipts: [{ itemId: 'remove', status: 'removed', reason: receiptReason, bytes: 500 }],
+    } }));
     f.nodeFixtures.get(nodes[0])!.scan = () => ({
-      filesystems: [fs('main', '/data', 0)], items: [], complete: true,
+      filesystems: [fs('main', '/data', 0), fs('cleanup', '/cleanup')],
+      items: [item('keep', 'cleanup'), item('remove', 'cleanup')],
+      complete: true,
+      execution: 'disposable',
     });
-    await f.reconcile();
+    expect((await f.reconcile()).status).toBe(200);
     const p = await f.parent();
     const notice = p.notices.find((row: { kind: string }) => row.kind === 'question');
     expect(notice.action).toEqual({ driveId: notice.driveId, kind: 'question', chatId: p.incident.chatId, id: notice.questionId });
@@ -760,6 +948,20 @@ describe('Storage incident normal entry points', () => {
     expect(inspect.data.a2ui.length).toBeGreaterThan(0);
     expect(inspect.data.evidenceIds).toHaveLength(1);
     const chat = `${api}/incident/chat/${p.incident.chatId}`;
+    const answer = `${api}/incident/questions/${notice.questionId}/answer`;
+    const answerText = 'Review retention policy. '.repeat(16).trim();
+    expect((await f.call(answer, { data: { answer: answerText } })).data.answer).toBe(answerText);
+    expect((await f.call(answer, { data: { answer: 'Another answer.' } })).status).toBe(409);
+    expect((await f.parent()).notices.some((row: { id: string }) => row.id === notice.id)).toBe(false);
+    const cleanup = p.drives.find((drive: { filesystemId: string }) => drive.filesystemId === 'cleanup');
+    const cleanupPath = `${api}/incident/drives/${cleanup.id}`;
+    const [keepItem, removeItem] = (await f.details(cleanup.id)).items;
+    const keep = await f.call(`${cleanupPath}/decisions`, { data: { itemId: keepItem.id, decision: 'keep' } });
+    expect(keep.status).toBe(200);
+    const plan = (await f.call(`${cleanupPath}/dry-run`, { data: {} })).data;
+    expect((await f.call(`${api}/incident/plans/${plan.id}/approve`, { data: { itemIds: [removeItem.id] } })).status).toBe(202);
+    await vi.waitFor(async () => expect((await f.details(cleanup.id)).receipts[0]?.status).toBe('removed'));
+
     for (let n = 0; n < 25; n++) {
       expect((await f.call(`${chat}/messages`, { data: { text: 'Explain capacity', driveId: notice.driveId } })).status).toBe(200);
     }
@@ -767,12 +969,41 @@ describe('Storage incident normal entry points', () => {
     expect(compact.messages).toHaveLength(24);
     expect(compact.checkpoint.messageCount).toBe(26);
     expect(compact.checkpoint.evidenceIds).toHaveLength(13);
-    const answer = `${api}/incident/questions/${notice.questionId}/answer`;
-    expect((await f.call(answer, { data: { answer: 'Review retention policy.' } })).data.answer).toBe('Review retention policy.');
-    expect((await f.call(answer, { data: { answer: 'Another answer.' } })).status).toBe(409);
-    expect((await f.parent()).notices.some((row: { id: string }) => row.id === notice.id)).toBe(false);
+    expect(compact.checkpoint.evidence).toHaveLength(16);
+    expect(compact.checkpoint.evidence.slice(0, 13).map((row: { id: string }) => row.id))
+      .toEqual([...compact.checkpoint.evidenceIds].reverse());
+    expect(compact.checkpoint.evidence[0]).toMatchObject({
+      kind: 'capacity', driveId: notice.driveId, summary: expect.stringContaining('0 bytes are available'),
+    });
+    expect(compact.checkpoint.decisions).toEqual([expect.objectContaining({ id: keep.data.id, decision: 'keep', driveId: cleanup.id })]);
+    expect(compact.checkpoint.questions).toEqual([expect.objectContaining({ id: notice.questionId, answer: answerText.slice(0, 280) })]);
+    expect(compact.checkpoint.receipts).toEqual([expect.objectContaining({
+      driveId: cleanup.id, itemId: removeItem.id, status: 'removed', reason: receiptReason.slice(0, 280), bytes: 500,
+    })]);
+
+    const transcript = `${chat}/transcript`;
+    expect((await f.call(transcript, { token: false })).status).toBe(401);
+    expect((await f.call(transcript, { token: automation })).status).toBe(403);
+    expect((await f.call(`${transcript}?limit=25`)).status).toBe(400);
+    expect((await f.call(`${transcript}?before=${randomUUID()}`)).status).toBe(404);
+    expect((await f.call(`${api}/incident/chat/${randomUUID()}/transcript`)).status).toBe(404);
+    const tail = await f.call(transcript, { token: viewer });
+    expect(tail).toEqual({ status: 200, data: { id: p.incident.chatId, messages: compact.messages, nextBefore: compact.messages[0].id } });
+    const archived = (await f.call(`${transcript}?before=${tail.data.nextBefore}`)).data;
+    expect(archived.messages).toHaveLength(24);
+    expect(archived.messages.at(-1).id).toBe(compact.checkpoint.throughMessageId);
+    const first = (await f.call(`${transcript}?before=${archived.nextBefore}&limit=2`)).data;
+    expect(first.nextBefore).toBeNull();
+    expect(first.messages).toEqual([
+      expect.objectContaining({ role: 'user', text: 'Explain capacity' }),
+      expect.objectContaining({ role: 'assistant', text: expect.stringContaining('0 bytes are available') }),
+    ]);
+    const all = [...first.messages, ...archived.messages, ...tail.data.messages];
+    expect(new Set(all.map(message => message.id)).size).toBe(50);
+
     await f.restart();
     expect((await f.call(chat)).data).toEqual(compact);
-    expect((await f.details(notice.driveId)).questions[0].answer).toBe('Review retention policy.');
+    expect((await f.call(`${transcript}?before=${archived.nextBefore}&limit=2`)).data).toEqual(first);
+    expect((await f.details(notice.driveId)).questions[0].answer).toBe(answerText);
   });
 });
