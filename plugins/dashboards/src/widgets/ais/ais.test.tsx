@@ -1,5 +1,5 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
-import { cleanup, fireEvent, render } from '@testing-library/react';
+import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import React from 'react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -762,5 +762,113 @@ describe('AisView stacked (narrow widget)', () => {
     expect(c.querySelector('[data-legend]')).not.toBeNull();
     expect(c.querySelector('[data-stats]')?.getAttribute('data-stat-columns')).toBeNull();
     expect(c.querySelectorAll('[data-ais-row]')).toHaveLength(8);
+  });
+});
+
+describe('reset countdown', () => {
+  const NOW = Date.parse('2026-11-24T10:00:00Z');
+  const iso = (ms: number): string => new Date(NOW + ms).toISOString();
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  const withReset = (label: string, detail: string, f: number, resetsAt: string) => ({
+    ...lim(label, detail, f),
+    meta: { resetsAt },
+  });
+  const rows = () => [
+    withReset('Anthropic / red', '5-hour', 0.3, iso(5 * HOUR + 12 * MIN + 5000)),
+    withReset('Anthropic / red', 'Weekly', 0.5, iso(3 * 24 * HOUR + 4 * HOUR + 10 * MIN)),
+    withReset('Anthropic / red', 'Weekly (Fable)', 0.9, iso(12 * MIN + 5000)),
+    withReset('Anthropic / blue', 'Weekly', 0.4, iso(-HOUR)),
+    lim('Anthropic / blue', '5-hour', 0.2),
+  ];
+  const draw = () =>
+    render(
+      wrap(
+        <AisView
+          model={joinAis({
+            limits: parsePanel({
+              version: 1,
+              id: 'limits',
+              title: 'Limits',
+              status: 'ok',
+              summary: '',
+              stats: [],
+              rows: rows(),
+            }),
+          })}
+          sourceId="ais-console"
+          kiosk={false}
+          editing={false}
+        />
+      )
+    ).container;
+  const texts = (row: Element): Record<string, string> =>
+    Object.fromEntries(
+      Array.from(row.querySelectorAll('[data-countdown]')).map(e => [
+        e.getAttribute('data-countdown') ?? '',
+        e.querySelector('[data-countdown-text]')?.textContent ?? '',
+      ])
+    );
+
+  const rowNamed = (c: Element, name: string): Element => {
+    const row = Array.from(c.querySelectorAll('[data-ais-row]')).find(
+      r => r.querySelector('[data-ais-label]')?.textContent === name
+    );
+    expect(row).toBeDefined();
+    return row as Element;
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('shows the time to the reset of every bar, model windows too', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const red = rowNamed(draw(), 'red');
+    expect(texts(red)).toEqual({
+      '5-hour': '5h 12m',
+      Weekly: '3d 4h',
+      'Weekly (Fable)': '12m',
+    });
+  });
+
+  it('shows nothing for a past reset or a window with no reset', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const blue = rowNamed(draw(), 'blue');
+    expect(texts(blue)).toEqual({});
+    // The slots stay, so the columns of the lines line up.
+    expect(blue.querySelectorAll('[data-countdowns] > div')).toHaveLength(3);
+  });
+
+  it('keeps the full reset time in the tooltip text of the bars', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const bar = draw().querySelector('[data-bar]') as Element;
+    expect(bar.getAttribute('aria-label')).toMatch(/resets 2026-11-2\d \d\d:\d\d UTC/);
+  });
+
+  it('ticks every 30 s with one timer and stops it on unmount', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const setSpy = vi.spyOn(globalThis, 'setInterval');
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+    const c = draw();
+    const red = rowNamed(c, 'red');
+    expect(texts(red)['Weekly (Fable)']).toBe('12m');
+    expect(setSpy.mock.calls.filter(call => call[1] === 30_000)).toHaveLength(1);
+    act(() => {
+      vi.advanceTimersByTime(11 * MIN);
+    });
+    expect(texts(red)['Weekly (Fable)']).toBe('1m');
+    act(() => {
+      vi.advanceTimersByTime(MIN);
+    });
+    expect(texts(red)['Weekly (Fable)']).toBe('<1m');
+    act(() => {
+      vi.advanceTimersByTime(MIN);
+    });
+    expect(texts(red)['Weekly (Fable)']).toBeUndefined();
+    cleanup();
+    expect(clearSpy).toHaveBeenCalled();
+    setSpy.mockRestore();
+    clearSpy.mockRestore();
   });
 });

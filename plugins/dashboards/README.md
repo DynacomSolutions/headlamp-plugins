@@ -498,8 +498,11 @@ needed.
   the colour of its window in the legend, so no window name is written on a line. A login that needs
   attention (expiring, expired) shows a small status icon before the name and tints the line. A login that is
   fine shows nothing. A small dot after the name marks the served member of a pool, and a small ring marks
-  the registry active member. The tooltip of a line lists every window with its percentage and reset time,
-  and the login state. A widget at least 1000 px wide draws the identities of a group in two columns.
+  the registry active member. Between the bars and the percentage, each window of the legend has a small
+  slot with a dot in the colour of the window and the time to its reset ("3d 4h", "5h 12m", "12m", "<1m").
+  A window with no data, no `resetsAt` or a past reset leaves its slot empty. One timer redraws the
+  countdowns every 30 s, with no extra fetch. The tooltip of a line lists every window with its percentage
+  and full reset time, and the login state. A widget at least 1000 px wide draws the identities of a group in two columns.
 - **Pool line, joint usage**: the pool line has two text rows, the pool name and "Pool total, N members".
   Its bars are the joint usage of all members, in the same colours as the member bars. For each window,
   only the members that report that window count. The joint value is the mean of the member shares (each
