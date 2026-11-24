@@ -90,9 +90,9 @@ export type ApplyResult = z.infer<typeof applyResultSchema>;
 export type Investigation = z.infer<typeof investigationSchema>;
 export type DecisionRequest = z.infer<typeof decisionSchema>;
 export type Parent = { id: string; chatId: string; createdAt: string };
-export type Snapshot = {
 export type ScanResult = 'complete' | 'incomplete' | 'timeout' | 'error';
 export type NodeScan = { node: string; status: ScanResult | 'pending' | 'running'; completedAt?: string };
+export type Snapshot = {
   id: string;
   scannedAt: string;
   totalBytes: number;

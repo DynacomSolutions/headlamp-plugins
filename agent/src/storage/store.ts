@@ -101,8 +101,8 @@ const SCHEMA = [
     lease_owner uuid,
     lease_until timestamptz
   )`,
-  `CREATE TABLE IF NOT EXISTS storage_incident_aliases (
   'ALTER TABLE storage_incident_scans ADD COLUMN IF NOT EXISTS result text, ADD COLUMN IF NOT EXISTS completed_at timestamptz',
+  `CREATE TABLE IF NOT EXISTS storage_incident_aliases (
     node text PRIMARY KEY,
     data jsonb NOT NULL
   )`,
@@ -120,8 +120,8 @@ type Query = Db['query'];
 type RecordKind = 'evidence' | 'decision' | 'question' | 'child' | 'notice';
 type StoredApproval = { data: Approval; dispatch: Dispatch | null };
 type MessageRow = { seq: string; data: ChatMessage };
-
 type ScanState = NodeScan & { lastFullAt: number };
+
 function json(value: unknown): string {
   return JSON.stringify(value);
 }

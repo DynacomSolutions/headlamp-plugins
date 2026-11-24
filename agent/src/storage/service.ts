@@ -15,6 +15,7 @@ export class StorageIncident {
     apply: StorageApply;
     notifications: StorageNotifications;
     now: () => number;
+    nodes: string[];
   }) {}
 
   private viewDrive(state: Omit<DriveState, 'items'>, complete: boolean, now: number) {
@@ -29,7 +30,10 @@ export class StorageIncident {
     const now = this.deps.now();
     const [incident, states, notices, coverage, scanStates] = await Promise.all([
       store.parent(), store.driveSummaries(), store.list<StorageNotice>('notice'), notifications.coverage(),
+      store.scanStates(nodes, now),
     ]);
+    const scans = scanStates.map(({ node, status, completedAt }) => ({ node, status, completedAt }));
+    const completeNodes = new Set(scans.filter(scan => scan.status === 'complete').map(scan => scan.node));
     return {
       enabled: true,
       applyEnabled: this.deps.apply.enabled,
@@ -37,6 +41,7 @@ export class StorageIncident {
       drives: states.map(state => this.viewDrive(state, completeNodes.has(state.drive.node), now)),
       notices: await notifications.project(notices, incident.chatId),
       notifications: coverage,
+      scans,
     };
   }
 
@@ -44,7 +49,6 @@ export class StorageIncident {
     return this.deps.store.transaction(async tx => {
       const state = await this.findDrive(tx, id);
       const history = await tx.history(id);
-    nodes: string[];
       const evidence = await tx.list<Evidence>('evidence', id);
       const decisions = await tx.list<Decision>('decision', id);
       const questions = await tx.list<Parameters<typeof publicQuestion>[0]>('question', id);
@@ -59,10 +63,7 @@ export class StorageIncident {
       return {
         drive: this.viewDrive(state, complete, now),
         current,
-      store.scanStates(nodes, now),
         history,
-    const scans = scanStates.map(({ node, status, completedAt }) => ({ node, status, completedAt }));
-    const completeNodes = new Set(scans.filter(scan => scan.status === 'complete').map(scan => scan.node));
         items,
         evidence,
         decisions: decisions.map(({ material: _material, ...decision }) => decision),
@@ -70,7 +71,6 @@ export class StorageIncident {
         children,
         receipts,
         plans: plans.map(plan => plan.public),
-      scans,
       };
     });
   }
