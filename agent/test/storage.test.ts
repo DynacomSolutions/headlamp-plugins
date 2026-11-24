@@ -289,10 +289,13 @@ async function fixture(options: {
     return { status: response.status, data };
   };
   const reconcile = (triggers: unknown[] = []) => call(`${api}/reconcile`, { data: { triggers }, token: machine });
+  const readMetrics = async () => String((await call('/metrics', { token: false })).data);
+  const nodeCheck = (node: string, check: string, result: string, count: number) =>
+    `headlamp_agent_storage_reconcile_node_checks_total{check="${check}",node="${node}",result="${result}"} ${count}\n`;
   const parent = async () => (await call(`${api}/incident`)).data;
   const details = async (id: string) => (await call(`${api}/incident/drives/${id}`)).data;
   return {
-    db, dir, reviews, seenScans, scanPaths, applyCalls, scannerAuth, nodeFixtures, sent, env, getUrl, parent, details, reconcile, call,
+    db, dir, reviews, seenScans, scanPaths, applyCalls, scannerAuth, nodeFixtures, sent, env, getUrl, parent, details, reconcile, call, readMetrics, nodeCheck,
     authorityRequests, revokedVerbs,
     authority(status: number, member = true) { authorityStatus = status; authorityMember = member; },
     entitlementVersion(version: string) { authorityVersion = version; },
@@ -521,7 +524,9 @@ describe('Storage incident normal entry points', () => {
     };
     fixtureNode.scan = () => observation;
     const trigger = { node: nodes[0], device: '/dev/md3', mount: '/', reason: 'capacity' };
-    const readMetrics = async () => String((await f.call('/metrics', { token: false })).data);
+    const { readMetrics, nodeCheck } = f;
+    const expectCheck = async (check: string, result: string, count: number) =>
+      expect(await readMetrics()).toContain(nodeCheck(nodes[0], check, result, count));
     const scanRow = async () => (await f.db.query(
       'SELECT result, last_full_at FROM storage_incident_scans WHERE node = $1', [nodes[0]],
     )).rows[0];
@@ -539,9 +544,18 @@ describe('Storage incident normal entry points', () => {
     expect(await readMetrics()).toContain(`${successMetric} 1767227400\n`);
     expect(await readMetrics()).toContain(`${fullMetric} 0\n`);
     expect(await readMetrics()).toContain('headlamp_agent_storage_holder_evidence_expected 0\n');
+    await expectCheck('inventory', 'complete', 1);
+    await expectCheck('policy', 'matched', 1);
+    await expectCheck('trigger', 'matched', 1);
+    await expectCheck('holder', 'unavailable', 1);
+    await expectCheck('acceptance', 'contained', 1);
 
     f.advance(60_000);
     expect((await f.reconcile([{ ...trigger, device: '/dev/md4' }])).status).toBe(503);
+    await expectCheck('inventory', 'complete', 2);
+    await expectCheck('policy', 'matched', 2);
+    await expectCheck('trigger', 'unmatched', 1);
+    await expectCheck('acceptance', 'rejected', 1);
     for (const degraded of [
       { ...observation, inventoryComplete: false },
       { ...observation, execution: undefined },
@@ -553,9 +567,19 @@ describe('Storage incident normal entry points', () => {
       expect((await f.reconcile()).status).toBe(503);
       expect(await scanRow()).toEqual({ result: 'incomplete', last_full_at: null });
     }
+    await expectCheck('inventory', 'incomplete', 1);
+    await expectCheck('policy', 'unmatched', 2);
+    await expectCheck('trigger', 'not_required', 5);
+    await expectCheck('acceptance', 'rejected', 6);
     fixtureNode.status = 503;
-    expect((await f.reconcile()).status).toBe(503);
+    const submittedNode = 'unconfigured-private-node';
+    expect((await f.reconcile([{ ...trigger, node: submittedNode }])).status).toBe(503);
+    await expectCheck('acceptance', 'scanner_error', 1);
     expect(await scanRow()).toEqual({ result: 'error', last_full_at: null });
+    const rendered = await readMetrics();
+    for (const privateValue of [submittedNode, trigger.device, observation.items[0].path, machine, scanner]) {
+      expect(rendered).not.toContain(privateValue);
+    }
     expect(await readMetrics()).toContain(`${successMetric} 1767227400\n`);
     expect(await readMetrics()).toContain(`${fullMetric} 0\n`);
 
@@ -566,12 +590,15 @@ describe('Storage incident normal entry points', () => {
     expect(f.seenScans).toEqual([nodes[0]]);
     expect(await readMetrics()).toContain(`${successMetric} 1767227460\n`);
     expect(await scanRow()).toEqual({ result: 'incomplete', last_full_at: null });
+    await expectCheck('acceptance', 'contained', 2);
 
     f.advance(24 * 60 * 60_000);
     fixtureNode.scan = () => ({ ...observation, complete: true });
     expect((await f.reconcile()).status).toBe(200);
     expect(await scanRow()).toMatchObject({ result: 'complete' });
     expect(await readMetrics()).toContain(`${fullMetric} 1767313860\n`);
+    await expectCheck('holder', 'complete', 1);
+    await expectCheck('acceptance', 'full', 1);
     expect(f.applyCalls).toEqual([]);
     expect(f.sent).toEqual([]);
   });
@@ -663,6 +690,13 @@ describe('Storage incident normal entry points', () => {
     const success = async () => String((await f.call('/metrics', { token: false })).data)
       .match(/^headlamp_agent_storage_reconcile_last_success_timestamp_seconds (\d+)$/m)?.[1];
     expect(await dispatch()).toBe(true);
+    const firstMetrics = await f.readMetrics();
+    for (const [check, result] of [
+      ['inventory', 'configured_omission'], ['policy', 'matched'], ['trigger', 'matched'],
+      ['holder', 'unknown'], ['acceptance', 'configured_omission'],
+    ]) {
+      expect(firstMetrics).toContain(f.nodeCheck(partialNode, check, result, 1));
+    }
     expect(f.scanPaths.sort()).toEqual(nodes.map(node => [node, node === partialNode ? '/v2/scan' : '/v1/scan']));
     expect(await partialRow()).toEqual({ result: 'incomplete', last_full_at: null });
     expect((await f.db.query('SELECT node FROM storage_incident_scans WHERE last_full_at IS NOT NULL ORDER BY node')).rows)
@@ -708,6 +742,12 @@ describe('Storage incident normal entry points', () => {
       expect(await dispatch(), `scanner HTTP ${status}`).toBe(false);
     }
     expect(await success()).toBe(firstSuccess);
+    const failedMetrics = await f.readMetrics();
+    expect(failedMetrics).toContain(f.nodeCheck(partialNode, 'inventory', 'incomplete', 5));
+    expect(failedMetrics).toContain(f.nodeCheck(partialNode, 'policy', 'unmatched', 2));
+    expect(failedMetrics).toContain(f.nodeCheck(partialNode, 'trigger', 'unmatched', 2));
+    expect(failedMetrics).toContain(f.nodeCheck(partialNode, 'acceptance', 'rejected', 7));
+    expect(failedMetrics).toContain(f.nodeCheck(partialNode, 'acceptance', 'scanner_error', 11));
     expect(await partialRow()).toEqual({ result: 'error', last_full_at: null });
     expect([...new Set(f.scanPaths.map(path => path.join(' ')))]).toEqual([`${partialNode} /v2/scan`]);
 
@@ -716,6 +756,7 @@ describe('Storage incident normal entry points', () => {
     expect(await dispatch()).toBe(true);
     expect(await partialRow()).toEqual({ result: 'incomplete', last_full_at: null });
     expect(await success()).toBe('1767227460');
+    expect(await f.readMetrics()).toContain(f.nodeCheck(partialNode, 'acceptance', 'configured_omission', 2));
     f.advance(60_000);
     await partial.close!();
     expect(await dispatch(), 'unreachable opted-in scanner').toBe(false);

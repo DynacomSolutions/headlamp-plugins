@@ -12,6 +12,16 @@ const INGEST_TIMEOUT_MS = 90_000;
 const SCAN_LEASE_MS = SCAN_TIMEOUT_MS + INGEST_TIMEOUT_MS + 60_000;
 const CLOCK_SKEW_MS = 60_000;
 
+const CHECKS = {
+  inventory: ['complete', 'incomplete', 'configured_omission', 'unknown'],
+  policy: ['matched', 'unmatched', 'not_required'],
+  trigger: ['matched', 'unmatched', 'not_required'],
+  holder: ['complete', 'unavailable', 'unknown'],
+  acceptance: ['full', 'contained', 'configured_omission', 'rejected', 'skipped', 'busy', 'timeout', 'scanner_error', 'store_error'],
+} as const;
+type NodeChecks = { [Check in keyof typeof CHECKS]: typeof CHECKS[Check][number] };
+const CHECK_METRIC = 'headlamp_agent_storage_reconcile_node_checks_total';
+
 export class StorageReconciler {
   constructor(private readonly deps: {
     store: StorageStore;
@@ -22,7 +32,19 @@ export class StorageReconciler {
     partialScanScopes?: ReadonlyMap<string, ExpectedScopes>;
     holderEvidenceExpected?: boolean;
     now: () => number;
-  }) {}
+  }) {
+    for (const node of deps.nodes) {
+      for (const [check, results] of Object.entries(CHECKS)) {
+        for (const result of results) deps.metrics.inc(CHECK_METRIC, { node, check, result }, 0);
+      }
+    }
+  }
+
+  private record(node: string, acceptance: NodeChecks['acceptance'], evidence?: Omit<NodeChecks, 'acceptance'>): void {
+    for (const [check, result] of Object.entries({ ...evidence, acceptance })) {
+      this.deps.metrics.inc(CHECK_METRIC, { node, check, result });
+    }
+  }
 
   async run(triggers: Trigger[]): Promise<boolean> {
     const { nodes } = this.deps;
@@ -40,6 +62,7 @@ export class StorageReconciler {
     const { store, scanner, now, metrics, filesystemPolicies } = this.deps;
     const owner = randomUUID();
     let claimed = false;
+    let failure: 'scanner_error' | 'store_error' = 'store_error';
     try {
       const work = await store.transaction(async tx => {
         await tx.query("SET LOCAL statement_timeout = '15s'");
@@ -55,8 +78,12 @@ export class StorageReconciler {
         const lease = await tx.leaseScan(node, owner, started, SCAN_LEASE_MS);
         return lease ? { state: 'scan', full, due, started } as const : { state: 'busy' } as const;
       });
-      if (work.state !== 'scan') return work.state === 'skip';
+      if (work.state !== 'scan') {
+        this.record(node, work.state === 'skip' ? 'skipped' : 'busy');
+        return work.state === 'skip';
+      }
       claimed = true;
+      failure = 'scanner_error';
       const requested = now();
       const scan = await scanner.scan(node);
       const received = now();
@@ -65,6 +92,7 @@ export class StorageReconciler {
       if (scan.node !== node || !Number.isFinite(scannedAt) || Math.abs(scannedAt - requested) > CLOCK_SKEW_MS) {
         throw new Error('Scan is outside its requested node or time');
       }
+      failure = 'store_error';
       const deadline = received + INGEST_TIMEOUT_MS;
       const result = await store.transaction(async tx => {
         const remaining = deadline - now();
@@ -73,8 +101,9 @@ export class StorageReconciler {
         await tx.query("SET LOCAL statement_timeout = '45s'");
         if (!await tx.ownsScan(node, owner, now())) throw new RequestDeadlineError();
         const policies = filesystemPolicies?.get(node) ?? [];
+        const evaluatedTriggers = scan.version === 2 ? triggers : work.due;
         const { inventoryComplete, policiesMatched, matched, observed } = await ingestScan(
-          tx, scan, scan.version === 2 ? triggers : work.due, policies, received, COOLDOWN_MS,
+          tx, scan, evaluatedTriggers, policies, received, COOLDOWN_MS,
         );
         for (const state of observed) await raiseScanQuestion(tx, state, await tx.list<Decision>('decision', state.drive.id), received);
         const finished = now();
@@ -87,15 +116,26 @@ export class StorageReconciler {
         const containedInventory = contained && scan.execution === 'shadow'
           && inventoryComplete && matched && scan.filesystems.length > 0;
         const expected = this.deps.partialScanScopes?.get(node);
-        const omissionOnly = scan.version === 2 && contained && expected !== undefined
-          && scan.inventoryCoverage.filesystemInventoryComplete && policiesMatched && matched
+        const configuredOmission = scan.version === 2 && expected !== undefined
+          && scan.inventoryCoverage.filesystemInventoryComplete
           && Object.keys(scan.inventoryCoverage.scopes).length === Object.keys(expected).length
           && Object.entries(expected).every(([scope, state]) => scan.inventoryCoverage.scopes[scope] === state);
-        const accepted = complete || containedInventory || omissionOnly;
-        return { status, accepted };
+        const omissionOnly = contained && configuredOmission && policiesMatched && matched;
+        const acceptance: NodeChecks['acceptance'] = complete ? 'full' : containedInventory ? 'contained'
+          : omissionOnly ? 'configured_omission' : 'rejected';
+        const evidence: Omit<NodeChecks, 'acceptance'> = {
+          inventory: configuredOmission ? 'configured_omission' : scan.inventoryComplete === undefined ? 'unknown'
+            : scan.inventoryComplete ? 'complete' : 'incomplete',
+          policy: !policies.length ? 'not_required' : policiesMatched ? 'matched' : 'unmatched',
+          trigger: !evaluatedTriggers.length ? 'not_required' : matched ? 'matched' : 'unmatched',
+          // V2 fixes complete to false, independent of the holder check.
+          holder: scan.version === 2 ? 'unknown' : scan.complete ? 'complete' : 'unavailable',
+        };
+        return { status, acceptance, evidence };
       });
       metrics.inc('headlamp_agent_storage_scan_total', { result: result.status });
-      return result.accepted;
+      this.record(node, result.acceptance, result.evidence);
+      return result.acceptance !== 'rejected';
     } catch (error) {
       const code = (error as { code?: string } | undefined)?.code;
       const result: ScanResult = error instanceof RequestDeadlineError || code === '57014' || code === '25P04' ? 'timeout' : 'error';
@@ -107,6 +147,7 @@ export class StorageReconciler {
         }).catch(() => undefined);
       }
       metrics.inc('headlamp_agent_storage_scan_total', { result });
+      this.record(node, result === 'timeout' ? 'timeout' : failure);
       return false;
     }
   }

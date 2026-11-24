@@ -12,6 +12,7 @@ interface Meta {
 const META: Record<string, Meta> = {
   headlamp_agent_storage_reconcile_total: { type: 'counter', help: 'Storage scan reconcile requests by result.' },
   headlamp_agent_storage_scan_total: { type: 'counter', help: 'Storage scanner executions by result.' },
+  headlamp_agent_storage_reconcile_node_checks_total: { type: 'counter', help: 'Storage reconcile checks by configured scanner node, check and result.' },
   headlamp_agent_storage_last_full_scan_timestamp_seconds: { type: 'gauge', help: 'Unix time of the last complete daily scan by node.' },
   headlamp_agent_storage_reconcile_last_success_timestamp_seconds: { type: 'gauge', help: 'Unix time of the last successful storage scan reconcile.' },
   headlamp_agent_storage_holder_evidence_expected: { type: 'gauge', help: 'Whether storage scans must collect host process evidence.' },
