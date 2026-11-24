@@ -6,6 +6,8 @@ import { clean, MAX_APPROVAL_ITEMS, needsMergeEvidence, StorageError, type Appro
 
 const PLAN_MS = 30 * 60_000;
 
+export const PARTIAL_CLEANUP = 'Cleanup requires intervention. Check Cleanup receipts before taking further action.';
+
 export class StorageApply {
   private readonly running = new Map<string, Promise<boolean>>();
 
@@ -33,7 +35,10 @@ export class StorageApply {
       const at = now();
       const complete = (await tx.scanState(state.drive.node, at)).status === 'complete';
       const current = complete ? state.current : { ...state.current, complete: false };
-      const views = itemViews({ ...state, current }, await tx.list<Decision>('decision', driveId), at);
+      const partial = new Set((await tx.cleanupReceipts(driveId))
+        .filter(({ data }) => data.status === 'partial').map(({ data }) => data.itemId));
+      const views = itemViews({ ...state, current }, await tx.list<Decision>('decision', driveId), at)
+        .map(item => partial.has(item.id) ? { ...item, eligible: false, reason: PARTIAL_CLEANUP } : item);
       const plan: Plan = {
         id: randomUUID(),
         driveId,
@@ -80,6 +85,10 @@ export class StorageApply {
       }
       if (Date.parse(plan.public.expiresAt) <= at) throw new StorageError(409, 'The plan expired');
       const selected = new Set(itemIds);
+      const outstanding = await tx.cleanupReceipts(state.drive.id);
+      if (outstanding.some(({ data }) => selected.has(data.itemId) && data.status === 'partial')) {
+        throw new StorageError(409, PARTIAL_CLEANUP);
+      }
       const planned = plan.public.items.filter(item => selected.has(item.itemId));
       const lacksMergeProof = (item: Pick<Plan['items'][number], 'category' | 'mergeEvidence'>) =>
         needsMergeEvidence(item.category) && item.mergeEvidence !== 'verified';
@@ -93,7 +102,7 @@ export class StorageApply {
       const decisions = await tx.list<Decision>('decision', state.drive.id);
       const allowed = this.revalidate(state, plan, decisions, at);
       const approval: Approval = { id: randomUUID(), planId, driveId: state.drive.id, itemIds, by: actor, createdAt: new Date(at).toISOString() };
-      const pending = new Set((await tx.cleanupReceipts(state.drive.id)).map(({ data }) => data.itemId));
+      const pending = new Set(outstanding.map(({ data }) => data.itemId));
       const receipts = itemIds.map((itemId): Receipt => {
         const current = allowed.has(itemId) && !pending.has(itemId);
         return {
@@ -107,7 +116,8 @@ export class StorageApply {
       await tx.putReceipts(receipts);
       return { approval, receipts };
     });
-    if (result.receipts.some(receipt => receipt.status === 'queued')) void this.run(result.approval.id);
+    if (!result.receipts.some(receipt => receipt.status === 'partial')
+      && result.receipts.some(receipt => receipt.status === 'queued')) void this.run(result.approval.id);
     return result;
   }
 
@@ -145,10 +155,13 @@ export class StorageApply {
       const { data: approval } = stored;
       // The drive lock serialises the dispatch boundary with operator decisions.
       const state = await tx.drive(approval.driveId, true);
-      const queued = (await tx.receipts(id)).filter(receipt => receipt.status === 'queued');
+      const receipts = await tx.receipts(id);
+      if (receipts.some(receipt => receipt.status === 'partial')) return;
+      const queued = receipts.filter(receipt => receipt.status === 'queued');
       if (!queued.length) return;
       if (!state || !this.permitted(state)) return { gated: true } as const;
       if (stored.dispatch) {
+        // A lost response can hide a terminal receipt. The scanner resolves it using the original request.
         const dispatch = stored.dispatch;
         if (dispatch.node !== state.drive.node || dispatch.filesystemId !== state.drive.filesystemId) return { gated: true } as const;
         return { approval, dispatch };
@@ -184,11 +197,13 @@ export class StorageApply {
         const check = selected.get(receipt.itemId)!;
         const previous = queued.get(check.itemId);
         if (!previous) return [];
-        const reason = check.visibility === 'jev' ? clean(receipt.reason) : `Scanner reports ${receipt.status}`;
+        const reason = receipt.status === 'partial' ? receipt.reason
+          : check.visibility === 'jev' ? clean(receipt.reason) : `Scanner reports ${receipt.status}`;
         return [{ ...previous, status: receipt.status, reason, bytes: receipt.bytes, updatedAt }];
       });
       await tx.putReceipts(verified);
-      return !(await tx.receipts(id)).some(receipt => receipt.status === 'queued');
+      const receipts = await tx.receipts(id);
+      return receipts.some(receipt => receipt.status === 'partial') || !receipts.some(receipt => receipt.status === 'queued');
     });
   }
 }

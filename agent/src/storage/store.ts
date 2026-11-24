@@ -245,8 +245,8 @@ export class StorageQueries {
 
   async cleanupReceipts(driveId: string, item?: { id: string; scannedAt: string }): Promise<Array<{ data: Receipt; dispatched: boolean }>> {
     const filter = item
-      ? "AND r.data->>'itemId' = $2 AND (r.status = 'queued' OR (r.status = 'removed' AND (r.data->>'updatedAt')::timestamptz >= $3))"
-      : "AND r.status = 'queued'";
+      ? "AND r.data->>'itemId' = $2 AND (r.status IN ('queued', 'partial') OR (r.status = 'removed' AND (r.data->>'updatedAt')::timestamptz >= $3))"
+      : "AND r.status IN ('queued', 'partial')";
     const { rows } = await this.query(`SELECT r.data, a.dispatch IS NOT NULL AS dispatched FROM storage_incident_receipts r
       JOIN storage_incident_approvals a ON r.approval_id = a.id
       JOIN storage_incident_plans p ON a.plan_id = p.id
@@ -255,7 +255,11 @@ export class StorageQueries {
   }
 
   async pending(): Promise<string[]> {
-    return (await this.query("SELECT DISTINCT approval_id FROM storage_incident_receipts WHERE status = 'queued'")).rows.map(row => row.approval_id as string);
+    const { rows } = await this.query(`SELECT DISTINCT r.approval_id FROM storage_incident_receipts r
+      WHERE r.status = 'queued' AND NOT EXISTS (
+        SELECT 1 FROM storage_incident_receipts terminal WHERE terminal.approval_id = r.approval_id AND terminal.status = 'partial'
+      )`);
+    return rows.map(row => row.approval_id as string);
   }
 
   async addMessage(message: ChatMessage): Promise<void> {

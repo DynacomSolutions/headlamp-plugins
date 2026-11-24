@@ -81,12 +81,18 @@ export const filesystemPoliciesSchema = z.record(name, z.array(filesystemPolicy)
 
 export const reconcileSchema = z.object({ triggers: z.array(triggerSchema).max(500) }).strict();
 export const MAX_APPROVAL_ITEMS = 1000;
-export const receiptStatus = z.enum(['removed', 'stale', 'blocked', 'failed']);
+export const receiptStatus = z.enum(['removed', 'partial', 'stale', 'blocked', 'failed']);
+const scannerReceipt = z.object({
+  itemId: itemKey,
+  status: receiptStatus,
+  reason: z.string().max(1000),
+  bytes: count,
+}).refine(receipt => receipt.status !== 'partial' || /^needs-intervention:[a-z0-9]+(?:-[a-z0-9]+)*$/.test(receipt.reason));
 export const applyResultSchema = z.object({
   planId: z.uuid(),
   approvalId: z.uuid(),
   node: name,
-  receipts: z.array(z.object({ itemId: itemKey, status: receiptStatus, reason: z.string().max(1000), bytes: count })).max(MAX_APPROVAL_ITEMS),
+  receipts: z.array(scannerReceipt).max(MAX_APPROVAL_ITEMS),
 }).refine(response => unique(response.receipts.map(receipt => receipt.itemId)));
 
 export const investigationSchema = z.object({ kind: z.enum(['inventory', 'capacity', 'eligibility']), itemId: z.uuid().optional() }).strict();

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { investigate, publicQuestion, raiseScanQuestion } from './findings.js';
 import { itemViews, scanIsFresh, updateCleanupNotice, type StorageNotice } from './inventory.js';
-import type { StorageApply } from './apply.js';
+import { PARTIAL_CLEANUP, type StorageApply } from './apply.js';
 import type { StorageNotifications } from './notifications.js';
 import type { StorageQueries, StorageStore } from './store.js';
 import { clean, StorageError, type Chat, type ChatTranscript, type Checkpoint, type Child, type Decision, type DecisionRequest, type DriveState, type Evidence, type Investigation, type Question } from './types.js';
@@ -84,10 +84,13 @@ export class StorageIncident {
       const { status } = await tx.scanState(state.drive.node, now);
       const complete = status === 'complete' && scanIsFresh(state, now);
       const current = complete ? state.current : { ...state.current, complete: false, eligibleCount: 0 };
-      const items = itemViews(status === 'complete' ? state : { ...state, current }, decisions, now);
+      const partial = new Set(receipts.filter(receipt => receipt.status === 'partial').map(receipt => receipt.itemId));
+      const items = itemViews(status === 'complete' ? state : { ...state, current }, decisions, now)
+        .map(item => partial.has(item.id) ? { ...item, eligible: false, reason: PARTIAL_CLEANUP } : item);
+      const eligibleCount = complete ? items.filter(item => item.eligible).length : 0;
       return {
-        drive: this.viewDrive(state, complete, now),
-        current,
+        drive: { ...this.viewDrive(state, complete, now), eligibleCount },
+        current: { ...current, eligibleCount },
         history,
         items,
         evidence,
@@ -121,6 +124,9 @@ export class StorageIncident {
       const receipts = await tx.cleanupReceipts(id, { id: request.itemId, scannedAt: state.current.scannedAt });
       if (receipts.some(receipt => receipt.data.status === 'removed')) {
         throw new StorageError(409, 'Cleanup already removed this item. Refresh the inventory and check Cleanup receipts.');
+      }
+      if (receipts.some(receipt => receipt.data.status === 'partial')) {
+        throw new StorageError(409, PARTIAL_CLEANUP);
       }
       const dispatched = receipts.find(receipt => receipt.dispatched);
       if (dispatched) {

@@ -222,7 +222,7 @@ export async function storageHttp(deps: HttpHelpers & {
       const byNode = new Map(current.scans.map(scan => [scan.node, scan.at]));
       for (const node of active.urls.keys()) metrics.set('headlamp_agent_storage_last_full_scan_timestamp_seconds', { node }, byNode.get(node) ?? 0);
       const counts = new Map(current.receipts.map(row => [row.status, row.count]));
-      for (const status of ['queued', 'removed', 'stale', 'blocked', 'failed']) metrics.set('headlamp_agent_storage_receipts', { status }, counts.get(status) ?? 0);
+      for (const status of ['queued', 'removed', 'partial', 'stale', 'blocked', 'failed']) metrics.set('headlamp_agent_storage_receipts', { status }, counts.get(status) ?? 0);
       await backend.notifications.metrics(metrics);
     },
     async drain() {
