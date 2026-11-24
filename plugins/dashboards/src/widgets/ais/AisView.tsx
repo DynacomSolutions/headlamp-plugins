@@ -52,9 +52,10 @@ export const isStacked = (width: number): boolean => width > 0 && width < STACK_
 export const COUNTDOWN_SLOT = 64;
 /** The width reserved for the percentage at the end of a line, in px. The countdowns never take it. */
 export const PERCENT_WIDTH = 44;
-/** The room that a row needs besides its cells: padding, indent, scroll bar and the least bars width. */
-const ROW_PAD = 80;
-const BARS_MIN = 56;
+/** The room that a row needs besides its cells: padding and the scroll bar. */
+const ROW_PAD = 40;
+/** The least width of the bars, as in the grid of a line. */
+const BARS_MIN = 40;
 const COLUMN_GAP = 10;
 /** The widest name column of a row, in px (the pool line is wider than a member line). */
 const nameWidth = (wideRow: boolean): number => (wideRow ? 250 : 200);
