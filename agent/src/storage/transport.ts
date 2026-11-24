@@ -3,9 +3,15 @@ import { request as httpsRequest } from 'node:https';
 import { z } from 'zod';
 import { applyResultSchema, scanSchema, type ApplyResult, type Scan } from './types.js';
 
-export const SCAN_TIMEOUT_MS = 10 * 60_000;
+export const SCAN_TIMEOUT_MS = 960_000;
 export const APPLY_TIMEOUT_MS = 60_000;
 const MAX_SCAN_BYTES = 32 * 1024 * 1024;
+
+export class RequestDeadlineError extends Error {
+  constructor() {
+    super('Scanner request deadline exceeded');
+  }
+}
 
 export interface Scanner {
   scan(node: string): Promise<Scan>;
@@ -17,12 +23,19 @@ export function requestJson(
   url: URL,
   options: { token: string; timeoutMs: number; body?: unknown; ca?: string; limit?: number },
 ): Promise<{ status: number; data?: unknown }> {
-  return new Promise((resolve, reject) => {
+  const deadline = performance.now() + options.timeoutMs;
+  let timer: NodeJS.Timeout | undefined;
+  return new Promise<{ status: number; data?: unknown }>((resolve, reject) => {
     const body = options.body === undefined ? undefined : JSON.stringify(options.body);
     const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    const limit = options.limit ?? MAX_SCAN_BYTES;
+    const expire = () => {
+      const error = new RequestDeadlineError();
+      reject(error);
+      req.destroy(error);
+    };
     const req = request(url, {
       method: body === undefined ? 'GET' : 'POST',
-      signal: AbortSignal.timeout(options.timeoutMs),
       ca: options.ca,
       headers: {
         accept: 'application/json',
@@ -32,33 +45,47 @@ export function requestJson(
     }, res => {
       const status = res.statusCode ?? 500;
       res.on('error', reject);
+      res.on('aborted', () => reject(new Error('Response stream was interrupted')));
+      if (performance.now() >= deadline) return expire();
       if (status < 200 || status >= 300) {
-        res.destroy();
         resolve({ status });
+        res.destroy();
+        return;
+      }
+      const tooLarge = () => {
+        reject(new Error('Response exceeds size limit'));
+        res.destroy();
+      };
+      if (Number(res.headers['content-length']) > limit) {
+        tooLarge();
         return;
       }
       let size = 0;
       const chunks: Buffer[] = [];
       res.on('data', (chunk: Buffer) => {
         size += chunk.length;
-        if (size > (options.limit ?? MAX_SCAN_BYTES)) {
-          reject(new Error('Response exceeds size limit'));
-          res.destroy();
+        if (size > limit) {
+          tooLarge();
           return;
         }
         chunks.push(chunk);
       });
       res.on('end', () => {
+        if (performance.now() >= deadline) return expire();
         try {
-          resolve({ status, data: JSON.parse(Buffer.concat(chunks).toString('utf8')) });
+          const data: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+          if (performance.now() >= deadline) return expire();
+          resolve({ status, data });
         } catch (error) {
           reject(error);
         }
       });
     });
     req.on('error', reject);
+    timer = setTimeout(expire, Math.max(0, deadline - performance.now()));
+    timer.unref();
     req.end(body);
-  });
+  }).finally(() => clearTimeout(timer));
 }
 
 export class HttpScanner implements Scanner {

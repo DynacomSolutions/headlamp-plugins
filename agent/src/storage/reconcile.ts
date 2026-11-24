@@ -3,12 +3,14 @@ import type { Metrics } from '../metrics.js';
 import { raiseScanQuestion } from './findings.js';
 import { ingestScan, resolveCooldowns } from './inventory.js';
 import type { StorageStore } from './store.js';
-import { SCAN_TIMEOUT_MS, type Scanner } from './transport.js';
-import type { Decision, Trigger } from './types.js';
+import { RequestDeadlineError, SCAN_TIMEOUT_MS, type Scanner } from './transport.js';
+import type { Decision, ScanResult, Trigger } from './types.js';
 
 const DAY_MS = 24 * 60 * 60_000;
 const COOLDOWN_MS = 15 * 60_000;
-const SCAN_LEASE_MS = SCAN_TIMEOUT_MS + 2 * 60_000;
+const INGEST_TIMEOUT_MS = 90_000;
+const SCAN_LEASE_MS = SCAN_TIMEOUT_MS + INGEST_TIMEOUT_MS + 60_000;
+const CLOCK_SKEW_MS = 60_000;
 
 export class StorageReconciler {
   constructor(private readonly deps: {
@@ -33,39 +35,62 @@ export class StorageReconciler {
 
   private async scanNode(node: string, triggers: Trigger[]): Promise<boolean> {
     const { store, scanner, now, metrics } = this.deps;
-    const started = now();
     const owner = randomUUID();
     let claimed = false;
     try {
       const work = await store.transaction(async tx => {
+        await tx.query("SET LOCAL statement_timeout = '15s'");
+        await tx.query("SET LOCAL transaction_timeout = '15s'");
         await tx.lock(`scan:${node}`);
-        const full = Math.floor(await tx.lastFull(node) / DAY_MS) < Math.floor(started / DAY_MS);
+        const started = now();
+        const latest = await tx.scanState(node, started);
+        if (latest.status === 'running') return { state: 'busy' } as const;
+        const full = Math.floor(latest.lastFullAt / DAY_MS) < Math.floor(started / DAY_MS);
+        const retry = ['incomplete', 'timeout', 'error'].includes(latest.status);
         const due = await resolveCooldowns(tx, node, triggers, started, COOLDOWN_MS);
-        if (!full && !due.length) return { state: 'skip' } as const;
+        if (!full && !retry && !due.length) return { state: 'skip' } as const;
         const lease = await tx.leaseScan(node, owner, started, SCAN_LEASE_MS);
-        return lease ? { state: 'scan', full, due } as const : { state: 'busy' } as const;
+        return lease ? { state: 'scan', full, due, started } as const : { state: 'busy' } as const;
       });
       if (work.state !== 'scan') return work.state === 'skip';
       claimed = true;
+      const requested = now();
       const scan = await scanner.scan(node);
-      if (scan.node !== node || Date.parse(scan.scannedAt) > now() + 60_000 || Date.parse(scan.scannedAt) < started - 60_000) {
+      const received = now();
+      const scannedAt = Date.parse(scan.scannedAt);
+      if (received >= requested + SCAN_TIMEOUT_MS) throw new RequestDeadlineError();
+      if (scan.node !== node || !Number.isFinite(scannedAt) || Math.abs(scannedAt - requested) > CLOCK_SKEW_MS) {
         throw new Error('Scan is outside its requested node or time');
       }
-      const done = await store.transaction(async tx => {
-        if (!await tx.ownsScan(node, owner)) return false;
+      const deadline = received + INGEST_TIMEOUT_MS;
+      const result = await store.transaction(async tx => {
+        const remaining = deadline - now();
+        if (remaining <= 0) throw new RequestDeadlineError();
+        await tx.query("SELECT set_config('transaction_timeout', $1, true)", [`${remaining}ms`]);
         await tx.query("SET LOCAL statement_timeout = '45s'");
-        const result = await ingestScan(tx, scan, work.due, started, COOLDOWN_MS);
-        for (const state of result.observed) await raiseScanQuestion(tx, state, await tx.list<Decision>('decision', state.drive.id), started);
-        await tx.finishScan(node, owner, scan.complete && work.full ? started : undefined);
-        return scan.complete && result.matched;
+        if (!await tx.ownsScan(node, owner, now())) throw new RequestDeadlineError();
+        const { matched, observed } = await ingestScan(tx, scan, work.due, received, COOLDOWN_MS);
+        for (const state of observed) await raiseScanQuestion(tx, state, await tx.list<Decision>('decision', state.drive.id), received);
+        const finished = now();
+        if (finished >= deadline || finished >= work.started + SCAN_LEASE_MS) throw new RequestDeadlineError();
+        const result = scan.complete && matched ? 'complete' : 'incomplete';
+        await tx.finishScan(node, owner, result, finished, result === 'complete' && work.full ? scannedAt : undefined);
+        return result;
       });
-      metrics.inc('headlamp_agent_storage_scan_total', { result: scan.complete ? 'complete' : 'incomplete' });
-      return done;
-    } catch {
-      metrics.inc('headlamp_agent_storage_scan_total', { result: 'error' });
+      metrics.inc('headlamp_agent_storage_scan_total', { result });
+      return result === 'complete';
+    } catch (error) {
+      const code = (error as { code?: string } | undefined)?.code;
+      const result: ScanResult = error instanceof RequestDeadlineError || code === '57014' || code === '25P04' ? 'timeout' : 'error';
+      if (claimed) {
+        await store.transaction(async tx => {
+          await tx.query("SET LOCAL statement_timeout = '15s'");
+          await tx.query("SET LOCAL transaction_timeout = '15s'");
+          await tx.finishScan(node, owner, result, now());
+        }).catch(() => undefined);
+      }
+      metrics.inc('headlamp_agent_storage_scan_total', { result });
       return false;
-    } finally {
-      if (claimed) await store.finishScan(node, owner).catch(() => undefined);
     }
   }
 }

@@ -45,7 +45,7 @@ export class Metrics {
     this.inc('headlamp_agent_alert_repeats_merged_total', {}, 0);
     this.inc('headlamp_agent_resolve_notifications_total', {}, 0);
     for (const result of ['success', 'error']) this.inc('headlamp_agent_storage_reconcile_total', { result }, 0);
-    for (const result of ['complete', 'incomplete', 'error']) this.inc('headlamp_agent_storage_scan_total', { result }, 0);
+    for (const result of ['complete', 'incomplete', 'timeout', 'error']) this.inc('headlamp_agent_storage_scan_total', { result }, 0);
     for (const result of ['ok', 'error', 'skipped']) this.inc('headlamp_agent_reconcile_runs_total', { result }, 0);
   }
 

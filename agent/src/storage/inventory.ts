@@ -5,6 +5,12 @@ import { clean, needsMergeEvidence, type Decision, type DriveState, type Interna
 type Filesystem = Scan['filesystems'][number];
 export type StorageNotice = Notice & { external: boolean; externalItemId?: string; critical?: boolean };
 const hash = (values: unknown[]) => createHash('sha256').update(JSON.stringify(values)).digest('hex');
+const MAX_SCAN_AGE_MS = 24 * 60 * 60_000;
+
+export function scanIsFresh(state: Pick<DriveState, 'current'>, now: number): boolean {
+  const age = now - Date.parse(state.current.scannedAt);
+  return state.current.complete && age >= 0 && age <= MAX_SCAN_AGE_MS;
+}
 
 function filesystemScope(node: string, fs: Filesystem): string {
   return JSON.stringify(fs.shared ? ['shared', fs.id] : ['node', node, fs.id]);
@@ -18,18 +24,21 @@ function decisionMap(decisions: Decision[]): Map<string, Decision> {
 
 export function itemViews(state: DriveState, decisions: Decision[], now: number) {
   const latest = decisionMap(decisions);
+  const fresh = scanIsFresh(state, now);
   return state.items.map(item => {
     const decision = latest.get(item.id);
     const current = decision?.decision === 'defer' || decision?.material === item.decisionMaterial ? decision : undefined;
     const keep = current?.decision === 'keep';
     const deferUntil = current?.decision === 'defer' && Date.parse(current.until!) > now ? current.until : undefined;
     const mergeEvidence = needsMergeEvidence(item.category) ? item.mergeEvidence ?? 'unavailable' : undefined;
-    const eligible = state.current.complete && item.eligible && mergeEvidence !== 'unavailable' && !item.inUse && !keep && !deferUntil;
+    const eligible = fresh && item.eligible && mergeEvidence !== 'unavailable' && item.inUse === false && !keep && !deferUntil;
     const reason = !state.current.complete ? 'The scan is incomplete'
-      : keep ? 'Kept by an operator'
-        : deferUntil ? 'Deferred by an operator'
-          : mergeEvidence === 'unavailable' ? 'Merge verification unavailable'
-            : item.inUse ? 'In use' : item.reason;
+      : !fresh ? 'The scan is too old'
+        : keep ? 'Kept by an operator'
+          : deferUntil ? 'Deferred by an operator'
+            : mergeEvidence === 'unavailable' ? 'Merge verification unavailable'
+              : item.inUse === true ? 'In use'
+                : item.inUse === undefined ? 'Inactivity was not verified' : item.reason;
     return {
       id: item.id,
       category: item.category,
@@ -50,12 +59,12 @@ export function itemViews(state: DriveState, decisions: Decision[], now: number)
 function normalizeItem(item: ScanItem, node: string, id: string): InternalItem {
   const jev = item.visibility === 'jev';
   const mergeEvidence = needsMergeEvidence(item.category) ? item.mergeEvidence ?? 'unavailable' : undefined;
-  const eligible = item.category !== 'host-temp' && item.eligible && mergeEvidence !== 'unavailable' && !item.inUse;
+  const eligible = item.category !== 'host-temp' && item.eligible && mergeEvidence !== 'unavailable' && item.inUse === false;
   return {
     id,
     scannerId: item.id,
     category: item.category,
-    material: hash([node, item.id, item.objectKey, item.path, item.category, item.bytes, item.owner, item.inUse, item.holder, item.eligible, item.visibility, mergeEvidence]),
+    material: hash([node, item.objectKey ? undefined : item.id, item.objectKey, item.path, item.category, item.bytes, item.owner, item.inUse, item.holder, item.eligible, item.visibility, mergeEvidence]),
     decisionMaterial: hash([item.category, item.bytes, item.owner, item.inUse, item.holder]),
     path: jev ? clean(item.path) : undefined,
     owner: jev ? clean(item.owner) : undefined,
@@ -69,8 +78,12 @@ function normalizeItem(item: ScanItem, node: string, id: string): InternalItem {
   };
 }
 
+function aliasKey(device: string, mountpoint: string): string {
+  return JSON.stringify([device, mountpoint]);
+}
+
 function triggerKey(trigger: Trigger): string {
-  return trigger.mount ? `mount:${trigger.mount}` : `id:${trigger.filesystemId}`;
+  return trigger.device !== undefined && trigger.mount !== undefined ? aliasKey(trigger.device, trigger.mount) : `id:${trigger.filesystemId}`;
 }
 
 export async function resolveCooldowns(tx: StorageQueries, node: string, triggers: Trigger[], now: number, cooldownMs: number): Promise<Trigger[]> {
@@ -146,7 +159,7 @@ export async function ingestScan(
   }
   for (const { fs, scope } of filesystems) {
     addAlias(`id:${fs.id}`, scope);
-    for (const mount of [fs.mount, ...(fs.aliases ?? []).map(a => a.mountpoint)]) addAlias(`mount:${mount}`, scope);
+    for (const { device, mountpoint } of fs.aliases ?? []) addAlias(aliasKey(device, mountpoint), scope);
   }
   const aliases = new Map([...aliasScopes].flatMap(([key, scopes]) => scopes.size === 1 ? [[key, [...scopes][0]] as const] : []));
   if (scan.complete) await tx.putAliases(scan.node, [...aliases]);

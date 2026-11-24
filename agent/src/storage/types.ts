@@ -5,7 +5,9 @@ import { maskText } from '../mask.js';
 const count = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const name = z.string().min(1).max(256);
 const itemKey = z.string().min(1).max(512).regex(/^[A-Za-z0-9._:-]+$/);
-const mount = z.string().min(1).max(1000).startsWith('/');
+const label = z.string().min(1).max(4096).refine(value => !value.includes('\0'));
+const mount = label.refine(value => value.startsWith('/'));
+const filesystemId = z.string().min(1).max(4608).refine(value => !value.includes('\0'));
 const unique = <T>(values: T[]) => new Set(values).size === values.length;
 const category = z.enum(['build-cache', 'linked-worktree', 'pod-task', 'host-temp']);
 const mergeEvidence = z.enum(['verified', 'unavailable']);
@@ -18,11 +20,11 @@ export const scanSchema = z.object({
   scannedAt: z.iso.datetime(),
   execution: z.enum(['shadow', 'disposable']).optional(),
   filesystems: z.array(z.object({
-    id: name,
+    id: filesystemId,
     mount,
-    aliases: z.array(z.object({ mountpoint: mount })).max(200).optional(),
+    aliases: z.array(z.object({ device: label, mountpoint: mount })).max(200).optional(),
     shared: z.boolean().optional(),
-    device: name.optional(),
+    device: label.optional(),
     majorMinor: name.optional(),
     fsType: name.optional(),
     totalBytes: count,
@@ -34,7 +36,7 @@ export const scanSchema = z.object({
     category,
     path: z.string().max(2000),
     owner: z.string().max(256),
-    filesystemId: name,
+    filesystemId,
     bytes: count,
     eligible: z.boolean(),
     mergeEvidence: mergeEvidence.optional(),
@@ -52,12 +54,14 @@ export const scanSchema = z.object({
 
 export const triggerSchema = z.object({
   node: name,
-  filesystemId: name.optional(),
+  filesystemId: filesystemId.optional(),
+  device: label.optional(),
   mount: mount.optional(),
   reason: z.enum(['capacity', 'growth', 'forecast']),
   reserveBytes: count.optional(),
   criticalBytes: count.optional(),
-}).strict().refine(t => Boolean(t.filesystemId) !== Boolean(t.mount) && (t.reserveBytes === undefined || t.criticalBytes === undefined || t.criticalBytes <= t.reserveBytes));
+}).strict().refine(t => (t.filesystemId === undefined ? t.device !== undefined && t.mount !== undefined : t.device === undefined && t.mount === undefined)
+  && (t.reserveBytes === undefined || t.criticalBytes === undefined || t.criticalBytes <= t.reserveBytes));
 export const reconcileSchema = z.object({ triggers: z.array(triggerSchema).max(500) }).strict();
 export const receiptStatus = z.enum(['removed', 'stale', 'blocked', 'failed']);
 export const applyResultSchema = z.object({
@@ -87,6 +91,8 @@ export type Investigation = z.infer<typeof investigationSchema>;
 export type DecisionRequest = z.infer<typeof decisionSchema>;
 export type Parent = { id: string; chatId: string; createdAt: string };
 export type Snapshot = {
+export type ScanResult = 'complete' | 'incomplete' | 'timeout' | 'error';
+export type NodeScan = { node: string; status: ScanResult | 'pending' | 'running'; completedAt?: string };
   id: string;
   scannedAt: string;
   totalBytes: number;

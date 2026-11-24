@@ -53,7 +53,7 @@ async function listener(handle: (req: IncomingMessage, res: ServerResponse) => P
 
 function fs(id: string, mount: string, availableBytes = 10, shared = false): Scan['filesystems'][number] {
   return {
-    id, mount, totalBytes: 1000, availableBytes, shared, aliases: [{ mountpoint: `${mount}-alias` }],
+    id, mount, totalBytes: 1000, availableBytes, shared, aliases: [{ device: 'fixture-device', mountpoint: `${mount}-alias` }],
     device: 'fixture-device', majorMinor: '0:42', fsType: 'fixturefs',
   };
 }
@@ -270,7 +270,7 @@ describe('Storage incident normal entry points', () => {
   it('advertises disabled state without exposing records', async () => {
     const f = await fixture({ disabled: true });
     expect(await f.call(`${api}/incident`, { token: false })).toEqual({
-      status: 200, data: { enabled: false, applyEnabled: false, incident: null, drives: [], notices: [], notifications: { enabled: false, registeredRecipients: 0 } },
+      status: 200, data: { enabled: false, applyEnabled: false, incident: null, drives: [], notices: [], scans: [], notifications: { enabled: false, registeredRecipients: 0 } },
     });
     expect((await f.reconcile()).status).toBe(503);
     expect((await f.call('/metrics', { token: false })).data).toContain('headlamp_agent_storage_push_registered_recipients 0');
@@ -358,7 +358,7 @@ describe('Storage incident normal entry points', () => {
       if (arrivals.size === nodes.length) release();
       await allScanners;
     });
-    const trigger = { node: nodes[0], mount: '/volume-alias', reason: 'growth', reserveBytes: 90, criticalBytes: 25 };
+    const trigger = { node: nodes[0], device: 'fixture-device', mount: '/volume-alias', reason: 'growth', reserveBytes: 90, criticalBytes: 25 };
     expect(await f.reconcile([trigger])).toMatchObject({ status: 503, data: { ok: false } });
     expect(arrivals.size).toBe(6);
     expect(f.scannerAuth.every(token => token === `Bearer ${scanner}`)).toBe(true);

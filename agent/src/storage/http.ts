@@ -15,12 +15,13 @@ import { answerSchema, approvalSchema, decisionSchema, investigationSchema, mess
 
 const base = '/api/storage';
 const empty = {
-  enabled: false, applyEnabled: false, incident: null, drives: [], notices: [],
+  enabled: false, applyEnabled: false, incident: null, drives: [], notices: [], scans: [],
   notifications: { enabled: false, registeredRecipients: 0 },
 };
 const uuid = z.uuid();
 const emptyBody = z.object({}).strict();
 const MAX_APPROVAL_BODY_BYTES = 2 * 1024 * 1024;
+const MAX_RECONCILE_BODY_BYTES = 8 * 1024 * 1024;
 
 type HttpHelpers = {
   readBody(req: IncomingMessage, maxBytes?: number): Promise<unknown>;
@@ -84,8 +85,9 @@ export async function storageHttp(deps: HttpHelpers & {
     const scanner = new HttpScanner(configured.urls, configured.scannerToken);
     const apply = new StorageApply({ store: db, scanner, now, enabled: configured.applyEnabled, disposable: configured.disposable });
     const notifications = new StorageNotifications({ store: db, now, push });
-    const reconcile = new StorageReconciler({ store: db, scanner, now, metrics, nodes: new Set(configured.urls.keys()) });
-    return { apply, notifications, reconcile, db, service: new StorageIncident({ store: db, now, apply, notifications }) };
+    const nodes = [...configured.urls.keys()];
+    const reconcile = new StorageReconciler({ store: db, scanner, now, metrics, nodes: new Set(nodes) });
+    return { apply, notifications, reconcile, db, service: new StorageIncident({ store: db, now, apply, notifications, nodes }) };
   }
 
   function validId<T>(type: z.ZodType<T>, value: unknown): T {
@@ -114,7 +116,7 @@ export async function storageHttp(deps: HttpHelpers & {
     const { apply, notifications, reconcile, db, service } = backend;
     if (root === 'reconcile' && parts.length === 1 && method === 'POST') {
       if (!authenticatedMachine(req, active.reconcileToken())) throw new StorageError(401, 'Reconcile authentication required');
-      const { triggers } = await body(req, reconcileSchema);
+      const { triggers } = await body(req, reconcileSchema, MAX_RECONCILE_BODY_BYTES);
       const scanned = await reconcile.run(triggers);
       const applied = await apply.retryPending();
       const ok = scanned && applied;

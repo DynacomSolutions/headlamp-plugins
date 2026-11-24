@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { investigate, publicQuestion, raiseScanQuestion } from './findings.js';
-import { itemViews, updateCleanupNotice, type StorageNotice } from './inventory.js';
+import { itemViews, scanIsFresh, updateCleanupNotice, type StorageNotice } from './inventory.js';
 import type { StorageApply } from './apply.js';
 import type { StorageNotifications } from './notifications.js';
 import type { StorageQueries, StorageStore } from './store.js';
@@ -17,20 +17,24 @@ export class StorageIncident {
     now: () => number;
   }) {}
 
-  private viewDrive(state: Omit<DriveState, 'items'>) {
+  private viewDrive(state: Omit<DriveState, 'items'>, complete: boolean, now: number) {
+    if (!complete || !scanIsFresh(state, now)) {
+      return { ...state.drive, status: 'incomplete' as const, complete: false, applyEnabled: false, eligibleCount: 0 };
+    }
     return { ...state.drive, applyEnabled: this.deps.apply.permitted(state) };
   }
 
   async parent() {
-    const { store, notifications } = this.deps;
-    const [incident, states, notices, coverage] = await Promise.all([
+    const { store, notifications, nodes } = this.deps;
+    const now = this.deps.now();
+    const [incident, states, notices, coverage, scanStates] = await Promise.all([
       store.parent(), store.driveSummaries(), store.list<StorageNotice>('notice'), notifications.coverage(),
     ]);
     return {
       enabled: true,
       applyEnabled: this.deps.apply.enabled,
       incident,
-      drives: states.map(state => this.viewDrive(state)),
+      drives: states.map(state => this.viewDrive(state, completeNodes.has(state.drive.node), now)),
       notices: await notifications.project(notices, incident.chatId),
       notifications: coverage,
     };
@@ -40,17 +44,25 @@ export class StorageIncident {
     return this.deps.store.transaction(async tx => {
       const state = await this.findDrive(tx, id);
       const history = await tx.history(id);
+    nodes: string[];
       const evidence = await tx.list<Evidence>('evidence', id);
       const decisions = await tx.list<Decision>('decision', id);
       const questions = await tx.list<Parameters<typeof publicQuestion>[0]>('question', id);
       const children = await tx.list<Child>('child', id);
       const receipts = await tx.driveReceipts(id);
       const plans = await tx.plans(id);
-      const items = itemViews(state, decisions, this.deps.now());
+      const now = this.deps.now();
+      const { status } = await tx.scanState(state.drive.node, now);
+      const complete = status === 'complete' && scanIsFresh(state, now);
+      const current = complete ? state.current : { ...state.current, complete: false, eligibleCount: 0 };
+      const items = itemViews(status === 'complete' ? state : { ...state, current }, decisions, now);
       return {
-        drive: this.viewDrive(state),
-        current: state.current,
+        drive: this.viewDrive(state, complete, now),
+        current,
+      store.scanStates(nodes, now),
         history,
+    const scans = scanStates.map(({ node, status, completedAt }) => ({ node, status, completedAt }));
+    const completeNodes = new Set(scans.filter(scan => scan.status === 'complete').map(scan => scan.node));
         items,
         evidence,
         decisions: decisions.map(({ material: _material, ...decision }) => decision),
@@ -58,6 +70,7 @@ export class StorageIncident {
         children,
         receipts,
         plans: plans.map(plan => plan.public),
+      scans,
       };
     });
   }
