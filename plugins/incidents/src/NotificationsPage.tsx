@@ -40,20 +40,16 @@ function StorageNotificationSettings({
   const { busy, error, run } = useStorageAction(enrolment.refresh);
   const change = (enabled: boolean) =>
     run(async () => {
-      if (enabled) {
-        const device = await existingSubscription();
-        if (!device || (await subscriptionId(device.endpoint)) !== id) {
-          throw new Error('The browser subscription changed. Reload this page and try again.');
-        }
-        await postStorage(settings, '/incident/notifications', {
-          subscriptionId: id,
-          enabled,
-          auth: subscriptionParts(device).keys.auth,
-          urls: storageNotificationUrls(),
-        });
-      } else {
-        await postStorage(settings, '/incident/notifications', { subscriptionId: id, enabled });
+      const device = await existingSubscription();
+      if (!device || (await subscriptionId(device.endpoint)) !== id) {
+        throw new Error('The browser subscription changed. Reload this page and try again.');
       }
+      await postStorage(settings, '/incident/notifications', {
+        subscriptionId: id,
+        enabled,
+        auth: subscriptionParts(device).keys.auth,
+        ...(enabled && { urls: storageNotificationUrls() }),
+      });
     });
   const enabled = enrolment.data?.enabled === true;
   return (
@@ -62,9 +58,8 @@ function StorageNotificationSettings({
         Storage notifications
       </Typography>
       <Typography variant="body2">
-        Receive push notifications for storage findings and questions. Push enrolment lasts up to 15
-        minutes. Renew after expiry or an agent restart. Findings and questions remain available in
-        Headlamp.
+        Device enrolment lasts up to 30 days. The agent checks your access before each push.
+        Findings and questions remain available in Headlamp.
       </Typography>
       {enrolment.loading && <CircularProgress size={20} aria-label="Loading storage enrolment" />}
       {enrolment.error && (
@@ -95,6 +90,11 @@ function StorageNotificationSettings({
             )}
           </Stack>
         </>
+      )}
+      {enrolment.error && (
+        <Button sx={{ alignSelf: 'flex-start' }} disabled={busy || disabled} onClick={() => void change(false)}>
+          Disable storage notifications
+        </Button>
       )}
     </Stack>
   );

@@ -7,7 +7,8 @@ import type { PushService } from '../push/service.js';
 import type { StorageStore } from './store.js';
 import { StorageApply } from './apply.js';
 import { authenticatedMachine, operatorAuth, tokenFile } from './auth.js';
-import { enrolSchema, StorageNotifications, subscriptionSchema } from './notifications.js';
+import { notificationAuthority, type NotificationAuthority } from './notification-authority.js';
+import { enrolSchema, StorageNotifications, subscriptionSchema, disabledCoverage, coverageMetrics } from './notifications.js';
 import { StorageReconciler } from './reconcile.js';
 import { StorageIncident } from './service.js';
 import { HttpScanner } from './transport.js';
@@ -16,7 +17,7 @@ import { answerSchema, approvalSchema, decisionSchema, filesystemPoliciesSchema,
 const base = '/api/storage';
 const empty = {
   enabled: false, applyEnabled: false, incident: null, drives: [], notices: [], scans: [],
-  notifications: { enabled: false, registeredRecipients: 0 },
+  notifications: disabledCoverage,
 };
 const uuid = z.uuid();
 const emptyBody = z.object({}).strict();
@@ -35,7 +36,7 @@ type Settings = {
   reconcileToken: () => string;
   cluster: string;
   humanGroups: ReadonlySet<string>;
-  userInfo?: URL;
+  authority?: NotificationAuthority;
   disposable: ReadonlySet<string>;
   applyEnabled: boolean;
 };
@@ -68,18 +69,9 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   const disposable = new Set((env.STORAGE_DISPOSABLE_SCANNERS ?? '').split(',').map(node => node.trim()).filter(Boolean));
   if ([...disposable].some(node => !urls.has(node))) throw new Error('Invalid disposable scanner configuration');
   let groups: string[];
-  let userInfo: URL | undefined;
   try {
     const group = z.string().min(1).max(1024).refine(value => value === value.trim() && !value.startsWith('system:'));
     groups = z.array(group).max(100).parse(JSON.parse(env.STORAGE_OPERATOR_GROUPS || '[]'));
-    if (env.STORAGE_OPERATOR_USERINFO_URL) {
-      userInfo = new URL(env.STORAGE_OPERATOR_USERINFO_URL);
-      const loopback = ['127.0.0.1', '[::1]'].includes(userInfo.hostname);
-      if (userInfo.username || userInfo.password || userInfo.search || userInfo.hash
-        || (userInfo.protocol !== 'https:' && !(userInfo.protocol === 'http:' && loopback && env.NODE_ENV === 'test'))) {
-        throw new Error('invalid issuer endpoint');
-      }
-    }
   } catch {
     throw new Error('Invalid storage operator configuration');
   }
@@ -87,7 +79,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     urls,
     filesystemPolicies,
     humanGroups: new Set(groups),
-    userInfo,
+    authority: notificationAuthority(env),
     scannerToken: tokenFile(env.STORAGE_SCANNER_TOKEN_FILE),
     reconcileToken: tokenFile(env.STORAGE_RECONCILE_TOKEN_FILE),
     cluster: env.STORAGE_HEADLAMP_CLUSTER ?? '',
@@ -115,7 +107,8 @@ export async function storageHttp(deps: HttpHelpers & {
     await db.init(now());
     const scanner = new HttpScanner(configured.urls, configured.scannerToken);
     const apply = new StorageApply({ store: db, scanner, now, enabled: configured.applyEnabled, disposable: configured.disposable });
-    const notifications = new StorageNotifications({ store: db, now, push, issuerConfigured: Boolean(configured.userInfo) });
+    const notifications = new StorageNotifications({ store: db, now, push, authority: configured.authority });
+    notifications.start();
     const nodes = [...configured.urls.keys()];
     const reconcile = new StorageReconciler({
       store: db, scanner, now, metrics, nodes: new Set(nodes), filesystemPolicies: configured.filesystemPolicies,
@@ -135,7 +128,7 @@ export async function storageHttp(deps: HttpHelpers & {
     return parsed.data;
   }
 
-  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.userInfo);
+  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set());
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {
     const method = req.method;
@@ -169,7 +162,7 @@ export async function storageHttp(deps: HttpHelpers & {
     if (parent) return { data: await service.parent() };
     if (kind === 'notifications') {
       if (method === 'POST' && parts.length === 2) return { data: await notifications.enrol(await operatorBody(enrolSchema), operator) };
-      if (method === 'GET' && parts.length === 3) return { data: await notifications.device(validId(subscriptionSchema, id), operator.name) };
+      if (method === 'GET' && parts.length === 3) return { data: await notifications.device(validId(subscriptionSchema, id), operator.identity) };
     }
     if (kind === 'drives' && id) {
       const driveId = validId(uuid, id);
@@ -220,7 +213,7 @@ export async function storageHttp(deps: HttpHelpers & {
     },
     async metrics() {
       if (!backend || !store || !active) {
-        metrics.set('headlamp_agent_storage_push_registered_recipients', {}, 0);
+        coverageMetrics(metrics, disabledCoverage);
         metrics.set('headlamp_agent_storage_reconcile_last_success_timestamp_seconds', {}, 0);
         return;
       }

@@ -462,6 +462,90 @@ Make a key pair once, keep it in a Secret, and give it to the pod. This prints t
 node -e "const{generateKeyPairSync}=require('crypto');const{privateKey:k,publicKey:p}=generateKeyPairSync('ec',{namedCurve:'prime256v1'});const d=k.export({format:'jwk'}).d;const j=p.export({format:'jwk'});console.log(JSON.stringify({publicKey:Buffer.concat([Buffer.from([4]),Buffer.from(j.x,'base64url'),Buffer.from(j.y,'base64url')]).toString('base64url'),privateKey:d}))"
 ```
 
+### Storage notification authority
+
+Storage findings and unanswered questions can send a generic Web Push message with a link to the
+affected incident. Headlamp authenticates the operator again when they open the link. Private
+findings stay in Headlamp.
+
+Storage push requires the existing Web Push keys, shared PostgreSQL and an approved server-side
+entitlement authority. The current read-only Headlamp deployment has no approved authority. Leave
+all three authority settings unset there. Findings and questions remain available in Headlamp.
+
+| Setting | Deployment contract |
+| --- | --- |
+| `STORAGE_NOTIFICATION_AUTHORITY_URL` | Exact HTTPS POST endpoint. Use a URL without credentials, a query or a fragment. The agent refuses redirects. |
+| `STORAGE_NOTIFICATION_AUTHORITY_TOKEN_FILE` | Readable file with one plain-text service bearer and optional trailing newline. Grant this credential access only to this deployment's notification authority operations. Mount it as a Secret. |
+| `STORAGE_NOTIFICATION_AUTHORITY_CA_FILE` | Optional readable PEM CA bundle. When present, this bundle supplies the TLS trust roots for this endpoint. When omitted, Node uses its default roots. The certificate must match the URL host. |
+
+The agent reads both files for every request, so the mounted files can rotate without a pod restart.
+Use a dedicated credential scoped to the authority. The service identifies the trusted deployment
+from this credential. The authority must reject impersonation and cross-deployment identity lookups.
+
+**Identity and entitlement.** The existing Kubernetes SelfSubjectReview and SelfSubjectAccessReview
+checks authenticate the enrolment request and require configured human membership and both
+`get` and `update` access to storage incidents. The agent sends only the authenticated Kubernetes
+username and UID to the authority. The authority binds those values to an immutable issuer and
+subject. When Kubernetes supplies no UID, the authority must have an unambiguous trusted binding
+for the authenticated username. It must deny enrolment if it cannot establish that binding.
+
+The authority must check active human membership and both storage permissions for the same
+immutable identity at enrolment and on each access check. The authority must use a new grant
+version after revocation and regrant. Existing enrolments cannot resume after a version change
+until the operator opts in again. The agent stores the identity and grant version with the
+device enrolment for up to 30 days. Legacy enrolments require a new opt-in. The delivery worker
+uses the dedicated service credential and never stores a human bearer.
+
+**JSON protocol.** Send `Content-Type: application/json` and `Authorization: Bearer <service-credential>`.
+The following examples use fixture identities.
+
+```json
+{"operation":"resolve","kubernetes":{"username":"fixture-operator","uid":"fixture-uid"}}
+```
+
+```json
+{"kubernetes":{"username":"fixture-operator","uid":"fixture-uid"},"recipient":{"issuer":"https://example.com","subject":"fixture-subject"},"entitlement":{"status":"allowed","version":"fixture-grant-1"}}
+```
+
+Echo the exact username and UID, including `null` when Kubernetes supplies no UID. Return
+`recipient: null` with a revoked entitlement if the authority cannot map the identity.
+
+```json
+{"operation":"check","recipients":[{"issuer":"https://example.com","subject":"fixture-subject"}]}
+```
+
+```json
+{"decisions":[{"recipient":{"issuer":"https://example.com","subject":"fixture-subject"},"entitlement":{"status":"revoked"}}]}
+```
+
+A check contains up to 50 distinct identities. Return exactly one decision per requested identity.
+An empty check returns `{"decisions":[]}` only when the authority can evaluate current entitlements.
+Both operations return HTTP 200 for explicit decisions, including denials. Return a non-200
+response when authentication fails or an upstream policy source is unavailable. The agent
+also treats a timeout, TLS error, redirect or invalid response as unavailable. It holds pending
+sends during an outage and checks again before calling the provider.
+
+**API and metrics.** The authenticated `GET /api/storage/incident` response includes
+`notifications: {enabled, status, registeredRecipients, revokedRecipients}`. The counts
+represent device enrolments. Revoked includes grant version changes. Both counts are `null`
+when status is `disabled` or `unavailable`. A verified zero requires status `ready`.
+
+`GET /metrics` uses the normal metrics scrape path and needs no human credential.
+`headlamp_agent_storage_push_authority{status="disabled|ready|unavailable"}` is 1 for the
+current status and 0 for the other two. The gauges
+`headlamp_agent_storage_push_registered_recipients` and
+`headlamp_agent_storage_push_revoked_recipients` emit `NaN` when counts are unknown.
+Report zero coverage only when `ready=1` and the registered gauge is zero. Report
+an authority outage when `unavailable=1`. Unset configuration reports `disabled`.
+The gauges use no recipient identity labels. Each replica reports the shared enrolment
+counts, so summing replicas would count the same devices more than once.
+
+**Delivery evidence.** The agent records claims and provider results in PostgreSQL. A restart
+preserves accepted sends. If the agent loses the provider result after dispatch, it records
+unverified delivery and does not resend that attempt. A provider 404 or 410 removes the
+storage enrolment. Provider 2xx means acceptance, and `clientReceived` remains `null`.
+A revocation after the final authority check can occur while a provider request is in flight.
+
 ## Agent launches
 
 An operator can ask the agent to start a T3 Code agent for a

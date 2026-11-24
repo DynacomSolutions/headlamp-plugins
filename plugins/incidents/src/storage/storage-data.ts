@@ -67,11 +67,22 @@ export interface Item {
 
 export interface NotificationCoverage {
   enabled: boolean;
-  registeredRecipients: number;
+  status: 'disabled' | 'ready' | 'unavailable';
+  registeredRecipients: number | null;
+  revokedRecipients: number | null;
 }
 
 export interface NoticeDelivery {
-  status: 'private' | 'disabled' | 'no_recipients' | 'pending' | 'accepted' | 'failed' | 'partial';
+  status:
+    | 'private'
+    | 'disabled'
+    | 'authority_unavailable'
+    | 'no_recipients'
+    | 'revoked'
+    | 'pending'
+    | 'accepted'
+    | 'failed'
+    | 'partial';
   targetedRecipients: number;
   providerAccepted: number;
   failed: number;

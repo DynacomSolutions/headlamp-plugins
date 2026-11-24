@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { createDecipheriv, createECDH, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
@@ -27,6 +29,13 @@ const api = '/api/storage';
 const rbac = 'storage.incidents.example.com';
 const operatorGroup = 'fixture-human-operators';
 const automation = 'fixture-automation-credential';
+const authorityBearer = 'fixture-authority-machine';
+const recipient = { issuer: 'https://identity.example.com', subject: 'fixture-immutable-subject' };
+const operatorKubernetes = { username: 'fixture-operator', uid: 'fixture-operator-uid' };
+const disabledCoverage = { enabled: false, status: 'disabled', registeredRecipients: null, revokedRecipients: null };
+const readyCoverage = (registeredRecipients: number, revokedRecipients = 0) => ({
+  enabled: true, status: 'ready', registeredRecipients, revokedRecipients,
+});
 const dispose: Array<() => void | Promise<void>> = [];
 
 afterEach(async () => {
@@ -45,13 +54,14 @@ function reply(res: ServerResponse, status: number, data: unknown) {
   res.end(JSON.stringify(data));
 }
 
-async function listener(handle: (req: IncomingMessage, res: ServerResponse) => Promise<void>) {
-  const server = createServer((req, res) => void handle(req, res).catch(() => reply(res, 500, {})));
+async function listener(handle: (req: IncomingMessage, res: ServerResponse) => Promise<void>, tls?: { key: Buffer; cert: Buffer }) {
+  const respond = (req: IncomingMessage, res: ServerResponse) => void handle(req, res).catch(() => reply(res, 500, {}));
+  const server = tls ? createHttpsServer(tls, respond) : createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   dispose.push(() => new Promise<void>(resolve => server.close(() => resolve())));
   const address = server.address();
   if (typeof address !== 'object' || !address) throw new Error('Fixture listener did not start');
-  return `http://127.0.0.1:${address.port}`;
+  return `${tls ? 'https' : 'http'}://127.0.0.1:${address.port}`;
 }
 
 function fs(id: string, mount: string, availableBytes = 10, shared = false): Scan['filesystems'][number] {
@@ -76,9 +86,9 @@ type NodeFixture = {
 };
 
 async function fixture(options: {
-  disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; issuerConfigured?: boolean;
+  disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; authorityConfigured?: boolean;
 } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'storage-incident-fixture-'));
+  const dir = mkdtempSync(join(process.env.STORAGE_TEST_FIXTURE_ROOT ?? tmpdir(), 'storage-incident-fixture-'));
   dispose.push(() => rmSync(dir, { recursive: true, force: true }));
   const db = pgliteDb();
   dispose.push(() => db.close());
@@ -91,15 +101,57 @@ async function fixture(options: {
   });
   let redirect = false;
   let operatorMember = true;
-  let issuerStatus = 200;
-  let issuerGroups = [operatorGroup];
+  let authorityStatus = 200;
+  let authorityMember = true;
+  let authorityVersion = 'fixture-grant-1';
+  let authorityResponse: ((input: Record<string, unknown>) => unknown) | undefined;
   const revokedVerbs = new Set<string>();
-  const issuerChecks: (string | undefined)[] = [];
-  const issuer = await listener(async (req, res) => {
-    issuerChecks.push(req.headers.authorization);
-    if (req.url !== '/userinfo' || req.headers.authorization !== `Bearer ${human}`) return reply(res, 401, {});
-    reply(res, issuerStatus, { sub: 'fixture-operator', groups: issuerGroups });
-  });
+  const authorityRequests: { token: string | undefined; input: Record<string, unknown> }[] = [];
+  const useAuthority = options.pushEnabled && options.authorityConfigured !== false;
+  const authorityFile = join(dir, 'authority-token');
+  const authorityCA = join(dir, 'authority-ca.pem');
+  let authority: string | undefined;
+  if (useAuthority) {
+    const key = join(dir, 'authority-key.pem');
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes', '-days', '1',
+      '-subj', '/CN=example.com', '-addext', 'subjectAltName=IP:127.0.0.1', '-keyout', key, '-out', authorityCA,
+    ], { stdio: 'ignore' });
+    writeFileSync(authorityFile, authorityBearer, { mode: 0o600 });
+    authority = await listener(async (req, res) => {
+      const input = await body(req);
+      authorityRequests.push({ token: req.headers.authorization, input });
+      if (req.method !== 'POST' || req.url !== '/entitlement' || req.headers.authorization !== `Bearer ${authorityBearer}`) {
+        return reply(res, 401, {});
+      }
+      if (authorityStatus === 307) {
+        res.writeHead(307, { location: `${redirectTarget}/authority` });
+        res.end();
+        return;
+      }
+      if (authorityStatus !== 200) return reply(res, authorityStatus, {});
+      if (authorityResponse) return reply(res, 200, authorityResponse(input));
+      const entitled = authorityMember && !revokedVerbs.has('get') && !revokedVerbs.has('update');
+      const entitlement = entitled ? { status: 'allowed', version: authorityVersion } : { status: 'revoked' };
+      if (input.operation === 'resolve') {
+        const matches = JSON.stringify(input.kubernetes) === JSON.stringify(operatorKubernetes);
+        return reply(res, 200, {
+          kubernetes: input.kubernetes,
+          recipient: matches ? recipient : null,
+          entitlement: matches ? entitlement : { status: 'revoked' },
+        });
+      }
+      if (input.operation === 'check' && Array.isArray(input.recipients)) {
+        return reply(res, 200, {
+          decisions: input.recipients.map((identity: unknown) => ({
+            recipient: identity,
+            entitlement: JSON.stringify(identity) === JSON.stringify(recipient) ? entitlement : { status: 'revoked' },
+          })),
+        });
+      }
+      return reply(res, 400, {});
+    }, { key: readFileSync(key), cert: readFileSync(authorityCA) });
+  }
   const kubeApi = await listener(async (req, res) => {
     const token = req.headers.authorization;
     const path = req.url ?? '';
@@ -121,7 +173,7 @@ async function fixture(options: {
       if (username.startsWith('system:')) groups.push('system:serviceaccounts', operatorGroup);
       else if (username === 'fixture-automation' || (username === 'fixture-operator' && !operatorMember)) groups.push(`${operatorGroup}-other`);
       else groups.push(operatorGroup);
-      return reply(res, 201, { status: { userInfo: { username, groups } } });
+      return reply(res, 201, { status: { userInfo: { username, ...(username === operatorKubernetes.username ? { uid: operatorKubernetes.uid } : {}), groups } } });
     }
     const spec = input.spec as { resourceAttributes?: { group?: string; resource?: string; verb?: string } };
     const attrs = spec?.resourceAttributes;
@@ -164,15 +216,17 @@ async function fixture(options: {
   writeFileSync(scannerFile, scanner, { mode: 0o600 });
   writeFileSync(machineFile, machine, { mode: 0o600 });
   writeFileSync(kubeTokenFile, headlampAccount, { mode: 0o600 });
-  const env = options.disabled ? {} : {
+  const env: NodeJS.ProcessEnv = options.disabled ? {} : {
     STORAGE_SCANNERS_FILE: map,
     STORAGE_SCANNER_TOKEN_FILE: scannerFile,
     STORAGE_RECONCILE_TOKEN_FILE: machineFile,
     STORAGE_HEADLAMP_CLUSTER: 'example',
     ...(options.operatorGroups === null ? {} : { STORAGE_OPERATOR_GROUPS: JSON.stringify(options.operatorGroups ?? [operatorGroup]) }),
-    ...(options.pushEnabled && options.issuerConfigured !== false
-      ? { STORAGE_OPERATOR_USERINFO_URL: `${issuer}/userinfo`, NODE_ENV: 'test' }
-      : {}),
+    ...(authority ? {
+      STORAGE_NOTIFICATION_AUTHORITY_URL: `${authority}/entitlement`,
+      STORAGE_NOTIFICATION_AUTHORITY_TOKEN_FILE: authorityFile,
+      STORAGE_NOTIFICATION_AUTHORITY_CA_FILE: authorityCA,
+    } : {}),
     STORAGE_APPLY_ENABLED: options.disposable ? 'true' : 'false',
     STORAGE_DISPOSABLE_SCANNERS: options.disposable ? nodes[0] : '',
   };
@@ -210,8 +264,15 @@ async function fixture(options: {
   const details = async (id: string) => (await call(`${api}/incident/drives/${id}`)).data;
   return {
     db, reviews, seenScans, applyCalls, scannerAuth, nodeFixtures, sent, env, getUrl, parent, details, reconcile, call,
-    issuerChecks, revokedVerbs,
-    issuer(status: number, groups = [operatorGroup]) { issuerStatus = status; issuerGroups = groups; },
+    authorityRequests, revokedVerbs,
+    authority(status: number, member = true) { authorityStatus = status; authorityMember = member; },
+    entitlementVersion(version: string) { authorityVersion = version; },
+    authorityResponse(override: typeof authorityResponse) { authorityResponse = override; },
+    async replica() {
+      const replica = await startServer(config, 'test', { store, storageEnv: env, pushFetch, now: () => at });
+      dispose.push(() => replica.close());
+      return `http://127.0.0.1:${replica.port}`;
+    },
     operatorMembership(enabled: boolean) { operatorMember = enabled; },
     onScan(fn: typeof onScan) { onScan = fn; },
     onApply(fn: typeof apply) { apply = fn; },
@@ -296,10 +357,12 @@ describe('Storage incident normal entry points', () => {
   it('advertises disabled state without exposing records', async () => {
     const f = await fixture({ disabled: true });
     expect(await f.call(`${api}/incident`, { token: false })).toEqual({
-      status: 200, data: { enabled: false, applyEnabled: false, incident: null, drives: [], notices: [], scans: [], notifications: { enabled: false, registeredRecipients: 0 } },
+      status: 200, data: { enabled: false, applyEnabled: false, incident: null, drives: [], notices: [], scans: [], notifications: disabledCoverage },
     });
     expect((await f.reconcile()).status).toBe(503);
-    expect((await f.call('/metrics', { token: false })).data).toContain('headlamp_agent_storage_push_registered_recipients 0');
+    const metrics = (await f.call('/metrics', { token: false })).data;
+    expect(metrics).toContain('headlamp_agent_storage_push_authority{status="disabled"} 1');
+    expect(metrics).toContain('headlamp_agent_storage_push_registered_recipients NaN');
   });
 
   it.each([{ groups: null }, { groups: ['fixture-unrelated-group'] }])('denies human access with membership configuration $groups', async ({ groups }) => {
@@ -651,7 +714,7 @@ describe('Storage incident normal entry points', () => {
     });
     expect((await f.reconcile()).status).toBe(200);
     const parent = await f.parent();
-    expect(parent.notifications).toEqual({ enabled: false, registeredRecipients: 0 });
+    expect(parent.notifications).toEqual(disabledCoverage);
     expect(parent.notices[0].delivery).toMatchObject({ status: 'disabled', targetedRecipients: 0, clientReceived: null });
     expect(f.sent).toEqual([]);
   });
@@ -673,7 +736,7 @@ describe('Storage incident normal entry points', () => {
     );
     await vi.waitFor(async () => {
       const parent = await f.parent();
-      expect(parent.notifications).toEqual({ enabled: true, registeredRecipients: 0 });
+      expect(parent.notifications).toEqual(readyCoverage(0));
       expect(parent.notices).toHaveLength(3);
       expect(externalNotices(parent).map((n: { delivery: { status: string } }) => n.delivery.status))
         .toEqual(['no_recipients', 'no_recipients']);
@@ -713,8 +776,7 @@ describe('Storage incident normal entry points', () => {
     await f.restart();
     expect((await f.reconcile()).status).toBe(200);
     expect(f.sent).toHaveLength(2);
-    expect((await f.call(`${registration}/${device.id}`)).data.enabled).toBe(false);
-    expect((await f.call(registration, { data: grant })).status).toBe(200);
+    expect((await f.call(`${registration}/${device.id}`)).data.enabled).toBe(true);
     f.provider(201);
     f.advance(5 * 60_000);
     expect((await f.reconcile()).status).toBe(200);
@@ -786,8 +848,8 @@ describe('Storage incident normal entry points', () => {
     expect(JSON.stringify((await f.db.query('SELECT * FROM storage_incident_push_registrations')).rows)).not.toContain(human);
   });
 
-  it('disables storage enrolment without a current membership verifier', async () => {
-    const f = await fixture({ pushEnabled: true, issuerConfigured: false });
+  it('disables storage enrolment without an approved authority', async () => {
+    const f = await fixture({ pushEnabled: true, authorityConfigured: false });
     expect((await f.parent()).notifications.enabled).toBe(false);
     const device = pushDevice();
     expect((await f.call(`${api}/incident/notifications`, {
@@ -795,48 +857,213 @@ describe('Storage incident normal entry points', () => {
     })).status).toBe(503);
   });
 
-  it.each(['issuer membership', 'issuer unavailable', 'RBAC get', 'RBAC update', 'restart', 'expiry'])(
+  async function enrolFixture(f: Awaited<ReturnType<typeof fixture>>) {
+    const device = pushDevice();
+    const generic = `/api/push/subscriptions/${device.id}`;
+    const subscribe = await f.call(generic, { token: false, data: {
+      subscription: { endpoint: device.endpoint, keys: device.keys },
+      urls: { incident: '/c/example/incidents/{id}', chat: '/c/example/incidents/chat/{id}' },
+    } });
+    expect(subscribe.status).toBe(200);
+    const registration = `${api}/incident/notifications`;
+    const grant = { subscriptionId: device.id, enabled: true, auth: device.keys.auth, urls: noticeUrls };
+    expect((await f.call(registration, { data: grant })).status).toBe(200);
+    return { device, generic, registration, grant, subscribe };
+  }
+
+  function cleanupFixture(f: Awaited<ReturnType<typeof fixture>>) {
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({
+      filesystems: [fs('main', '/data')], items: [item('cleanup', 'main')], complete: true,
+    });
+  }
+
+  function outcomes(f: Awaited<ReturnType<typeof fixture>>) {
+    return f.db.query('SELECT attempt, result FROM storage_incident_push_attempts ORDER BY attempt').then(result => result.rows);
+  }
+
+  it('sends one new notice four hours after enrolment with two replicas and no human session', async () => {
+    const f = await fixture({ pushEnabled: true });
+    await enrolFixture(f);
+    expect(f.authorityRequests).toContainEqual({
+      token: `Bearer ${authorityBearer}`,
+      input: { operation: 'resolve', kubernetes: operatorKubernetes },
+    });
+    const reviews = f.reviews.length;
+    f.operatorMembership(false);
+    f.advance(4 * 60 * 60_000);
+    await f.restart();
+    const replica = await f.replica();
+    cleanupFixture(f);
+    await Promise.all([f.reconcile(), f.call(`${api}/reconcile`, {
+      via: replica, token: machine, data: { triggers: [] },
+    })]);
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([{ attempt: 1, result: '201' }]));
+    expect(f.sent).toHaveLength(1);
+    expect(f.reviews).toHaveLength(reviews);
+    expect(f.authorityRequests.every(request => request.token === `Bearer ${authorityBearer}`)).toBe(true);
+    expect(f.authorityRequests).toContainEqual({
+      token: `Bearer ${authorityBearer}`, input: { operation: 'check', recipients: [recipient] },
+    });
+    expect(JSON.stringify(f.authorityRequests.map(request => request.input))).not.toMatch(/groups|fixture-human-credential/);
+  });
+
+  it.each(['membership', 'RBAC get', 'RBAC update', 'regrant', 'grant expiry'])(
     'suppresses storage retry after %s',
     async loss => {
       const f = await fixture({ pushEnabled: true });
-      f.nodeFixtures.get(nodes[0])!.scan = () => ({
-        filesystems: [fs('main', '/data')], items: [item('cleanup', 'main')], complete: true,
-      });
+      cleanupFixture(f);
       expect((await f.reconcile()).status).toBe(200);
-      const device = pushDevice();
-      const generic = `/api/push/subscriptions/${device.id}`;
-      const registration = `${api}/incident/notifications`;
-      const subscribed = await f.call(generic, { token: false, data: {
-        subscription: { endpoint: device.endpoint, keys: device.keys },
-        urls: { incident: '/c/example/incidents/{id}', chat: '/c/example/incidents/chat/{id}' },
-      } });
-      expect(subscribed.status).toBe(200);
       f.provider(503);
-      expect((await f.call(registration, { data: {
-        subscriptionId: device.id, enabled: true, auth: device.keys.auth, urls: noticeUrls,
-      } })).status).toBe(200);
-      const outcomes = async () => (await f.db.query(
-        'SELECT attempt, result FROM storage_incident_push_attempts ORDER BY attempt',
-      )).rows;
-      await vi.waitFor(async () => expect(await outcomes()).toEqual([{ attempt: 1, result: '503' }]));
-      expect(f.issuerChecks).toEqual([human, human].map(token => `Bearer ${token}`));
-      if (loss === 'issuer membership') f.issuer(200, [`${operatorGroup}-other`]);
-      if (loss === 'issuer unavailable') f.issuer(503);
+      const { generic, subscribe } = await enrolFixture(f);
+      await vi.waitFor(async () => expect(await outcomes(f)).toEqual([{ attempt: 1, result: '503' }]));
+      if (loss === 'membership') f.authority(200, false);
       if (loss === 'RBAC get') f.revokedVerbs.add('get');
       if (loss === 'RBAC update') f.revokedVerbs.add('update');
-      if (loss === 'restart') await f.restart();
+      if (loss === 'regrant') f.entitlementVersion('fixture-grant-2');
       f.provider(201);
-      f.advance((loss === 'expiry' ? 15 : 5) * 60_000);
-      expect((await f.reconcile()).status).toBe(200);
-      await vi.waitFor(async () => expect(await outcomes()).toEqual([
+      f.advance((loss === 'grant expiry' ? 31 * 24 * 60 : 5) * 60_000);
+      await f.restart();
+      await vi.waitFor(async () => expect(await outcomes(f)).toEqual([
         { attempt: 1, result: '503' },
-        { attempt: 2, result: 'authorisation_or_notice_withdrawn' },
+        { attempt: 2, result: loss === 'grant expiry' ? 'authorisation_or_notice_withdrawn' : 'revoked' },
       ]));
+      const metrics = (await f.call('/metrics', { token: false })).data;
+      expect(metrics).toContain('headlamp_agent_storage_push_registered_recipients 0');
+      expect(metrics).toContain(`headlamp_agent_storage_push_revoked_recipients ${loss === 'grant expiry' ? 0 : 1}`);
+      if (loss !== 'grant expiry') expect(metrics).toContain('headlamp_agent_storage_push_notices{status="revoked"} 1');
       expect(f.sent).toHaveLength(1);
-      expect(await f.call(generic, { token: false })).toEqual(subscribed);
-      expect((await f.call(`${registration}/${device.id}`)).data.enabled).toBe(loss === 'RBAC get' ? undefined : false);
+      expect(await f.call(generic, { token: false })).toEqual(subscribe);
     },
   );
+
+  it('checks entitlement again after selecting a recipient and before provider dispatch', async () => {
+    const f = await fixture({ pushEnabled: true });
+    await enrolFixture(f);
+    let checks = 0;
+    cleanupFixture(f);
+    f.provider(503);
+    expect((await f.reconcile()).status).toBe(200);
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([{ attempt: 1, result: '503' }]));
+    f.authorityResponse(input => ({
+      decisions: Array.isArray(input.recipients) ? input.recipients.map((identity: unknown) => ({
+        recipient: identity,
+        entitlement: ++checks === 1
+          ? { status: 'allowed', version: 'fixture-grant-1' }
+          : { status: 'revoked' },
+      })) : [],
+    }));
+    f.provider(201);
+    f.advance(5 * 60_000);
+    await f.restart();
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([
+      { attempt: 1, result: '503' }, { attempt: 2, result: 'revoked' },
+    ]));
+    expect(checks).toBeGreaterThanOrEqual(2);
+    expect(f.sent).toHaveLength(1);
+  });
+
+  it('reports a lost in-flight result after restart without repeating the send', async () => {
+    const f = await fixture({ pushEnabled: true });
+    await enrolFixture(f);
+    f.provider(503);
+    cleanupFixture(f);
+    expect((await f.reconcile()).status).toBe(200);
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([{ attempt: 1, result: '503' }]));
+    f.advance(5 * 60_000);
+    const store = new StorageStore(f.db);
+    const [due] = await store.dueDeliveries(Date.parse('2026-01-01T00:35:00Z'));
+    expect(await store.claimDelivery(due, Date.parse('2026-01-01T00:35:00Z'))).toMatchObject({ status: 'sending' });
+    f.advance(61_000);
+    await f.restart();
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([
+      { attempt: 1, result: '503' }, { attempt: 2, result: 'delivery_unverified' },
+    ]));
+    expect(f.sent).toHaveLength(1);
+    expect((await f.parent()).notices[0].delivery).toMatchObject({
+      status: 'failed', providerAccepted: 0, clientReceived: null,
+    });
+  });
+
+  it('reports an outage before targeting and retries queued deliveries on recovery without consuming a provider attempt', async () => {
+    const f = await fixture({ pushEnabled: true });
+    f.authority(503);
+    cleanupFixture(f);
+    expect((await f.reconcile()).status).toBe(200);
+    const unavailable = { enabled: true, status: 'unavailable', registeredRecipients: null, revokedRecipients: null };
+    await vi.waitFor(async () => {
+      const parent = await f.parent();
+      expect(parent.notifications).toEqual(unavailable);
+      expect(parent.notices[0].delivery.status).toBe('authority_unavailable');
+    });
+    expect(await outcomes(f)).toEqual([]);
+    const metrics = (await f.call('/metrics', { token: false })).data;
+    expect(metrics).toContain('headlamp_agent_storage_push_authority{status="unavailable"} 1');
+    expect(metrics).toContain('headlamp_agent_storage_push_registered_recipients NaN');
+    f.authority(200);
+    f.provider(503);
+    await enrolFixture(f);
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([{ attempt: 1, result: '503' }]));
+    f.authority(503);
+    f.advance(5 * 60_000);
+    await f.restart();
+    await vi.waitFor(async () => {
+      const parent = await f.parent();
+      expect(parent.notifications).toEqual(unavailable);
+      expect(parent.notices[0].delivery).toMatchObject({ status: 'authority_unavailable', pending: 1 });
+    });
+    expect(await outcomes(f)).toEqual([{ attempt: 1, result: '503' }]);
+    expect(f.sent).toHaveLength(1);
+    f.authority(200);
+    f.provider(201);
+    f.advance(60_000);
+    await f.restart();
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([
+      { attempt: 1, result: '503' }, { attempt: 2, result: '201' },
+    ]));
+    expect(f.sent).toHaveLength(2);
+    expect((await f.parent()).notifications).toEqual(readyCoverage(1));
+  });
+
+  it('fails closed on redirects, bad TLS and mismatched authority responses', async () => {
+    const f = await fixture({ pushEnabled: true });
+    expect((await f.parent()).notifications).toEqual(readyCoverage(0));
+    const { grant, device, registration } = await enrolFixture(f);
+    f.authority(307);
+    expect((await f.parent()).notifications.status).toBe('unavailable');
+    expect(f.redirected()).toBe(0);
+    f.authority(200);
+    const ca = f.env.STORAGE_NOTIFICATION_AUTHORITY_CA_FILE!;
+    const cert = readFileSync(ca);
+    writeFileSync(ca, '');
+    expect((await f.parent()).notifications.status).toBe('unavailable');
+    writeFileSync(ca, cert);
+    const tokenPath = f.env.STORAGE_NOTIFICATION_AUTHORITY_TOKEN_FILE!;
+    writeFileSync(tokenPath, 'invalid-fixture-service-credential');
+    expect((await f.parent()).notifications.status).toBe('unavailable');
+    writeFileSync(tokenPath, authorityBearer);
+    expect((await f.parent()).notifications).toEqual(readyCoverage(1));
+    f.authorityResponse(input => input.operation === 'resolve'
+      ? { kubernetes: { ...operatorKubernetes, uid: 'wrong-uid' }, recipient, entitlement: { status: 'allowed', version: 'fixture-grant-1' } }
+      : { decisions: [{ recipient: { ...recipient, subject: 'wrong-subject' }, entitlement: { status: 'allowed', version: 'fixture-grant-1' } }] });
+    expect((await f.call(registration, { data: grant })).status).toBe(503);
+    expect((await f.parent()).notifications.status).toBe('unavailable');
+    expect((await f.call(registration, { data: { subscriptionId: device.id, enabled: false, auth: device.keys.auth } })).status).toBe(200);
+    expect(await f.db.query('SELECT data FROM storage_incident_push_registrations').then(result => result.rows)).toEqual([]);
+    expect(f.sent).toEqual([]);
+  });
+
+  it('requires a fresh opt-in for legacy records with no immutable identity', async () => {
+    const f = await fixture({ pushEnabled: true });
+    const { device, registration, grant } = await enrolFixture(f);
+    await f.db.query("UPDATE storage_incident_push_registrations SET data = data - 'entitlement' WHERE subscription_id = $1", [device.id]);
+    cleanupFixture(f);
+    expect((await f.reconcile()).status).toBe(200);
+    await vi.waitFor(async () => expect((await f.parent()).notices[0].delivery.status).toBe('no_recipients'));
+    expect((await f.call(`${registration}/${device.id}`)).data.enabled).toBe(false);
+    expect(f.sent).toEqual([]);
+    expect((await f.call(registration, { data: grant })).status).toBe(200);
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([{ attempt: 1, result: '201' }]));
+  });
 
   it('sends one notice per pressure stage and preserves answers across recurrence', async () => {
     const f = await fixture({ pushEnabled: true });

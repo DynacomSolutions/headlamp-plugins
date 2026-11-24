@@ -380,10 +380,16 @@ export class StorageQueries {
     await this.query('DELETE FROM storage_incident_push_registrations WHERE subscription_id = $1', [subscriptionId]);
   }
 
-  unresolvedCoverage(canSend: boolean): Promise<StorageNotice[]> {
+  async notificationDevice(id: string): Promise<{ id: string; endpoint: string; auth: string; p256dh: string } | undefined> {
+    const result = await this.query('SELECT id, endpoint, auth, p256dh FROM push_subscriptions WHERE id = $1 FOR SHARE', [id]);
+    return result.rows[0] as { id: string; endpoint: string; auth: string; p256dh: string } | undefined;
+  }
+
+  unresolvedCoverage(next: CoverageStatus): Promise<StorageNotice[]> {
     return this.records<StorageNotice>(`SELECT n.data FROM storage_incident_records n LEFT JOIN storage_incident_push_coverage c ON n.id = c.notice_id
-      WHERE n.kind = 'notice' AND (c.notice_id IS NULL OR ($1 AND c.status IN ('private', 'disabled', 'no_recipients')
-        AND n.data->>'external' = 'true')) ORDER BY n.seq`, [canSend]);
+      WHERE n.kind = 'notice' AND (c.notice_id IS NULL OR (c.status <> $1
+        AND c.status IN ('private', 'disabled', 'authority_unavailable', 'no_recipients', 'revoked')
+        AND n.data->>'external' = 'true')) ORDER BY n.seq`, [next]);
   }
 
   async evaluateNotice(id: string, status: CoverageStatus, at: number): Promise<void> {
@@ -398,14 +404,22 @@ export class StorageQueries {
       ON CONFLICT (notice_id, subscription_id) DO NOTHING`, [noticeId, new Date(at), json(recipients)]);
   }
 
-  async deliverySummaries(noticeIds: string[]): Promise<Array<{ id: string; evaluated: boolean; accepted: number; failed: number; pending: number }>> {
+  async deliverySummaries(noticeIds: string[]): Promise<Array<{
+    id: string; coverage: CoverageStatus; accepted: number; failed: number; pending: number; revoked: number; authorityUnavailable: boolean;
+  }>> {
     if (!noticeIds.length) return [];
-    const rows = (await this.query(`SELECT c.notice_id, count(d.status) FILTER (WHERE d.status = 'accepted') AS accepted,
+    const rows = (await this.query(`SELECT c.notice_id, c.status,
+      count(d.status) FILTER (WHERE d.status = 'accepted') AS accepted,
       count(d.status) FILTER (WHERE d.status = 'failed') AS failed,
-      count(d.status) FILTER (WHERE d.status IN ('pending','sending')) AS pending
+      count(d.status) FILTER (WHERE d.status IN ('pending','sending')) AS pending,
+      count(d.status) FILTER (WHERE d.status = 'failed' AND d.result = 'revoked') AS revoked,
+      coalesce(bool_or(d.status IN ('pending','sending') AND d.result = 'authority_unavailable'), false) AS unavailable
       FROM storage_incident_push_coverage c LEFT JOIN storage_incident_push_deliveries d ON c.notice_id = d.notice_id
-      WHERE c.notice_id = ANY($1::uuid[]) GROUP BY c.notice_id`, [noticeIds])).rows;
-    return rows.map(row => ({ id: String(row.notice_id), evaluated: true, accepted: Number(row.accepted), failed: Number(row.failed), pending: Number(row.pending) }));
+      WHERE c.notice_id = ANY($1::uuid[]) GROUP BY c.notice_id, c.status`, [noticeIds])).rows;
+    return rows.map(row => ({
+      id: String(row.notice_id), coverage: row.status as CoverageStatus, accepted: Number(row.accepted),
+      failed: Number(row.failed), pending: Number(row.pending), revoked: Number(row.revoked), authorityUnavailable: Boolean(row.unavailable),
+    }));
   }
 
   async deliveryCounts(): Promise<Map<string, number>> {
@@ -430,6 +444,23 @@ export class StorageQueries {
       ) SELECT notice_id AS "noticeId", subscription_id AS "subscriptionId", grant_id AS grant, status, attempts, at FROM claim`,
     [delivery.noticeId, delivery.subscriptionId, new Date(at), delivery.attempts]);
     return result.rows[0] as Delivery | undefined;
+  }
+
+  async lockAttempt(delivery: Delivery, cutoff: number): Promise<boolean> {
+    const result = await this.query(`SELECT 1 FROM storage_incident_push_deliveries
+      WHERE notice_id = $1 AND subscription_id = $2 AND attempts = $3 AND status = 'sending' AND at >= $4 FOR UPDATE`,
+    [delivery.noticeId, delivery.subscriptionId, delivery.attempts, new Date(cutoff)]);
+    return result.rows.length > 0;
+  }
+
+  async deferDelivery(delivery: Delivery, at: number): Promise<void> {
+    await this.query(`WITH deferred AS (
+        UPDATE storage_incident_push_deliveries SET status = 'pending', result = 'authority_unavailable', at = $4, attempts = attempts - 1
+        WHERE notice_id = $1 AND subscription_id = $2 AND attempts = $3 AND status = 'sending'
+        RETURNING notice_id, subscription_id
+      ) DELETE FROM storage_incident_push_attempts a USING deferred d
+        WHERE a.notice_id = d.notice_id AND a.subscription_id = d.subscription_id AND a.attempt = $3`,
+    [delivery.noticeId, delivery.subscriptionId, delivery.attempts, new Date(at)]);
   }
 
   async finishDelivery(delivery: Delivery, status: Delivery['status'], result: string, at: number): Promise<void> {

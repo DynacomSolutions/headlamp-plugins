@@ -250,7 +250,7 @@ export class PushService {
   }
 
   /** Send an unsolicited storage notice independently of chat state. */
-  async sendStorageNotice(r: PushSubscriptionRecord, payload: Record<string, unknown>, topic: string): Promise<
+  async sendStorageNotice(r: Pick<PushSubscriptionRecord, 'id' | 'endpoint' | 'auth' | 'p256dh'>, payload: Record<string, unknown>, topic: string): Promise<
     { outcome: 'http'; status: number } | { outcome: 'disabled' | 'rate_limited' | 'delivery_unverified' }
   > {
     if (!this.keys) return { outcome: 'disabled' };

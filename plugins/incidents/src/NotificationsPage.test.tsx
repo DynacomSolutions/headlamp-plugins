@@ -91,6 +91,34 @@ beforeEach(() => {
 const writes = () => calls.filter(c => c.method !== 'GET');
 
 describe('NotificationsPage', () => {
+  it('allows local storage opt-out while its authority is unavailable', async () => {
+    push.device = fakeDevice();
+    record = {
+      id: ID,
+      label: 'Phone',
+      settings: { diagnosis: true, chat: true, severities: ['critical'] },
+    };
+    const original = request.getMockImplementation()!;
+    request.mockImplementation(async (url: string, params?: { method?: string }) => {
+      if (url.endsWith(`/api/storage/incident/notifications/${ID}`)) {
+        throw Object.assign(new Error('Storage notification authority is unavailable'), { status: 503 });
+      }
+      return original(url, params);
+    });
+
+    render(<NotificationsPage />);
+    expect(await screen.findByText('Storage notification authority is unavailable')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Disable storage notifications' }));
+    await waitFor(() =>
+      expect(writes()).toContainEqual({
+        url: expect.stringContaining('/api/storage/incident/notifications'),
+        method: 'POST',
+        body: { subscriptionId: ID, enabled: false, auth: Buffer.from(bytes(16)).toString('base64url') },
+      })
+    );
+    expect(push.unsubscribe).not.toHaveBeenCalled();
+  });
+
   it('subscribes this device with its own key and the paths a notification opens', async () => {
     render(<NotificationsPage />);
     const enable = await screen.findByRole('button', { name: 'Enable on this device' });

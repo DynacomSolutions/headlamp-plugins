@@ -61,25 +61,26 @@ function cookieBearer(header: string | undefined, cluster: string): string | und
 
 const identitySchema = z.object({
   status: z.object({
-    userInfo: z.object({ username: z.string().min(1).max(1024), groups: z.array(z.string()).default([]) }),
+    userInfo: z.object({ username: z.string().min(1).max(1024), uid: z.string().max(1024).optional(), groups: z.array(z.string()).default([]) }),
   }),
 });
 const accessSchema = z.object({ status: z.object({ allowed: z.boolean(), denied: z.boolean().optional(), evaluationError: z.string().optional() }) });
 
-const userInfoSchema = z.object({ sub: z.string().min(1), groups: z.array(z.string()) });
 const REVIEW_LIMIT = 64 * 1024;
+
+export type KubernetesIdentity = { username: string; uid: string | null };
 
 export type Operator = {
   name: string;
+  identity: KubernetesIdentity;
   checkBody(data: unknown): void;
-  verifyDelivery?: () => Promise<boolean>;
+  requireRead(): Promise<void>;
 };
 
 export function operatorAuth(
   config: Pick<Config, 'kubeApi' | 'kubeCaFile' | 'allowedOrigins'>,
   headlampCluster: string,
   humanGroups: ReadonlySet<string>,
-  userInfo?: URL,
 ) {
   const isMember = (groups: string[]) => groups.some(group => humanGroups.has(group));
 
@@ -141,7 +142,7 @@ export function operatorAuth(
         || user.groups.some(group => group.startsWith('system:serviceaccounts')) || !isMember(user.groups)) {
         throw new StorageError(403, 'Approved human operator membership is required');
       }
-      return user.username;
+      return { username: user.username, uid: user.uid || null };
     }
 
     async function authorise(requested: OperatorVerb) {
@@ -155,25 +156,15 @@ export function operatorAuth(
       if (!auth.data.status.allowed || auth.data.status.denied) throw new StorageError(403, 'Operator permission required');
     }
 
-    const name = await identity();
+    const verified = await identity();
     await authorise(verb);
     return {
-      name,
+      name: verified.username,
+      identity: verified,
+      requireRead: () => authorise('get'),
       checkBody(data: unknown) {
         if (JSON.stringify(data).includes(token)) throw new StorageError(400, 'Remove the login credential from the request');
       },
-      verifyDelivery: verb === 'update' && userInfo ? async () => {
-        try {
-          if (await identity() !== name) return false;
-          const response = await requestJson(userInfo, { token, timeoutMs: SELF_REVIEW_TIMEOUT_MS, limit: REVIEW_LIMIT });
-          const issuer = userInfoSchema.safeParse(response.data);
-          if (!issuer.success || !isMember(issuer.data.groups)) return false;
-          await Promise.all([authorise('get'), authorise('update')]);
-          return true;
-        } catch {
-          return false;
-        }
-      } : undefined,
     };
   };
 }

@@ -2,13 +2,15 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import type { PushService } from '../push/service.js';
 import type { Metrics } from '../metrics.js';
-import type { Operator } from './auth.js';
+import type { KubernetesIdentity, Operator } from './auth.js';
+import { recipientKey, type Entitlement, type NotificationAuthority, type Recipient } from './notification-authority.js';
 import { itemViews, pressureStage, scanIsFresh, type StorageNotice } from './inventory.js';
-import type { StorageQueries, StorageStore } from './store.js';
+import type { StorageStore } from './store.js';
 import { StorageError, type Decision, type DriveState } from './types.js';
 
 const GRANT_MS = 30 * 24 * 60 * 60_000;
-const SESSION_MS = 15 * 60_000;
+const POLL_MS = 30_000;
+const AUTHORITY_RETRY_MS = 60_000;
 const RETRY_MS = 5 * 60_000;
 const ATTEMPT_MS = 60_000;
 const MAX_ATTEMPTS = 3;
@@ -26,7 +28,8 @@ export const enrolSchema = z.object({
 }).strict().refine(body => !body.enabled || Boolean(body.auth && body.urls), 'Enabling needs the device key and both action URLs');
 
 export type NotificationUrls = NonNullable<z.infer<typeof enrolSchema>['urls']>;
-export type Registration = { subscriptionId: string; actor: string; grant: string; key: string; urls: NotificationUrls; until: string };
+type RecipientGrant = { recipient: Recipient; version: string };
+export type Registration = { subscriptionId: string; grant: string; key: string; urls: NotificationUrls; until: string; entitlement?: RecipientGrant };
 export type Delivery = {
   noticeId: string;
   subscriptionId: string;
@@ -36,105 +39,157 @@ export type Delivery = {
   at: string;
   result?: string;
 };
-export type CoverageStatus = 'private' | 'disabled' | 'no_recipients' | 'pending' | 'accepted' | 'failed' | 'partial';
+const coverageStatuses = ['private', 'disabled', 'authority_unavailable', 'no_recipients', 'revoked', 'pending', 'accepted', 'failed', 'partial'] as const;
+export type CoverageStatus = typeof coverageStatuses[number];
 
-type Verification = {
-  grant: string;
-  until: number;
-  verify: NonNullable<Operator['verifyDelivery']>;
-  timer: NodeJS.Timeout;
-};
+const authorityStatuses = ['disabled', 'ready', 'unavailable'] as const;
+type AuthorityStatus = typeof authorityStatuses[number];
+type Coverage = { enabled: boolean; status: AuthorityStatus; registeredRecipients: number | null; revokedRecipients: number | null };
+type Recipients =
+  | { status: 'disabled' | 'unavailable' }
+  | { status: 'ready'; eligible: Registration[]; revoked: number };
+
+export const disabledCoverage: Coverage = { enabled: false, status: 'disabled', registeredRecipients: null, revokedRecipients: null };
+
+export function coverageMetrics(metrics: Metrics, coverage: Coverage) {
+  for (const status of authorityStatuses) {
+    metrics.set('headlamp_agent_storage_push_authority', { status }, Number(coverage.status === status));
+  }
+  metrics.set('headlamp_agent_storage_push_registered_recipients', {}, coverage.registeredRecipients ?? NaN);
+  metrics.set('headlamp_agent_storage_push_revoked_recipients', {}, coverage.revokedRecipients ?? NaN);
+}
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const keyOf = (device: { endpoint: string; auth: string; p256dh: string }) => digest(JSON.stringify([device.endpoint, device.auth, device.p256dh]));
+const ownsDevice = (device: { auth: string }, proof: string) =>
+  timingSafeEqual(Buffer.from(digest(device.auth)), Buffer.from(digest(proof)));
+const matches = (grant: RecipientGrant, decision: Entitlement | undefined) =>
+  decision?.status === 'allowed' && grant.version === decision.version;
 
 export class StorageNotifications {
   private running: Promise<void> | undefined;
+  private timer: NodeJS.Timeout | undefined;
   private rerun = false;
-  private readonly verifiers = new Map<string, Verification>();
+  private stopping = false;
 
   constructor(private readonly deps: {
     store: StorageStore;
     push: PushService;
     now: () => number;
-    issuerConfigured: boolean;
+    authority?: NotificationAuthority;
   }) {}
 
   private get enabled() {
-    return this.deps.push.enabled && this.deps.issuerConfigured;
+    return this.deps.push.enabled && Boolean(this.deps.authority);
   }
 
-  private forget(subscriptionId: string, expected?: Verification) {
-    const current = this.verifiers.get(subscriptionId);
-    if (!current || (expected && current !== expected)) return;
-    clearTimeout(current.timer);
-    this.verifiers.delete(subscriptionId);
-  }
-
-  private verifier(row: Registration): Verification | undefined {
-    const current = this.verifiers.get(row.subscriptionId);
-    if (current?.grant === row.grant && current.until > this.deps.now()) return current;
+  start(): void {
+    if (!this.enabled) return;
+    this.timer = setInterval(() => this.kick(), POLL_MS).unref();
+    this.kick();
   }
 
   async enrol(request: z.infer<typeof enrolSchema>, operator: Operator) {
-    const { store, push, now } = this.deps;
+    const { store, now, authority } = this.deps;
     const { subscriptionId, enabled, auth, urls } = request;
-    const actor = operator.name;
     if (!enabled) {
       await store.transaction(async tx => {
         await tx.lock(`recipient:${subscriptionId}`);
-        if ((await tx.registration(subscriptionId))?.actor !== actor) return;
-        await tx.removeRegistration(subscriptionId);
-        this.forget(subscriptionId);
+        const previous = await tx.registration(subscriptionId);
+        if (!previous) return;
+        const device = await tx.notificationDevice(subscriptionId);
+        if (device && auth && ownsDevice(device, auth)) {
+          await tx.removeRegistration(subscriptionId);
+          return;
+        }
+        // Previous clients can opt out using the mapped identity.
+        if (!previous.entitlement || auth) throw new StorageError(403, 'Device subscription could not be verified');
+        const resolved = await authority?.resolve(operator.identity);
+        if (!resolved) throw new StorageError(503, 'Storage notification authority is unavailable');
+        if (resolved.recipient && recipientKey(resolved.recipient) === recipientKey(previous.entitlement.recipient)) {
+          await tx.removeRegistration(subscriptionId);
+        }
       });
       return { subscriptionId, enabled };
     }
 
-    const verify = operator.verifyDelivery;
-    if (!this.enabled || !verify) throw new StorageError(503, 'Storage notification verification is unavailable');
-    const device = await push.storageDevice(subscriptionId);
-    if (!device || !auth || !urls || !timingSafeEqual(Buffer.from(digest(device.auth)), Buffer.from(digest(auth)))) {
-      throw new StorageError(403, 'Device subscription could not be verified');
-    }
-    if (!await verify()) throw new StorageError(403, 'Current storage notification entitlement could not be verified');
-
-    const key = keyOf(device);
-    const grant = await store.transaction(async tx => {
+    if (!this.enabled || !authority) throw new StorageError(503, 'Storage notification authority is unavailable');
+    await operator.requireRead();
+    await store.transaction(async tx => {
       await tx.lock(`recipient:${subscriptionId}`);
+      const device = await tx.notificationDevice(subscriptionId);
+      if (!device || !auth || !urls || !ownsDevice(device, auth)) {
+        throw new StorageError(403, 'Device subscription could not be verified');
+      }
+      const resolved = await authority.resolve(operator.identity);
+      if (!resolved) throw new StorageError(503, 'Storage notification authority is unavailable');
+      if (resolved.entitlement.status !== 'allowed' || !resolved.recipient) {
+        throw new StorageError(403, 'Current storage notification entitlement is required');
+      }
+
+      const entitlement = { recipient: resolved.recipient, version: resolved.entitlement.version };
       const previous = await tx.registration(subscriptionId);
+      const key = keyOf(device);
       const at = now();
       const sameDevice = previous?.key === key && Date.parse(previous.until) > at;
-      if (sameDevice && previous.actor !== actor) throw new StorageError(409, 'Device already has an operator enrolment');
-      const grant = sameDevice ? previous.grant : randomUUID();
-      await tx.saveRegistration({ subscriptionId, actor, grant, key, urls, until: new Date(at + GRANT_MS).toISOString() });
-      return grant;
+      const existing = sameDevice ? previous.entitlement : undefined;
+      if (existing && recipientKey(existing.recipient) !== recipientKey(entitlement.recipient)) {
+        throw new StorageError(409, 'Device already has an operator enrolment');
+      }
+      const grant = previous && existing?.version === entitlement.version ? previous.grant : randomUUID();
+      await tx.saveRegistration({ subscriptionId, grant, key, urls, entitlement, until: new Date(at + GRANT_MS).toISOString() });
     });
-    this.forget(subscriptionId);
-    const timer = setTimeout(() => this.forget(subscriptionId), SESSION_MS).unref();
-    this.verifiers.set(subscriptionId, { grant, verify, timer, until: now() + SESSION_MS });
     this.kick();
     return { subscriptionId, enabled };
   }
 
-  async device(subscriptionId: string, actor: string) {
-    const current = await this.deps.store.registration(subscriptionId);
-    const device = current?.actor === actor && await this.deps.push.storageDevice(subscriptionId);
+  async device(subscriptionId: string, identity: KubernetesIdentity) {
+    const { store, push, authority, now } = this.deps;
+    const disabled = { subscriptionId, enabled: false };
+    if (!this.enabled || !authority) return disabled;
+    const current = await store.registration(subscriptionId);
+    if (!current?.entitlement || Date.parse(current.until) <= now()) return disabled;
+    const device = await push.storageDevice(subscriptionId);
+    if (!device || current.key !== keyOf(device)) return disabled;
+    const resolved = await authority.resolve(identity);
+    if (!resolved) throw new StorageError(503, 'Storage notification authority is unavailable');
     return {
       subscriptionId,
-      enabled: Boolean(this.enabled && device && current && current.key === keyOf(device)
-        && Date.parse(current.until) > this.deps.now() && this.verifier(current)),
+      enabled: Boolean(resolved.recipient
+        && recipientKey(resolved.recipient) === recipientKey(current.entitlement.recipient)
+        && matches(current.entitlement, resolved.entitlement)),
     };
   }
 
-  private async recipients(tx: StorageQueries): Promise<Registration[]> {
-    const candidates = await tx.registrations(this.deps.now());
-    const devices = await this.deps.push.storageDevices();
+  private async recipients(): Promise<Recipients> {
+    const { store, push, authority, now } = this.deps;
+    if (!this.enabled || !authority) return { status: 'disabled' };
+    const [grants, devices] = await Promise.all([store.registrations(now()), push.storageDevices()]);
     const keys = new Map(devices.map(device => [device.id, keyOf(device)]));
-    return candidates.filter(row => keys.get(row.subscriptionId) === row.key && this.verifier(row));
+    const candidates = grants.flatMap(row => row.entitlement && keys.get(row.subscriptionId) === row.key
+      ? [{ row, entitlement: row.entitlement }] : []);
+    const identities = [...new Map(candidates.map(({ entitlement: { recipient } }) => [recipientKey(recipient), recipient])).values()];
+    const checks = [];
+    for (let i = 0; i < Math.max(1, identities.length); i += 50) checks.push(authority.check(identities.slice(i, i + 50)));
+    const batches = await Promise.all(checks);
+    const verified = new Map<string, Entitlement>();
+    for (const batch of batches) {
+      if (!batch) return { status: 'unavailable' };
+      for (const [key, decision] of batch) verified.set(key, decision);
+    }
+    const eligible = candidates.filter(({ entitlement }) => matches(entitlement, verified.get(recipientKey(entitlement.recipient))));
+    return { status: 'ready', eligible: eligible.map(({ row }) => row), revoked: candidates.length - eligible.length };
   }
 
-  async coverage() {
-    return { enabled: this.enabled, registeredRecipients: this.enabled ? (await this.recipients(this.deps.store)).length : 0 };
+  async coverage(): Promise<Coverage> {
+    const checked = await this.recipients();
+    if (checked.status === 'disabled') return disabledCoverage;
+    return {
+      enabled: true,
+      status: checked.status,
+      registeredRecipients: checked.status === 'ready' ? checked.eligible.length : null,
+      revokedRecipients: checked.status === 'ready' ? checked.revoked : null,
+    };
   }
 
   async project(notices: StorageNotice[], chatId: string) {
@@ -146,9 +201,12 @@ export class StorageNotifications {
       const failed = totals?.failed ?? 0;
       const pending = totals?.pending ?? 0;
       const targetedRecipients = providerAccepted + failed + pending;
-      const status: CoverageStatus = !external ? 'private' : !this.enabled ? 'disabled'
-        : pending ? 'pending' : providerAccepted && failed ? 'partial' : providerAccepted ? 'accepted'
-          : failed ? 'failed' : totals?.evaluated ? 'no_recipients' : 'pending';
+      let status: CoverageStatus = totals?.coverage ?? 'pending';
+      if (!external) status = 'private';
+      else if (!this.enabled) status = 'disabled';
+      else if (pending) status = totals?.authorityUnavailable ? 'authority_unavailable' : 'pending';
+      else if (providerAccepted) status = failed ? 'partial' : 'accepted';
+      else if (failed) status = totals?.revoked === failed ? 'revoked' : 'failed';
       return {
         ...notice,
         action: { driveId: notice.driveId, kind: notice.kind, id: notice.questionId ?? notice.id, chatId },
@@ -158,6 +216,7 @@ export class StorageNotifications {
   }
 
   kick(): void {
+    if (this.stopping) return;
     if (this.running) {
       this.rerun = true;
       return;
@@ -172,87 +231,93 @@ export class StorageNotifications {
   }
 
   async drain(): Promise<void> {
-    while (this.running) await this.running;
-    for (const id of this.verifiers.keys()) this.forget(id);
+    this.stopping = true;
+    clearInterval(this.timer);
+    await this.running;
   }
 
   private async deliver(): Promise<void> {
     const { store, now } = this.deps;
+    const checked = await this.recipients();
     const at = now();
-    const recipients = this.enabled ? await this.recipients(store) : [];
+    const coverage = checked.status === 'ready'
+      ? checked.eligible.length ? 'pending' : checked.revoked ? 'revoked' : 'no_recipients'
+      : checked.status === 'unavailable' ? 'authority_unavailable' : 'disabled';
     await store.transaction(async tx => {
       await tx.lock('notification-coverage');
-      const noticeRows = await tx.unresolvedCoverage(recipients.length > 0);
+      const noticeRows = await tx.unresolvedCoverage(coverage);
       for (const notice of noticeRows) {
-        const status = !notice.external ? 'private' : !this.enabled ? 'disabled' : !recipients.length ? 'no_recipients' : 'pending';
-        await tx.evaluateNotice(notice.id, status, at);
-        if (status === 'pending') await tx.addTargets(notice.id, recipients, at);
+        await tx.evaluateNotice(notice.id, notice.external ? coverage : 'private', at);
+        if (notice.external && checked.status === 'ready' && coverage === 'pending') {
+          await tx.addTargets(notice.id, checked.eligible, at);
+        }
       }
-      await tx.expireAttempts(at - ATTEMPT_MS);
     });
+    await store.expireAttempts(at - ATTEMPT_MS);
     if (!this.enabled) return;
-    const deliveries = await store.dueDeliveries(at);
-    await Promise.allSettled(deliveries.map(delivery => this.send(delivery)));
+    for (const delivery of await store.dueDeliveries(at)) {
+      if (this.stopping) return;
+      await this.send(delivery);
+    }
   }
 
   private async send(old: Delivery): Promise<void> {
-    const { store, now } = this.deps;
-    const at = now();
-    const attempt = await store.claimDelivery(old, at);
+    const { store, push, now, authority } = this.deps;
+    if (!authority) return;
+    const attempt = await store.claimDelivery(old, now());
     if (!attempt) return;
-    let status: Delivery['status'] = 'failed';
-    let result = 'authorisation_or_notice_withdrawn';
-    let next = at;
     try {
-      const registration = await store.registration(attempt.subscriptionId);
-      const verifier = registration?.grant === attempt.grant ? this.verifier(registration) : undefined;
-      const verified = verifier && await verifier.verify();
-      if (verifier && !verified) this.forget(attempt.subscriptionId, verifier);
-      if (verified && verifier) {
-        const provider = await this.sendVerified(attempt, verifier);
-        if (provider) {
-          result = provider.outcome === 'http' ? String(provider.status) : provider.outcome;
-          if (provider.outcome === 'http' && provider.status >= 200 && provider.status < 300) status = 'accepted';
-          if (attempt.attempts < MAX_ATTEMPTS && (provider.outcome === 'rate_limited'
-              || (provider.outcome === 'http' && (provider.status === 429 || provider.status >= 500)))) {
-            status = 'pending';
-            next = now() + RETRY_MS * attempt.attempts;
-          }
-          if (provider.outcome === 'http' && [404, 410].includes(provider.status)) {
-            // Keep provider errors in the storage workflow.
-            this.forget(attempt.subscriptionId, verifier);
-          }
+      await store.transaction(async tx => {
+        await tx.lock(`recipient:${attempt.subscriptionId}`);
+        if (!await tx.lockAttempt(attempt, now() - ATTEMPT_MS)) return;
+        const registration = await tx.registration(attempt.subscriptionId);
+        if (registration?.grant !== attempt.grant || !registration.entitlement || Date.parse(registration.until) <= now()) {
+          return tx.finishDelivery(attempt, 'failed', 'authorisation_or_notice_withdrawn', now());
         }
-      }
-    } catch {
-      result = 'delivery_unverified';
-    }
-    await store.finishDelivery(attempt, status, result, next);
-  }
+        const { recipient } = registration.entitlement;
+        const checked = await authority.check([recipient]);
+        if (!checked) return tx.deferDelivery(attempt, now() + AUTHORITY_RETRY_MS);
+        if (!matches(registration.entitlement, checked.get(recipientKey(recipient)))) {
+          return tx.finishDelivery(attempt, 'failed', 'revoked', now());
+        }
 
-  private async sendVerified(attempt: Delivery, verifier: Verification) {
-    const { store, push, now } = this.deps;
-    const [notice, registration, device] = await Promise.all([
-      store.get<StorageNotice>('notice', attempt.noticeId), store.registration(attempt.subscriptionId),
-      push.storageDevice(attempt.subscriptionId),
-    ]);
-    if (!notice?.external || registration?.grant !== attempt.grant || !device || registration.key !== keyOf(device)) return;
-    const [current, decisions] = await Promise.all([
-      store.drive(notice.driveId),
-      notice.kind === 'cleanup' ? store.list<Decision>('decision', notice.driveId) : [],
-    ]);
-    const at = now();
-    if (this.verifier(registration) !== verifier || Date.parse(registration.until) <= at
-      || !current || !this.externalStillAllowed(current, notice, decisions, at)) return;
-    const id = notice.questionId ?? notice.id;
-    const url = registration.urls[notice.kind].replace('{driveId}', notice.driveId).replace('{id}', id);
-    return push.sendStorageNotice(device, {
-      kind: 'storage',
-      title: notice.kind === 'question' ? 'Storage incident question' : 'Storage cleanup available',
-      body: notice.kind === 'question' ? 'Open the incident to answer the question.' : 'Open the incident to review the cleanup finding.',
-      url,
-      tag: `storage-${notice.id}`,
-    }, digest(notice.id).slice(0, 30));
+        const device = await tx.notificationDevice(attempt.subscriptionId);
+        const notice = await tx.get<StorageNotice>('notice', attempt.noticeId);
+        if (!notice?.external || !device || registration.key !== keyOf(device) || Date.parse(registration.until) <= now()) {
+          return tx.finishDelivery(attempt, 'failed', 'authorisation_or_notice_withdrawn', now());
+        }
+        const current = await tx.drive(notice.driveId);
+        const decisions = notice.kind === 'cleanup' ? await tx.list<Decision>('decision', notice.driveId) : [];
+        if (!current || !this.externalStillAllowed(current, notice, decisions, now())) {
+          return tx.finishDelivery(attempt, 'failed', 'authorisation_or_notice_withdrawn', now());
+        }
+
+        const id = notice.questionId ?? notice.id;
+        const url = registration.urls[notice.kind].replace('{driveId}', notice.driveId).replace('{id}', id);
+        const provider = await push.sendStorageNotice(device, {
+          kind: 'storage',
+          title: notice.kind === 'question' ? 'Storage incident question' : 'Storage cleanup available',
+          body: notice.kind === 'question' ? 'Open the incident to answer the question.' : 'Open the incident to review the cleanup finding.',
+          url,
+          tag: `storage-${notice.id}`,
+        }, digest(notice.id).slice(0, 30));
+        const result = provider.outcome === 'http' ? String(provider.status) : provider.outcome;
+        if (provider.outcome === 'http' && provider.status >= 200 && provider.status < 300) {
+          return tx.finishDelivery(attempt, 'accepted', result, now());
+        }
+        if (provider.outcome === 'http' && [404, 410].includes(provider.status)) {
+          await tx.removeRegistration(attempt.subscriptionId);
+        }
+        if (attempt.attempts < MAX_ATTEMPTS && (provider.outcome === 'rate_limited'
+            || (provider.outcome === 'http' && (provider.status === 429 || provider.status >= 500)))) {
+          return tx.finishDelivery(attempt, 'pending', result, now() + RETRY_MS * attempt.attempts);
+        }
+        await tx.finishDelivery(attempt, 'failed', result, now());
+      });
+    } catch {
+      // A committed claim without a result prevents resending an uncertain provider request.
+      await store.finishDelivery(attempt, 'failed', 'delivery_unverified', now());
+    }
   }
 
   private externalStillAllowed(state: DriveState, notice: StorageNotice, decisions: Decision[], now: number): boolean {
@@ -265,12 +330,11 @@ export class StorageNotifications {
   }
 
   async metrics(metrics: Metrics) {
-    const { registeredRecipients } = await this.coverage();
-    metrics.set('headlamp_agent_storage_push_registered_recipients', {}, registeredRecipients);
+    coverageMetrics(metrics, await this.coverage());
     const views = await this.project(await this.deps.store.list<StorageNotice>('notice'), '');
     const statusCounts = new Map<CoverageStatus, number>();
     for (const view of views) statusCounts.set(view.delivery.status, (statusCounts.get(view.delivery.status) ?? 0) + 1);
-    for (const status of ['private', 'disabled', 'no_recipients', 'pending', 'accepted', 'failed', 'partial'] as const) {
+    for (const status of coverageStatuses) {
       metrics.set('headlamp_agent_storage_push_notices', { status }, statusCounts.get(status) ?? 0);
     }
     const totals = await this.deps.store.deliveryCounts();

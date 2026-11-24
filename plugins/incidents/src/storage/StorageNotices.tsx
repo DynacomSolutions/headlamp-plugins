@@ -22,8 +22,10 @@ export function noticeUrl(action: NoticeAction) {
 
 const deliveryLabels = {
   private: 'Available in Headlamp only',
-  disabled: 'Push unavailable',
-  no_recipients: 'No registered recipients when this notice was issued',
+  disabled: 'Storage push is disabled',
+  authority_unavailable: 'Storage notification authority unavailable',
+  no_recipients: 'No eligible device enrolments',
+  revoked: 'Device enrolment access was withdrawn',
   pending: 'Send pending',
   accepted: 'Push provider accepted the send',
   failed: 'Push send failed',
@@ -57,15 +59,23 @@ export function DeliveryEvidence({ delivery }: { delivery?: NoticeDelivery }) {
 }
 
 function Coverage({ coverage }: { coverage?: NotificationCoverage }) {
-  if (coverage?.enabled !== true || typeof coverage.registeredRecipients !== 'number') {
+  if (coverage?.status === 'disabled') {
+    return <StorageAlert severity="info">Storage push is disabled for this deployment.</StorageAlert>;
+  }
+  if (coverage?.status === 'unavailable') {
+    return <StorageAlert severity="warning">Storage notification authority is unavailable.</StorageAlert>;
+  }
+  if (coverage?.status !== 'ready' || typeof coverage.registeredRecipients !== 'number') {
     return <StorageAlert severity="info">Storage notification coverage is unavailable.</StorageAlert>;
   }
   const count = coverage.registeredRecipients;
+  const revoked = coverage.revokedRecipients ?? 0;
   if (count === 0) {
     return (
       <StorageAlert severity="warning">
-        No registered recipients for storage notifications. Findings and questions are available
-        here.{' '}
+        {revoked > 0
+          ? 'Access was withdrawn for the remaining storage notification enrolments.'
+          : 'No eligible device enrolments for storage notifications.'}{' '}
         <Link component={RouterLink} to={notificationsUrl()}>
           Manage notifications
         </Link>
@@ -74,7 +84,8 @@ function Coverage({ coverage }: { coverage?: NotificationCoverage }) {
   }
   return (
     <Typography variant="body2" color="text.secondary">
-      {count} registered {count === 1 ? 'recipient' : 'recipients'} for storage notifications
+      {count} eligible {count === 1 ? 'device' : 'devices'} for storage notifications
+      {revoked > 0 && (' · ' + revoked + ' enrolments with withdrawn access')}
       {' · '}
       <Link component={RouterLink} to={notificationsUrl()}>
         Manage notifications

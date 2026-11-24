@@ -92,7 +92,7 @@ async function fixture(
   const scanner = new HttpScanner(urls, () => token);
   const apply = new StorageApply({ store, scanner, now, disposable: new Set(nodeNames), enabled: true });
   const push = new PushService({ store: new MemoryPushStore() });
-  const notificationDeps = { store, push, now, issuerConfigured: false };
+  const notificationDeps = { store, push, now };
   const notifications = new StorageNotifications(notificationDeps);
   const reconciler = new StorageReconciler({ store, scanner, nodes: new Set(nodeNames), metrics: new Metrics(), now, filesystemPolicies });
   const incident = new StorageIncident({ store, apply, notifications, now, nodes: nodeNames });
