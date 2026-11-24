@@ -199,10 +199,11 @@ export function Composer(props: {
   running: boolean;
   disabled?: boolean;
   onSend: (text: string) => void;
-  onStop: () => void;
+  onStop?: () => void;
   picker: React.ReactNode;
+  placeholder?: string;
 }) {
-  const { running, disabled, onSend, onStop, picker } = props;
+  const { running, disabled, onSend, onStop, picker, placeholder } = props;
   const [text, setText] = React.useState('');
   const canSend = !running && !disabled && text.trim() !== '';
   const send = () => {
@@ -225,7 +226,7 @@ export function Composer(props: {
       <Box
         component="textarea"
         aria-label="Message"
-        placeholder="Ask about the cluster or an incident"
+        placeholder={placeholder ?? 'Ask about the cluster or an incident'}
         rows={2}
         maxLength={8000}
         value={text}
@@ -251,7 +252,7 @@ export function Composer(props: {
       />
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         {picker}
-        {running ? (
+        {running && onStop ? (
           <Button
             size="small"
             variant="contained"

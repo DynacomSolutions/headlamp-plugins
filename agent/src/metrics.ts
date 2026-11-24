@@ -10,6 +10,16 @@ interface Meta {
 }
 
 const META: Record<string, Meta> = {
+  headlamp_agent_storage_reconcile_total: { type: 'counter', help: 'Storage scan reconcile requests by result.' },
+  headlamp_agent_storage_scan_total: { type: 'counter', help: 'Storage scanner executions by result.' },
+  headlamp_agent_storage_last_full_scan_timestamp_seconds: { type: 'gauge', help: 'Unix time of the last complete daily scan by node.' },
+  headlamp_agent_storage_reconcile_last_success_timestamp_seconds: { type: 'gauge', help: 'Unix time of the last successful storage scan reconcile.' },
+  headlamp_agent_storage_receipts: { type: 'gauge', help: 'Storage plan receipts by status.' },
+  headlamp_agent_storage_push_authority: { type: 'gauge', help: 'Current storage notification authority status. Exactly one status is 1.' },
+  headlamp_agent_storage_push_registered_recipients: { type: 'gauge', help: 'Devices with a verified current storage grant, or NaN without a decision.' },
+  headlamp_agent_storage_push_revoked_recipients: { type: 'gauge', help: 'Devices with a revoked storage grant, or NaN without a decision.' },
+  headlamp_agent_storage_push_notices: { type: 'gauge', help: 'Active storage notices by delivery status.' },
+  headlamp_agent_storage_push_deliveries: { type: 'gauge', help: 'Durable storage provider deliveries by status.' },
   headlamp_agent_diagnoses_open: { type: 'gauge', help: 'Diagnoses that are not resolved, by alert severity.' },
   headlamp_agent_reconcile_runs_total: { type: 'counter', help: 'Reconcile runs of this pod, by result: ok, error (vmalert unreadable) or skipped (another pod leads).' },
   headlamp_agent_reconcile_resolved_total: { type: 'counter', help: 'Open diagnoses that a reconcile run resolved because vmalert no longer has the alert.' },
@@ -36,6 +46,8 @@ export class Metrics {
     this.inc('headlamp_agent_reconcile_folded_total', {}, 0);
     this.inc('headlamp_agent_alert_repeats_merged_total', {}, 0);
     this.inc('headlamp_agent_resolve_notifications_total', {}, 0);
+    for (const result of ['success', 'error']) this.inc('headlamp_agent_storage_reconcile_total', { result }, 0);
+    for (const result of ['complete', 'incomplete', 'timeout', 'error']) this.inc('headlamp_agent_storage_scan_total', { result }, 0);
     for (const result of ['ok', 'error', 'skipped']) this.inc('headlamp_agent_reconcile_runs_total', { result }, 0);
   }
 

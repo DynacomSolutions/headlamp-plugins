@@ -86,7 +86,8 @@ export interface Loaded<T> {
 export function useLoaded<T>(
   url: string,
   parse: (json: unknown) => T,
-  intervalMs: (data: T | null) => number
+  intervalMs: (data: T | null) => number,
+  request: (url: string) => Promise<unknown> = ApiProxy.request
 ): Loaded<T> {
   const [state, setState] = React.useState<Omit<Loaded<T>, 'refresh'>>({
     data: null,
@@ -105,7 +106,7 @@ export function useLoaded<T>(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
       try {
-        const data = parse(await ApiProxy.request(url));
+        const data = parse(await request(url));
         dataRef.current = data;
         if (alive) setState({ data, loading: false, error: null });
       } catch (e: any) {

@@ -12,20 +12,23 @@ async function main(): Promise<void> {
   const command = process.argv[2] ?? 'serve';
   if (command === 'acp') return startAcp();
   if (command === 'serve') {
-    const server = await startServer(undefined, VERSION);
-    let stopping = false;
-    const stop = () => {
-      // A second signal ends the process at once.
-      if (stopping) process.exit(1);
-      stopping = true;
-      // Readiness turns 503, new connections stop, and the running diagnosis finishes. No timer: the platform kill is the only limit.
-      server
-        .close()
-        .catch(error => process.stderr.write(`shutdown failed: ${error instanceof Error ? error.message : String(error)}\n`))
-        .finally(() => process.exit(0));
-    };
+    const shutdown = new AbortController();
+    const stop = () => shutdown.abort();
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
+    try {
+      const server = await startServer(undefined, VERSION, { signal: shutdown.signal });
+      await new Promise<void>(resolve => {
+        if (shutdown.signal.aborted) return resolve();
+        shutdown.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      await server.close();
+    } catch (error) {
+      if (!shutdown.signal.aborted || error !== shutdown.signal.reason) throw error;
+    } finally {
+      process.off('SIGTERM', stop);
+      process.off('SIGINT', stop);
+    }
     return;
   }
   process.stderr.write('usage: headlamp-agent [serve|acp]\n');

@@ -7,12 +7,98 @@ import CircularProgress from '@mui/material/CircularProgress';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import FormGroup from '@mui/material/FormGroup';
 import FormLabel from '@mui/material/FormLabel';
+import Stack from '@mui/material/Stack';
 import Switch from '@mui/material/Switch';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { useSettings } from './data';
+import { Settings } from './model';
+import { existingSubscription } from './push';
 import { usePushDevice } from './push-data';
-import { PushSettings, SEVERITY_OPTIONS, SeverityGroup } from './push-model';
+import {
+  PushSettings,
+  SEVERITY_OPTIONS,
+  SeverityGroup,
+  subscriptionId,
+  subscriptionParts,
+} from './push-model';
+import { storageNotificationUrls } from './routes';
+import { useStorageAction } from './storage/Investigation';
+import { postStorage, useStorageNotificationDevice } from './storage/storage-data';
+import { StorageAlert } from './storage/StorageAlert';
+
+function StorageNotificationSettings({
+  settings,
+  id,
+  disabled,
+}: {
+  settings: Settings;
+  id: string;
+  disabled: boolean;
+}) {
+  const enrolment = useStorageNotificationDevice(settings, id);
+  const { busy, error, run } = useStorageAction(enrolment.refresh);
+  const change = (enabled: boolean) =>
+    run(async () => {
+      const device = await existingSubscription();
+      if (!device || (await subscriptionId(device.endpoint)) !== id) {
+        throw new Error('The browser subscription changed. Reload this page and try again.');
+      }
+      await postStorage(settings, '/incident/notifications', {
+        subscriptionId: id,
+        enabled,
+        auth: subscriptionParts(device).keys.auth,
+        ...(enabled && { urls: storageNotificationUrls() }),
+      });
+    });
+  const enabled = enrolment.data?.enabled === true;
+  return (
+    <Stack component="section" aria-labelledby="storage-push-title" spacing={1}>
+      <Typography id="storage-push-title" component="h2" variant="h6">
+        Storage notifications
+      </Typography>
+      <Typography variant="body2">
+        Device enrolment lasts up to 30 days. The agent checks your access before each push.
+        Findings and questions remain available in Headlamp.
+      </Typography>
+      {enrolment.loading && <CircularProgress size={20} aria-label="Loading storage enrolment" />}
+      {enrolment.error && (
+        <StorageAlert severity="warning" action={<Button onClick={enrolment.refresh}>Retry</Button>}>
+          {enrolment.error}
+        </StorageAlert>
+      )}
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
+      {enrolment.data && !enrolment.error && (
+        <>
+          <Typography variant="body2" color="text.secondary" role="status">
+            {enabled
+              ? 'This device is enrolled for storage notifications.'
+              : 'This device is not enrolled for storage notifications.'}
+          </Typography>
+          <Stack direction="row" gap={1} flexWrap="wrap">
+            <Button
+              variant={enabled ? 'outlined' : 'contained'}
+              disabled={busy || disabled}
+              onClick={() => void change(true)}
+            >
+              {enabled ? 'Renew storage enrolment' : 'Enable storage notifications'}
+            </Button>
+            {enabled && (
+              <Button disabled={busy || disabled} onClick={() => void change(false)}>
+                Disable storage notifications
+              </Button>
+            )}
+          </Stack>
+        </>
+      )}
+      {enrolment.error && (
+        <Button sx={{ alignSelf: 'flex-start' }} disabled={busy || disabled} onClick={() => void change(false)}>
+          Disable storage notifications
+        </Button>
+      )}
+    </Stack>
+  );
+}
 
 /**
  * Push notifications of the incident agent. This is its own subscription, not the one of the Alerting
@@ -72,7 +158,9 @@ export function NotificationsPage() {
                 {on ? 'Disable on this device' : 'Enable on this device'}
               </Button>
               <Typography variant="body2" color="text.secondary">
-                {on ? 'Notifications are on for this device.' : 'Notifications are off for this device.'}
+                {on
+                  ? 'Notifications are on for this device.'
+                  : 'Notifications are off for this device.'}
               </Typography>
             </Box>
             {view && (
@@ -131,10 +219,20 @@ export function NotificationsPage() {
                 <Typography variant="caption" color="text.secondary">
                   {view.lastSentAt
                     ? `Last notification: ${new Date(view.lastSentAt).toLocaleString()} (${
-                        view.lastResult === 'ok' ? 'delivered to the push service' : `result ${view.lastResult}`
+                        view.lastResult === 'ok'
+                          ? 'delivered to the push service'
+                          : `result ${view.lastResult}`
                       }).`
                     : 'No notification sent to this device yet.'}
                 </Typography>
+                {device.id && support === 'ok' && (
+                  <StorageNotificationSettings
+                    key={device.id}
+                    id={device.id}
+                    settings={settings}
+                    disabled={busy}
+                  />
+                )}
               </>
             )}
           </>

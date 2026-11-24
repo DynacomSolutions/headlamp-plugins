@@ -105,6 +105,7 @@ export function publicView(r: PushSubscriptionRecord) {
 export class PushService {
   private readonly now: () => number;
   private readonly sent = new Map<string, number[]>();
+  private readonly storageSent = new Map<string, number[]>();
   private readonly keys?: VapidKeys;
   private readonly maxPerWindow: number;
   private readonly windowMs: number;
@@ -199,6 +200,7 @@ export class PushService {
     this.checkId(id);
     await this.deps.store.delete(id);
     this.sent.delete(id);
+    this.storageSent.delete(id);
   }
 
   /** The page reports the chat it shows (visible), or null (hidden or left the chat). */
@@ -239,16 +241,39 @@ export class PushService {
     }
   }
 
+  storageDevice(id: string): Promise<PushSubscriptionRecord | undefined> {
+    return this.deps.store.get(id);
+  }
+
+  storageDevices(): Promise<PushSubscriptionRecord[]> {
+    return this.deps.store.list();
+  }
+
+  /** Send an unsolicited storage notice independently of chat state. */
+  async sendStorageNotice(r: Pick<PushSubscriptionRecord, 'id' | 'endpoint' | 'auth' | 'p256dh'>, payload: Record<string, unknown>, topic: string): Promise<
+    { outcome: 'http'; status: number } | { outcome: 'disabled' | 'rate_limited' | 'delivery_unverified' }
+  > {
+    if (!this.keys) return { outcome: 'disabled' };
+    if (!endpointAllowed(r.endpoint, this.deps.extraHosts)) return { outcome: 'delivery_unverified' };
+    if (!this.allow(r.id, this.storageSent)) return { outcome: 'rate_limited' };
+    try {
+      const result = await sendWebPush(r, payload, this.keys, { fetch: this.deps.fetch, now: this.now(), topic });
+      return { outcome: 'http', status: result.status };
+    } catch {
+      return { outcome: 'delivery_unverified' };
+    }
+  }
+
   /** The device is inside its rate limit: counts this push when it is. */
-  private allow(id: string): boolean {
+  private allow(id: string, sent = this.sent): boolean {
     const t = this.now();
-    const recent = (this.sent.get(id) ?? []).filter(at => t - at < this.windowMs);
+    const recent = (sent.get(id) ?? []).filter(at => t - at < this.windowMs);
     if (recent.length >= this.maxPerWindow) {
-      this.sent.set(id, recent);
+      sent.set(id, recent);
       return false;
     }
     recent.push(t);
-    this.sent.set(id, recent);
+    sent.set(id, recent);
     return true;
   }
 

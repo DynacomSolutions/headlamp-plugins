@@ -1,3 +1,4 @@
+import { StorageStore } from './storage/store.js';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Diagnosis } from './agent/report.js';
@@ -370,6 +371,10 @@ export class PgDiagnosisStore extends DiagnosisStore {
 
   pushStore(): PushStore {
     return this.push;
+  }
+
+  storageIncidentStore(): StorageStore {
+    return new StorageStore(this.db);
   }
 
   async init(): Promise<void> {

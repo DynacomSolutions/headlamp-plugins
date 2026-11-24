@@ -388,6 +388,38 @@ describe('review fixes', () => {
 describe('restart and shutdown', () => {
   const base = () => ({ ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir });
 
+  it('reports live before the warm HTTP render and ready after it', async () => {
+    const store = new MemoryDiagnosisStore();
+    const page = store.page.bind(store);
+    let releaseWarmPage!: () => void;
+    const warmPage = new Promise<void>(resolve => { releaseWarmPage = resolve; });
+    vi.spyOn(store, 'page').mockImplementation(async options => {
+      await warmPage;
+      return page(options);
+    });
+    const request = globalThis.fetch;
+    let recordWarmRequest!: (url: URL) => void;
+    const warmRequest = new Promise<URL>(resolve => { recordWarmRequest = resolve; });
+    const warmFetch = vi.spyOn(globalThis, 'fetch').mockImplementation((input, options) => {
+      recordWarmRequest(new URL(String(input)));
+      return request(input, options);
+    });
+    const starting = startServer(base(), 'test', { store });
+    try {
+      const url = await Promise.race([warmRequest, starting.then(() => { throw new Error('Missing warm HTTP render'); })]);
+      expect(url.pathname).toBe('/api/diagnoses');
+      expect((await request(new URL('/healthz', url))).status).toBe(200);
+      expect((await request(new URL('/readyz', url))).status).toBe(503);
+      releaseWarmPage();
+      await starting;
+      expect((await request(new URL('/readyz', url))).status).toBe(200);
+    } finally {
+      releaseWarmPage();
+      warmFetch.mockRestore();
+      await (await starting).close();
+    }
+  });
+
   it('marks an interrupted diagnosis failed when no model is configured', async () => {
     await (await pod('old')).put(diagnosis('a', 'running'));
     const server = await startServer(base(), 'test', { store: await pod('new') });

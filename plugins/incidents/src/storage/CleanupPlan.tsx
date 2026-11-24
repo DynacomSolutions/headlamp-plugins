@@ -1,0 +1,373 @@
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
+import Chip from '@mui/material/Chip';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Stack from '@mui/material/Stack';
+import Typography from '@mui/material/Typography';
+import React from 'react';
+import { cleanErrorText } from '../chat-model';
+import { useNow } from '../LaunchPages';
+import { Settings } from '../model';
+import { size, time } from './Capacity';
+import {
+  DriveDetail,
+  drivePath,
+  Item,
+  mergeVerification,
+  pausedCleanupPlans,
+  Plan,
+  postStorage,
+  Receipt,
+} from './storage-data';
+import { StorageAlert } from './StorageAlert';
+
+export function CleanupPlan({
+  detail,
+  settings,
+  canApply,
+  refresh,
+}: {
+  detail: DriveDetail;
+  settings: Settings;
+  canApply: boolean;
+  refresh: () => void;
+}) {
+  const [issued, setIssued] = React.useState<Plan>();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string>();
+  const plan = [issued, ...detail.plans].reduce<Plan | undefined>(
+    (newest, candidate) =>
+      candidate && (!newest || candidate.createdAt > newest.createdAt) ? candidate : newest,
+    undefined
+  );
+  const eligible = detail.items.filter(
+    item => item.eligible && mergeVerification(item) !== 'unavailable'
+  );
+  const scanAvailable = detail.drive.complete && detail.current?.complete === true;
+  const approvalBlock = !scanAvailable
+    ? 'Scan evidence is unavailable. Cleanup requires a complete scan.'
+    : !canApply
+    ? 'Cleanup approval is unavailable for this drive.'
+    : undefined;
+  const dryRun = async () => {
+    setBusy(true);
+    setError(undefined);
+    try {
+      setIssued(await postStorage<Plan>(settings, `${drivePath(detail.drive.id)}/dry-run`, {}));
+      refresh();
+    } catch (error) {
+      setError(cleanErrorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Stack spacing={1.5}>
+      <Typography component="h2" variant="h6">
+        Cleanup plan
+      </Typography>
+      {approvalBlock && (
+        <StorageAlert severity={scanAvailable ? 'info' : 'warning'}>{approvalBlock}</StorageAlert>
+      )}
+      <Box>
+        <Button
+          variant="outlined"
+          disabled={busy || !scanAvailable || eligible.length === 0}
+          onClick={dryRun}
+        >
+          {busy ? 'Running dry run…' : `Dry run all eligible items (${eligible.length})`}
+        </Button>
+      </Box>
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
+      {plan && (
+        <PlanReview
+          key={plan.id}
+          plan={plan}
+          settings={settings}
+          approvalBlock={approvalBlock}
+          currentItems={detail.items}
+          receipts={detail.receipts}
+          refresh={refresh}
+        />
+      )}
+    </Stack>
+  );
+}
+
+function PlanReview({
+  plan,
+  settings,
+  approvalBlock,
+  currentItems,
+  receipts,
+  refresh,
+}: {
+  plan: Plan;
+  settings: Settings;
+  approvalBlock?: string;
+  currentItems: Item[];
+  receipts: Receipt[];
+  refresh: () => void;
+}) {
+  const [selected, setSelected] = React.useState<string[]>([]);
+  const [submitted, setSubmitted] = React.useState<string[]>();
+  const [result, setResult] = React.useState<Receipt[]>([]);
+  const [confirm, setConfirm] = React.useState<string[]>();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string>();
+  const now = useNow(true);
+  const canApply = !approvalBlock;
+  const expired = !(Date.parse(plan.expiresAt) > now);
+  const planReceipts = new Map(result.map(receipt => [receipt.itemId, receipt]));
+  for (const receipt of receipts) {
+    if (receipt.planId === plan.id) planReceipts.set(receipt.itemId, receipt);
+  }
+  const outcomes = [...planReceipts.values()];
+  const approved = outcomes.length > 0;
+  const removed = outcomes.filter(receipt => receipt.status === 'removed').length;
+  const partial = outcomes.filter(receipt => receipt.status === 'partial').length;
+  const queued = outcomes.filter(receipt => receipt.status === 'queued').length;
+  const other = outcomes.length - removed - partial - queued;
+  const fullSuccess = removed === plan.items.length && removed === outcomes.length;
+  const currentById = new Map(currentItems.map(item => [item.id, item]));
+  const checks = plan.items.map(item => {
+    const current = currentById.get(item.itemId);
+    const frozenMerge = mergeVerification(item);
+    const currentMerge = current && mergeVerification(current);
+    const missingMerge =
+      (frozenMerge !== undefined || currentMerge !== undefined) &&
+      (frozenMerge !== 'verified' || currentMerge !== 'verified');
+    return {
+      item,
+      missingMerge,
+      receipt: planReceipts.get(item.itemId),
+      selectable: item.eligible && !!current?.eligible && !missingMerge,
+    };
+  });
+  const selectable = new Set(
+    checks.filter(check => check.selectable).map(check => check.item.itemId)
+  );
+  const selection = selected.filter(id => selectable.has(id));
+  const confirming = plan.items.filter(item => confirm?.includes(item.itemId));
+  const bytes = confirming.reduce((sum, item) => sum + item.bytes, 0);
+  const confirmReady = !!confirm?.length && confirm.every(id => selectable.has(id));
+  const confirmMissingMerge = checks.some(
+    ({ item, missingMerge }) => missingMerge && confirm?.includes(item.itemId)
+  );
+  const retryReady = !!submitted?.length && submitted.every(id => selectable.has(id));
+
+  const change = (id: string, checked: boolean) =>
+    setSelected(values => (checked ? [...values, id] : values.filter(value => value !== id)));
+
+  const approve = async () => {
+    if (busy || !canApply || approved || !(submitted ? retryReady : confirmReady)) return;
+    if (!submitted && !(Date.parse(plan.expiresAt) > Date.now())) {
+      setConfirm(undefined);
+      return;
+    }
+    const itemIds = submitted ?? confirm;
+    if (!itemIds) return;
+    setSubmitted(itemIds);
+    setBusy(true);
+    setConfirm(undefined);
+    setError(undefined);
+    try {
+      const response = await postStorage<{ receipts: Receipt[] }>(
+        settings,
+        `/incident/plans/${encodeURIComponent(plan.id)}/approve`,
+        { itemIds }
+      );
+      setResult(response.receipts);
+    } catch (error) {
+      setError(cleanErrorText(error));
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  };
+
+  return (
+    <Stack spacing={1.5}>
+      <Box>
+        <Typography fontWeight={600}>Dry run results</Typography>
+        <Typography variant="body2" color="text.secondary">
+          {time(plan.createdAt)} · Expires {time(plan.expiresAt)}
+        </Typography>
+      </Box>
+      {approved && (
+        <StorageAlert
+          severity={partial || other ? 'warning' : fullSuccess ? 'success' : 'info'}
+        >
+          {outcomes.length} of {plan.items.length} plan items approved.{' '}
+          {removed > 0 && `${removed} removed. `}
+          {partial > 0 && `${partial} need intervention. `}
+          {queued > 0 && (partial ? `${queued} queued and paused. ` : `${queued} queued. `)}
+          {other > 0 && `${other} have other outcomes. `}
+          See cleanup receipts below.
+        </StorageAlert>
+      )}
+      {expired && !approved && <StorageAlert severity="warning">This plan has expired.</StorageAlert>}
+      <Box component="ul" sx={{ listStyle: 'none', p: 0, m: 0 }}>
+        {checks.map(({ item, missingMerge, receipt, selectable }) => (
+          <Box
+            component="li"
+            key={item.itemId}
+            sx={{ py: 1, borderTop: 1, borderColor: 'divider', overflowWrap: 'anywhere' }}
+          >
+            {selectable && canApply && !approved ? (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={selected.includes(item.itemId)}
+                    disabled={expired || !!submitted || busy}
+                    onChange={event => change(item.itemId, event.target.checked)}
+                  />
+                }
+                label={`${item.label} · ${size(item.bytes)}`}
+              />
+            ) : (
+              <Typography variant="body2">
+                {item.label} · {size(item.bytes)}
+              </Typography>
+            )}
+            <Typography variant="caption" color="text.secondary" display="block">
+              {receipt
+                ? receiptLabel(receipt.status, partial > 0)
+                : approved
+                ? 'Not approved'
+                : missingMerge
+                ? 'Excluded · Merge verification unavailable'
+                : item.eligible && !selectable
+                ? 'Item changed since the dry run'
+                : `${item.eligible ? 'Eligible' : 'Excluded'}${
+                    item.reason ? ` · ${item.reason}` : ''
+                  }`}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
+      {error && !approved && <StorageAlert severity="error">{error}</StorageAlert>}
+      {!approved && canApply && (
+        <Box>
+          <Button
+            color="error"
+            variant="contained"
+            disabled={busy || (submitted ? !retryReady : !selection.length || expired)}
+            onClick={submitted ? approve : () => setConfirm(selection)}
+          >
+            {submitted ? 'Retry the same approval' : `Review approval (${selection.length})`}
+          </Button>
+        </Box>
+      )}
+      <Dialog open={!!confirm} onClose={() => setConfirm(undefined)} fullWidth maxWidth="xs">
+        <DialogTitle>Approve selected items?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Approve {confirming.length} selected {confirming.length === 1 ? 'item' : 'items'}{' '}
+            totalling {size(bytes)}. Each item is checked again before removal.
+          </Typography>
+          <Box component="ul" sx={{ overflowWrap: 'anywhere' }}>
+            {confirming.map(item => (
+              <li key={item.itemId}>{item.label}</li>
+            ))}
+          </Box>
+          {(approvalBlock || !confirmReady) && (
+            <StorageAlert severity="warning">
+              {approvalBlock ??
+                (confirmMissingMerge
+                  ? 'Merge verification is unavailable for a selected item. Cancel and review the remaining eligible items.'
+                  : 'A selected item is no longer eligible. Cancel and review the remaining eligible items.')}
+            </StorageAlert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirm(undefined)}>Cancel</Button>
+          <Button onClick={approve} disabled={expired || !canApply || !confirmReady} color="error">
+            Approve and queue
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </Stack>
+  );
+}
+
+const receiptColours = {
+  queued: 'info',
+  removed: 'success',
+  partial: 'warning',
+  stale: 'warning',
+  blocked: 'warning',
+  failed: 'error',
+} as const;
+
+const receiptLabels: Record<Receipt['status'], string> = {
+  queued: 'Queued',
+  removed: 'Removed',
+  partial: 'Partial · Needs intervention',
+  stale: 'Stale',
+  blocked: 'Blocked',
+  failed: 'Failed',
+};
+
+function receiptLabel(status: Receipt['status'], paused: boolean) {
+  return status === 'queued' && paused ? 'Queued · Paused' : receiptLabels[status];
+}
+
+const interventionReasons: Record<string, string> = {
+  'host-process-or-bind-mount': 'A host process or bind mount was detected during cleanup.',
+  'snapshot-merge-proof-changed': 'Merge verification changed during cleanup.',
+  'safety-proof-changed': 'A safety check changed during cleanup.',
+};
+
+export function Receipts({ detail }: { detail: DriveDetail }) {
+  const paused = pausedCleanupPlans(detail.receipts);
+  return (
+    <Stack spacing={1}>
+      <Typography component="h2" variant="h6">
+        Cleanup receipts
+      </Typography>
+      {detail.receipts.length === 0 && (
+        <Typography color="text.secondary">No cleanup receipts yet.</Typography>
+      )}
+      {detail.receipts.map(receipt => {
+        const item = detail.plans
+          .find(plan => plan.id === receipt.planId)
+          ?.items.find(item => item.itemId === receipt.itemId);
+        const partial = receipt.status === 'partial';
+        const queued = receipt.status === 'queued' && paused.has(receipt.planId);
+        const code = receipt.reason.replace(/^needs-intervention:/, '');
+        const reason = partial
+          ? interventionReasons[code] ?? code.replace(/-/g, ' ')
+          : queued
+          ? 'Paused because another item in this approval needs intervention.'
+          : receipt.reason;
+        return (
+          <Box key={receipt.id} sx={{ borderTop: 1, borderColor: 'divider', pt: 1 }}>
+            <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
+              <Chip
+                size="small"
+                label={receiptLabel(receipt.status, queued)}
+                color={receiptColours[receipt.status]}
+              />
+              <Typography variant="body2">
+                {item?.label ?? 'Storage item'} ·{' '}
+                {partial
+                  ? `${receipt.bytes.toLocaleString('en-GB')} bytes of verified allocated data unlinked`
+                  : size(receipt.bytes)}
+              </Typography>
+            </Stack>
+            <Typography variant="caption" color="text.secondary">
+              {time(receipt.updatedAt)}
+              {reason && ` · ${reason}`}
+            </Typography>
+          </Box>
+        );
+      })}
+    </Stack>
+  );
+}

@@ -115,6 +115,7 @@ function summary(store: ChatStore, chat: Chat): ChatSummary {
 
 export class ChatService {
   private readonly turns = new Map<string, AbortController>();
+  private readonly running = new Set<Promise<void>>();
 
   constructor(private readonly deps: ChatDeps) {}
 
@@ -202,7 +203,9 @@ export class ChatService {
     const reply: ChatMessage = { id: randomUUID(), role: 'assistant', text: '', createdAt: now, status: 'running', model: resolved, steps: [] };
     chat.messages.push(reply);
     store.save(chat);
-    this.run(chat, reply, controller, subscription).catch(() => undefined);
+    const run = this.run(chat, reply, controller, subscription).catch(() => undefined);
+    this.running.add(run);
+    void run.then(() => this.running.delete(run));
     return { messageId: reply.id };
   }
 
@@ -212,9 +215,9 @@ export class ChatService {
     this.stop(id, 'cancelled');
   }
 
-  /** Stops every running turn, for shutdown. They are marked failed, as a restart would leave them. */
-  shutdown(): void {
-    for (const id of [...this.turns.keys()]) this.stop(id, 'failed', 'interrupted by restart');
+  /** Wait for turns started by requests that the listener accepted. */
+  async drain(): Promise<void> {
+    await Promise.all(this.running);
   }
 
   private stop(id: string, status: 'cancelled' | 'failed', error?: string): void {
