@@ -239,6 +239,31 @@ export class PushService {
     }
   }
 
+  storageDevice(id: string): Promise<PushSubscriptionRecord | undefined> {
+    return this.deps.store.get(id);
+  }
+
+  storageDevices(): Promise<PushSubscriptionRecord[]> {
+    return this.deps.store.list();
+  }
+
+  /** Send an unsolicited storage notice independently of chat state. */
+  async sendStorageNotice(r: PushSubscriptionRecord, payload: Record<string, unknown>, topic: string): Promise<
+    { outcome: 'http'; status: number } | { outcome: 'disabled' | 'rate_limited' | 'delivery_unverified' }
+  > {
+    if (!this.keys) return { outcome: 'disabled' };
+    if (!endpointAllowed(r.endpoint, this.deps.extraHosts)) return { outcome: 'delivery_unverified' };
+    if (!this.allow(r.id)) return { outcome: 'rate_limited' };
+    try {
+      const result = await sendWebPush(r, payload, this.keys, { fetch: this.deps.fetch, now: this.now(), topic });
+      if (result.gone) await this.deps.store.delete(r.id).catch(() => undefined);
+      else await this.deps.store.recordResult(r.id, this.now(), result.status >= 200 && result.status < 300 ? 'ok' : String(result.status)).catch(() => undefined);
+      return { outcome: 'http', status: result.status };
+    } catch {
+      return { outcome: 'delivery_unverified' };
+    }
+  }
+
   /** The device is inside its rate limit: counts this push when it is. */
   private allow(id: string): boolean {
     const t = this.now();

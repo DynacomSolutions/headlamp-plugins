@@ -14,12 +14,13 @@ import { mask, maskText } from './mask.js';
 import { mcpHandler } from './mcp.js';
 import { Runtime, serviceGet } from './runtime.js';
 import { PanelError, buildPanel, listPanels } from './widgets.js';
-import { DiagnosisStore, openDiagnosisStore } from './store.js';
+import { DiagnosisStore, openDiagnosisStore, PgDiagnosisStore } from './store.js';
 import { LaunchError, LaunchService } from './launch/service.js';
 import { LaunchStore, type Launch } from './launch/store.js';
 import { T3Client, tokenFromFile } from './t3/client.js';
 import { PushError, PushService } from './push/service.js';
 import { Metrics } from './metrics.js';
+import { storageHttp } from './storage/http.js';
 import { Reconciler, readVmalert } from './reconcile.js';
 
 const MAX_BODY = 1024 * 1024;
@@ -28,12 +29,12 @@ function log(level: 'info' | 'warn' | 'error', message: string, extra: Record<st
   process.stdout.write(`${JSON.stringify({ time: new Date().toISOString(), level, message, ...extra })}\n`);
 }
 
-async function readBody(req: IncomingMessage): Promise<unknown> {
+async function readBody(req: IncomingMessage, maxBytes = MAX_BODY): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new HttpError(413, 'Body too large');
+    if (size > maxBytes) throw new HttpError(413, 'Body too large');
     chunks.push(chunk as Buffer);
   }
   const text = Buffer.concat(chunks).toString('utf8');
@@ -395,7 +396,7 @@ async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
 }
 
 /** `deps.store` replaces the diagnosis store, for tests. The caller then closes it. */
-export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore } = {}): Promise<{ close(): Promise<void>; port: number }> {
+export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number } = {}): Promise<{ close(): Promise<void>; port: number }> {
   const store = deps.store ?? (await openDiagnosisStore(config.databaseUrl, config.dataDir, (message, extra) => log('info', message, extra)));
   const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
   const runtime = new Runtime(config, store, launchStore);
@@ -404,6 +405,8 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     keys: config.push.publicKey && config.push.privateKey ? { publicKey: config.push.publicKey, privateKey: config.push.privateKey, subject: config.push.subject } : undefined,
     extraHosts: config.push.extraHosts,
     maxPerWindow: config.push.maxPer10Min,
+    fetch: deps.pushFetch,
+    now: deps.now,
     log: (level, message, extra) => log(level, message, extra),
   });
   // A push is best effort and never holds up the diagnosis or the answer.
@@ -432,6 +435,10 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   let ready = true;
   let rerunTurn: Promise<void> = Promise.resolve();
   const metrics = new Metrics();
+  const storage = await storageHttp({
+    config, metrics, push, readBody, send, env: deps.storageEnv, now: deps.now,
+    store: store instanceof PgDiagnosisStore ? store.storageIncidentStore() : undefined,
+  });
   // Keeps open diagnoses in step with vmalert. A resolved notification can be lost (a vmalert restart forgets its alerts).
   const reconciler = new Reconciler({
     store,
@@ -452,8 +459,10 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         if (origin && !config.allowedOrigins.includes(origin)) return send(res, 403, { jsonrpc: '2.0', error: { code: -32600, message: 'Origin not allowed' } });
         return void (await mcpNode(req, res));
       }
+      if (await storage.route(req, res, path)) return;
       if (path === '/healthz') return send(res, 200, { ok: true });
       if (path === '/metrics' && req.method === 'GET') {
+        await storage.metrics();
         metrics.clear('headlamp_agent_diagnoses_open');
         const counts = new Map<string, number>([['critical', 0], ['warning', 0], ['info', 0]]);
         for (const d of await store.openSummaries()) counts.set(d.alert.severity || 'none', (counts.get(d.alert.severity || 'none') ?? 0) + 1);
@@ -749,8 +758,10 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       return send(res, 404, { error: 'not found' });
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500;
-      if (status === 500) log('error', 'request failed', { path, error: String(error) });
-      if (!res.headersSent) send(res, status, { error: error instanceof Error ? error.message : String(error) });
+      const storageRoute = path === '/api/storage' || path.startsWith('/api/storage/');
+      if (status === 500) log('error', 'request failed', storageRoute ? { path: '/api/storage' } : { path, error: String(error) });
+      const message = storageRoute && status === 500 ? 'Storage request failed' : error instanceof Error ? error.message : String(error);
+      if (!res.headersSent) send(res, status, { error: message });
     }
   });
 
@@ -772,9 +783,10 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       await reconciler.stop();
       await runner.drain();
       await mcp.close();
-      if (!deps.store) await store.close();
       server.closeIdleConnections();
       await closed;
+      await storage.drain();
+      if (!deps.store) await store.close();
     },
   };
 }
