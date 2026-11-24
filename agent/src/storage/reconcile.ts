@@ -4,7 +4,7 @@ import { raiseScanQuestion } from './findings.js';
 import { ingestScan, resolveCooldowns } from './inventory.js';
 import type { StorageStore } from './store.js';
 import { RequestDeadlineError, SCAN_TIMEOUT_MS, type Scanner } from './transport.js';
-import type { Decision, ExpectedScopes, FilesystemPolicy, ScanResult, Trigger } from './types.js';
+import { SCAN_CHECKS, type Decision, type ExpectedScopes, type FilesystemPolicy, type ScanChecks, type ScanResult, type Trigger } from './types.js';
 
 const DAY_MS = 24 * 60 * 60_000;
 const COOLDOWN_MS = 15 * 60_000;
@@ -12,14 +12,6 @@ const INGEST_TIMEOUT_MS = 90_000;
 const SCAN_LEASE_MS = SCAN_TIMEOUT_MS + INGEST_TIMEOUT_MS + 60_000;
 const CLOCK_SKEW_MS = 60_000;
 
-const CHECKS = {
-  inventory: ['complete', 'incomplete', 'configured_omission', 'unknown'],
-  policy: ['matched', 'unmatched', 'not_required'],
-  trigger: ['matched', 'unmatched', 'not_required'],
-  holder: ['complete', 'unavailable', 'unknown'],
-  acceptance: ['full', 'contained', 'configured_omission', 'rejected', 'skipped', 'busy', 'timeout', 'scanner_error', 'store_error'],
-} as const;
-type NodeChecks = { [Check in keyof typeof CHECKS]: typeof CHECKS[Check][number] };
 const CHECK_METRIC = 'headlamp_agent_storage_reconcile_node_checks_total';
 
 export class StorageReconciler {
@@ -34,14 +26,14 @@ export class StorageReconciler {
     now: () => number;
   }) {
     for (const node of deps.nodes) {
-      for (const [check, results] of Object.entries(CHECKS)) {
+      for (const [check, results] of Object.entries(SCAN_CHECKS)) {
         for (const result of results) deps.metrics.inc(CHECK_METRIC, { node, check, result }, 0);
       }
     }
   }
 
-  private record(node: string, acceptance: NodeChecks['acceptance'], evidence?: Omit<NodeChecks, 'acceptance'>): void {
-    for (const [check, result] of Object.entries({ ...evidence, acceptance })) {
+  private record(node: string, checks: ScanChecks | Pick<ScanChecks, 'acceptance'>): void {
+    for (const [check, result] of Object.entries(checks)) {
       this.deps.metrics.inc(CHECK_METRIC, { node, check, result });
     }
   }
@@ -79,7 +71,7 @@ export class StorageReconciler {
         return lease ? { state: 'scan', full, due, started } as const : { state: 'busy' } as const;
       });
       if (work.state !== 'scan') {
-        this.record(node, work.state === 'skip' ? 'skipped' : 'busy');
+        this.record(node, { acceptance: work.state === 'skip' ? 'skipped' : 'busy' });
         return work.state === 'skip';
       }
       claimed = true;
@@ -102,52 +94,37 @@ export class StorageReconciler {
         if (!await tx.ownsScan(node, owner, now())) throw new RequestDeadlineError();
         const policies = filesystemPolicies?.get(node) ?? [];
         const evaluatedTriggers = scan.version === 2 ? triggers : work.due;
-        const { inventoryComplete, policiesMatched, matched, observed } = await ingestScan(
+        const { checks, observed } = await ingestScan(
           tx, scan, evaluatedTriggers, policies, received, COOLDOWN_MS,
+          this.deps.holderEvidenceExpected === false, this.deps.partialScanScopes?.get(node),
         );
         for (const state of observed) await raiseScanQuestion(tx, state, await tx.list<Decision>('decision', state.drive.id), received);
         const finished = now();
         if (finished >= deadline || finished >= work.started + SCAN_LEASE_MS) throw new RequestDeadlineError();
-        const complete = scan.complete && inventoryComplete && matched;
+        const complete = checks.acceptance === 'full';
         const status = complete ? 'complete' : 'incomplete';
-        await tx.finishScan(node, owner, status, finished, complete && work.full ? scannedAt : undefined);
-        // A contained shadow scan can report inventory without proving host process coverage.
-        const contained = this.deps.holderEvidenceExpected === false;
-        const containedInventory = contained && scan.execution === 'shadow'
-          && inventoryComplete && matched && scan.filesystems.length > 0;
-        const expected = this.deps.partialScanScopes?.get(node);
-        const configuredOmission = scan.version === 2 && expected !== undefined
-          && scan.inventoryCoverage.filesystemInventoryComplete
-          && Object.keys(scan.inventoryCoverage.scopes).length === Object.keys(expected).length
-          && Object.entries(expected).every(([scope, state]) => scan.inventoryCoverage.scopes[scope] === state);
-        const omissionOnly = contained && configuredOmission && policiesMatched && matched;
-        const acceptance: NodeChecks['acceptance'] = complete ? 'full' : containedInventory ? 'contained'
-          : omissionOnly ? 'configured_omission' : 'rejected';
-        const evidence: Omit<NodeChecks, 'acceptance'> = {
-          inventory: configuredOmission ? 'configured_omission' : scan.inventoryComplete === undefined ? 'unknown'
-            : scan.inventoryComplete ? 'complete' : 'incomplete',
-          policy: !policies.length ? 'not_required' : policiesMatched ? 'matched' : 'unmatched',
-          trigger: !evaluatedTriggers.length ? 'not_required' : matched ? 'matched' : 'unmatched',
-          // V2 fixes complete to false, independent of the holder check.
-          holder: scan.version === 2 ? 'unknown' : scan.complete ? 'complete' : 'unavailable',
-        };
-        return { status, acceptance, evidence };
+        await tx.finishScan(node, owner, status, finished, checks, complete && work.full ? scannedAt : undefined);
+        return { status, checks };
       });
       metrics.inc('headlamp_agent_storage_scan_total', { result: result.status });
-      this.record(node, result.acceptance, result.evidence);
-      return result.acceptance !== 'rejected';
+      this.record(node, result.checks);
+      return result.checks.acceptance !== 'rejected';
     } catch (error) {
       const code = (error as { code?: string } | undefined)?.code;
       const result: ScanResult = error instanceof RequestDeadlineError || code === '57014' || code === '25P04' ? 'timeout' : 'error';
+      const checks: ScanChecks = {
+        inventory: 'unknown', policy: 'unknown', trigger: 'unknown', holder: 'unknown',
+        acceptance: result === 'timeout' ? 'timeout' : failure,
+      };
       if (claimed) {
         await store.transaction(async tx => {
           await tx.query("SET LOCAL statement_timeout = '15s'");
           await tx.query("SET LOCAL transaction_timeout = '15s'");
-          await tx.finishScan(node, owner, result, now());
+          await tx.finishScan(node, owner, result, now(), checks);
         }).catch(() => undefined);
       }
       metrics.inc('headlamp_agent_storage_scan_total', { result });
-      this.record(node, result === 'timeout' ? 'timeout' : failure);
+      this.record(node, checks);
       return false;
     }
   }

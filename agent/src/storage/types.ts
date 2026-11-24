@@ -14,6 +14,10 @@ const mergeEvidence = z.enum(['verified', 'unavailable']);
 export type MergeEvidence = z.infer<typeof mergeEvidence>;
 export const needsMergeEvidence = (value: z.infer<typeof category>) => value === 'linked-worktree' || value === 'pod-task';
 
+export function scanObjectIdentity(item: { objectKey?: string; path: string; id: string }): string {
+  return item.objectKey ?? (item.path || item.id);
+}
+
 const scanFields = z.object({
   node: name,
   scannedAt: z.iso.datetime(),
@@ -51,7 +55,9 @@ const scanFields = z.object({
   const fsIds = scan.filesystems.map(fs => fs.id);
   const filesystems = new Set(fsIds);
   return filesystems.size === fsIds.length && unique(scan.items.map(item => item.id)) && scan.items.every(item => filesystems.has(item.filesystemId));
-}, 'The scan contains duplicate or unknown IDs');
+}, 'The scan contains duplicate or unknown IDs').refine(scan => unique(scan.items.map(item =>
+  JSON.stringify([item.filesystemId, item.category, scanObjectIdentity(item)]),
+)), 'The scan contains duplicate object identities');
 
 const scopeName = z.string().regex(/^\.(?:data|worktrees)\/[A-Za-z0-9._-]+$/).max(256);
 const expectedScopes = z.record(scopeName, z.enum(['complete', 'omitted'])).refine(scopes => {
@@ -143,7 +149,15 @@ export type Investigation = z.infer<typeof investigationSchema>;
 export type DecisionRequest = z.infer<typeof decisionSchema>;
 export type Parent = { id: string; chatId: string; createdAt: string };
 export type ScanResult = 'complete' | 'incomplete' | 'timeout' | 'error';
-export type NodeScan = { node: string; status: ScanResult | 'pending' | 'running'; completedAt?: string };
+export const SCAN_CHECKS = {
+  inventory: ['complete', 'incomplete', 'configured_omission', 'unknown'],
+  policy: ['matched', 'unmatched', 'not_required', 'unknown'],
+  trigger: ['matched', 'unmatched', 'not_required', 'unknown'],
+  holder: ['complete', 'unavailable', 'unknown'],
+  acceptance: ['full', 'contained', 'configured_omission', 'rejected', 'skipped', 'busy', 'timeout', 'scanner_error', 'store_error'],
+} as const;
+export type ScanChecks = { [Check in keyof typeof SCAN_CHECKS]: typeof SCAN_CHECKS[Check][number] };
+export type NodeScan = { node: string; status: ScanResult | 'pending' | 'running'; completedAt?: string; checks?: ScanChecks };
 export type Snapshot = {
   id: string;
   scannedAt: string;
@@ -154,6 +168,7 @@ export type Snapshot = {
   complete: boolean;
   holderEvidenceComplete?: boolean;
   inventoryComplete?: boolean;
+  checks?: ScanChecks;
   critical: boolean;
   itemCount: number;
   eligibleCount: number;

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Db } from '../store.js';
 import type { StorageNotice } from './inventory.js';
 import type { CoverageStatus, Delivery, Registration } from './notifications.js';
-import type { Approval, ChatMessage, Checkpoint, Dispatch, DriveState, FrozenPlan, NodeScan, Parent, Receipt, ScanResult, Snapshot } from './types.js';
+import type { Approval, ChatMessage, Checkpoint, Dispatch, DriveState, FrozenPlan, NodeScan, Parent, Receipt, ScanChecks, ScanResult, Snapshot } from './types.js';
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS storage_incident_push_registrations (
@@ -103,6 +103,7 @@ const SCHEMA = [
     lease_until timestamptz
   )`,
   'ALTER TABLE storage_incident_scans ADD COLUMN IF NOT EXISTS result text, ADD COLUMN IF NOT EXISTS completed_at timestamptz',
+  'ALTER TABLE storage_incident_scans ADD COLUMN IF NOT EXISTS checks jsonb',
   `CREATE TABLE IF NOT EXISTS storage_incident_aliases (
     node text PRIMARY KEY,
     data jsonb NOT NULL
@@ -301,14 +302,17 @@ export class StorageQueries {
   }
 
   async scanStates(nodes: string[], now: number): Promise<ScanState[]> {
-    const { rows } = await this.query('SELECT node, last_full_at, lease_until, result, completed_at FROM storage_incident_scans WHERE node = ANY($1::text[])', [nodes]);
+    const { rows } = await this.query('SELECT node, last_full_at, lease_until, result, completed_at, checks FROM storage_incident_scans WHERE node = ANY($1::text[])', [nodes]);
     const byNode = new Map(rows.map(row => [row.node, row]));
     return nodes.map(node => {
       const row = byNode.get(node);
       const lastFullAt = row?.last_full_at ? new Date(row.last_full_at as string).getTime() : 0;
       const result = (row?.result as ScanResult | null) ?? (lastFullAt ? 'complete' : 'pending');
       const status = row?.lease_until ? (new Date(row.lease_until as string).getTime() > now ? 'running' : 'timeout') : result;
-      return { node, status, lastFullAt, completedAt: row?.completed_at ? new Date(row.completed_at as string).toISOString() : undefined };
+      return {
+        node, status, lastFullAt, completedAt: row?.completed_at ? new Date(row.completed_at as string).toISOString() : undefined,
+        checks: row?.lease_until ? undefined : (row?.checks as ScanChecks | null | undefined) ?? undefined,
+      };
     });
   }
 
@@ -328,10 +332,11 @@ export class StorageQueries {
     return result.rows.length > 0;
   }
 
-  async finishScan(node: string, owner: string, result: ScanResult, now: number, fullAt?: number): Promise<void> {
+  async finishScan(node: string, owner: string, result: ScanResult, now: number, checks: ScanChecks, fullAt?: number): Promise<void> {
     await this.query(`UPDATE storage_incident_scans SET lease_owner = NULL, lease_until = NULL,
-      result = $3, completed_at = $4, last_full_at = COALESCE($5, last_full_at) WHERE node = $1 AND lease_owner = $2`,
-    [node, owner, result, new Date(now), fullAt === undefined ? null : new Date(fullAt)]);
+      result = $3, completed_at = $4, last_full_at = COALESCE($5, last_full_at), checks = $6
+      WHERE node = $1 AND lease_owner = $2`,
+    [node, owner, result, new Date(now), fullAt === undefined ? null : new Date(fullAt), json(checks)]);
   }
 
   async aliases(node: string): Promise<Array<[string, string]>> {
