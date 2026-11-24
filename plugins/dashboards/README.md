@@ -500,7 +500,10 @@ needed.
   fine shows nothing. A small dot after the name marks the served member of a pool, and a small ring marks
   the registry active member. Between the bars and the percentage, each window of the legend has a small
   slot with a dot in the colour of the window and the time to its reset ("3d 4h", "5h 12m", "12m", "<1m").
-  A window with no data, no `resetsAt` or a past reset leaves its slot empty. One timer redraws the
+  Each cell has a fixed width and a gap, so two countdowns never touch, and the percentage keeps its own reserved
+  width, so it is never cut off. A past reset shows "now" (muted). A window with no data or no `resetsAt` leaves its
+  cell empty. A widget too narrow for every cell shows one cell, the window that sets the line, and a still narrower
+  widget shows none. The tooltip keeps every time. One timer redraws the
   countdowns every 30 s, with no extra fetch. The tooltip of a line lists every window with its percentage
   and full reset time, and the login state. A widget at least 1000 px wide draws the identities of a group in two columns.
 - **Pool line, joint usage**: the pool line has two text rows, the pool name and "Pool total, N members".
