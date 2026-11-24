@@ -871,7 +871,8 @@ describe('reset countdown', () => {
   it('decides how many countdown cells fit on the width of the row', () => {
     expect(countdownMode(0, 3, true)).toBe('all');
     expect(countdownMode(1400, 3, true)).toBe('all');
-    expect(countdownMode(620, 3, true)).toBe('worst');
+    expect(countdownMode(560, 3, true)).toBe('worst');
+    expect(countdownMode(420, 3, false)).toBe('worst');
     expect(countdownMode(300, 3, false)).toBe('none');
     expect(countdownMode(1400, 0, true)).toBe('none');
     // The cells that the mode keeps never take the room of the percentage.
@@ -880,7 +881,7 @@ describe('reset countdown', () => {
 
   it('on a narrow widget draws only the countdown of the window that sets the line', () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const c = withWidth(600, draw);
+    const c = withWidth(560, draw);
     expect(c.querySelector('[data-ais]')?.getAttribute('data-countdown-mode')).toBe('worst');
     const red = rowNamed(c, 'red');
     // "Weekly (Fable)" is fuller, but a model window never sets the line.
