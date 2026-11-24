@@ -14,7 +14,20 @@ import { LaunchesPage, LaunchPage } from './LaunchPages';
 import { CONFIG_KEY } from './model';
 import { NotificationsPage } from './NotificationsPage';
 import { IncidentPage, IncidentsPage } from './pages';
+import {
+  ROUTE_STORAGE,
+  ROUTE_STORAGE_CHAT,
+  ROUTE_STORAGE_DRIVE,
+  ROUTE_STORAGE_FINDING,
+  ROUTE_STORAGE_ITEM,
+  ROUTE_STORAGE_QUESTION,
+} from './routes';
 import { Settings } from './settings';
+import {
+  StorageFindingPage,
+  StorageIncidentPage,
+  StorageQuestionPage,
+} from './storage/StorageIncidentPage';
 
 registerSidebarEntry({
   parent: null,
@@ -35,6 +48,12 @@ registerSidebarEntry({
   name: 'incidents-chat',
   label: 'Chat',
   url: '/incidents/chat',
+});
+registerSidebarEntry({
+  parent: 'incidents',
+  name: ROUTE_STORAGE,
+  label: 'Storage',
+  url: '/incidents/storage',
 });
 registerSidebarEntry({
   parent: 'incidents',
@@ -95,6 +114,48 @@ registerRoute({
   name: 'incidents-launch',
   exact: true,
   component: LaunchPage,
+});
+registerRoute({
+  path: '/incidents/storage',
+  sidebar: ROUTE_STORAGE,
+  name: ROUTE_STORAGE,
+  exact: true,
+  component: StorageIncidentPage,
+});
+registerRoute({
+  path: '/incidents/storage/chat/:chatId',
+  sidebar: ROUTE_STORAGE,
+  name: ROUTE_STORAGE_CHAT,
+  exact: true,
+  component: StorageIncidentPage,
+});
+registerRoute({
+  path: '/incidents/storage/drives/:driveId',
+  sidebar: ROUTE_STORAGE,
+  name: ROUTE_STORAGE_DRIVE,
+  exact: true,
+  component: StorageIncidentPage,
+});
+registerRoute({
+  path: '/incidents/storage/drives/:driveId/items/:itemId',
+  sidebar: ROUTE_STORAGE,
+  name: ROUTE_STORAGE_ITEM,
+  exact: true,
+  component: StorageIncidentPage,
+});
+registerRoute({
+  path: '/incidents/storage/drives/:driveId/questions/:actionId',
+  sidebar: ROUTE_STORAGE,
+  name: ROUTE_STORAGE_QUESTION,
+  exact: true,
+  component: StorageQuestionPage,
+});
+registerRoute({
+  path: '/incidents/storage/drives/:driveId/findings/:actionId',
+  sidebar: ROUTE_STORAGE,
+  name: ROUTE_STORAGE_FINDING,
+  exact: true,
+  component: StorageFindingPage,
 });
 registerRoute({
   path: '/incidents/:id',
