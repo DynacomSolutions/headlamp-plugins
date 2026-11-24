@@ -9,8 +9,15 @@ export interface StorageIncident {
   applyEnabled?: boolean;
   incident: { id: string; chatId: string; createdAt: string } | null;
   drives: Drive[];
+  scans?: NodeScan[];
   notices: Notice[];
   notifications?: NotificationCoverage;
+}
+
+export interface NodeScan {
+  node: string;
+  status: 'pending' | 'running' | 'complete' | 'incomplete' | 'timeout' | 'error';
+  completedAt?: string;
 }
 
 export interface Drive {
@@ -166,10 +173,14 @@ export type StorageChatMessage = ChatMessage & { a2ui?: A2uiMessage[]; questionI
 
 function parseStorageChat(raw: unknown) {
   const chat = parseChat(raw);
-  const original = (raw as { messages?: { a2ui?: A2uiMessage[]; questionIds?: string[] }[] })
-    ?.messages;
+  const source = raw as {
+    checkpoint?: { messageCount?: number } | null;
+    messages?: { a2ui?: A2uiMessage[]; questionIds?: string[] }[];
+  } | null;
+  const original = source?.messages;
   return {
     ...chat,
+    hasEarlier: (source?.checkpoint?.messageCount ?? 0) > 0,
     messages: chat.messages.map((m, index): StorageChatMessage => {
       const message = original?.[index];
       return {
@@ -186,7 +197,7 @@ export const chatPath = (id: string) => `/incident/chat/${encodeURIComponent(id)
 const storageUrl = (settings: Settings, path: string) =>
   backendUrl(settings, `/api/storage${path}`);
 
-async function request(url: string, body?: unknown): Promise<unknown> {
+async function request(url: string, body?: unknown, unavailableMessage?: string): Promise<unknown> {
   try {
     return await ApiProxy.request(
       url,
@@ -204,6 +215,7 @@ async function request(url: string, body?: unknown): Promise<unknown> {
     if (status === 401)
       throw new Error('Sign in with a human operator token to access storage incidents.');
     if (status === 403) throw new Error('Storage operator permission required.');
+    if (unavailableMessage) throw new Error(unavailableMessage);
     throw error;
   }
 }
@@ -219,6 +231,30 @@ export function useStorageIncident(settings: Settings) {
     () => 10000,
     request
   );
+}
+
+export async function loadStorageTranscriptBefore(settings: Settings, id: string, before: string) {
+  const query = new URLSearchParams({ before, limit: '24' });
+  const unavailableMessage =
+    'Earlier messages could not be loaded. Select Load earlier messages to try again.';
+  const raw = await request(
+    storageUrl(settings, `${chatPath(id)}/transcript?${query}`),
+    undefined,
+    unavailableMessage
+  );
+  const page = raw as { messages?: unknown[]; nextBefore?: string | null } | null;
+  const chat = parseStorageChat(raw);
+  if (
+    chat.id !== id ||
+    !Array.isArray(page?.messages) ||
+    chat.messages.some(m => !m.id || m.id === before) ||
+    (page.nextBefore !== null &&
+      page.nextBefore !== undefined &&
+      page.nextBefore !== chat.messages[0]?.id)
+  ) {
+    throw new Error(unavailableMessage);
+  }
+  return { messages: chat.messages, hasMore: !!page.nextBefore };
 }
 
 export function useStorageDrive(settings: Settings, id?: string) {
@@ -243,7 +279,7 @@ export function useStorageNotificationDevice(settings: Settings, id: string) {
   return useLoaded(
     storageUrl(settings, `/incident/notifications/${encodeURIComponent(id)}`),
     raw => raw as { subscriptionId: string; enabled: boolean },
-    () => 0,
+    () => 10000,
     request
   );
 }

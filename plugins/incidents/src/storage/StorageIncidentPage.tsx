@@ -1,5 +1,4 @@
 import { SectionBox } from '@kinvolk/headlamp-plugin/lib/CommonComponents';
-import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -13,6 +12,7 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, useHistory, useLocation, useParams } from 'react-router-dom';
 import { A2uiRenderer } from '../a2ui';
+import { cleanErrorText } from '../chat-model';
 import { Composer, MessageView } from '../ChatPage';
 import { useSettings } from '../data';
 import { Settings } from '../model';
@@ -35,13 +35,17 @@ import {
   Drive,
   DriveDetail,
   Item,
+  loadStorageTranscriptBefore,
   mergeVerification,
+  NodeScan,
   postStorage,
+  StorageChatMessage,
   StorageIncident,
   useStorageChat,
   useStorageDrive,
   useStorageIncident,
 } from './storage-data';
+import { StorageAlert } from './StorageAlert';
 import { DeliveryEvidence, noticeUrl, StorageNotices } from './StorageNotices';
 
 const panel = { p: { xs: 2, md: 2.5 }, minWidth: 0, overflowWrap: 'anywhere' } as const;
@@ -52,9 +56,98 @@ const driveStatus = {
   healthy: { order: 3, label: 'Healthy', color: 'success' },
 } as const;
 
+const scanStatus = {
+  error: { order: 0, label: 'Scan failed', color: 'error' },
+  timeout: { order: 1, label: 'Scan timed out', color: 'error' },
+  incomplete: { order: 2, label: 'Incomplete scan', color: 'warning' },
+  running: { order: 3, label: 'Running', color: 'info' },
+  pending: { order: 4, label: 'Pending', color: 'default' },
+  complete: { order: 5, label: 'Complete', color: 'success' },
+} as const;
+
 function DriveStatus({ drive }: { drive: Drive }) {
   const status = driveStatus[drive.status];
-  return <Chip size="small" color={status.color} variant="outlined" label={status.label} />;
+  return (
+    <Chip
+      size="small"
+      color={status.color}
+      variant="outlined"
+      label={status.label}
+      sx={{ color: 'text.primary' }}
+    />
+  );
+}
+
+function ScannerStatus({ scans }: { scans: NodeScan[] }) {
+  const ordered = [...scans].sort(
+    (a, b) =>
+      scanStatus[a.status].order - scanStatus[b.status].order || a.node.localeCompare(b.node)
+  );
+  return (
+    <Paper
+      component="section"
+      aria-labelledby="storage-scanner-status"
+      variant="outlined"
+      sx={panel}
+    >
+      <Typography id="storage-scanner-status" component="h2" variant="h6" mb={1}>
+        Scanner status
+      </Typography>
+      {ordered.length === 0 ? (
+        <Typography variant="body2" color="text.secondary">
+          No scanner status reported yet.
+        </Typography>
+      ) : (
+        <Box
+          component="ul"
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: {
+              xs: 'minmax(0, 1fr)',
+              sm: 'repeat(2, minmax(0, 1fr))',
+              lg: 'repeat(3, minmax(0, 1fr))',
+            },
+            gap: 1,
+            listStyle: 'none',
+            m: 0,
+            p: 0,
+          }}
+        >
+          {ordered.map(({ node, status, completedAt }) => (
+            <Box
+              component="li"
+              key={node}
+              sx={{ border: 1, borderColor: 'divider', borderRadius: 1, px: 1.25, py: 0.75 }}
+            >
+              <Stack
+                direction="row"
+                alignItems="center"
+                justifyContent="space-between"
+                gap={1}
+                flexWrap="wrap"
+              >
+                <Typography variant="body2" fontWeight={600}>
+                  {node}
+                </Typography>
+                <Chip
+                  size="small"
+                  color={scanStatus[status].color}
+                  variant="outlined"
+                  label={scanStatus[status].label}
+                  sx={{ color: 'text.primary' }}
+                />
+              </Stack>
+              {completedAt && (
+                <Typography variant="caption" color="text.secondary">
+                  Last recorded completion {time(completedAt)}
+                </Typography>
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
+    </Paper>
+  );
 }
 
 function Overview({
@@ -70,10 +163,11 @@ function Overview({
   return (
     <Stack spacing={2}>
       <StorageNotices incident={incident} readsCurrent={readsCurrent} />
+      {incident.scans && <ScannerStatus scans={incident.scans} />}
       <Typography component="h2" variant="h6">
         Drives
       </Typography>
-      {drives.length === 0 && <Alert severity="info">No drive scans yet.</Alert>}
+      {drives.length === 0 && <StorageAlert severity="info">No drive inventory is available yet.</StorageAlert>}
       <Box
         sx={{
           display: 'grid',
@@ -124,7 +218,7 @@ function ItemDetail({
   refresh: () => void;
 }) {
   const item = detail.items.find(item => item.id === itemId);
-  if (!item) return <Alert severity="info">This item is absent from the latest inventory.</Alert>;
+  if (!item) return <StorageAlert severity="info">This item is absent from the latest inventory.</StorageAlert>;
 
   const decisions = detail.decisions.filter(entry => entry.itemId === itemId);
   const verification = mergeVerification(item);
@@ -160,7 +254,7 @@ function ItemDetail({
               {item.reason}
             </Typography>
           )}
-          {item.deferUntil && <Alert severity="info">Deferred until {time(item.deferUntil)}</Alert>}
+          {item.deferUntil && <StorageAlert severity="info">Deferred until {time(item.deferUntil)}</StorageAlert>}
         </Stack>
       </Paper>
       <Paper variant="outlined" sx={panel}>
@@ -258,9 +352,9 @@ function DriveView({
   return (
     <Stack spacing={2}>
       {error && (
-        <Alert severity="error" action={<Button onClick={refresh}>Retry</Button>}>
+        <StorageAlert severity="error" action={<Button onClick={refresh}>Retry</Button>}>
           {error}
-        </Alert>
+        </StorageAlert>
       )}
       {loading && <LinearProgress aria-label="Loading drive" />}
       {data && (
@@ -307,7 +401,7 @@ function DriveView({
                       refresh={refreshAll}
                     />
                   ) : (
-                    <Alert severity="info">This question is unavailable for this drive.</Alert>
+                    <StorageAlert severity="info">This question is unavailable for this drive.</StorageAlert>
                   ))}
                 {action === 'cleanup' &&
                   (notice ? (
@@ -321,7 +415,7 @@ function DriveView({
                       <Receipts detail={data} />
                     </>
                   ) : (
-                    <Alert severity="info">This cleanup finding is no longer open.</Alert>
+                    <StorageAlert severity="info">This cleanup finding is no longer open.</StorageAlert>
                   ))}
               </Stack>
             </Paper>
@@ -386,6 +480,102 @@ function DriveView({
         </>
       )}
     </Stack>
+  );
+}
+
+function mergeMessages(earlier: StorageChatMessage[], later: StorageChatMessage[]) {
+  const byId = new Map(earlier.map(message => [message.id, message]));
+  later.forEach(message => byId.set(message.id, message));
+  return [...byId.values()];
+}
+
+function StorageTranscript({
+  chatId,
+  settings,
+  tail,
+  hasEarlier,
+  notices,
+}: {
+  chatId: string;
+  settings: Settings;
+  tail: StorageChatMessage[];
+  hasEarlier: boolean;
+  notices: StorageIncident['notices'];
+}) {
+  const [history, setHistory] = React.useState<{
+    messages: StorageChatMessage[];
+    hasMore: boolean;
+  }>();
+  const [previousTail, setPreviousTail] = React.useState(tail);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState<string>();
+  if (previousTail !== tail) {
+    setPreviousTail(tail);
+    if (history && previousTail[0]?.id !== tail[0]?.id) {
+      setHistory({ ...history, messages: mergeMessages(history.messages, previousTail) });
+    }
+  }
+
+  const messages = history ? mergeMessages(history.messages, tail) : tail;
+  const before = messages[0]?.id;
+  const canLoadEarlier = !!before && (history?.hasMore ?? hasEarlier);
+  const loadEarlier = async () => {
+    if (!canLoadEarlier || busy) return;
+    setBusy(true);
+    setError(undefined);
+    setHistory(current => current ?? { messages, hasMore: true });
+    try {
+      const page = await loadStorageTranscriptBefore(settings, chatId, before);
+      setHistory(current => ({
+        ...page,
+        messages: mergeMessages(page.messages, current?.messages ?? messages),
+      }));
+    } catch (error) {
+      setError(cleanErrorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {(canLoadEarlier || history) && (
+        <Box>
+          <Button aria-disabled={busy || !canLoadEarlier} onClick={loadEarlier}>
+            Load earlier messages
+          </Button>
+          <Typography component="span" variant="body2" color="text.secondary" role="status">
+            {busy
+              ? 'Loading earlier messages…'
+              : history && !canLoadEarlier
+              ? 'Start of transcript'
+              : ''}
+          </Typography>
+        </Box>
+      )}
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
+      {messages.length === 0 && (
+        <Typography color="text.secondary">
+          Ask about capacity, active consumers or cleanup eligibility.
+        </Typography>
+      )}
+      {messages.map(message => (
+        <Stack key={message.id} spacing={1}>
+          <MessageView m={message} />
+          {message.a2ui && <A2uiRenderer messages={message.a2ui} />}
+          {notices
+            .filter(notice => notice.questionId && message.questionIds.includes(notice.questionId))
+            .map(
+              notice =>
+                notice.action && (
+                  <Link key={notice.id} component={RouterLink} to={noticeUrl(notice.action)}>
+                    Open question from this message
+                  </Link>
+                )
+            )}
+        </Stack>
+      ))}
+    </>
   );
 }
 
@@ -459,39 +649,25 @@ function StorageChat({
           </Stack>
           {chat.loading && <LinearProgress aria-label="Loading storage chat" />}
           {chat.error && (
-            <Alert severity="error" action={<Button onClick={chat.refresh}>Retry</Button>}>
+            <StorageAlert severity="error" action={<Button onClick={chat.refresh}>Retry</Button>}>
               {chat.error}
-            </Alert>
+            </StorageAlert>
           )}
-          {chat.data?.messages.length === 0 && (
-            <Typography color="text.secondary">
-              Ask about capacity, active consumers or cleanup eligibility.
-            </Typography>
+          {chat.data && (
+            <StorageTranscript
+              chatId={chatId}
+              settings={settings}
+              tail={chat.data.messages}
+              hasEarlier={chat.data.hasEarlier}
+              notices={incident.notices}
+            />
           )}
-          {chat.data?.messages.map(message => (
-            <Stack key={message.id} spacing={1}>
-              <MessageView m={message} />
-              {message.a2ui && <A2uiRenderer messages={message.a2ui} />}
-              {incident.notices
-                .filter(
-                  notice => notice.questionId && message.questionIds.includes(notice.questionId)
-                )
-                .map(
-                  notice =>
-                    notice.action && (
-                      <Link key={notice.id} component={RouterLink} to={noticeUrl(notice.action)}>
-                        Open question from this message
-                      </Link>
-                    )
-                )}
-            </Stack>
-          ))}
           {busy && (
             <Typography variant="body2" role="status">
               Investigating…
             </Typography>
           )}
-          {error && <Alert severity="error">{error}</Alert>}
+          {error && <StorageAlert severity="error">{error}</StorageAlert>}
           <Composer
             running={busy}
             disabled={!chat.data}
@@ -505,7 +681,7 @@ function StorageChat({
           />
         </Stack>
       </Paper>
-      {detail.error && <Alert severity="error">{detail.error}</Alert>}
+      {detail.error && <StorageAlert severity="error">{detail.error}</StorageAlert>}
       {detail.data && (
         <Paper variant="outlined" sx={panel}>
           <ChildResults detail={detail.data} />
@@ -575,12 +751,12 @@ function StoragePage({ action }: { action?: 'question' | 'cleanup' }) {
       <Stack spacing={2}>
         {incident.loading && <LinearProgress aria-label="Loading storage incident" />}
         {incident.error && (
-          <Alert severity="error" action={<Button onClick={incident.refresh}>Retry</Button>}>
+          <StorageAlert severity="error" action={<Button onClick={incident.refresh}>Retry</Button>}>
             {incident.error}
-          </Alert>
+          </StorageAlert>
         )}
         {incident.data && !incident.data.enabled && (
-          <Alert severity="info">Storage incidents are disabled.</Alert>
+          <StorageAlert severity="info">Storage incidents are disabled.</StorageAlert>
         )}
         {incident.data?.enabled && (
           <>
@@ -609,7 +785,7 @@ function StoragePage({ action }: { action?: 'question' | 'cleanup' }) {
               />
             )}
             {chatId && chatId !== parent?.chatId && (
-              <Alert severity="error">Storage chat is unavailable.</Alert>
+              <StorageAlert severity="error">Storage chat is unavailable.</StorageAlert>
             )}
           </>
         )}

@@ -1,4 +1,3 @@
-import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
@@ -22,6 +21,7 @@ import {
   postStorage,
   Question,
 } from './storage-data';
+import { StorageAlert } from './StorageAlert';
 
 export function useStorageAction(refresh: () => void) {
   const [busy, setBusy] = React.useState(false);
@@ -207,7 +207,7 @@ export function ItemActions({
           Saving…
         </Typography>
       )}
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
     </Stack>
   );
 }
@@ -233,10 +233,10 @@ export function DriveInvestigation({
         Investigate drive
       </Typography>
       {criticalEmpty && (
-        <Alert severity="warning">
+        <StorageAlert severity="warning">
           This drive is below its free space reserve and has no eligible items. What would you like
           to investigate?
-        </Alert>
+        </StorageAlert>
       )}
       <Stack direction="row" gap={1} flexWrap="wrap">
         <Button variant="outlined" disabled={busy} onClick={() => investigate('inventory')}>
@@ -254,7 +254,7 @@ export function DriveInvestigation({
           Gathering evidence…
         </Typography>
       )}
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
     </Stack>
   );
 }
@@ -302,7 +302,7 @@ export function QuestionCard({
           </Button>
         </Box>
       )}
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
     </Stack>
   );
 }

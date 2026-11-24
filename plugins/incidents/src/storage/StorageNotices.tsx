@@ -1,4 +1,3 @@
-import Alert from '@mui/material/Alert';
 import Link from '@mui/material/Link';
 import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
@@ -13,6 +12,7 @@ import {
   NotificationCoverage,
   StorageIncident,
 } from './storage-data';
+import { StorageAlert } from './StorageAlert';
 
 export function noticeUrl(action: NoticeAction) {
   return action.kind === 'question'
@@ -58,18 +58,18 @@ export function DeliveryEvidence({ delivery }: { delivery?: NoticeDelivery }) {
 
 function Coverage({ coverage }: { coverage?: NotificationCoverage }) {
   if (coverage?.enabled !== true || typeof coverage.registeredRecipients !== 'number') {
-    return <Alert severity="info">Storage notification coverage is unavailable.</Alert>;
+    return <StorageAlert severity="info">Storage notification coverage is unavailable.</StorageAlert>;
   }
   const count = coverage.registeredRecipients;
   if (count === 0) {
     return (
-      <Alert severity="warning">
+      <StorageAlert severity="warning">
         No registered recipients for storage notifications. Findings and questions are available
         here.{' '}
         <Link component={RouterLink} to={notificationsUrl()}>
           Manage notifications
         </Link>
-      </Alert>
+      </StorageAlert>
     );
   }
   return (

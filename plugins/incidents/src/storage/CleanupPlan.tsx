@@ -1,4 +1,3 @@
-import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
@@ -24,6 +23,7 @@ import {
   postStorage,
   Receipt,
 } from './storage-data';
+import { StorageAlert } from './StorageAlert';
 
 export function CleanupPlan({
   detail,
@@ -47,6 +47,12 @@ export function CleanupPlan({
   const eligible = detail.items.filter(
     item => item.eligible && mergeVerification(item) !== 'unavailable'
   );
+  const scanAvailable = detail.drive.complete && detail.current?.complete === true;
+  const approvalBlock = !scanAvailable
+    ? 'Scan evidence is unavailable. Cleanup requires a complete scan.'
+    : !canApply
+    ? 'Cleanup approval is unavailable for this drive.'
+    : undefined;
   const dryRun = async () => {
     setBusy(true);
     setError(undefined);
@@ -64,23 +70,25 @@ export function CleanupPlan({
       <Typography component="h2" variant="h6">
         Cleanup plan
       </Typography>
-      {!canApply && <Alert severity="info">Cleanup approval is unavailable for this drive.</Alert>}
+      {approvalBlock && (
+        <StorageAlert severity={scanAvailable ? 'info' : 'warning'}>{approvalBlock}</StorageAlert>
+      )}
       <Box>
         <Button
           variant="outlined"
-          disabled={busy || !detail.drive.complete || eligible.length === 0}
+          disabled={busy || !scanAvailable || eligible.length === 0}
           onClick={dryRun}
         >
           {busy ? 'Running dry run…' : `Dry run all eligible items (${eligible.length})`}
         </Button>
       </Box>
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
       {plan && (
         <PlanReview
           key={plan.id}
           plan={plan}
           settings={settings}
-          canApply={canApply}
+          approvalBlock={approvalBlock}
           currentItems={detail.items}
           receipts={detail.receipts}
           refresh={refresh}
@@ -93,14 +101,14 @@ export function CleanupPlan({
 function PlanReview({
   plan,
   settings,
-  canApply,
+  approvalBlock,
   currentItems,
   receipts,
   refresh,
 }: {
   plan: Plan;
   settings: Settings;
-  canApply: boolean;
+  approvalBlock?: string;
   currentItems: Item[];
   receipts: Receipt[];
   refresh: () => void;
@@ -112,6 +120,7 @@ function PlanReview({
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string>();
   const now = useNow(true);
+  const canApply = !approvalBlock;
   const expired = !(Date.parse(plan.expiresAt) > now);
   const approved = result.length > 0 || receipts.some(receipt => receipt.planId === plan.id);
   const currentById = new Map(currentItems.map(item => [item.id, item]));
@@ -178,8 +187,8 @@ function PlanReview({
           {time(plan.createdAt)} · Expires {time(plan.expiresAt)}
         </Typography>
       </Box>
-      {approved && <Alert severity="success">Approval recorded. See cleanup receipts below.</Alert>}
-      {expired && !approved && <Alert severity="warning">This plan has expired.</Alert>}
+      {approved && <StorageAlert severity="success">Approval recorded. See cleanup receipts below.</StorageAlert>}
+      {expired && !approved && <StorageAlert severity="warning">This plan has expired.</StorageAlert>}
       <Box component="ul" sx={{ listStyle: 'none', p: 0, m: 0 }}>
         {checks.map(({ item, missingMerge, selectable }) => (
           <Box
@@ -215,7 +224,7 @@ function PlanReview({
           </Box>
         ))}
       </Box>
-      {error && !approved && <Alert severity="error">{error}</Alert>}
+      {error && !approved && <StorageAlert severity="error">{error}</StorageAlert>}
       {!approved && canApply && (
         <Box>
           <Button
@@ -232,21 +241,21 @@ function PlanReview({
         <DialogTitle>Approve selected items?</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
-            Approve {confirming.length} selected {confirming.length === 1 ? 'item' : 'items'} totalling{' '}
-            {size(bytes)}. Each item is checked again before removal.
+            Approve {confirming.length} selected {confirming.length === 1 ? 'item' : 'items'}{' '}
+            totalling {size(bytes)}. Each item is checked again before removal.
           </Typography>
           <Box component="ul" sx={{ overflowWrap: 'anywhere' }}>
             {confirming.map(item => (
               <li key={item.itemId}>{item.label}</li>
             ))}
           </Box>
-          {!confirmReady && (
-            <Alert severity="warning">
-              {confirmMissingMerge
-                ? 'Merge verification is unavailable for a selected item.'
-                : 'A selected item is no longer eligible.'}{' '}
-              Cancel and review the remaining eligible items.
-            </Alert>
+          {(approvalBlock || !confirmReady) && (
+            <StorageAlert severity="warning">
+              {approvalBlock ??
+                (confirmMissingMerge
+                  ? 'Merge verification is unavailable for a selected item. Cancel and review the remaining eligible items.'
+                  : 'A selected item is no longer eligible. Cancel and review the remaining eligible items.')}
+            </StorageAlert>
           )}
         </DialogContent>
         <DialogActions>

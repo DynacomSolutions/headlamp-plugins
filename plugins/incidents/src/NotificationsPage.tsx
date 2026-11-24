@@ -25,6 +25,7 @@ import {
 import { storageNotificationUrls } from './routes';
 import { useStorageAction } from './storage/Investigation';
 import { postStorage, useStorageNotificationDevice } from './storage/storage-data';
+import { StorageAlert } from './storage/StorageAlert';
 
 function StorageNotificationSettings({
   settings,
@@ -61,16 +62,17 @@ function StorageNotificationSettings({
         Storage notifications
       </Typography>
       <Typography variant="body2">
-        Receive storage findings and questions, including those from scheduled scans. Enrolment
-        lasts 30 days.
+        Receive push notifications for storage findings and questions. Push enrolment lasts up to 15
+        minutes. Renew after expiry or an agent restart. Findings and questions remain available in
+        Headlamp.
       </Typography>
       {enrolment.loading && <CircularProgress size={20} aria-label="Loading storage enrolment" />}
       {enrolment.error && (
-        <Alert severity="warning" action={<Button onClick={enrolment.refresh}>Retry</Button>}>
-          Storage notification enrolment is unavailable.
-        </Alert>
+        <StorageAlert severity="warning" action={<Button onClick={enrolment.refresh}>Retry</Button>}>
+          {enrolment.error}
+        </StorageAlert>
       )}
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && <StorageAlert severity="error">{error}</StorageAlert>}
       {enrolment.data && !enrolment.error && (
         <>
           <Typography variant="body2" color="text.secondary" role="status">
