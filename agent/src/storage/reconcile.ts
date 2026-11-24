@@ -4,7 +4,7 @@ import { raiseScanQuestion } from './findings.js';
 import { ingestScan, resolveCooldowns } from './inventory.js';
 import type { StorageStore } from './store.js';
 import { RequestDeadlineError, SCAN_TIMEOUT_MS, type Scanner } from './transport.js';
-import type { Decision, ScanResult, Trigger } from './types.js';
+import type { Decision, FilesystemPolicy, ScanResult, Trigger } from './types.js';
 
 const DAY_MS = 24 * 60 * 60_000;
 const COOLDOWN_MS = 15 * 60_000;
@@ -18,6 +18,7 @@ export class StorageReconciler {
     scanner: Scanner;
     nodes: ReadonlySet<string>;
     metrics: Metrics;
+    filesystemPolicies?: ReadonlyMap<string, FilesystemPolicy[]>;
     now: () => number;
   }) {}
 
@@ -34,7 +35,7 @@ export class StorageReconciler {
   }
 
   private async scanNode(node: string, triggers: Trigger[]): Promise<boolean> {
-    const { store, scanner, now, metrics } = this.deps;
+    const { store, scanner, now, metrics, filesystemPolicies } = this.deps;
     const owner = randomUUID();
     let claimed = false;
     try {
@@ -69,11 +70,12 @@ export class StorageReconciler {
         await tx.query("SELECT set_config('transaction_timeout', $1, true)", [`${remaining}ms`]);
         await tx.query("SET LOCAL statement_timeout = '45s'");
         if (!await tx.ownsScan(node, owner, now())) throw new RequestDeadlineError();
-        const { matched, observed } = await ingestScan(tx, scan, work.due, received, COOLDOWN_MS);
+        const policies = filesystemPolicies?.get(node) ?? [];
+        const { complete, matched, observed } = await ingestScan(tx, scan, work.due, policies, received, COOLDOWN_MS);
         for (const state of observed) await raiseScanQuestion(tx, state, await tx.list<Decision>('decision', state.drive.id), received);
         const finished = now();
         if (finished >= deadline || finished >= work.started + SCAN_LEASE_MS) throw new RequestDeadlineError();
-        const result = scan.complete && matched ? 'complete' : 'incomplete';
+        const result = complete && matched ? 'complete' : 'incomplete';
         await tx.finishScan(node, owner, result, finished, result === 'complete' && work.full ? scannedAt : undefined);
         return result;
       });

@@ -43,7 +43,7 @@ export async function raiseQuestion(
 }
 
 export async function raiseScanQuestion(tx: StorageQueries, state: DriveState, decisions: Decision[], now: number): Promise<void> {
-  if (!state.current.complete) return;
+  if (state.current.inventoryComplete !== true) return;
   const stage = pressureStage(state);
   const notices = await tx.list<StorageNotice>('notice', state.drive.id);
   for (const notice of notices) {

@@ -12,7 +12,7 @@ import { StorageReconciler } from '../src/storage/reconcile.js';
 import { StorageIncident } from '../src/storage/service.js';
 import { StorageQueries, StorageStore } from '../src/storage/store.js';
 import { HttpScanner, requestJson } from '../src/storage/transport.js';
-import { reconcileSchema, type Scan } from '../src/storage/types.js';
+import { filesystemPoliciesSchema, reconcileSchema, type FilesystemPolicy, type Scan } from '../src/storage/types.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -58,7 +58,7 @@ function clock() {
 
 function scan(node: string, at: number, extra: Partial<Scan> = {}): Scan {
   return {
-    version: 1, node, execution: 'shadow', scannedAt: new Date(at).toISOString(), complete: true,
+    version: 1, node, execution: 'shadow', scannedAt: new Date(at).toISOString(), complete: true, inventoryComplete: true,
     filesystems: [{ id: 'volume', mount: '/srv/volume', totalBytes: 1_000_000, availableBytes: 250_000 }],
     items: [],
     ...extra,
@@ -73,7 +73,12 @@ function item(id: string, extra: Partial<Scan['items'][number]> = {}): Scan['ite
   };
 }
 
-async function fixture(now: () => number, nodeNames: string[], serve: (node: string, res: ServerResponse, at: number) => void) {
+async function fixture(
+  now: () => number,
+  nodeNames: string[],
+  serve: (node: string, res: ServerResponse, at: number) => void,
+  filesystemPolicies?: ReadonlyMap<string, FilesystemPolicy[]>,
+) {
   const db = pgliteDb();
   dispose.push(() => db.close());
   await podStore(db);
@@ -89,7 +94,7 @@ async function fixture(now: () => number, nodeNames: string[], serve: (node: str
   const push = new PushService({ store: new MemoryPushStore() });
   const notificationDeps = { store, push, now, issuerConfigured: false };
   const notifications = new StorageNotifications(notificationDeps);
-  const reconciler = new StorageReconciler({ store, scanner, nodes: new Set(nodeNames), metrics: new Metrics(), now });
+  const reconciler = new StorageReconciler({ store, scanner, nodes: new Set(nodeNames), metrics: new Metrics(), now, filesystemPolicies });
   const incident = new StorageIncident({ store, apply, notifications, now, nodes: nodeNames });
   return { store, incident, reconciler, apply, calls };
 }
@@ -99,6 +104,104 @@ function send(res: ServerResponse, data: Scan) {
 }
 
 describe('Storage scanner contract', () => {
+  it('retains partial evidence without advancing coverage or enabling cleanup', async () => {
+    const { now, advance } = clock();
+    const [affected, peer] = nodes;
+    const initial = now();
+    let inventoryComplete: boolean | undefined = false;
+    const f = await fixture(now, nodes, (node, res, at) => send(res, scan(node, at, {
+      execution: 'disposable',
+      inventoryComplete: node === affected ? inventoryComplete : true,
+      items: [item('cache')],
+    })));
+    expect(await f.reconciler.run([])).toBe(false);
+    const parent = await f.incident.parent();
+    expect(parent.scans.map(row => row.status)).toEqual(['incomplete', 'complete']);
+    const drive = parent.drives.find(row => row.node === affected)!;
+    const detail = await f.incident.drive(drive.id);
+    expect(detail.current).toMatchObject({
+      complete: false, holderEvidenceComplete: true, inventoryComplete: false, itemCount: 1, eligibleCount: 0,
+    });
+    expect(detail.items).toMatchObject([{ eligible: false, reason: 'The scan is incomplete' }]);
+    expect((await f.store.drive(drive.id))?.items).toMatchObject([{ eligible: false }]);
+    expect((await f.apply.dryRun(drive.id)).items).toMatchObject([{ eligible: false }]);
+    expect(await f.store.scanState(affected, now())).toMatchObject({ lastFullAt: 0 });
+    expect(await f.store.aliases(affected)).toEqual([]);
+    expect(await f.store.scanState(peer, now())).toMatchObject({ lastFullAt: initial });
+
+    inventoryComplete = undefined;
+    advance(60_000);
+    expect(await f.reconciler.run([])).toBe(false);
+    expect(await f.store.scanState(affected, now())).toMatchObject({ status: 'incomplete', lastFullAt: 0 });
+    expect((await f.incident.drive(drive.id)).items[0]).toMatchObject({ id: detail.items[0].id, eligible: false });
+
+    inventoryComplete = true;
+    advance(60_000);
+    expect(await f.reconciler.run([])).toBe(true);
+    expect(await f.store.scanState(affected, now())).toMatchObject({ status: 'complete', lastFullAt: now() });
+    expect((await f.incident.drive(drive.id)).items[0]).toMatchObject({ id: detail.items[0].id, eligible: true });
+    expect(f.calls.filter(node => node === affected)).toHaveLength(3);
+    expect(f.calls.filter(node => node === peer)).toHaveLength(1);
+
+    const lastFullAt = now();
+    expect(await f.store.aliases(affected)).not.toEqual([]);
+    inventoryComplete = false;
+    advance(60_000);
+    expect(await f.reconciler.run([{ node: affected, filesystemId: 'volume', reason: 'capacity' }])).toBe(false);
+    expect(await f.store.scanState(affected, now())).toMatchObject({ status: 'incomplete', lastFullAt });
+    expect(await f.store.aliases(affected)).toEqual([]);
+    expect((await f.incident.drive(drive.id)).items[0]).toMatchObject({ eligible: false });
+    expect(f.calls.filter(node => node === peer)).toHaveLength(1);
+  });
+
+  it('uses the mounted thresholds on the daily scan and requires coverage of the exact policy mount', async () => {
+    const { now, advance } = clock();
+    const node = nodes[0];
+    const gib = 1024 ** 3;
+    const policyMount = '/srv/Team\\040\tqueue\nready ';
+    const policy = { mount: policyMount, reserveGiB: 160, criticalGiB: 40, growth1hGiB: 20, growth6hGiB: 60 };
+    const policies = new Map(Object.entries(filesystemPoliciesSchema.parse({ [node]: [policy] })));
+    let mountpoint = policyMount.trimEnd();
+    let complete = false;
+    const f = await fixture(now, [node], (name, res, at) => send(res, scan(name, at, {
+      complete,
+      filesystems: [{
+        id: 'volume', mount: '/srv/volume', aliases: [{ device: '/dev/example', mountpoint }],
+        totalBytes: 1000 * gib, availableBytes: 120 * gib,
+      }],
+    })), policies);
+    expect(await f.reconciler.run([])).toBe(false);
+    expect(await f.store.scanState(node, now())).toMatchObject({ status: 'incomplete', lastFullAt: 0 });
+    const [drive] = (await f.incident.parent()).drives;
+    expect(drive).toMatchObject({ complete: false, status: 'incomplete', inventoryComplete: false });
+    expect((await f.incident.drive(drive.id)).questions).toEqual([]);
+
+    mountpoint = policyMount;
+    advance(60_000);
+    expect(await f.reconciler.run([])).toBe(false);
+    expect(await f.store.scanState(node, now())).toMatchObject({ status: 'incomplete', lastFullAt: 0 });
+    const shadow = await f.incident.drive(drive.id);
+    expect(shadow.drive).toMatchObject({
+      status: 'incomplete', complete: false, inventoryComplete: true, holderEvidenceComplete: false,
+      reserveBytes: 160 * gib, criticalBytes: 40 * gib, applyEnabled: false,
+    });
+    expect(shadow.questions.map(question => question.text)).toEqual([expect.stringContaining('below its reserve')]);
+
+    complete = true;
+    advance(60_000);
+    expect(await f.reconciler.run([])).toBe(true);
+    expect(await f.store.scanState(node, now())).toMatchObject({ status: 'complete', lastFullAt: now() });
+    const detail = await f.incident.drive(drive.id);
+    expect(detail.drive).toMatchObject({ status: 'pressure', reserveBytes: 160 * gib, criticalBytes: 40 * gib });
+    expect(detail.questions.map(question => question.text)).toEqual([expect.stringContaining('below its reserve')]);
+
+    advance(60_000);
+    expect(await f.reconciler.run([{
+      node, device: '/dev/example', mount: policyMount, reason: 'capacity', reserveBytes: 240 * gib, criticalBytes: 180 * gib,
+    }])).toBe(true);
+    expect((await f.incident.parent()).drives[0]).toMatchObject({ status: 'pressure', reserveBytes: 160 * gib, criticalBytes: 40 * gib });
+  });
+
   it('ingests 3,240 rows after a 900s scan with time left for the transaction', async () => {
     const { now, advance } = clock();
     const response = deferred<ServerResponse>();
@@ -295,6 +398,9 @@ describe('Storage scanner contract', () => {
     expect(first.items.map(row => row.eligible)).toEqual([true, true, false, false]);
     const legacy = { ...first, items: first.items.map(row => ({ ...row, eligible: true })) };
     expect(itemViews(legacy, [], now()).map(row => row.eligible)).toEqual([true, true, false, false]);
+    const legacyCoverage = { ...first, current: { ...first.current, inventoryComplete: undefined } };
+    expect(itemViews(legacyCoverage, [], now())).toEqual(first.items.map(() =>
+      expect.objectContaining({ eligible: false, reason: 'The scan is incomplete' })));
     const plan = await f.apply.dryRun(drive.id);
     const frozen = (await f.store.plan(plan.id))!;
     expect(frozen.checks.map(row => row.scannerId)).toEqual(['proof-1', 'no-proof-1']);

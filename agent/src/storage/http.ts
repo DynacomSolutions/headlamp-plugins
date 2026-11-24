@@ -11,7 +11,7 @@ import { enrolSchema, StorageNotifications, subscriptionSchema } from './notific
 import { StorageReconciler } from './reconcile.js';
 import { StorageIncident } from './service.js';
 import { HttpScanner } from './transport.js';
-import { answerSchema, approvalSchema, decisionSchema, investigationSchema, messageSchema, reconcileSchema, StorageError } from './types.js';
+import { answerSchema, approvalSchema, decisionSchema, filesystemPoliciesSchema, investigationSchema, messageSchema, reconcileSchema, StorageError, type FilesystemPolicy } from './types.js';
 
 const base = '/api/storage';
 const empty = {
@@ -30,6 +30,7 @@ type HttpHelpers = {
 
 type Settings = {
   urls: ReadonlyMap<string, URL>;
+  filesystemPolicies: ReadonlyMap<string, FilesystemPolicy[]>;
   scannerToken: () => string;
   reconcileToken: () => string;
   cluster: string;
@@ -54,6 +55,15 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   } catch {
     throw new Error('Invalid storage scanner configuration');
   }
+  let filesystemPolicies: ReadonlyMap<string, FilesystemPolicy[]>;
+  try {
+    const policyFile = env.STORAGE_FILESYSTEM_POLICIES_FILE;
+    const policies = policyFile ? filesystemPoliciesSchema.parse(JSON.parse(readFileSync(policyFile, 'utf8'))) : {};
+    filesystemPolicies = new Map(Object.entries(policies));
+    if ([...filesystemPolicies.keys()].some(node => !urls.has(node))) throw new Error('Unknown policy node');
+  } catch {
+    throw new Error('Invalid storage filesystem policy configuration');
+  }
   if (!env.STORAGE_SCANNER_TOKEN_FILE || !env.STORAGE_RECONCILE_TOKEN_FILE) throw new Error('Storage token files are required');
   const disposable = new Set((env.STORAGE_DISPOSABLE_SCANNERS ?? '').split(',').map(node => node.trim()).filter(Boolean));
   if ([...disposable].some(node => !urls.has(node))) throw new Error('Invalid disposable scanner configuration');
@@ -75,6 +85,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   }
   return {
     urls,
+    filesystemPolicies,
     humanGroups: new Set(groups),
     userInfo,
     scannerToken: tokenFile(env.STORAGE_SCANNER_TOKEN_FILE),
@@ -106,7 +117,9 @@ export async function storageHttp(deps: HttpHelpers & {
     const apply = new StorageApply({ store: db, scanner, now, enabled: configured.applyEnabled, disposable: configured.disposable });
     const notifications = new StorageNotifications({ store: db, now, push, issuerConfigured: Boolean(configured.userInfo) });
     const nodes = [...configured.urls.keys()];
-    const reconcile = new StorageReconciler({ store: db, scanner, now, metrics, nodes: new Set(nodes) });
+    const reconcile = new StorageReconciler({
+      store: db, scanner, now, metrics, nodes: new Set(nodes), filesystemPolicies: configured.filesystemPolicies,
+    });
     return { apply, notifications, reconcile, db, service: new StorageIncident({ store: db, now, apply, notifications, nodes }) };
   }
 

@@ -146,7 +146,7 @@ async function fixture(options: {
       seenScans.push(node);
       await onScan?.(node);
       const data = nodeFixtures.get(node)!;
-      return reply(res, data.status ?? 200, { version: 1, node, scannedAt: new Date(at).toISOString(), ...data.scan() });
+      return reply(res, data.status ?? 200, { version: 1, node, scannedAt: new Date(at).toISOString(), inventoryComplete: true, ...data.scan() });
     }
     if (req.url === '/v1/apply' && req.method === 'POST') {
       const request = await body(req) as ApplyRequest;
@@ -856,6 +856,7 @@ describe('Storage incident normal entry points', () => {
       filesystems: names.map(id => fs(id, `/${id}`, available)),
       items: [item('cleanup', names[0]), item('question', names[1], { inUse: true })],
       complete,
+      inventoryComplete: complete,
     });
     const triggers = names.map(filesystemId => ({
       node: nodes[0], filesystemId, reason: 'capacity', reserveBytes: 100, criticalBytes: 20,

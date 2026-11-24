@@ -22,7 +22,7 @@ export const scanSchema = z.object({
   filesystems: z.array(z.object({
     id: filesystemId,
     mount,
-    aliases: z.array(z.object({ device: label, mountpoint: mount })).max(200).optional(),
+    aliases: z.array(z.object({ device: label, mountpoint: mount }).strict()).max(200).optional(),
     shared: z.boolean().optional(),
     device: label.optional(),
     majorMinor: name.optional(),
@@ -46,6 +46,8 @@ export const scanSchema = z.object({
     holder: z.string().max(256).optional(),
   })).max(30_000),
   complete: z.boolean(),
+  // Older responses remain readable as evidence but cannot prove inventory coverage.
+  inventoryComplete: z.boolean().optional(),
 }).refine(scan => {
   const fsIds = scan.filesystems.map(fs => fs.id);
   const filesystems = new Set(fsIds);
@@ -62,6 +64,21 @@ export const triggerSchema = z.object({
   criticalBytes: count.optional(),
 }).strict().refine(t => (t.filesystemId === undefined ? t.device !== undefined && t.mount !== undefined : t.device === undefined && t.mount === undefined)
   && (t.reserveBytes === undefined || t.criticalBytes === undefined || t.criticalBytes <= t.reserveBytes));
+const GIB = 1024 ** 3;
+const gib = z.number().int().min(0).max(Math.floor(Number.MAX_SAFE_INTEGER / GIB));
+const filesystemPolicy = z.object({
+  mount,
+  reserveGiB: gib,
+  criticalGiB: gib,
+  growth1hGiB: gib,
+  growth6hGiB: gib,
+}).strict().refine(policy => policy.criticalGiB <= policy.reserveGiB).transform(policy => ({
+  mount: policy.mount, reserveBytes: policy.reserveGiB * GIB, criticalBytes: policy.criticalGiB * GIB,
+}));
+export type FilesystemPolicy = z.infer<typeof filesystemPolicy>;
+export const filesystemPoliciesSchema = z.record(name, z.array(filesystemPolicy).max(500)
+  .refine(rows => unique(rows.map(row => row.mount))));
+
 export const reconcileSchema = z.object({ triggers: z.array(triggerSchema).max(500) }).strict();
 export const MAX_APPROVAL_ITEMS = 1000;
 export const receiptStatus = z.enum(['removed', 'stale', 'blocked', 'failed']);
@@ -101,6 +118,8 @@ export type Snapshot = {
   reserveBytes: number;
   criticalBytes: number;
   complete: boolean;
+  holderEvidenceComplete?: boolean;
+  inventoryComplete?: boolean;
   critical: boolean;
   itemCount: number;
   eligibleCount: number;

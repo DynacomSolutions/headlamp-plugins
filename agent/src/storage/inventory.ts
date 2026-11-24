@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { StorageQueries } from './store.js';
-import { clean, needsMergeEvidence, type Decision, type DriveState, type InternalItem, type Notice, type Scan, type ScanItem, type Snapshot, type Trigger } from './types.js';
+import { clean, needsMergeEvidence, type Decision, type DriveState, type FilesystemPolicy, type InternalItem, type Notice, type Scan, type ScanItem, type Snapshot, type Trigger } from './types.js';
 
 type Filesystem = Scan['filesystems'][number];
 export type StorageNotice = Notice & { external: boolean; externalItemId?: string; stage?: string; critical?: boolean };
@@ -9,7 +9,7 @@ const MAX_SCAN_AGE_MS = 24 * 60 * 60_000;
 
 export function scanIsFresh(state: Pick<DriveState, 'current'>, now: number): boolean {
   const age = now - Date.parse(state.current.scannedAt);
-  return state.current.complete && age >= 0 && age <= MAX_SCAN_AGE_MS;
+  return state.current.complete && state.current.inventoryComplete === true && age >= 0 && age <= MAX_SCAN_AGE_MS;
 }
 
 function filesystemScope(node: string, fs: Filesystem): string {
@@ -32,7 +32,7 @@ export function itemViews(state: DriveState, decisions: Decision[], now: number)
     const deferUntil = current?.decision === 'defer' && Date.parse(current.until!) > now ? current.until : undefined;
     const mergeEvidence = needsMergeEvidence(item.category) ? item.mergeEvidence ?? 'unavailable' : undefined;
     const eligible = fresh && item.eligible && mergeEvidence !== 'unavailable' && item.inUse === false && !keep && !deferUntil;
-    const reason = !state.current.complete ? 'The scan is incomplete'
+    const reason = !state.current.complete || state.current.inventoryComplete !== true ? 'The scan is incomplete'
       : !fresh ? 'The scan is too old'
         : keep ? 'Kept by an operator'
           : deferUntil ? 'Deferred by an operator'
@@ -56,10 +56,10 @@ export function itemViews(state: DriveState, decisions: Decision[], now: number)
   });
 }
 
-function normalizeItem(item: ScanItem, node: string, id: string): InternalItem {
+function normalizeItem(item: ScanItem, node: string, id: string, complete: boolean): InternalItem {
   const jev = item.visibility === 'jev';
   const mergeEvidence = needsMergeEvidence(item.category) ? item.mergeEvidence ?? 'unavailable' : undefined;
-  const eligible = item.category !== 'host-temp' && item.eligible && mergeEvidence !== 'unavailable' && item.inUse === false;
+  const eligible = complete && item.category !== 'host-temp' && item.eligible && mergeEvidence !== 'unavailable' && item.inUse === false;
   return {
     id,
     scannerId: item.id,
@@ -99,11 +99,16 @@ export async function resolveCooldowns(tx: StorageQueries, node: string, trigger
   return due;
 }
 
-function makeSnapshot(scan: Scan, fs: Filesystem, previous: DriveState | undefined, triggers: Trigger[]): Snapshot {
+function makeSnapshot(
+  scan: Scan, inventoryComplete: boolean, fs: Filesystem, previous: DriveState | undefined,
+  triggers: Trigger[], policies: FilesystemPolicy[],
+): Snapshot {
   const reserves = triggers.flatMap(t => t.reserveBytes === undefined ? [] : [t.reserveBytes]);
   const criticals = triggers.flatMap(t => t.criticalBytes === undefined ? [] : [t.criticalBytes]);
-  const reserveBytes = reserves.length ? Math.max(...reserves) : previous?.current.reserveBytes ?? Math.ceil(fs.totalBytes / 10);
-  const criticalBytes = Math.min(reserveBytes, criticals.length ? Math.max(...criticals) : previous?.current.criticalBytes ?? reserveBytes);
+  const reserveBytes = policies.length ? Math.max(...policies.map(policy => policy.reserveBytes))
+    : reserves.length ? Math.max(...reserves) : previous?.current.reserveBytes ?? Math.ceil(fs.totalBytes / 10);
+  const criticalBytes = Math.min(reserveBytes, policies.length ? Math.max(...policies.map(policy => policy.criticalBytes))
+    : criticals.length ? Math.max(...criticals) : previous?.current.criticalBytes ?? reserveBytes);
   return {
     id: randomUUID(),
     scannedAt: scan.scannedAt,
@@ -111,7 +116,9 @@ function makeSnapshot(scan: Scan, fs: Filesystem, previous: DriveState | undefin
     availableBytes: fs.availableBytes,
     reserveBytes,
     criticalBytes,
-    complete: scan.complete,
+    complete: scan.complete && inventoryComplete,
+    holderEvidenceComplete: scan.complete,
+    inventoryComplete,
     critical: fs.availableBytes <= criticalBytes,
     itemCount: 0,
     eligibleCount: 0,
@@ -119,7 +126,7 @@ function makeSnapshot(scan: Scan, fs: Filesystem, previous: DriveState | undefin
 }
 
 function pressureEpisode(snapshot: Snapshot, previous?: DriveState['episode']): DriveState['episode'] {
-  if (!snapshot.complete) return previous;
+  if (snapshot.inventoryComplete !== true) return previous;
   if (!snapshot.critical && snapshot.availableBytes >= snapshot.reserveBytes) return;
   const episode = previous ?? { id: randomUUID() };
   if (snapshot.critical && !episode.critical) return { ...episode, critical: randomUUID() };
@@ -160,9 +167,10 @@ export async function ingestScan(
   tx: StorageQueries,
   scan: Scan,
   triggers: Trigger[],
+  policies: FilesystemPolicy[],
   now: number,
   cooldownMs: number,
-): Promise<{ matched: boolean; observed: DriveState[] }> {
+): Promise<{ complete: boolean; matched: boolean; observed: DriveState[] }> {
   const filesystems = scan.filesystems.map(fs => ({ fs, scope: filesystemScope(scan.node, fs) })).sort((a, b) => a.scope.localeCompare(b.scope));
   const aliasScopes = new Map<string, Set<string>>();
   function addAlias(key: string, scope: string) {
@@ -175,7 +183,29 @@ export async function ingestScan(
     for (const { device, mountpoint } of fs.aliases ?? []) addAlias(aliasKey(device, mountpoint), scope);
   }
   const aliases = new Map([...aliasScopes].flatMap(([key, scopes]) => scopes.size === 1 ? [[key, [...scopes][0]] as const] : []));
-  if (scan.complete) await tx.putAliases(scan.node, [...aliases]);
+  // The mounted policy names a path on its node. Metrics triggers still require both labels.
+  const policyScopes = new Map<string, Set<string>>();
+  for (const { fs, scope } of filesystems) {
+    for (const mount of [fs.mount, ...(fs.aliases ?? []).map(alias => alias.mountpoint)]) {
+      const scopes = policyScopes.get(mount) ?? new Set<string>();
+      scopes.add(scope);
+      policyScopes.set(mount, scopes);
+    }
+  }
+  const policiesByScope = new Map<string, FilesystemPolicy[]>();
+  let coveredPolicies = 0;
+  for (const policy of policies) {
+    const scopes = policyScopes.get(policy.mount);
+    if (scopes?.size !== 1) continue;
+    const [scope] = scopes;
+    const matched = policiesByScope.get(scope) ?? [];
+    matched.push(policy);
+    policiesByScope.set(scope, matched);
+    coveredPolicies++;
+  }
+  const inventoryComplete = scan.inventoryComplete === true && coveredPolicies === policies.length;
+  const complete = scan.complete && inventoryComplete;
+  await tx.putAliases(scan.node, complete ? [...aliases] : []);
   const scopes = triggers.map(trigger => aliases.get(triggerKey(trigger)));
   const triggersByScope = new Map<string, Trigger[]>();
   for (const [index, scope] of scopes.entries()) {
@@ -198,7 +228,10 @@ export async function ingestScan(
     const last = await tx.byScope(scope);
     if (!last || last.drive.node !== scan.node || Date.parse(last.current.scannedAt) >= Date.parse(scan.scannedAt)) continue;
     await tx.drive(last.drive.id, true);
-    const snapshot = { ...last.current, id: randomUUID(), scannedAt: scan.scannedAt, complete: false, eligibleCount: 0 };
+    const snapshot = {
+      ...last.current, id: randomUUID(), scannedAt: scan.scannedAt, complete: false,
+      holderEvidenceComplete: scan.complete, inventoryComplete: false, eligibleCount: 0,
+    };
     const drive = { ...last.drive, ...snapshot, id: last.drive.id, status: 'incomplete' as const };
     await tx.putSnapshot(drive.id, snapshot);
     await tx.putDrive(scope, { ...last, drive, current: snapshot });
@@ -213,13 +246,13 @@ export async function ingestScan(
     // A complete peer is stronger evidence than an incomplete view of a shared filesystem.
     const stale = previous && (
       Date.parse(previous.current.scannedAt) > Date.parse(scan.scannedAt)
-      || (fs.shared && previous.current.complete && !scan.complete && previous.drive.node !== scan.node)
+      || (fs.shared && previous.current.complete && previous.current.inventoryComplete === true && !complete && previous.drive.node !== scan.node)
     );
     if (stale) {
-      if (scan.complete && due.length) await tx.markCooldown(scope, now);
+      if (complete && due.length) await tx.markCooldown(scope, now);
       continue;
     }
-    const snapshot = makeSnapshot(scan, fs, previous, due);
+    const snapshot = makeSnapshot(scan, inventoryComplete, fs, previous, due, policiesByScope.get(scope) ?? []);
     const source = scan.execution ?? 'shadow';
     const state: DriveState = {
       drive: {
@@ -228,7 +261,7 @@ export async function ingestScan(
         node: scan.node,
         mount: clean(fs.mount),
         filesystemId: clean(fs.id),
-        status: !scan.complete ? 'incomplete' : snapshot.critical ? 'critical' : fs.availableBytes < snapshot.reserveBytes ? 'pressure' : 'healthy',
+        status: !complete ? 'incomplete' : snapshot.critical ? 'critical' : fs.availableBytes < snapshot.reserveBytes ? 'pressure' : 'healthy',
         applyEnabled: false,
       },
       current: snapshot,
@@ -244,7 +277,7 @@ export async function ingestScan(
     // The drive row must exist before the stable item IDs can refer to it.
     if (!previous) await tx.putDrive(scope, state);
     const ids = await tx.itemIds(id, [...uniqueKeys]);
-    state.items = keyed.map(({ item, key }) => normalizeItem(item, scan.node, ids.get(key)!));
+    state.items = keyed.map(({ item, key }) => normalizeItem(item, scan.node, ids.get(key)!, complete));
     const decisions = await tx.list<Decision>('decision', id);
     snapshot.itemCount = state.items.length;
     snapshot.eligibleCount = itemViews(state, decisions, now).filter(item => item.eligible).length;
@@ -256,9 +289,9 @@ export async function ingestScan(
       state.drive.scannedAt = previous.current.scannedAt;
     }
     await tx.putDrive(scope, state);
-    if (scan.complete && due.length) await tx.markCooldown(scope, now);
+    if (complete && due.length) await tx.markCooldown(scope, now);
     await updateCleanupNotice(tx, state, decisions, now);
     observed.push(state);
   }
-  return { matched: scopes.every(Boolean), observed };
+  return { complete, matched: scopes.every(Boolean), observed };
 }
