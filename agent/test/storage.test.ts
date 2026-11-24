@@ -8,7 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { generateVapidKeys, subscriptionId } from '../src/push/webpush.js';
 import { startServer } from '../src/server.js';
-import type { Scan } from '../src/storage/types.js';
+import { StorageStore } from '../src/storage/store.js';
+import type { Approval, Scan } from '../src/storage/types.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
 
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
@@ -440,7 +441,7 @@ describe('Storage incident normal entry points', () => {
     const initial = await f.parent();
     const absentPlan = `${api}/incident/plans/${randomUUID()}/approve`;
     expect((await f.call(absentPlan, {
-      data: { itemIds: Array.from({ length: 30_000 }, () => randomUUID()) },
+      data: { itemIds: Array.from({ length: 1000 }, () => randomUUID()) },
     })).status).toBe(404);
     const drive = initial.drives.find((row: { node: string }) => row.node === nodes[0]);
     expect(drive.applyEnabled).toBe(true);
@@ -450,6 +451,9 @@ describe('Storage incident normal entry points', () => {
     const [first, second, third] = plan.items.map((row: { itemId: string }) => row.itemId) as string[];
     const approve = `${api}/incident/plans/${plan.id}/approve`;
     expect((await f.call(approve, { token: viewer, data: { itemIds: [first, second] } })).status).toBe(403);
+    expect((await f.call(approve, {
+      data: { itemIds: Array.from({ length: 1001 }, () => randomUUID()) },
+    })).status).toBe(400);
     const queued = await f.call(approve, { data: { itemIds: [second, first] } });
     expect(queued).toMatchObject({ status: 202, data: { approval: { by: 'fixture-operator' } } });
     expect(queued.data.receipts).toHaveLength(2);
@@ -459,6 +463,19 @@ describe('Storage incident normal entry points', () => {
     });
     const request = { planId: plan.id, approvalId: queued.data.approval.id, itemIds: ['first', 'second'] };
     expect(f.applyCalls).toEqual([request]);
+    const decisions = `${path}/decisions`;
+    for (const data of [
+      { itemId: second, decision: 'keep' },
+      { itemId: second, decision: 'defer', until: '2026-01-01T03:00:00Z' },
+    ]) {
+      expect(await f.call(decisions, { data })).toEqual({
+        status: 409,
+        data: { error: `Cleanup approval ${queued.data.approval.id} is already dispatched. Check Cleanup receipts for the final result.` },
+      });
+    }
+    const keep = await f.call(decisions, { data: { itemId: third, decision: 'keep' } });
+    expect(keep.status).toBe(200);
+    expect((await f.details(drive.id)).decisions).toEqual([keep.data]);
     await f.restart();
     const trigger = { reason: 'capacity', node: nodes[0], filesystemId: 'main' };
     mode = 'shadow';
@@ -484,6 +501,68 @@ describe('Storage incident normal entry points', () => {
     expect(replay.data.approval.id).toBe(queued.data.approval.id);
     expect(f.applyCalls).toHaveLength(4);
     expect(f.reviews.some(review => (review.input.spec as { resourceAttributes?: { verb: string } })?.resourceAttributes?.verb === 'approve')).toBe(true);
+  });
+
+  it('checks positive inactivity and retains the planned scanner ID across an unchanged scan', async () => {
+    const f = await fixture({ disposable: true });
+    let opaqueId = 'first-scan';
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({
+      filesystems: [fs('main', '/data')],
+      items: [
+        item(opaqueId, 'main', { objectKey: 'stable-key', path: '/example/work/cache' }),
+        item('unknown-inactivity', 'main', { inUse: undefined }),
+      ],
+      complete: true, execution: 'disposable',
+    });
+    f.onApply((request, node) => ({ status: 200, data: { ...request, node, receipts: [] } }));
+    expect((await f.reconcile()).status).toBe(200);
+    const drive = (await f.parent()).drives.find((row: { node: string }) => row.node === nodes[0]);
+    const path = `${api}/incident/drives/${drive.id}`;
+    const plan = (await f.call(`${path}/dry-run`, { data: {} })).data;
+    const [eligible, unknown] = plan.items;
+    expect(eligible.eligible).toBe(true);
+    expect(unknown).toMatchObject({ eligible: false, reason: 'Inactivity was not verified' });
+    opaqueId = 'second-scan';
+    f.advance(16 * 60_000);
+    expect((await f.reconcile([{ node: nodes[0], filesystemId: 'main', reason: 'capacity' }])).status).toBe(200);
+    expect((await f.details(drive.id)).items[0].id).toBe(eligible.itemId);
+    const approval = await f.call(`${api}/incident/plans/${plan.id}/approve`, { data: { itemIds: [eligible.itemId] } });
+    expect(approval.status).toBe(202);
+    await vi.waitFor(() => expect(f.applyCalls).toEqual([
+      { planId: plan.id, approvalId: approval.data.approval.id, itemIds: ['first-scan'] },
+    ]));
+  });
+
+  it('cancels queued cleanup when an operator defers before dispatch', async () => {
+    const f = await fixture({ disposable: true });
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({
+      filesystems: [fs('main', '/data')], items: [item('cache', 'main')], complete: true, execution: 'disposable',
+    });
+    expect((await f.reconcile()).status).toBe(200);
+    const drive = (await f.parent()).drives.find((row: { node: string }) => row.node === nodes[0]);
+    const path = `${api}/incident/drives/${drive.id}`;
+    const plan = (await f.call(`${path}/dry-run`, { data: {} })).data;
+    const { itemId } = plan.items[0];
+    // This is the durable state after approval commits and before a worker starts dispatch.
+    const approval: Approval = {
+      id: randomUUID(), planId: plan.id, driveId: drive.id, itemIds: [itemId], by: 'fixture-operator', createdAt: plan.createdAt,
+    };
+    const store = new StorageStore(f.db);
+    await store.transaction(async tx => {
+      await tx.putApproval(approval);
+      await tx.putReceipts([{
+        id: randomUUID(), approvalId: approval.id, planId: plan.id, driveId: drive.id, itemId, status: 'queued',
+        reason: 'Awaiting verified scanner receipt', bytes: 0, updatedAt: approval.createdAt,
+      }]);
+    });
+    const until = '2026-01-01T00:31:00Z';
+    expect((await f.call(`${path}/decisions`, { data: { itemId, decision: 'defer', until } })).status).toBe(200);
+    f.advance(2 * 60_000);
+    expect((await f.reconcile()).status).toBe(200);
+    expect(f.applyCalls).toEqual([]);
+    expect(await store.receipts(approval.id)).toEqual([
+      expect.objectContaining({ itemId, status: 'stale', reason: 'An operator changed the cleanup decision before dispatch' }),
+    ]);
   });
 
   it('requires positive merge evidence for worktrees and pod tasks in the plan and at approval', async () => {

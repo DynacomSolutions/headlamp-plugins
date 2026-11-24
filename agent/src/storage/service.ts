@@ -89,13 +89,24 @@ export class StorageIncident {
   }
 
   async decide(id: string, request: DecisionRequest, actor: string) {
-    const at = this.deps.now();
-    if (request.until && Date.parse(request.until) <= at) throw new StorageError(400, 'Defer must end in the future');
     const result = await this.deps.store.transaction(async tx => {
       const state = await this.findDrive(tx, id, true);
+      const at = this.deps.now();
+      if (request.until && Date.parse(request.until) <= at) throw new StorageError(400, 'Defer must end in the future');
+      const receipts = await tx.cleanupReceipts(id, { id: request.itemId, scannedAt: state.current.scannedAt });
+      if (receipts.some(receipt => receipt.data.status === 'removed')) {
+        throw new StorageError(409, 'Cleanup already removed this item. Refresh the inventory and check Cleanup receipts.');
+      }
+      const dispatched = receipts.find(receipt => receipt.dispatched);
+      if (dispatched) {
+        throw new StorageError(409, `Cleanup approval ${dispatched.data.approvalId} is already dispatched. Check Cleanup receipts for the final result.`);
+      }
       const item = state.items.find(candidate => candidate.id === request.itemId);
       if (!item) throw new StorageError(404, 'Item not found on this drive');
       const decision: Decision = { ...request, id: randomUUID(), by: actor, createdAt: new Date(at).toISOString(), material: item.decisionMaterial };
+      await tx.putReceipts(receipts.map(({ data }) => ({
+        ...data, status: 'stale', reason: 'An operator changed the cleanup decision before dispatch', updatedAt: decision.createdAt,
+      })));
       await tx.insert(id, 'decision', decision);
       const decisions = await tx.list<Decision>('decision', id);
       await updateCleanupNotice(tx, state, decisions, at);

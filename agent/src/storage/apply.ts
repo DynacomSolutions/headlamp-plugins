@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { itemViews } from './inventory.js';
+import { itemViews, scanIsFresh } from './inventory.js';
 import type { StorageStore } from './store.js';
 import type { Scanner } from './transport.js';
-import { clean, needsMergeEvidence, StorageError, type Approval, type Check, type Decision, type DriveState, type FrozenPlan, type Plan, type Receipt } from './types.js';
+import { clean, MAX_APPROVAL_ITEMS, needsMergeEvidence, StorageError, type Approval, type Check, type Decision, type DriveState, type FrozenPlan, type Plan, type Receipt } from './types.js';
 
 const PLAN_MS = 30 * 60_000;
-const MAX_SCAN_AGE_MS = 24 * 60 * 60_000;
 
 export class StorageApply {
   private readonly running = new Map<string, Promise<boolean>>();
@@ -32,8 +31,9 @@ export class StorageApply {
       const state = await tx.drive(driveId, true);
       if (!state) throw new StorageError(404, 'Drive not found');
       const at = now();
-      const views = itemViews(state, await tx.list<Decision>('decision', driveId), at);
-      const fresh = this.fresh(state, at);
+      const complete = (await tx.scanState(state.drive.node, at)).status === 'complete';
+      const current = complete ? state.current : { ...state.current, complete: false };
+      const views = itemViews({ ...state, current }, await tx.list<Decision>('decision', driveId), at);
       const plan: Plan = {
         id: randomUUID(),
         driveId,
@@ -41,8 +41,7 @@ export class StorageApply {
         expiresAt: new Date(at + PLAN_MS).toISOString(),
         items: views.map(({ id, category, label, bytes, eligible, reason, mergeEvidence }) => ({
           itemId: id, category, label, bytes, mergeEvidence,
-          eligible: fresh && eligible,
-          reason: fresh || !state.current.complete ? reason : 'The scan is too old',
+          eligible, reason,
         })),
       };
       const planned = new Map(plan.items.map(item => [item.itemId, item.eligible]));
@@ -61,6 +60,9 @@ export class StorageApply {
   async approve(planId: string, subset: string[], actor: string): Promise<{ approval: Approval; receipts: Receipt[] }> {
     const { store, now } = this.deps;
     if (!this.enabled) throw new StorageError(503, 'Storage apply is disabled');
+    if (subset.length === 0 || subset.length > MAX_APPROVAL_ITEMS || new Set(subset).size !== subset.length) {
+      throw new StorageError(400, `Select between 1 and ${MAX_APPROVAL_ITEMS} distinct items`);
+    }
     const itemIds = [...subset].sort();
     const result = await store.transaction(async tx => {
       const plan = await tx.plan(planId, true);
@@ -73,6 +75,9 @@ export class StorageApply {
       const state = await tx.drive(plan.public.driveId, true);
       if (!state || !this.permitted(state)) throw new StorageError(503, 'Storage apply is disabled for this drive');
       const at = now();
+      if ((await tx.scanState(state.drive.node, at)).status !== 'complete') {
+        throw new StorageError(503, 'Wait for a complete scan before approving cleanup');
+      }
       if (Date.parse(plan.public.expiresAt) <= at) throw new StorageError(409, 'The plan expired');
       const selected = new Set(itemIds);
       const planned = plan.public.items.filter(item => selected.has(item.itemId));
@@ -88,8 +93,7 @@ export class StorageApply {
       const decisions = await tx.list<Decision>('decision', state.drive.id);
       const allowed = this.revalidate(state, plan, decisions, at);
       const approval: Approval = { id: randomUUID(), planId, driveId: state.drive.id, itemIds, by: actor, createdAt: new Date(at).toISOString() };
-      const previous = await tx.driveReceipts(state.drive.id);
-      const pending = new Set(previous.filter(receipt => receipt.status === 'queued').map(receipt => receipt.itemId));
+      const pending = new Set((await tx.cleanupReceipts(state.drive.id)).map(({ data }) => data.itemId));
       const receipts = itemIds.map((itemId): Receipt => {
         const current = allowed.has(itemId) && !pending.has(itemId);
         return {
@@ -126,12 +130,8 @@ export class StorageApply {
     return work;
   }
 
-  private fresh(state: DriveState, now: number): boolean {
-    return state.current.complete && Date.parse(state.current.scannedAt) >= now - MAX_SCAN_AGE_MS;
-  }
-
   private revalidate(state: DriveState, plan: FrozenPlan, decisions: Decision[], now: number): Set<string> {
-    if (!this.fresh(state, now) || state.drive.node !== plan.node || state.drive.filesystemId !== plan.filesystemId) return new Set();
+    if (!scanIsFresh(state, now) || state.drive.node !== plan.node || state.drive.filesystemId !== plan.filesystemId) return new Set();
     const checks = new Map(plan.checks.map(check => [check.itemId, check]));
     const eligible = new Set(itemViews(state, decisions, now).filter(item => item.eligible).map(item => item.id));
     return new Set(state.items.filter(item => eligible.has(item.id) && checks.get(item.id)?.material === item.material).map(item => item.id));
@@ -143,9 +143,10 @@ export class StorageApply {
       const stored = await tx.approval(id, true);
       if (!stored) return;
       const { data: approval } = stored;
+      // The drive lock serialises the dispatch boundary with operator decisions.
+      const state = await tx.drive(approval.driveId, true);
       const queued = (await tx.receipts(id)).filter(receipt => receipt.status === 'queued');
       if (!queued.length) return;
-      const state = await tx.drive(approval.driveId, true);
       if (!state || !this.permitted(state)) return { gated: true } as const;
       if (stored.dispatch) {
         const dispatch = stored.dispatch;
@@ -156,6 +157,7 @@ export class StorageApply {
       if (!plan) return { gated: true } as const;
       const decisions = await tx.list<Decision>('decision', state.drive.id);
       const at = now();
+      if ((await tx.scanState(state.drive.node, at)).status !== 'complete') return { gated: true } as const;
       const valid = this.revalidate(state, plan, decisions, at);
       const allowed = new Set(queued.filter(receipt => valid.has(receipt.itemId)).map(receipt => receipt.itemId));
       const checks = plan.checks.filter(check => allowed.has(check.itemId));
@@ -175,6 +177,7 @@ export class StorageApply {
     const result = await scanner.apply(dispatch.node, approval.planId, approval.id, [...selected.keys()].sort());
     if (result.node !== dispatch.node || result.approvalId !== id || result.planId !== approval.planId || result.receipts.some(receipt => !selected.has(receipt.itemId))) return false;
     return store.transaction(async tx => {
+      await tx.drive(approval.driveId, true);
       const queued = new Map((await tx.receipts(id)).filter(receipt => receipt.status === 'queued').map(receipt => [receipt.itemId, receipt]));
       const updatedAt = new Date(now()).toISOString();
       const verified = result.receipts.flatMap(receipt => {

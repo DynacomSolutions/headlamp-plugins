@@ -63,12 +63,13 @@ export const triggerSchema = z.object({
 }).strict().refine(t => (t.filesystemId === undefined ? t.device !== undefined && t.mount !== undefined : t.device === undefined && t.mount === undefined)
   && (t.reserveBytes === undefined || t.criticalBytes === undefined || t.criticalBytes <= t.reserveBytes));
 export const reconcileSchema = z.object({ triggers: z.array(triggerSchema).max(500) }).strict();
+export const MAX_APPROVAL_ITEMS = 1000;
 export const receiptStatus = z.enum(['removed', 'stale', 'blocked', 'failed']);
 export const applyResultSchema = z.object({
   planId: z.uuid(),
   approvalId: z.uuid(),
   node: name,
-  receipts: z.array(z.object({ itemId: itemKey, status: receiptStatus, reason: z.string().max(1000), bytes: count })).max(30_000),
+  receipts: z.array(z.object({ itemId: itemKey, status: receiptStatus, reason: z.string().max(1000), bytes: count })).max(MAX_APPROVAL_ITEMS),
 }).refine(response => unique(response.receipts.map(receipt => receipt.itemId)));
 
 export const investigationSchema = z.object({ kind: z.enum(['inventory', 'capacity', 'eligibility']), itemId: z.uuid().optional() }).strict();
@@ -80,7 +81,7 @@ export const decisionSchema = z.object({
 export const answerSchema = z.object({ answer: z.string().trim().min(1).max(2000) }).strict();
 export const messageSchema = z.object({ text: z.string().trim().min(1).max(8000), driveId: z.uuid().optional() }).strict();
 export const approvalSchema = z.object({
-  itemIds: z.array(z.uuid()).min(1).max(30_000).refine(unique, 'The subset contains a duplicate item'),
+  itemIds: z.array(z.uuid()).min(1).max(MAX_APPROVAL_ITEMS).refine(unique, 'The subset contains a duplicate item'),
 }).strict();
 
 export type Scan = z.infer<typeof scanSchema>;

@@ -242,6 +242,17 @@ export class StorageQueries {
       WHERE p.drive_id = $1 ORDER BY r.data->>'updatedAt' DESC, r.id`, [driveId]);
   }
 
+  async cleanupReceipts(driveId: string, item?: { id: string; scannedAt: string }): Promise<Array<{ data: Receipt; dispatched: boolean }>> {
+    const filter = item
+      ? "AND r.data->>'itemId' = $2 AND (r.status = 'queued' OR (r.status = 'removed' AND (r.data->>'updatedAt')::timestamptz >= $3))"
+      : "AND r.status = 'queued'";
+    const { rows } = await this.query(`SELECT r.data, a.dispatch IS NOT NULL AS dispatched FROM storage_incident_receipts r
+      JOIN storage_incident_approvals a ON r.approval_id = a.id
+      JOIN storage_incident_plans p ON a.plan_id = p.id
+      WHERE p.drive_id = $1 ${filter}`, item ? [driveId, item.id, item.scannedAt] : [driveId]);
+    return rows as Array<{ data: Receipt; dispatched: boolean }>;
+  }
+
   async pending(): Promise<string[]> {
     return (await this.query("SELECT DISTINCT approval_id FROM storage_incident_receipts WHERE status = 'queued'")).rows.map(row => row.approval_id as string);
   }
