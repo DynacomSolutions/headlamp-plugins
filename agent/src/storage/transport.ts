@@ -1,7 +1,7 @@
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { z } from 'zod';
-import { applyResultSchema, scanSchema, type ApplyResult, type Scan } from './types.js';
+import { applyResultSchema, partialScanSchema, scanSchema, type ApplyResult, type ScannerScan } from './types.js';
 
 export const SCAN_TIMEOUT_MS = 960_000;
 export const APPLY_TIMEOUT_MS = 60_000;
@@ -14,7 +14,7 @@ export class RequestDeadlineError extends Error {
 }
 
 export interface Scanner {
-  scan(node: string): Promise<Scan>;
+  scan(node: string): Promise<ScannerScan>;
   apply(node: string, planId: string, approvalId: string, itemIds: string[]): Promise<ApplyResult>;
 }
 
@@ -89,7 +89,11 @@ export function requestJson(
 }
 
 export class HttpScanner implements Scanner {
-  constructor(private readonly urls: ReadonlyMap<string, URL>, private readonly readToken: () => string) {}
+  constructor(
+    private readonly urls: ReadonlyMap<string, URL>,
+    private readonly readToken: () => string,
+    private readonly partialNodes: ReadonlySet<string> = new Set(),
+  ) {}
 
   private async call<T>(node: string, path: string, schema: z.ZodType<T>, timeoutMs: number, body?: unknown): Promise<T> {
     const base = this.urls.get(node);
@@ -100,8 +104,10 @@ export class HttpScanner implements Scanner {
     return schema.parse(response.data);
   }
 
-  async scan(node: string): Promise<Scan> {
-    const scan = await this.call(node, '/v1/scan', scanSchema, SCAN_TIMEOUT_MS);
+  async scan(node: string): Promise<ScannerScan> {
+    const scan = this.partialNodes.has(node)
+      ? await this.call(node, '/v2/scan', partialScanSchema, SCAN_TIMEOUT_MS)
+      : await this.call(node, '/v1/scan', scanSchema, SCAN_TIMEOUT_MS);
     if (scan.node !== node) throw new Error('Scan node did not match its configured identity');
     return scan;
   }

@@ -1,10 +1,11 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { createDecipheriv, createECDH, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
@@ -54,11 +55,14 @@ function reply(res: ServerResponse, status: number, data: unknown) {
   res.end(JSON.stringify(data));
 }
 
-async function listener(handle: (req: IncomingMessage, res: ServerResponse) => Promise<void>, tls?: { key: Buffer; cert: Buffer }) {
+async function listener(handle: (req: IncomingMessage, res: ServerResponse) => Promise<void>, tls?: { key: Buffer; cert: Buffer },
+  onClose?: (close: () => Promise<void>) => void) {
   const respond = (req: IncomingMessage, res: ServerResponse) => void handle(req, res).catch(() => reply(res, 500, {}));
   const server = tls ? createHttpsServer(tls, respond) : createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  dispose.push(() => new Promise<void>(resolve => server.close(() => resolve())));
+  const close = () => new Promise<void>(resolve => server.close(() => resolve()));
+  dispose.push(close);
+  onClose?.(close);
   const address = server.address();
   if (typeof address !== 'object' || !address) throw new Error('Fixture listener did not start');
   return `${tls ? 'https' : 'http'}://127.0.0.1:${address.port}`;
@@ -82,12 +86,16 @@ type ApplyRequest = { planId: string; approvalId: string; itemIds: string[] };
 type PushAttempt = { url: string; headers: Headers; content: Buffer };
 type NodeFixture = {
   scan: () => Omit<Scan, 'node' | 'version' | 'scannedAt'>;
+  v2?: () => Record<string, unknown>;
+  close?: () => Promise<void>;
   status?: number;
 };
 
 async function fixture(options: {
   disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; authorityConfigured?: boolean;
   contained?: boolean; policyMount?: string; policyDevice?: string;
+  partialScopes?: Record<string, Record<string, string>>;
+  policies?: Record<string, { mount: string; device: string }[]>;
 } = {}) {
   const dir = mkdtempSync(join(process.env.STORAGE_TEST_FIXTURE_ROOT ?? tmpdir(), 'storage-incident-fixture-'));
   dispose.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -185,6 +193,7 @@ async function fixture(options: {
   });
   let at = Date.parse('2026-01-01T00:30:00Z');
   const seenScans: string[] = [];
+  const scanPaths: Array<[string, string]> = [];
   const applyCalls: ApplyRequest[] = [];
   const scannerAuth: (string | undefined)[] = [];
   const nodeFixtures = new Map<string, NodeFixture>(nodes.map(node => [node, {
@@ -195,10 +204,15 @@ async function fixture(options: {
   const addresses = Object.fromEntries(await Promise.all(nodes.map(async node => [node, await listener(async (req, res) => {
     scannerAuth.push(req.headers.authorization);
     if (req.headers.authorization !== `Bearer ${scanner}`) return reply(res, 401, {});
-    if (req.url === '/v1/scan' && req.method === 'GET') {
+    if ((req.url === '/v1/scan' || req.url === '/v2/scan') && req.method === 'GET') {
       seenScans.push(node);
+      scanPaths.push([node, req.url]);
       await onScan?.(node);
       const data = nodeFixtures.get(node)!;
+      if (req.url === '/v2/scan') {
+        if (!data.v2) return reply(res, 404, {});
+        return reply(res, data.status ?? 200, { version: 2, node, scannedAt: new Date(at).toISOString(), ...data.v2() });
+      }
       return reply(res, data.status ?? 200, { version: 1, node, scannedAt: new Date(at).toISOString(), inventoryComplete: true, ...data.scan() });
     }
     if (req.url === '/v1/apply' && req.method === 'POST') {
@@ -208,22 +222,26 @@ async function fixture(options: {
       return reply(res, result.status, result.data);
     }
     return reply(res, 404, {});
-  })])));
+  }, undefined, close => { nodeFixtures.get(node)!.close = close; })])));
   const map = join(dir, 'scanners.json');
   const scannerFile = join(dir, 'scanner-token');
   const machineFile = join(dir, 'reconcile-token');
   const kubeTokenFile = join(dir, 'headlamp-service-token');
   const policiesFile = join(dir, 'filesystem-policies.json');
+  const scopesFile = join(dir, 'partial-scan-scopes.json');
   writeFileSync(map, JSON.stringify(addresses));
   writeFileSync(scannerFile, scanner, { mode: 0o600 });
   writeFileSync(machineFile, machine, { mode: 0o600 });
   writeFileSync(kubeTokenFile, headlampAccount, { mode: 0o600 });
-  if (options.policyMount) {
+  if (options.policies) {
+    writeFileSync(policiesFile, JSON.stringify(options.policies));
+  } else if (options.policyMount) {
     writeFileSync(policiesFile, JSON.stringify({
       [nodes[0]]: [options.policyDevice ? { mount: options.policyMount, device: options.policyDevice }
         : { mount: options.policyMount, reserveGiB: 100, criticalGiB: 50, growth1hGiB: 20, growth6hGiB: 60 }],
     }));
   }
+  if (options.partialScopes) writeFileSync(scopesFile, JSON.stringify(options.partialScopes));
   const env: NodeJS.ProcessEnv = options.disabled ? {} : {
     STORAGE_SCANNERS_FILE: map,
     STORAGE_SCANNER_TOKEN_FILE: scannerFile,
@@ -238,7 +256,8 @@ async function fixture(options: {
     STORAGE_APPLY_ENABLED: options.disposable ? 'true' : 'false',
     STORAGE_DISPOSABLE_SCANNERS: options.disposable ? nodes[0] : '',
     ...(options.contained ? { STORAGE_EXPECT_HOLDER_EVIDENCE: 'false' } : {}),
-    ...(options.policyMount ? { STORAGE_FILESYSTEM_POLICIES_FILE: policiesFile } : {}),
+    ...(options.policyMount || options.policies ? { STORAGE_FILESYSTEM_POLICIES_FILE: policiesFile } : {}),
+    ...(options.partialScopes ? { STORAGE_PARTIAL_SCAN_SCOPES_FILE: scopesFile } : {}),
   };
   const config = { ...loadConfig({}), host: '127.0.0.1', port: 0, kubeApi, kubeTokenFile, dataDir: join(dir, 'state'), allowedOrigins: [origin], reconcileSeconds: 0 };
   const sent: PushAttempt[] = [];
@@ -273,7 +292,7 @@ async function fixture(options: {
   const parent = async () => (await call(`${api}/incident`)).data;
   const details = async (id: string) => (await call(`${api}/incident/drives/${id}`)).data;
   return {
-    db, reviews, seenScans, applyCalls, scannerAuth, nodeFixtures, sent, env, getUrl, parent, details, reconcile, call,
+    db, dir, reviews, seenScans, scanPaths, applyCalls, scannerAuth, nodeFixtures, sent, env, getUrl, parent, details, reconcile, call,
     authorityRequests, revokedVerbs,
     authority(status: number, member = true) { authorityStatus = status; authorityMember = member; },
     entitlementVersion(version: string) { authorityVersion = version; },
@@ -553,6 +572,155 @@ describe('Storage incident normal entry points', () => {
     expect((await f.reconcile()).status).toBe(200);
     expect(await scanRow()).toMatchObject({ result: 'complete' });
     expect(await readMetrics()).toContain(`${fullMetric} 1767313860\n`);
+    expect(f.applyCalls).toEqual([]);
+    expect(f.sent).toEqual([]);
+  });
+
+  it('accepts only the configured omission in a six-node scheduled reconciliation', async () => {
+    const partialNode = nodes[5];
+    const scopes = {
+      '.data/first-owner': 'omitted',
+      '.worktrees/first-owner': 'complete',
+      '.data/second-owner': 'complete',
+      '.worktrees/second-owner': 'complete',
+    };
+    const project = { device: '/dev/fixture-project', mount: '/projects', reserveGiB: 80, criticalGiB: 40, growth1hGiB: 20, growth6hGiB: 60 };
+    const policies = { [nodes[0]]: [project], [partialNode]: [project] };
+    const f = await fixture({ contained: true, partialScopes: { [partialNode]: scopes }, policies });
+    const gib = 1024 ** 3;
+    const drive = {
+      ...fs('project', project.mount, 20 * gib), totalBytes: 1000 * gib,
+      aliases: [{ device: project.device, mountpoint: project.mount }],
+    };
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({ filesystems: [drive], items: [], complete: true });
+    const partial = f.nodeFixtures.get(partialNode)!;
+    partial.scan = () => ({ filesystems: [drive], items: [], complete: false, execution: 'shadow', inventoryComplete: false });
+    const coverage = { scopes, filesystemInventoryComplete: true };
+    const observation = {
+      ...partial.scan(), items: [item('contained-cache', drive.id)], inventoryCoverage: coverage,
+    };
+    partial.v2 = () => observation;
+    const triggers = [nodes[0], partialNode].map(node => ({
+      node, device: project.device, mount: project.mount, reason: 'capacity',
+      reserveBytes: project.reserveGiB * gib, criticalBytes: project.criticalGiB * gib,
+    }));
+    let dispatch = async () => (await f.reconcile(triggers)).status === 200;
+    const dispatcher = process.env.STORAGE_TEST_DISPATCHER;
+    if (dispatcher) {
+      const result = nodes.flatMap(node => {
+        const labels = { node, device: project.device, mountpoint: project.mount, fstype: 'ext4' };
+        return Object.entries({
+          avail: policies[node] ? 20 * gib : 500 * gib, size: 1000 * gib, readonly: 0,
+          device_error: 0, hour: 500 * gib, six_hours: 500 * gib,
+        }).map(([storage_sample, value]) => ({ metric: { ...labels, storage_sample }, value: [1, String(value)] }));
+      });
+      result.push({
+        metric: { node: partialNode, device: '/dev/fixture-unreadable', mountpoint: '/unreadable', fstype: 'ext4', storage_sample: 'device_error' },
+        value: [1, '1'],
+      });
+      const telemetry: string[] = [];
+      const metrics = await listener(async (req, res) => {
+        if (req.method === 'GET' && req.url?.startsWith('/api/v1/query?')) {
+          return reply(res, 200, { status: 'success', data: { resultType: 'vector', result } });
+        }
+        if (req.method === 'POST' && req.url === '/import') {
+          const chunks: Buffer[] = [];
+          for await (const chunk of req) chunks.push(chunk as Buffer);
+          telemetry.push(Buffer.concat(chunks).toString());
+          return reply(res, 204, {});
+        }
+        return reply(res, 404, {});
+      });
+      writeFileSync(join(f.dir, 'pressure-only-filesystems.json'), '{}');
+      dispatch = async () => {
+        const { stdout, stderr, code } = await promisify(execFile)('python3', [
+          '-B', '-c',
+          'import runpy, sys; from pathlib import Path; main = runpy.run_path(sys.argv[1])["main"]; main.__globals__["CONFIG"] = Path(sys.argv[2]); sys.exit(main())',
+          dispatcher, f.dir,
+        ], {
+          timeout: 5000,
+          env: {
+            ...process.env, METRICS_URL: metrics, PRESSURE_METRICS_IMPORT_URL: `${metrics}/import`,
+            STORAGE_RECONCILE_TOKEN_FILE: f.env.STORAGE_RECONCILE_TOKEN_FILE,
+            STORAGE_RECONCILE_URL: `${f.getUrl()}${api}/reconcile`,
+          },
+        }).then(output => ({ ...output, code: 0 }), error => {
+          if (error.code !== 1) throw error;
+          return { stdout: String(error.stdout), stderr: String(error.stderr), code: 1 };
+        });
+        expect(stderr).toContain('Device errors 1.');
+        expect(telemetry.at(-1)).toContain(`headlamp_storage_dispatch_pressure_device_errors{node="${partialNode}"} 1 `);
+        expect(telemetry.at(-1)).toContain(`headlamp_storage_dispatch_pressure_missing_current{node="${partialNode}"} 0 `);
+        expect(telemetry.at(-1)).toContain('headlamp_storage_dispatch_pressure_lookup_success 1 ');
+        if (code === 0) expect(stdout).toContain('Reconcile accepted 2 filesystem triggers.');
+        else expect(stderr).toContain('Reconcile failed (HTTPError).');
+        return code === 0;
+      };
+    }
+    const partialRow = async () => (await f.db.query(
+      'SELECT result, last_full_at FROM storage_incident_scans WHERE node = $1', [partialNode],
+    )).rows[0];
+    const success = async () => String((await f.call('/metrics', { token: false })).data)
+      .match(/^headlamp_agent_storage_reconcile_last_success_timestamp_seconds (\d+)$/m)?.[1];
+    expect(await dispatch()).toBe(true);
+    expect(f.scanPaths.sort()).toEqual(nodes.map(node => [node, node === partialNode ? '/v2/scan' : '/v1/scan']));
+    expect(await partialRow()).toEqual({ result: 'incomplete', last_full_at: null });
+    expect((await f.db.query('SELECT node FROM storage_incident_scans WHERE last_full_at IS NOT NULL ORDER BY node')).rows)
+      .toEqual(nodes.slice(0, -1).map(node => ({ node })));
+    const { drives } = await f.parent();
+    const observed = drives.find((record: { node: string }) => record.node === partialNode);
+    expect(observed).toMatchObject({ complete: false, inventoryComplete: false, eligibleCount: 0, applyEnabled: false });
+    expect((await f.details(observed.id)).items).toEqual([expect.objectContaining({ eligible: false })]);
+    expect(drives.find((record: { node: string }) => record.node === nodes[0]))
+      .toMatchObject({ critical: true, reserveBytes: 80 * gib, criticalBytes: 40 * gib });
+    expect((await f.db.query('SELECT scope FROM storage_incident_cooldowns')).rows)
+      .toEqual([{ scope: JSON.stringify(['node', nodes[0], drive.id]) }]);
+    const firstSuccess = await success();
+    expect(firstSuccess).toBe('1767227400');
+
+    f.advance(60_000);
+    f.scanPaths.length = 0;
+    for (const [name, change] of Object.entries({
+      'enumeration error': { inventoryCoverage: { ...coverage, scopes: { ...scopes, '.worktrees/first-owner': 'error' } } },
+      'wrong bind': { inventoryCoverage: { ...coverage, filesystemInventoryComplete: false } },
+      'wrong exact pair': { filesystems: [{ ...drive, aliases: [{ device: project.device, mountpoint: '/wrong' }] }] },
+      'ambiguous exact pair': {
+        filesystems: [drive, { ...drive, id: 'second-filesystem' }],
+      },
+      'missing coverage': { inventoryCoverage: undefined },
+      'malformed coverage': { inventoryCoverage: { ...coverage, filesystemInventoryComplete: 'true' } },
+      'unexpected coverage field': { inventoryCoverage: { ...coverage, verified: true } },
+      'unexpected response field': { verified: true },
+      'missing scope': { inventoryCoverage: { ...coverage, scopes: { ...scopes, '.data/second-owner': undefined } } },
+      'additional scope': { inventoryCoverage: { ...coverage, scopes: { ...scopes, '.data/extra-owner': 'complete' } } },
+      'unconfigured omission': { inventoryCoverage: { ...coverage, scopes: { ...scopes, '.data/second-owner': 'omitted' } } },
+      'missing execution': { execution: undefined },
+      'wrong execution': { execution: 'disposable' },
+      'wrong version': { version: 1 },
+      'false full inventory': { inventoryComplete: true },
+      'false holder evidence': { complete: true },
+    })) {
+      partial.v2 = () => ({ ...observation, ...change });
+      expect(await dispatch(), name).toBe(false);
+    }
+    for (const status of [404, 503]) {
+      partial.status = status;
+      expect(await dispatch(), `scanner HTTP ${status}`).toBe(false);
+    }
+    expect(await success()).toBe(firstSuccess);
+    expect(await partialRow()).toEqual({ result: 'error', last_full_at: null });
+    expect([...new Set(f.scanPaths.map(path => path.join(' ')))]).toEqual([`${partialNode} /v2/scan`]);
+
+    partial.status = undefined;
+    partial.v2 = () => observation;
+    expect(await dispatch()).toBe(true);
+    expect(await partialRow()).toEqual({ result: 'incomplete', last_full_at: null });
+    expect(await success()).toBe('1767227460');
+    f.advance(60_000);
+    await partial.close!();
+    expect(await dispatch(), 'unreachable opted-in scanner').toBe(false);
+    expect(await partialRow()).toEqual({ result: 'error', last_full_at: null });
+    expect(await success()).toBe('1767227460');
     expect(f.applyCalls).toEqual([]);
     expect(f.sent).toEqual([]);
   });

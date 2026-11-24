@@ -14,8 +14,7 @@ const mergeEvidence = z.enum(['verified', 'unavailable']);
 export type MergeEvidence = z.infer<typeof mergeEvidence>;
 export const needsMergeEvidence = (value: z.infer<typeof category>) => value === 'linked-worktree' || value === 'pod-task';
 
-export const scanSchema = z.object({
-  version: z.literal(1),
+const scanFields = z.object({
   node: name,
   scannedAt: z.iso.datetime(),
   execution: z.enum(['shadow', 'disposable']).optional(),
@@ -53,6 +52,31 @@ export const scanSchema = z.object({
   const filesystems = new Set(fsIds);
   return filesystems.size === fsIds.length && unique(scan.items.map(item => item.id)) && scan.items.every(item => filesystems.has(item.filesystemId));
 }, 'The scan contains duplicate or unknown IDs');
+
+const scopeName = z.string().regex(/^\.(?:data|worktrees)\/[A-Za-z0-9._-]+$/).max(256);
+const expectedScopes = z.record(scopeName, z.enum(['complete', 'omitted'])).refine(scopes => {
+  const keys = Object.keys(scopes);
+  return keys.some(key => scopes[key] === 'omitted')
+    && keys.every(key => {
+      const owner = key.slice(key.indexOf('/') + 1);
+      return owner !== '.' && owner !== '..'
+        && Object.hasOwn(scopes, `.data/${owner}`) && scopes[`.worktrees/${owner}`] === 'complete';
+    });
+});
+export const partialScanScopesSchema = z.record(name, expectedScopes);
+export type ExpectedScopes = z.infer<typeof expectedScopes>;
+
+export const scanSchema = scanFields.safeExtend({ version: z.literal(1) });
+export const partialScanSchema = scanFields.safeExtend({
+  version: z.literal(2),
+  execution: z.literal('shadow'),
+  complete: z.literal(false),
+  inventoryComplete: z.literal(false),
+  inventoryCoverage: z.object({
+    scopes: z.record(scopeName, z.enum(['complete', 'omitted', 'error'])),
+    filesystemInventoryComplete: z.boolean(),
+  }).strict(),
+}).strict();
 
 export const triggerSchema = z.object({
   node: name,
@@ -111,6 +135,7 @@ export const approvalSchema = z.object({
 }).strict();
 
 export type Scan = z.infer<typeof scanSchema>;
+export type ScannerScan = Scan | z.infer<typeof partialScanSchema>;
 export type ScanItem = Scan['items'][number];
 export type Trigger = z.infer<typeof triggerSchema>;
 export type ApplyResult = z.infer<typeof applyResultSchema>;

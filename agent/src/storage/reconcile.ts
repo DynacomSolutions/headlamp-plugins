@@ -4,7 +4,7 @@ import { raiseScanQuestion } from './findings.js';
 import { ingestScan, resolveCooldowns } from './inventory.js';
 import type { StorageStore } from './store.js';
 import { RequestDeadlineError, SCAN_TIMEOUT_MS, type Scanner } from './transport.js';
-import type { Decision, FilesystemPolicy, ScanResult, Trigger } from './types.js';
+import type { Decision, ExpectedScopes, FilesystemPolicy, ScanResult, Trigger } from './types.js';
 
 const DAY_MS = 24 * 60 * 60_000;
 const COOLDOWN_MS = 15 * 60_000;
@@ -19,6 +19,7 @@ export class StorageReconciler {
     nodes: ReadonlySet<string>;
     metrics: Metrics;
     filesystemPolicies?: ReadonlyMap<string, FilesystemPolicy[]>;
+    partialScanScopes?: ReadonlyMap<string, ExpectedScopes>;
     holderEvidenceExpected?: boolean;
     now: () => number;
   }) {}
@@ -72,7 +73,9 @@ export class StorageReconciler {
         await tx.query("SET LOCAL statement_timeout = '45s'");
         if (!await tx.ownsScan(node, owner, now())) throw new RequestDeadlineError();
         const policies = filesystemPolicies?.get(node) ?? [];
-        const { inventoryComplete, matched, observed } = await ingestScan(tx, scan, work.due, policies, received, COOLDOWN_MS);
+        const { inventoryComplete, policiesMatched, matched, observed } = await ingestScan(
+          tx, scan, scan.version === 2 ? triggers : work.due, policies, received, COOLDOWN_MS,
+        );
         for (const state of observed) await raiseScanQuestion(tx, state, await tx.list<Decision>('decision', state.drive.id), received);
         const finished = now();
         if (finished >= deadline || finished >= work.started + SCAN_LEASE_MS) throw new RequestDeadlineError();
@@ -80,8 +83,15 @@ export class StorageReconciler {
         const status = complete ? 'complete' : 'incomplete';
         await tx.finishScan(node, owner, status, finished, complete && work.full ? scannedAt : undefined);
         // A contained shadow scan can report inventory without proving host process coverage.
-        const accepted = complete || (this.deps.holderEvidenceExpected === false && scan.execution === 'shadow'
-          && inventoryComplete && matched && scan.filesystems.length > 0);
+        const contained = this.deps.holderEvidenceExpected === false;
+        const containedInventory = contained && scan.execution === 'shadow'
+          && inventoryComplete && matched && scan.filesystems.length > 0;
+        const expected = this.deps.partialScanScopes?.get(node);
+        const omissionOnly = scan.version === 2 && contained && expected !== undefined
+          && scan.inventoryCoverage.filesystemInventoryComplete && policiesMatched && matched
+          && Object.keys(scan.inventoryCoverage.scopes).length === Object.keys(expected).length
+          && Object.entries(expected).every(([scope, state]) => scan.inventoryCoverage.scopes[scope] === state);
+        const accepted = complete || containedInventory || omissionOnly;
         return { status, accepted };
       });
       metrics.inc('headlamp_agent_storage_scan_total', { result: result.status });

@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { StorageQueries } from './store.js';
-import { clean, needsMergeEvidence, type Decision, type DriveState, type FilesystemPolicy, type InternalItem, type Notice, type Scan, type ScanItem, type Snapshot, type Trigger } from './types.js';
+import { clean, needsMergeEvidence, type Decision, type DriveState, type FilesystemPolicy, type InternalItem, type Notice, type ScannerScan, type ScanItem, type Snapshot, type Trigger } from './types.js';
 
-type Filesystem = Scan['filesystems'][number];
+type Filesystem = ScannerScan['filesystems'][number];
 export type StorageNotice = Notice & { external: boolean; externalItemId?: string; stage?: string; critical?: boolean };
 const hash = (values: unknown[]) => createHash('sha256').update(JSON.stringify(values)).digest('hex');
 const MAX_SCAN_AGE_MS = 24 * 60 * 60_000;
@@ -100,7 +100,7 @@ export async function resolveCooldowns(tx: StorageQueries, node: string, trigger
 }
 
 function makeSnapshot(
-  scan: Scan, inventoryComplete: boolean, fs: Filesystem, previous: DriveState | undefined,
+  scan: ScannerScan, inventoryComplete: boolean, fs: Filesystem, previous: DriveState | undefined,
   triggers: Trigger[], policies: FilesystemPolicy[],
 ): Snapshot {
   const reserves = triggers.flatMap(t => t.reserveBytes === undefined ? [] : [t.reserveBytes]);
@@ -171,12 +171,12 @@ export async function updateCleanupNotice(tx: StorageQueries, state: DriveState,
 
 export async function ingestScan(
   tx: StorageQueries,
-  scan: Scan,
+  scan: ScannerScan,
   triggers: Trigger[],
   policies: FilesystemPolicy[],
   now: number,
   cooldownMs: number,
-): Promise<{ inventoryComplete: boolean; matched: boolean; observed: DriveState[] }> {
+): Promise<{ inventoryComplete: boolean; policiesMatched: boolean; matched: boolean; observed: DriveState[] }> {
   const filesystems = scan.filesystems.map(fs => ({ fs, scope: filesystemScope(scan.node, fs) })).sort((a, b) => a.scope.localeCompare(b.scope));
   const aliasScopes = new Map<string, Set<string>>();
   function addAlias(key: string, scope: string) {
@@ -210,7 +210,8 @@ export async function ingestScan(
     policiesByScope.set(scope, matched);
     coveredPolicies++;
   }
-  const inventoryComplete = scan.inventoryComplete === true && coveredPolicies === policies.length;
+  const policiesMatched = coveredPolicies === policies.length;
+  const inventoryComplete = scan.inventoryComplete === true && policiesMatched;
   const complete = scan.complete && inventoryComplete;
   await tx.putAliases(scan.node, complete ? [...aliases] : []);
   const scopes = triggers.map(trigger => aliases.get(triggerKey(trigger)));
@@ -300,5 +301,5 @@ export async function ingestScan(
     await updateCleanupNotice(tx, state, decisions, now);
     observed.push(state);
   }
-  return { inventoryComplete, matched: scopes.every(Boolean), observed };
+  return { inventoryComplete, policiesMatched, matched: scopes.every(Boolean), observed };
 }
