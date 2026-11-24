@@ -19,6 +19,7 @@ import {
   drivePath,
   Item,
   mergeVerification,
+  pausedCleanupPlans,
   Plan,
   postStorage,
   Receipt,
@@ -122,7 +123,17 @@ function PlanReview({
   const now = useNow(true);
   const canApply = !approvalBlock;
   const expired = !(Date.parse(plan.expiresAt) > now);
-  const approved = result.length > 0 || receipts.some(receipt => receipt.planId === plan.id);
+  const planReceipts = new Map(result.map(receipt => [receipt.itemId, receipt]));
+  for (const receipt of receipts) {
+    if (receipt.planId === plan.id) planReceipts.set(receipt.itemId, receipt);
+  }
+  const outcomes = [...planReceipts.values()];
+  const approved = outcomes.length > 0;
+  const removed = outcomes.filter(receipt => receipt.status === 'removed').length;
+  const partial = outcomes.filter(receipt => receipt.status === 'partial').length;
+  const queued = outcomes.filter(receipt => receipt.status === 'queued').length;
+  const other = outcomes.length - removed - partial - queued;
+  const fullSuccess = removed === plan.items.length && removed === outcomes.length;
   const currentById = new Map(currentItems.map(item => [item.id, item]));
   const checks = plan.items.map(item => {
     const current = currentById.get(item.itemId);
@@ -134,6 +145,7 @@ function PlanReview({
     return {
       item,
       missingMerge,
+      receipt: planReceipts.get(item.itemId),
       selectable: item.eligible && !!current?.eligible && !missingMerge,
     };
   });
@@ -187,10 +199,21 @@ function PlanReview({
           {time(plan.createdAt)} · Expires {time(plan.expiresAt)}
         </Typography>
       </Box>
-      {approved && <StorageAlert severity="success">Approval recorded. See cleanup receipts below.</StorageAlert>}
+      {approved && (
+        <StorageAlert
+          severity={partial || other ? 'warning' : fullSuccess ? 'success' : 'info'}
+        >
+          {outcomes.length} of {plan.items.length} plan items approved.{' '}
+          {removed > 0 && `${removed} removed. `}
+          {partial > 0 && `${partial} need intervention. `}
+          {queued > 0 && (partial ? `${queued} queued and paused. ` : `${queued} queued. `)}
+          {other > 0 && `${other} have other outcomes. `}
+          See cleanup receipts below.
+        </StorageAlert>
+      )}
       {expired && !approved && <StorageAlert severity="warning">This plan has expired.</StorageAlert>}
       <Box component="ul" sx={{ listStyle: 'none', p: 0, m: 0 }}>
-        {checks.map(({ item, missingMerge, selectable }) => (
+        {checks.map(({ item, missingMerge, receipt, selectable }) => (
           <Box
             component="li"
             key={item.itemId}
@@ -213,7 +236,11 @@ function PlanReview({
               </Typography>
             )}
             <Typography variant="caption" color="text.secondary" display="block">
-              {missingMerge
+              {receipt
+                ? receiptLabel(receipt.status, partial > 0)
+                : approved
+                ? 'Not approved'
+                : missingMerge
                 ? 'Excluded · Merge verification unavailable'
                 : item.eligible && !selectable
                 ? 'Item changed since the dry run'
@@ -272,12 +299,33 @@ function PlanReview({
 const receiptColours = {
   queued: 'info',
   removed: 'success',
+  partial: 'warning',
   stale: 'warning',
   blocked: 'warning',
   failed: 'error',
 } as const;
 
+const receiptLabels: Record<Receipt['status'], string> = {
+  queued: 'Queued',
+  removed: 'Removed',
+  partial: 'Partial · Needs intervention',
+  stale: 'Stale',
+  blocked: 'Blocked',
+  failed: 'Failed',
+};
+
+function receiptLabel(status: Receipt['status'], paused: boolean) {
+  return status === 'queued' && paused ? 'Queued · Paused' : receiptLabels[status];
+}
+
+const interventionReasons: Record<string, string> = {
+  'host-process-or-bind-mount': 'A host process or bind mount was detected during cleanup.',
+  'snapshot-merge-proof-changed': 'Merge verification changed during cleanup.',
+  'safety-proof-changed': 'A safety check changed during cleanup.',
+};
+
 export function Receipts({ detail }: { detail: DriveDetail }) {
+  const paused = pausedCleanupPlans(detail.receipts);
   return (
     <Stack spacing={1}>
       <Typography component="h2" variant="h6">
@@ -290,17 +338,32 @@ export function Receipts({ detail }: { detail: DriveDetail }) {
         const item = detail.plans
           .find(plan => plan.id === receipt.planId)
           ?.items.find(item => item.itemId === receipt.itemId);
+        const partial = receipt.status === 'partial';
+        const queued = receipt.status === 'queued' && paused.has(receipt.planId);
+        const code = receipt.reason.replace(/^needs-intervention:/, '');
+        const reason = partial
+          ? interventionReasons[code] ?? code.replace(/-/g, ' ')
+          : queued
+          ? 'Paused because another item in this approval needs intervention.'
+          : receipt.reason;
         return (
           <Box key={receipt.id} sx={{ borderTop: 1, borderColor: 'divider', pt: 1 }}>
             <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap">
-              <Chip size="small" label={receipt.status} color={receiptColours[receipt.status]} />
+              <Chip
+                size="small"
+                label={receiptLabel(receipt.status, queued)}
+                color={receiptColours[receipt.status]}
+              />
               <Typography variant="body2">
-                {item?.label ?? 'Storage item'} · {size(receipt.bytes)}
+                {item?.label ?? 'Storage item'} ·{' '}
+                {partial
+                  ? `${receipt.bytes.toLocaleString('en-GB')} bytes of verified allocated data unlinked`
+                  : size(receipt.bytes)}
               </Typography>
             </Stack>
             <Typography variant="caption" color="text.secondary">
               {time(receipt.updatedAt)}
-              {receipt.reason && ` · ${receipt.reason}`}
+              {reason && ` · ${reason}`}
             </Typography>
           </Box>
         );

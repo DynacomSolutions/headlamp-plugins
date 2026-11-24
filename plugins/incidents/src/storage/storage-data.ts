@@ -161,10 +161,14 @@ export interface Receipt {
   id: string;
   planId: string;
   itemId: string;
-  status: 'queued' | 'removed' | 'stale' | 'blocked' | 'failed';
+  status: 'queued' | 'removed' | 'partial' | 'stale' | 'blocked' | 'failed';
   reason: string;
   bytes: number;
   updatedAt: string;
+}
+
+export function pausedCleanupPlans(receipts: Receipt[]) {
+  return new Set(receipts.filter(receipt => receipt.status === 'partial').map(receipt => receipt.planId));
 }
 
 export interface DriveDetail {
@@ -272,7 +276,13 @@ export function useStorageDrive(settings: Settings, id?: string) {
   return useLoaded(
     id ? storageUrl(settings, drivePath(id)) : '',
     raw => raw as DriveDetail,
-    data => (data?.receipts.some(receipt => receipt.status === 'queued') ? 2500 : 10000),
+    data => {
+      if (!data) return 10000;
+      const paused = pausedCleanupPlans(data.receipts);
+      return data.receipts.some(receipt => receipt.status === 'queued' && !paused.has(receipt.planId))
+        ? 2500
+        : 10000;
+    },
     request
   );
 }
