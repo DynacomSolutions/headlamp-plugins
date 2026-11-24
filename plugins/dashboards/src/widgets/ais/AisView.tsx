@@ -5,8 +5,10 @@
  * icon before it when the login needs attention, a small dot after it for the served or registry
  * active member of a pool), its limit windows as thin bars stacked in the middle (the colour of a
  * window is the colour of the legend, never written on the line), and at the end the highest limit
- * as a small percentage in its status colour. The tooltip of a line lists every window with its
- * percentage and reset time.
+ * as a small percentage in its status colour. Between the bars and the percentage is one slot for each
+ * window of the legend: a dot in the colour of the window and the time to its reset ("3d 4h", "5h 12m").
+ * A window with no data or no valid future reset leaves its slot empty. One timer redraws the
+ * countdowns every 30 s. The tooltip of a line lists every window with its percentage and reset time.
  *
  * The pool is a line of its own with two text rows: the name and "Pool total, N members". Its bars are
  * the joint usage of all members (see `jointLimits`). A member with no data for a window shows an
@@ -28,6 +30,7 @@ import { StatTiles } from '../panels/StatTiles';
 import { STATUS_WORD, StatusMark } from '../panels/StatusMark';
 import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
+import { COUNTDOWN_TICK_MS, formatCountdown } from './countdown';
 import type { AisGroup, AisIdentity, AisJoint, AisLimit, AisModel } from './join';
 import { isModelLimit } from './join';
 
@@ -42,6 +45,8 @@ export const STACK_WIDTH = 560;
 export const STACK_TILE_COLUMNS = 3;
 /** True when the widget is narrow: the stat tiles in a grid, no status key. */
 export const isStacked = (width: number): boolean => width > 0 && width < STACK_WIDTH;
+/** The width of the countdown of one window in the line, in px. */
+export const COUNTDOWN_SLOT = 50;
 /** The height of an identity line and of the pool line, in px. */
 export const LINE_HEIGHT = 24;
 export const POOL_LINE_HEIGHT = 42;
@@ -68,6 +73,19 @@ export function worstLimit(limits: ReadonlyArray<AisLimit>): AisLimit | undefine
       worst = l;
   }
   return worst;
+}
+
+/**
+ * The time now in ms, redrawn every COUNTDOWN_TICK_MS. One timer serves the whole widget and the
+ * cleanup stops it on unmount. It makes no fetch: the countdowns are derived from the reset times.
+ */
+export function useNow(tickMs: number = COUNTDOWN_TICK_MS): number {
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), tickMs);
+    return () => clearInterval(id);
+  }, [tickMs]);
+  return now;
 }
 
 const LINK_STYLE: React.CSSProperties = { color: 'inherit', textDecoration: 'none' };
@@ -288,6 +306,10 @@ function IdentityLine(props: {
   /** The windows to draw, in the display order. A window that the identity lacks is drawn empty. */
   windows: string[];
   colours: ReturnType<typeof limitColours>;
+  /** Every window name of the widget, in the display order: one countdown slot for each. */
+  slots: ReadonlyArray<string>;
+  /** The time now in ms, for the countdowns. */
+  now: number;
   link?: string;
   editing: boolean;
   wide: boolean;
@@ -301,7 +323,7 @@ function IdentityLine(props: {
   /** A member of a pool: drawn one step in. */
   indent?: boolean;
 }): JSX.Element {
-  const { identity, windows, colours, link, editing, wide, pool, indent } = props;
+  const { identity, windows, colours, slots, now, link, editing, wide, pool, indent } = props;
   const tk = useTokens();
   const height = pool ? POOL_LINE_HEIGHT : LINE_HEIGHT;
   const worst = worstLimit(identity.limits);
@@ -343,7 +365,7 @@ function IdentityLine(props: {
           display: 'grid',
           gridTemplateColumns: `${
             pool ? (wide ? 250 : 200) : wide ? 200 : 148
-          }px minmax(40px, 1fr) 40px`,
+          }px minmax(40px, 1fr) ${slots.length * COUNTDOWN_SLOT}px 40px`,
           columnGap: '10px',
           alignItems: 'center',
           height,
@@ -467,6 +489,51 @@ function IdentityLine(props: {
           </Box>
         )}
         <Box
+          data-countdowns
+          sx={{ display: 'flex', minWidth: 0, fontSize: 10.5, color: tk.fg2, lineHeight: 1 }}
+        >
+          {slots.map(slot => {
+            const limit = windows.includes(slot)
+              ? identity.limits.find(l => l.name === slot && l.fraction !== undefined)
+              : undefined;
+            const text = formatCountdown(limit?.resetsAt, now);
+            const c = colours.get(slot);
+            return (
+              <Box
+                key={slot}
+                data-countdown={text === '' ? undefined : slot}
+                sx={{
+                  width: COUNTDOWN_SLOT,
+                  flex: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '3px',
+                  whiteSpace: 'nowrap',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {text !== '' && (
+                  <>
+                    <Box
+                      component="span"
+                      aria-hidden
+                      sx={{
+                        width: 5,
+                        height: 5,
+                        borderRadius: '50%',
+                        flex: 'none',
+                        bgcolor: c?.colour,
+                        opacity: c?.opacity,
+                      }}
+                    />
+                    <span data-countdown-text>{text}</span>
+                  </>
+                )}
+              </Box>
+            );
+          })}
+        </Box>
+        <Box
           data-ais-note
           data-ais-status
           data-status={worst?.status ?? identity.status}
@@ -518,6 +585,7 @@ export function AisView(props: {
   const { model, sourceId, editing } = props;
   const consoleView = props.view === 'console';
   const tk = useTokens();
+  const now = useNow();
   const resolveLink = useResolveLink();
   const root = useElementSize<HTMLDivElement>();
   // A pool is open until the user folds it. The state belongs to the widget, not to the data.
@@ -584,6 +652,8 @@ export function AisView(props: {
                     identity={poolIdentity(pool, pool.joint)}
                     windows={model.limits.filter(n => poolWindows.includes(n))}
                     colours={colours}
+                    slots={model.limits}
+                    now={now}
                     link={linkOf(pool.link)}
                     editing={editing}
                     wide={wideRow}
@@ -609,6 +679,8 @@ export function AisView(props: {
                       identity={identity}
                       windows={laneNames(identity, model.limits, poolWindows)}
                       colours={colours}
+                      slots={model.limits}
+                      now={now}
                       link={linkOf(identity.link)}
                       editing={editing}
                       wide={wideRow}
