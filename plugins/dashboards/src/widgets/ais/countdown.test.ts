@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatCountdown } from './countdown';
+import { COUNTDOWN_PAST, formatCountdown } from './countdown';
 
 const NOW = Date.parse('2026-11-24T10:00:00Z');
 const at = (ms: number): string => new Date(NOW + ms).toISOString();
@@ -31,10 +31,15 @@ describe('formatCountdown', () => {
     expect(formatCountdown(at(1), NOW)).toBe('<1m');
   });
 
-  it('shows nothing for a past, equal, missing or invalid reset', () => {
-    expect(formatCountdown(at(0), NOW)).toBe('');
-    expect(formatCountdown(at(-5 * MIN), NOW)).toBe('');
-    expect(formatCountdown(at(-3 * DAY), NOW)).toBe('');
+  it('shows "now" for a reset that is equal to or before the time now', () => {
+    expect(COUNTDOWN_PAST).toBe('now');
+    expect(formatCountdown(at(0), NOW)).toBe('now');
+    expect(formatCountdown(at(-5 * MIN), NOW)).toBe('now');
+    expect(formatCountdown(at(-3 * DAY), NOW)).toBe('now');
+    expect(formatCountdown(at(-1), NOW)).not.toMatch(/-/);
+  });
+
+  it('shows nothing for a missing or invalid reset', () => {
     expect(formatCountdown(undefined, NOW)).toBe('');
     expect(formatCountdown('', NOW)).toBe('');
     expect(formatCountdown('not a time', NOW)).toBe('');
