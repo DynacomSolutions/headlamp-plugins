@@ -465,20 +465,17 @@ node -e "const{generateKeyPairSync}=require('crypto');const{privateKey:k,publicK
 ### Storage incident read access
 
 The Incidents plugin reads storage data through the Kubernetes service proxy.
-The agent trusts this route only when the connection peer address matches configured service-proxy ingress CIDRs.
-The Kubernetes API service proxy reaches a pod from node-specific CNI gateway addresses.
+The agent trusts this route only when the Kubernetes API service proxy presents the configured Headlamp service-account bearer.
 The agent does not trust forwarded identity headers, `Origin`, or browser cookies for this read path.
 
 | Setting | Deployment contract |
 | --- | --- |
-| `STORAGE_TRUSTED_SERVICE_PROXY_CIDRS` | Comma-separated IPv4 or IPv6 CIDRs for service-proxy peer addresses. The agent refuses an invalid value at startup and leaves this read path unavailable when the setting is empty. |
+| `STORAGE_HEADLAMP_SERVICE_ACCOUNT` | Exact Kubernetes service-account username allowed to read the four shared incident views through Headlamp. The agent validates the bearer with SelfSubjectReview and SelfSubjectAccessReview. |
 
 The trusted path permits only `GET /api/storage/incident`, drive details, chat details and chat transcripts.
 Notification device data and every mutation still require the existing human operator token and Kubernetes reviews.
-Set this value to the node-specific CNI gateway CIDRs used by the Headlamp service proxy.
-Do not set it to tailnet addresses or broad pod-network CIDRs.
-
-If the deployment does not know these peer CIDRs, leave this setting unset and use a human operator token.
+The Kubernetes API service proxy authenticates the Headlamp server before it forwards the request. The agent never trusts a peer address or user-supplied identity header. It accepts the service-account bearer only for the overview, drive, chat and transcript GET routes. Direct requests without that server-side bearer remain denied.
+Do not replace this setting with a peer address, node CIDR, or broad pod-network grant.
 
 ### Storage notification authority
 

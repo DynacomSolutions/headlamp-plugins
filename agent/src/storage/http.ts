@@ -6,7 +6,7 @@ import type { Metrics } from '../metrics.js';
 import type { PushService } from '../push/service.js';
 import type { StorageStore } from './store.js';
 import { StorageApply } from './apply.js';
-import { authenticatedMachine, operatorAuth, serviceProxyNetworks, tokenFile } from './auth.js';
+import { authenticatedMachine, operatorAuth, tokenFile } from './auth.js';
 import { diagnosticHeader, ScheduledDiagnostic } from './diagnostic.js';
 import { notificationAuthority, type NotificationAuthority } from './notification-authority.js';
 import { enrolSchema, StorageNotifications, subscriptionSchema, disabledCoverage, coverageMetrics } from './notifications.js';
@@ -42,7 +42,7 @@ type Settings = {
   disposable: ReadonlySet<string>;
   applyEnabled: boolean;
   holderEvidenceExpected: boolean;
-  trustedServiceProxyNetworks: ReturnType<typeof serviceProxyNetworks>;
+  headlampServiceAccount: string;
 };
 
 function settings(env: NodeJS.ProcessEnv): Settings | undefined {
@@ -81,7 +81,10 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   }
   const applyEnabled = env.STORAGE_APPLY_ENABLED === 'true';
   const holderEvidenceExpected = applyEnabled || disposable.size > 0 || env.STORAGE_EXPECT_HOLDER_EVIDENCE !== 'false';
-  const trustedServiceProxyNetworks = serviceProxyNetworks(env.STORAGE_TRUSTED_SERVICE_PROXY_CIDRS);
+  const headlampServiceAccount = env.STORAGE_HEADLAMP_SERVICE_ACCOUNT?.trim();
+  if (!headlampServiceAccount || !/^system:serviceaccount:[^:]+:[^:]+$/.test(headlampServiceAccount)) {
+    throw new Error('Storage Headlamp service account is required');
+  }
   let partialScanScopes: ReadonlyMap<string, ExpectedScopes>;
   try {
     const scopesFile = env.STORAGE_PARTIAL_SCAN_SCOPES_FILE;
@@ -108,7 +111,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     disposable,
     applyEnabled,
     holderEvidenceExpected,
-    trustedServiceProxyNetworks,
+    headlampServiceAccount,
   };
 }
 
@@ -154,7 +157,7 @@ export async function storageHttp(deps: HttpHelpers & {
     return parsed.data;
   }
 
-  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.trustedServiceProxyNetworks);
+  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.headlampServiceAccount ?? '');
   const diagnostic = new ScheduledDiagnostic(config.dataDir, now);
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {

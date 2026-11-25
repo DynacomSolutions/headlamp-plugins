@@ -96,7 +96,6 @@ async function fixture(options: {
   contained?: boolean; policyMount?: string; policyDevice?: string;
   partialScopes?: Record<string, Record<string, string>>;
   policies?: Record<string, { mount: string; device: string }[]>;
-  trustedServiceProxyCidrs?: string;
 } = {}) {
   const dir = mkdtempSync(join(process.env.STORAGE_TEST_FIXTURE_ROOT ?? tmpdir(), 'storage-incident-fixture-'));
   dispose.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -256,7 +255,7 @@ async function fixture(options: {
     } : {}),
     STORAGE_APPLY_ENABLED: options.disposable ? 'true' : 'false',
     STORAGE_DISPOSABLE_SCANNERS: options.disposable ? nodes[0] : '',
-    ...(options.trustedServiceProxyCidrs ? { STORAGE_TRUSTED_SERVICE_PROXY_CIDRS: options.trustedServiceProxyCidrs } : {}),
+    STORAGE_HEADLAMP_SERVICE_ACCOUNT: 'system:serviceaccount:example:headlamp',
     ...(options.contained ? { STORAGE_EXPECT_HOLDER_EVIDENCE: 'false' } : {}),
     ...(options.policyMount || options.policies ? { STORAGE_FILESYSTEM_POLICIES_FILE: policiesFile } : {}),
     ...(options.partialScopes ? { STORAGE_PARTIAL_SCAN_SCOPES_FILE: scopesFile } : {}),
@@ -405,30 +404,32 @@ describe('Storage incident normal entry points', () => {
     expect(f.reviews.every(review => review.path.endsWith('/selfsubjectreviews'))).toBe(true);
   });
 
-  it('allows trusted service-proxy reads and keeps writes and notification data protected', async () => {
-    const f = await fixture({ trustedServiceProxyCidrs: '127.0.0.1/32' });
+  it('allows the authenticated Headlamp service-proxy reads and keeps writes and notification data protected', async () => {
+    const f = await fixture();
     const endpoint = `${api}/incident`;
     const headers = { 'x-forwarded-user': 'attacker', 'x-remote-user': 'attacker' };
-    const overview = await f.call(endpoint, { token: false, headers });
+    const overview = await f.call(endpoint, { token: headlampAccount, headers });
     expect(overview.status).toBe(200);
     expect(overview.data).toMatchObject({ enabled: true, incident: { chatId: expect.any(String) } });
     const overviewData = overview.data as { incident: { chatId: string } };
     const chat = `${api}/incident/chat/${overviewData.incident.chatId}`;
-    expect((await f.call(chat, { token: false, headers })).status).toBe(200);
-    expect((await f.call(`${chat}/transcript`, { token: false, headers })).status).toBe(200);
-    expect((await f.call(`${api}/incident/notifications/${'0'.repeat(32)}`, { token: false, headers })).status).toBe(401);
-    expect((await f.call(`${chat}/messages`, { token: false, headers, data: { text: 'inventory' } })).status).toBe(401);
+    expect((await f.call(chat, { token: headlampAccount, headers })).status).toBe(200);
+    expect((await f.call(`${chat}/transcript`, { token: headlampAccount, headers })).status).toBe(200);
+    expect((await f.call(`${api}/incident/notifications/${'0'.repeat(32)}`, { token: headlampAccount, headers })).status).toBe(403);
+    expect((await f.call(`${chat}/messages`, { token: headlampAccount, headers, data: { text: 'inventory' } })).status).toBe(403);
 
     expect((await f.reconcile()).status).toBe(200);
-    const afterScan = await f.call(endpoint, { token: false, headers });
+    const afterScan = await f.call(endpoint, { token: headlampAccount, headers });
     const afterScanData = afterScan.data as { drives: Array<{ id: string }> };
     const driveId = afterScanData.drives[0].id;
-    expect((await f.call(`${api}/incident/drives/${driveId}`, { token: false, headers })).status).toBe(200);
-    expect((await f.call(`${api}/incident/drives/${driveId}/investigate`, { token: false, headers, data: { kind: 'capacity' } })).status).toBe(401);
+    expect((await f.call(`${api}/incident/drives/${driveId}`, { token: headlampAccount, headers })).status).toBe(200);
+    expect((await f.call(`${api}/incident/drives/${driveId}/investigate`, { token: headlampAccount, headers, data: { kind: 'capacity' } })).status).toBe(403);
+    expect((await f.call(endpoint, { token: false, headers })).status).toBe(401);
+    expect((await f.call(endpoint, { token: serviceAccount, headers })).status).toBe(403);
   });
 
-  it('denies direct storage reads without a human token when no service-proxy network is configured', async () => {
-    const f = await fixture({ trustedServiceProxyCidrs: '192.0.2.0/24' });
+  it('denies direct storage reads without the server-side service account credential', async () => {
+    const f = await fixture();
     expect((await f.call(`${api}/incident`, { token: false, headers: { 'x-forwarded-user': 'fixture-operator' } })).status).toBe(401);
   });
 
@@ -445,7 +446,7 @@ describe('Storage incident normal entry points', () => {
     expect((await f.call(endpoint, { token: invalid })).status).toBe(401);
     expect(f.reviews.map(review => review.token)).toEqual([`Bearer ${invalid}`]);
     expect((await f.call(endpoint, { token: serviceAccount })).status).toBe(403);
-    expect((await f.call(endpoint, { token: headlampAccount })).status).toBe(403);
+    expect((await f.call(endpoint, { token: headlampAccount })).status).toBe(200);
     expect((await f.call(endpoint, { token: automation })).status).toBe(403);
     f.operatorMembership(false);
     expect((await f.call(endpoint)).status).toBe(403);
@@ -472,7 +473,7 @@ describe('Storage incident normal entry points', () => {
 
     const proxy = await listener(async (req, res) => {
       const headers = new Headers();
-      for (const name of ['cookie', 'origin', 'content-type']) {
+      for (const name of ['authorization', 'cookie', 'origin', 'content-type']) {
         const value = req.headers[name];
         if (typeof value === 'string') headers.set(name, value);
       }
@@ -482,14 +483,19 @@ describe('Storage incident normal entry points', () => {
       reply(res, incoming.status, await incoming.json());
     });
     const cookie = 'headlamp-auth-example.0=fixture-human-; headlamp-auth-example.1=credential';
-    expect((await f.call(chat, { via: proxy, headers: { cookie } })).status).toBe(200);
-    expect((await f.call(`${chat}/messages`, { via: proxy, headers: { cookie }, data: { text: 'inventory' } })).status).toBe(403);
-    expect((await f.call(`${chat}/messages`, { via: proxy, headers: { cookie, origin }, data: { text: 'inventory' } })).data.messages).toHaveLength(2);
-    expect((await f.call(chat, { via: proxy, headers: { cookie: 'headlamp-auth-example.1=credential' } })).status).toBe(401);
+    expect((await f.call(chat, { via: proxy, token: headlampAccount, headers: { 'x-forwarded-user': 'attacker' } })).status).toBe(200);
+    expect((await f.call(chat, { via: proxy, token: serviceAccount, headers: { 'x-forwarded-user': 'attacker' } })).status).toBe(403);
+    expect((await f.call(chat, { via: proxy, token: false, headers: { cookie } })).status).toBe(200);
+    expect((await f.call(`${chat}/messages`, { via: proxy, token: false, headers: { cookie }, data: { text: 'inventory' } })).status).toBe(403);
+    expect((await f.call(`${chat}/messages`, { via: proxy, token: false, headers: { cookie, origin }, data: { text: 'inventory' } })).data.messages).toHaveLength(2);
+    expect((await f.call(chat, { via: proxy, token: false, headers: { cookie: 'headlamp-auth-example.1=credential' } })).status).toBe(401);
     expect((await f.call(chat, { token: false, headers: { 'x-storage-operator-token': `Bearer ${human}` } })).status).toBe(200);
     for (const token of [serviceAccount, headlampAccount]) {
       expect(f.reviews.filter(review => review.token === `Bearer ${token}`).map(review => review.path)).toEqual([
+        '/apis/authentication.k8s.io/v1/selfsubjectreviews',
+        ...(token === headlampAccount ? ['/apis/authorization.k8s.io/v1/selfsubjectaccessreviews'] : []),
         '/apis/authentication.k8s.io/v1/selfsubjectreviews', '/apis/authentication.k8s.io/v1/selfsubjectreviews',
+        ...(token === headlampAccount ? ['/apis/authorization.k8s.io/v1/selfsubjectaccessreviews'] : []),
       ]);
     }
     const allowed = f.reviews.filter(review => review.token === `Bearer ${human}` && review.path.endsWith('selfsubjectaccessreviews'));
