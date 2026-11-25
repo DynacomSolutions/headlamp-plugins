@@ -231,6 +231,11 @@ export function vmRepos(repos: Repo[], prefixes: string[]): Repo[] {
   return repos.filter(r => isVmRepo(r, prefixes));
 }
 
+/** Repositories that look like VM images, plus any repository that a VM disk comes from. */
+export function vmImageRepos(repos: Repo[], prefixes: string[], vmUsed: Set<string>): Repo[] {
+  return repos.filter(r => isVmRepo(r, prefixes) || vmUsed.has(r.name));
+}
+
 /* ---------- image references ---------- */
 
 export interface ImageRef {
@@ -349,20 +354,54 @@ export function vmVolumes(vm: J): J[] {
   return vm?.spec?.template?.spec?.volumes ?? [];
 }
 
-/** containerDisk images of VMs; the node comes from the matching VirtualMachineInstance. */
-export function vmUsages(vms: J[], vmis: J[]): Usage[] {
+/** Registry image URL of a CDI source block, or null when the source is not a registry. */
+function registryUrl(source: J): string | null {
+  const url = source?.registry?.url;
+  return typeof url === 'string' && url.trim() ? url.trim() : null;
+}
+
+/** Name of the PVC or DataVolume that a volume points to, or null (containerDisk and others). */
+function claimOf(v: J): string | null {
+  const name = v?.persistentVolumeClaim?.claimName ?? v?.ephemeral?.persistentVolumeClaim?.claimName ?? v?.dataVolume?.name;
+  return typeof name === 'string' && name ? name : null;
+}
+
+/**
+ * Images of VMs. A containerDisk volume names its image. A PVC or DataVolume volume resolves
+ * through the DataVolume of the same namespace and name (the PVC is owned by it), or through the
+ * VM's own dataVolumeTemplates, to its registry source URL. Claims without such a DataVolume stay
+ * unmatched. The node comes from the matching VirtualMachineInstance.
+ */
+export function vmUsages(vms: J[], vmis: J[], dataVolumes: J[] = []): Usage[] {
   const nodeOf = new Map<string, string>();
   for (const i of vmis) {
     const m = meta(i);
     if (i?.status?.nodeName) nodeOf.set(`${m.namespace}/${m.name}`, i.status.nodeName);
   }
+  const dvImage = new Map<string, string>();
+  for (const dv of dataVolumes) {
+    const m = meta(dv);
+    const url = registryUrl(dv?.spec?.source);
+    if (url) dvImage.set(`${m.namespace}/${m.name}`, url);
+  }
   const out: Usage[] = [];
   for (const vm of vms) {
     const m = meta(vm);
     const user: User = { kind: 'VirtualMachine', ...m, node: nodeOf.get(`${m.namespace}/${m.name}`) ?? null };
-    for (const v of vmVolumes(vm))
-      if (v?.containerDisk?.image)
+    const templates = new Map<string, string>();
+    for (const t of vm?.spec?.dataVolumeTemplates ?? []) {
+      const url = registryUrl(t?.spec?.source);
+      if (url && t?.metadata?.name) templates.set(String(t.metadata.name), url);
+    }
+    for (const v of vmVolumes(vm)) {
+      if (v?.containerDisk?.image) {
         out.push({ image: v.containerDisk.image, digestHint: null, user });
+        continue;
+      }
+      const claim = claimOf(v);
+      const image = claim ? (dvImage.get(`${m.namespace}/${claim}`) ?? templates.get(claim)) : undefined;
+      if (image) out.push({ image, digestHint: null, user });
+    }
   }
   return out;
 }
@@ -384,6 +423,11 @@ export function groupUsages(usages: Usage[], repos: Repo[]): Group[] {
     if (!g.users.some(x => userKey(x) === userKey(u.user))) g.users.push(u.user);
   }
   return [...groups.values()].sort((a, b) => a.ref.path.localeCompare(b.ref.path) || a.key.localeCompare(b.key));
+}
+
+/** Names of the repositories that at least one VirtualMachine uses. */
+export function vmUsedRepoNames(groups: Group[]): Set<string> {
+  return new Set(groups.filter(g => g.repo && g.users.some(u => u.kind === 'VirtualMachine')).map(g => g.repo!));
 }
 
 /** Distinct users per repository ("repo") and per tag ("repo:tag"). */
