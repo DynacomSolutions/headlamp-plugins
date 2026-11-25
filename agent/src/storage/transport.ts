@@ -1,6 +1,7 @@
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { z } from 'zod';
+import { diagnosticHeader } from './diagnostic.js';
 import { applyResultSchema, partialScanSchema, scanSchema, type ApplyResult, type ScannerScan } from './types.js';
 
 export const SCAN_TIMEOUT_MS = 960_000;
@@ -14,14 +15,14 @@ export class RequestDeadlineError extends Error {
 }
 
 export interface Scanner {
-  scan(node: string): Promise<ScannerScan>;
+  scan(node: string, diagnosticJob?: string): Promise<ScannerScan>;
   apply(node: string, planId: string, approvalId: string, itemIds: string[]): Promise<ApplyResult>;
 }
 
 /** Bound the full request and response, including a scan that takes minutes to send headers. */
 export function requestJson(
   url: URL,
-  options: { token: string; timeoutMs: number; body?: unknown; ca?: string; limit?: number },
+  options: { token: string; timeoutMs: number; body?: unknown; ca?: string; limit?: number; diagnosticJob?: string },
 ): Promise<{ status: number; data?: unknown }> {
   const deadline = performance.now() + options.timeoutMs;
   let timer: NodeJS.Timeout | undefined;
@@ -40,6 +41,7 @@ export function requestJson(
       headers: {
         accept: 'application/json',
         authorization: `Bearer ${options.token}`,
+        ...(options.diagnosticJob === undefined ? {} : { [diagnosticHeader]: options.diagnosticJob }),
         ...(body === undefined ? {} : { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }),
       },
     }, res => {
@@ -95,19 +97,21 @@ export class HttpScanner implements Scanner {
     private readonly partialNodes: ReadonlySet<string> = new Set(),
   ) {}
 
-  private async call<T>(node: string, path: string, schema: z.ZodType<T>, timeoutMs: number, body?: unknown): Promise<T> {
+  private async call<T>(
+    node: string, path: string, schema: z.ZodType<T>, timeoutMs: number, body?: unknown, diagnosticJob?: string,
+  ): Promise<T> {
     const base = this.urls.get(node);
     const token = this.readToken();
     if (!base || !token) throw new Error('Scanner is not configured');
-    const response = await requestJson(new URL(path, base), { token, body, timeoutMs });
+    const response = await requestJson(new URL(path, base), { token, body, timeoutMs, diagnosticJob });
     if (response.status !== 200) throw new Error('Scanner did not complete the request');
     return schema.parse(response.data);
   }
 
-  async scan(node: string): Promise<ScannerScan> {
+  async scan(node: string, diagnosticJob?: string): Promise<ScannerScan> {
     const scan = this.partialNodes.has(node)
-      ? await this.call(node, '/v2/scan', partialScanSchema, SCAN_TIMEOUT_MS)
-      : await this.call(node, '/v1/scan', scanSchema, SCAN_TIMEOUT_MS);
+      ? await this.call(node, '/v2/scan', partialScanSchema, SCAN_TIMEOUT_MS, undefined, diagnosticJob)
+      : await this.call(node, '/v1/scan', scanSchema, SCAN_TIMEOUT_MS, undefined, diagnosticJob);
     if (scan.node !== node) throw new Error('Scan node did not match its configured identity');
     return scan;
   }
