@@ -26,7 +26,10 @@ describe('plugin entry', () => {
     });
     const byPath = (p: string) => registerRoute.mock.calls.map(c => c[0]).find(r => r.path === p);
     expect(byPath('/dashboards')).toMatchObject({ exact: true, sidebar: 'dashboards' });
-    expect(byPath('/dashboards/:name/:tab?')).toMatchObject({ exact: true, isFullWidth: true });
+    expect(byPath('/dashboards/:name/:tab?/:focus*')).toMatchObject({
+      exact: true,
+      isFullWidth: true,
+    });
     expect(registerPluginSettings).toHaveBeenCalledWith('dashboards', expect.anything(), true);
   });
 

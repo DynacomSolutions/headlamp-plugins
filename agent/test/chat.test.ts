@@ -268,6 +268,50 @@ describe('chat service', () => {
     await expect(chats.create({ diagnosisIds: many })).rejects.toMatchObject({ status: 400 });
   });
 
+  it('lists the older incidents of a large group in one short line each', async () => {
+    const diagnoses = new MemoryDiagnosisStore();
+    const mk = (id: string, cause: string): Diagnosis => ({
+      ...diagnosis(id),
+      createdAt: `2026-11-25T10:00:${id.slice(1).padStart(2, '0')}Z`,
+      resolvedAt: id === 'd5' ? '2026-11-25T11:00:00Z' : undefined,
+      result: { ...diagnosis(id).result!, likelyCause: cause },
+    });
+    for (const id of ['d1', 'd2', 'd3', 'd4', 'd5']) await diagnoses.put(mk(id, `cause of ${id}`));
+    const { chats } = service([], { diagnoses });
+    script.queue.push({ text: 'Mostly one cause.' });
+    // d1 and d2 get the full context. d3 to d5 and a removed incident get a short line, or none.
+    const { id } = await chats.create({ diagnosisIds: ['d1', 'd2'], groupName: 'KubePodCrashLooping', summaryIds: ['d3', 'd4', 'd5', 'gone', 'd1'], groupOmitted: 7 });
+    expect(chats.get(id)).toMatchObject({ diagnosisIds: ['d1', 'd2'], groupName: 'KubePodCrashLooping', groupCount: 12 });
+    await chats.send(id, 'Is this one root cause?');
+    await until(() => !(chats.get(id) as any).running);
+    const system = script.requests[0].messages[0].content as string;
+    expect(system).toContain('Incident 1 of 2');
+    expect(system).toContain('## The group of incidents: KubePodCrashLooping');
+    expect(system).toContain('with 12 incidents');
+    expect(system).toContain('The next 3 have one short line each');
+    expect(system).toMatch(/- d3 \| .*cause: cause of d3/);
+    expect(system).toMatch(/- d5 \| .*resolved.*cause: cause of d5/);
+    expect(system).toContain('(7 more older incidents are not listed.)');
+    expect(system).not.toContain('Incident 3 of');
+    expect(system).not.toContain('gone');
+  });
+
+  it('counts the short lines that do not fit instead of cutting one in half', () => {
+    const many = Array.from({ length: 300 }, (_, i) => ({ ...diagnosis(`s${i}`), result: { ...diagnosis(`s${i}`).result!, likelyCause: 'x'.repeat(400) } }));
+    const prompt = systemPrompt(3, [diagnosis('d1'), diagnosis('d2')], { name: 'Big', summaries: many });
+    expect(prompt).toContain('The next 300 have');
+    expect(prompt).toMatch(/\(\d+ more older incidents are not listed\.\)/);
+    expect(prompt.length).toBeLessThan(48_000 + 30_000 + 30_000);
+  });
+
+  it('rejects a short list without full incidents, and too long a short list', async () => {
+    const diagnoses = new MemoryDiagnosisStore();
+    await diagnoses.put(diagnosis('d1'));
+    const { chats } = service([], { diagnoses });
+    await expect(chats.create({ summaryIds: ['d1'] })).rejects.toMatchObject({ status: 400 });
+    await expect(chats.create({ diagnosisIds: ['d1'], summaryIds: Array.from({ length: 501 }, (_, i) => `s${i}`) })).rejects.toMatchObject({ status: 400 });
+  });
+
   it('shares the prompt budget between the linked incidents', () => {
     const big = (id: string): Diagnosis => ({ ...diagnosis(id), evidence: Array.from({ length: 400 }, (_, i) => ({ id: `e${i}`, tool: 'get_resource', reason: 'r', summary: 'x'.repeat(100), ok: true })) });
     const ids = Array.from({ length: 20 }, (_, i) => `d${i}`);
@@ -333,6 +377,10 @@ describe('chat routes', () => {
       expect((await api(base, 'POST', '/api/chats', { diagnosisId: 'nope' })).status).toBe(404);
       expect((await api(base, 'POST', '/api/chats', { diagnosisIds: ['nope'] })).status).toBe(404);
       expect((await api(base, 'POST', '/api/chats', { diagnosisIds: [] })).status).toBe(400);
+      // The group fields pass the schema (the unknown incident is the only error), and a short list alone is refused.
+      expect((await api(base, 'POST', '/api/chats', { diagnosisIds: ['nope'], groupName: 'A', summaryIds: ['x'], groupOmitted: 3 })).status).toBe(404);
+      expect((await api(base, 'POST', '/api/chats', { summaryIds: ['x'] })).status).toBe(400);
+      expect((await api(base, 'POST', '/api/chats', { diagnosisIds: ['nope'], groupOmitted: 0 })).status).toBe(400);
       expect((await api(base, 'POST', '/api/chats', { diagnosisIds: Array.from({ length: 21 }, (_, i) => `d${i}`) })).status).toBe(400);
       const created = await api(base, 'POST', '/api/chats', {});
       expect(created.status).toBe(201);

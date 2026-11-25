@@ -96,6 +96,17 @@ export interface WidgetProps<C = Record<string, unknown>> {
    * browser blocks storage: a widget that uses it must work without it.
    */
   cache?: WidgetCache;
+  /**
+   * What the page URL focuses on: the path segments after the tab, for example
+   * `['group', 'HighCPU']` for `/dashboards/ops/incidents/group/HighCPU`. Empty when there are
+   * none. Absent in an older Dashboards plugin: a widget that uses it keeps its own state then.
+   */
+  focus?: string[];
+  /**
+   * Focuses on `segments`, or clears the focus with null. It pushes one history entry, so Back
+   * undoes it, and it keeps the query string. The dashboard keeps the segments opaque.
+   */
+  setFocus?: (segments: string[] | null) => void;
 }
 
 /** What the dashboard passes to a widget's `SettingsComponent`. */

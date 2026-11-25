@@ -1,7 +1,7 @@
 import { createTheme, ThemeProvider } from '@mui/material/styles';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import React from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useHistory, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { CHAT, MODELS } from './chat.fixture';
 
@@ -28,7 +28,7 @@ import {
 } from './dashboardWidgets';
 import { fetchAllDiagnoses } from './data';
 import { summariseDiagnoses } from './model';
-import { selectIncident } from './selection';
+import { resetFocus, setSelection } from './selection';
 
 const diag = (id: string, alert: string, severity: string, status: string, resolved = false) => ({
   id,
@@ -69,10 +69,12 @@ const view = (ui: React.ReactNode) =>
 type Call = { url: string; method: string; body: any };
 let calls: Call[];
 let pageTotal: number | undefined;
+let served: any[] = DIAGNOSES;
 
 beforeEach(() => {
   calls = [];
   pageTotal = undefined;
+  served = DIAGNOSES;
   request.mockReset();
   request.mockImplementation(async (url: string, params?: any) => {
     const method = params?.method ?? 'GET';
@@ -82,8 +84,8 @@ beforeEach(() => {
       const offset = Number(q.get('offset') ?? 0);
       const limit = Number(q.get('limit') ?? 50);
       return {
-        total: pageTotal ?? DIAGNOSES.length,
-        diagnoses: DIAGNOSES.slice(offset, offset + limit),
+        total: pageTotal ?? served.length,
+        diagnoses: served.slice(offset, offset + limit),
       };
     }
     if (url.endsWith('/api/models')) return { default: 'claude/opus', models: MODELS };
@@ -95,7 +97,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  selectIncident(null);
+  setSelection(null);
+  resetFocus();
 });
 
 /** Opens the group of an alert and returns its header. Every group is closed at first. */
@@ -435,5 +438,242 @@ describe('incidents.list last good data', () => {
     bad.write('not an object');
     view(<List {...props(SHOW_ALL, { cache: bad })} />);
     expect(screen.getByLabelText('Loading')).toBeTruthy();
+  });
+});
+
+/* ---------- A group as the chat context ---------- */
+
+/** A group of `n` open incidents of one alert, each a minute after the one before. */
+const crowd = (n: number, resolvedEvery = 0) =>
+  Array.from({ length: n }, (_, i) => ({
+    id: `c${i}`,
+    createdAt: `2026-11-25T10:${String(i % 60).padStart(2, '0')}:00Z`,
+    status: 'done',
+    source: 'alert',
+    alert: { name: 'KubePodCrashLooping', severity: i === 0 ? 'critical' : 'warning' },
+    result: { likelyCause: `cause ${i}`, confidence: 'high' },
+    resolvedAt: resolvedEvery && i % resolvedEvery === 0 ? '2026-11-25T11:00:00Z' : undefined,
+  }));
+
+/** A stand-in for the Dashboards page: the focus is the path after /d/t, and a change is a push. */
+function Page(props: {
+  children: (p: { focus: string[]; setFocus: (s: string[] | null) => void }) => React.ReactNode;
+}) {
+  const location = useLocation();
+  const history = useHistory();
+  const focus = location.pathname.split('/').slice(3).filter(Boolean).map(decodeURIComponent);
+  const setFocus = React.useCallback(
+    (s: string[] | null) =>
+      history.push(
+        `/d/t${(s ?? []).map(x => `/${encodeURIComponent(x)}`).join('')}${location.search}`
+      ),
+    [history, location.search]
+  );
+  return (
+    <>
+      <span data-testid="url">{location.pathname + location.search}</span>
+      <button data-testid="back" onClick={() => history.goBack()} />
+      <button data-testid="forward" onClick={() => history.goForward()} />
+      {props.children({ focus, setFocus })}
+    </>
+  );
+}
+
+const paged = (url: string, config: any = SHOW_ALL, over: any = {}) => {
+  const List = incidentListWidget.Component;
+  const Chat = incidentChatWidget.Component;
+  return render(
+    <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+      <MemoryRouter initialEntries={[url]}>
+        <Page>
+          {f => (
+            <>
+              <List {...props(config, { ...f, ...over })} />
+              <div data-testid="chat">
+                <Chat {...props({}, { ...f, ...over })} />
+              </div>
+            </>
+          )}
+        </Page>
+      </MemoryRouter>
+    </ThemeProvider>
+  );
+};
+const url = () => screen.getByTestId('url').textContent;
+const groupButton = (name: string) =>
+  document.querySelector(`[data-group-chat="${name}"]`) as HTMLElement;
+
+describe('a group as the chat context', () => {
+  it('selects the group from the button on its header, and the header itself still only opens it', async () => {
+    served = crowd(3);
+    paged('/d/t');
+    await screen.findByText('KubePodCrashLooping');
+    const header = document.querySelector('[data-incident-group]') as HTMLElement;
+    fireEvent.click(header);
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(url()).toBe('/d/t');
+    expect(screen.getByText(/No incident selected/)).toBeTruthy();
+    fireEvent.click(groupButton('KubePodCrashLooping'));
+    // The group is in the URL, the button is pressed, and the header did not close.
+    expect(url()).toBe('/d/t/group/KubePodCrashLooping');
+    await waitFor(() =>
+      expect(groupButton('KubePodCrashLooping').getAttribute('aria-pressed')).toBe('true')
+    );
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    const chip = await screen.findByText(/^About group: KubePodCrashLooping/);
+    expect(chip.textContent).toBe(
+      'About group: KubePodCrashLooping · 3 incidents · worst critical'
+    );
+    expect(document.querySelector('[data-chat-context="group"]')).toBeTruthy();
+    // The same button again clears it.
+    fireEvent.click(groupButton('KubePodCrashLooping'));
+    expect(url()).toBe('/d/t');
+    expect(await screen.findByText(/No incident selected/)).toBeTruthy();
+  });
+
+  it('shows the group from a link, and Back and Forward move between the views', async () => {
+    served = crowd(2);
+    paged('/d/t/group/KubePodCrashLooping');
+    expect(await screen.findByText(/^About group: KubePodCrashLooping/)).toBeTruthy();
+    expect(groupButton('KubePodCrashLooping').getAttribute('aria-pressed')).toBe('true');
+    // A row in the group replaces the group selection.
+    fireEvent.click(document.querySelector('[data-incident-group]')!);
+    const row = (await screen.findByText('cause 1')).closest('[data-incident-row]') as HTMLElement;
+    fireEvent.click(row);
+    expect(url()).toBe('/d/t/incident/c1');
+    expect(await screen.findByText('About incident: KubePodCrashLooping')).toBeTruthy();
+    expect(groupButton('KubePodCrashLooping').getAttribute('aria-pressed')).toBe('false');
+    expect(row.getAttribute('aria-selected')).toBe('true');
+    // The group button replaces the row selection.
+    fireEvent.click(groupButton('KubePodCrashLooping'));
+    expect(url()).toBe('/d/t/group/KubePodCrashLooping');
+    expect(await screen.findByText(/^About group: /)).toBeTruthy();
+    expect(row.getAttribute('aria-selected')).toBe('false');
+    // Back goes to the incident, then to the first group view.
+    fireEvent.click(screen.getByTestId('back'));
+    expect(url()).toBe('/d/t/incident/c1');
+    expect(await screen.findByText('About incident: KubePodCrashLooping')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('back'));
+    expect(url()).toBe('/d/t/group/KubePodCrashLooping');
+    fireEvent.click(screen.getByTestId('forward'));
+    expect(url()).toBe('/d/t/incident/c1');
+  });
+
+  it('clears the selection from the chip and keeps the query string', async () => {
+    served = crowd(2);
+    paged('/d/t/group/KubePodCrashLooping?kiosk=1');
+    const chip = (await screen.findByText(/^About group: /)).closest(
+      '.MuiChip-root'
+    ) as HTMLElement;
+    fireEvent.click(chip.querySelector('.MuiChip-deleteIcon')!);
+    expect(url()).toBe('/d/t?kiosk=1');
+    expect(await screen.findByText(/No incident selected/)).toBeTruthy();
+  });
+
+  it('shows no selection for a link to a group that is not in the view', async () => {
+    served = crowd(2);
+    paged('/d/t/group/Gone');
+    await screen.findByText('KubePodCrashLooping');
+    expect(screen.getByText(/No incident selected/)).toBeTruthy();
+  });
+
+  it('shows prompts that fit a group, and sends the group name with the incidents', async () => {
+    served = crowd(3);
+    paged('/d/t/group/KubePodCrashLooping');
+    await screen.findByText(/^About group: /);
+    expect(screen.getByText('What do these incidents have in common?')).toBeTruthy();
+    expect(screen.getByText('Is this one root cause?')).toBeTruthy();
+    expect(screen.queryByText('Why did this alert fire?')).toBeNull();
+    expect(screen.getByText('Ask the agent about the KubePodCrashLooping group')).toBeTruthy();
+    fireEvent.click(screen.getByText('Is this one root cause?'));
+    await waitFor(() =>
+      expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/chats'))).toBe(true)
+    );
+    const create = calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!;
+    // Newest first, and all three in full, with the group name. No short list for a small group.
+    expect(create.body).toEqual({
+      model: 'claude/opus',
+      diagnosisIds: ['c2', 'c1', 'c0'],
+      groupName: 'KubePodCrashLooping',
+    });
+    await waitFor(() =>
+      expect(calls.find(c => c.url.endsWith('/api/chats/c1/messages'))?.body).toEqual({
+        text: 'Is this one root cause?',
+      })
+    );
+  });
+
+  it('sends the newest incidents in full and the older ones as short lines for a large group', async () => {
+    served = crowd(40);
+    paged('/d/t/group/KubePodCrashLooping');
+    await screen.findByText(/^About group: /);
+    fireEvent.click(screen.getByText('What do these incidents have in common?'));
+    await waitFor(() =>
+      expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/chats'))).toBe(true)
+    );
+    const body = calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!.body;
+    expect(body.diagnosisIds).toEqual(Array.from({ length: 10 }, (_, i) => `c${39 - i}`));
+    expect(body.summaryIds).toHaveLength(30);
+    expect(body.summaryIds[0]).toBe('c29');
+    expect(body.summaryIds[29]).toBe('c0');
+    expect(body.groupOmitted).toBeUndefined();
+    expect(body.groupName).toBe('KubePodCrashLooping');
+  });
+
+  it('leaves the resolved incidents out of the group while the list hides them, and adds them when it shows them', async () => {
+    // c0, c3, c6 and c9 are resolved.
+    served = crowd(10, 3);
+    const open = paged('/d/t/group/KubePodCrashLooping', { ...SHOW_ALL, openOnly: true });
+    const chip = await screen.findByText(/^About group: /);
+    expect(chip.textContent).toBe(
+      'About group: KubePodCrashLooping · 6 incidents · worst warning · open only'
+    );
+    fireEvent.click(screen.getByText('Is this one root cause?'));
+    await waitFor(() =>
+      expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/chats'))).toBe(true)
+    );
+    expect(
+      calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!.body.diagnosisIds
+    ).toEqual(['c8', 'c7', 'c5', 'c4', 'c2', 'c1']);
+    open.unmount();
+    cleanup();
+    calls.length = 0;
+    paged('/d/t/group/KubePodCrashLooping', { ...SHOW_ALL, openOnly: false });
+    const all = await screen.findByText(/^About group: /);
+    expect(all.textContent).toBe(
+      'About group: KubePodCrashLooping · 10 incidents · worst critical'
+    );
+    fireEvent.click(screen.getByText('Is this one root cause?'));
+    await waitFor(() =>
+      expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/chats'))).toBe(true)
+    );
+    expect(
+      calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!.body.diagnosisIds
+    ).toEqual(['c9', 'c8', 'c7', 'c6', 'c5', 'c4', 'c3', 'c2', 'c1', 'c0']);
+  });
+
+  it('keeps the selection in memory with an older Dashboards plugin that gives no focus', async () => {
+    served = crowd(2);
+    const List = incidentListWidget.Component;
+    const Chat = incidentChatWidget.Component;
+    view(
+      <>
+        <List {...props(SHOW_ALL)} />
+        <Chat {...props({})} />
+      </>
+    );
+    await screen.findByText('KubePodCrashLooping');
+    fireEvent.click(groupButton('KubePodCrashLooping'));
+    expect(await screen.findByText(/^About group: KubePodCrashLooping/)).toBeTruthy();
+    fireEvent.click(groupButton('KubePodCrashLooping'));
+    expect(await screen.findByText(/No incident selected/)).toBeTruthy();
+  });
+
+  it('has no group button when the dashboard has no chat widget', async () => {
+    served = crowd(2);
+    const List = incidentListWidget.Component;
+    view(<List {...props(SHOW_ALL)} />);
+    await screen.findByText('KubePodCrashLooping');
+    expect(groupButton('KubePodCrashLooping')).toBeNull();
   });
 });

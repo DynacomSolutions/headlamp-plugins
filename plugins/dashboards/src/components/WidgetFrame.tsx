@@ -35,8 +35,17 @@ export interface WidgetFrameProps {
 
 function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
   const { sectionId, id, type, title, config, selfScroll, actions, inline } = props;
-  const { filters, refreshSignal, editing, kiosk, reportRefreshed, cacheScope, reportCached } =
-    useDashboardContext();
+  const {
+    filters,
+    refreshSignal,
+    editing,
+    kiosk,
+    reportRefreshed,
+    cacheScope,
+    reportCached,
+    focus,
+    setFocus,
+  } = useDashboardContext();
   const def = useWidgetDefinition(type);
   const merged = React.useMemo(
     () => (def ? { ...def.defaultConfig, ...config } : config),
@@ -95,6 +104,8 @@ function WidgetFrameImpl(props: WidgetFrameProps): JSX.Element {
           compact={inline ? true : undefined}
           footer={inline || !card ? undefined : footerEl}
           cache={cache}
+          focus={focus}
+          setFocus={setFocus}
         />
       </ErrorBoundary>
     </StaleContext.Provider>

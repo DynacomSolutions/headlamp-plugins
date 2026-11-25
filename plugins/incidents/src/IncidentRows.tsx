@@ -2,6 +2,8 @@
  * The incident rows of the dashboard list, grouped by alert name. A group header shows the alert
  * name, the number of incidents, the worst severity (a shape and a word) and the status mix. Only
  * the groups show at first: a click on a header opens its incidents. Critical groups come first.
+ * With a chat widget on the page, a header also has a "Chat about this group" button. It selects
+ * the group for the chat, and the chevron side of the header still only opens and closes the group.
  *
  * An incident row is one tinted band with the cause on one line (the full text is on hover), the
  * time and the analysis status. A failed row has its Run again button. In a narrow widget the
@@ -140,6 +142,20 @@ function Chevron({ open }: { open: boolean }): JSX.Element {
   );
 }
 
+function ChatIcon(): JSX.Element {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style={{ flex: 'none' }}>
+      <path
+        d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H8l-4 4V5a1 1 0 0 1 1-1z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function Row(props: {
   d: DiagnosisSummary;
   selected: boolean;
@@ -246,8 +262,12 @@ function GroupHeader(props: {
   toggle: () => void;
   touch: boolean;
   hasSelected: boolean;
+  /** True when the chat is about this group. */
+  selected: boolean;
+  /** Selects the group for the chat. Absent without a chat widget: the header has no button then. */
+  onSelectGroup?: () => void;
 }): JSX.Element {
-  const { group, open, toggle, touch, hasSelected } = props;
+  const { group, open, toggle, touch, hasSelected, selected, onSelectGroup } = props;
   const theme = useTheme();
   const colours = useSeverityColours();
   const tintOf = useTint();
@@ -272,7 +292,9 @@ function GroupHeader(props: {
       }}
       sx={{
         display: 'grid',
-        gridTemplateColumns: '14px 20px minmax(0, 1fr) auto',
+        gridTemplateColumns: onSelectGroup
+          ? '14px 20px minmax(0, 1fr) auto auto'
+          : '14px 20px minmax(0, 1fr) auto',
         columnGap: 1,
         alignItems: 'center',
         minHeight: touch ? 56 : 48,
@@ -282,7 +304,7 @@ function GroupHeader(props: {
         borderRadius: 1,
         bgcolor: tintOf(group.worst, 1),
         cursor: 'pointer',
-        outline: hasSelected ? `2px solid ${theme.palette.text.primary}` : 'none',
+        outline: selected || hasSelected ? `2px solid ${theme.palette.text.primary}` : 'none',
         outlineOffset: -2,
         '&:focus-visible': { outline: '2px solid', outlineColor: theme.palette.primary.main },
       }}
@@ -326,6 +348,40 @@ function GroupHeader(props: {
       >
         {group.rows.length}
       </Box>
+      {onSelectGroup && (
+        <Box
+          component="button"
+          type="button"
+          data-group-chat={group.name}
+          aria-pressed={selected}
+          aria-label={`${selected ? 'Stop chatting about' : 'Chat about'} the group ${group.name}`}
+          title={selected ? 'Stop chatting about this group' : 'Chat about this group'}
+          // The header opens and closes the group. The button only selects it.
+          onClick={e => {
+            e.stopPropagation();
+            onSelectGroup();
+          }}
+          onKeyDown={e => e.stopPropagation()}
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 0.5,
+            minWidth: touch ? 44 : 32,
+            height: touch ? 44 : 32,
+            p: 0.5,
+            borderRadius: 1,
+            cursor: 'pointer',
+            font: 'inherit',
+            color: selected ? theme.palette.background.paper : 'inherit',
+            bgcolor: selected ? theme.palette.text.primary : 'transparent',
+            border: `1px solid ${selected ? theme.palette.text.primary : theme.palette.divider}`,
+            '&:focus-visible': { outline: '2px solid', outlineColor: theme.palette.primary.main },
+          }}
+        >
+          <ChatIcon />
+        </Box>
+      )}
     </Box>
   );
 }
@@ -334,6 +390,10 @@ export function IncidentRows(props: {
   rows: DiagnosisSummary[];
   selectedId?: string | null;
   onSelect?: (d: DiagnosisSummary) => void;
+  /** The alert name of the group that the chat is about, if any. */
+  selectedGroup?: string | null;
+  /** Selects (or, for the selected group, clears) a group for the chat. */
+  onSelectGroup?: (g: IncidentGroup) => void;
   touch?: boolean;
   disableNavigation?: boolean;
   onRerun?: (d: DiagnosisSummary) => Promise<void>;
@@ -368,6 +428,8 @@ export function IncidentRows(props: {
               toggle={() => toggle(g.name)}
               touch={!!props.touch}
               hasSelected={!isOpen && g.rows.some(d => d.id === props.selectedId)}
+              selected={props.selectedGroup === g.name}
+              onSelectGroup={props.onSelectGroup ? () => props.onSelectGroup!(g) : undefined}
             />
             {isOpen &&
               g.rows.map(d => (

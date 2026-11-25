@@ -4,8 +4,11 @@
  *   incidents.list  The incident summary (counts by severity and status) stays at the top. The
  *                   diagnoses list below it scrolls on its own. A row selects the incident for the
  *                   chat widget when the dashboard has one. Otherwise it opens the incident page.
- *   incidents.chat  The incident agent chat. It talks about the incident that the list widget
- *                   selected, or about the cluster in general when nothing is selected.
+ *                   The button on a group header selects the whole group for the chat.
+ *   incidents.chat  The incident agent chat. It talks about the incident or the group that the
+ *                   list widget selected, or about the cluster in general when nothing is selected.
+ * The selection is in the page URL (`.../incident/<id>` or `.../group/<alert name>` after the tab),
+ * so a link shows the same view and Back undoes a selection. See groupChat.ts.
  * Both reuse the code of the Incidents pages (DiagnosesTable, ChatPage parts, chat-data). They
  * fetch when the dashboard refresh signal changes, never on a layout change. The chat also polls
  * its own chat once a second while the agent answers, as the chat page does.
@@ -20,6 +23,7 @@ import React from 'react';
 import {
   cancelChat,
   createChat,
+  createGroupChat,
   sendMessage,
   useChat,
   useFavourites,
@@ -34,8 +38,17 @@ import {
   WidgetProps,
 } from './dashboardsContract';
 import { fetchAllDiagnoses, rerunDiagnosis, useSettings } from './data';
+import {
+  chatContextKey,
+  GROUP_PROMPTS,
+  groupChatRequest,
+  groupFocus,
+  incidentFocus,
+  incidentWord,
+  resolveSelection,
+} from './groupChat';
 import { IncidentHero } from './IncidentHero';
-import { IncidentRows } from './IncidentRows';
+import { IncidentGroup, IncidentRows } from './IncidentRows';
 import {
   backendUrl,
   DEFAULT_FILTER,
@@ -48,12 +61,13 @@ import {
 import { ModelPicker } from './ModelPicker';
 import { ScrollArea } from './ScrollArea';
 import {
-  getSelectedIncident,
   registerChatWidget,
-  selectIncident,
+  setSelection,
+  useFocus,
   useHasChatWidget,
-  useSelectedIncident,
+  useSelection,
 } from './selection';
+import { SEVERITY_WORD } from './severity';
 
 /** A scroll area that scrolls by touch, with a thin scrollbar that always shows (also in the kiosk). */
 const scrollSx = () => ({
@@ -134,6 +148,8 @@ function IncidentListWidget({
   editing,
   kiosk,
   cache,
+  focus: urlFocus,
+  setFocus: setUrlFocus,
 }: WidgetProps<IncidentListConfig>): JSX.Element {
   const settings = useSettings();
   const [reload, setReload] = React.useState(0);
@@ -146,17 +162,31 @@ function IncidentListWidget({
     },
     [settings]
   );
-  const selected = useSelectedIncident();
+  const selected = useSelection();
   const hasChat = useHasChatWidget();
+  const { focus, setFocus } = useFocus({ focus: urlFocus, setFocus: setUrlFocus });
   // The selection belongs to the list on screen: clear it when the list goes away.
-  React.useEffect(() => () => selectIncident(null), []);
+  React.useEffect(() => () => setSelection(null), []);
   const rows = React.useMemo(() => filterDiagnoses(state.rows ?? [], config), [state.rows, config]);
   const counts = React.useMemo(() => summariseDiagnoses(rows), [rows]);
-  const onSelect = React.useCallback((d: DiagnosisSummary) => {
-    selectIncident(
-      getSelectedIncident()?.id === d.id ? null : { id: d.id, alertName: d.alertName || d.id }
-    );
-  }, []);
+  // What the URL selects, found in the rows. A group holds the rows of this view, so the "Hide
+  // resolved" setting decides whether its resolved incidents are in it.
+  const resolved = React.useMemo(
+    () => resolveSelection(focus, state.rows ?? [], rows, config.openOnly !== false),
+    [focus, state.rows, rows, config.openOnly]
+  );
+  // Publishes the selection to the chat widget, an external store.
+  React.useEffect(() => setSelection(hasChat ? resolved : null), [resolved, hasChat]);
+  const onSelect = React.useCallback(
+    (d: DiagnosisSummary) =>
+      setFocus(resolved?.kind === 'incident' && resolved.id === d.id ? null : incidentFocus(d.id)),
+    [resolved, setFocus]
+  );
+  const onSelectGroup = React.useCallback(
+    (g: IncidentGroup) =>
+      setFocus(resolved?.kind === 'group' && resolved.name === g.name ? null : groupFocus(g.name)),
+    [resolved, setFocus]
+  );
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <Box sx={{ flex: 'none' }}>
@@ -184,8 +214,10 @@ function IncidentListWidget({
           <IncidentRows
             rows={rows}
             touch={kiosk}
-            selectedId={selected?.id ?? null}
+            selectedId={selected?.kind === 'incident' ? selected.id : null}
+            selectedGroup={selected?.kind === 'group' ? selected.name : null}
             onSelect={hasChat ? onSelect : undefined}
+            onSelectGroup={hasChat ? onSelectGroup : undefined}
             disableNavigation={editing}
             onRerun={editing ? undefined : rerun}
           />
@@ -253,12 +285,16 @@ function IncidentChatWidget({
   refreshSignal,
   reportRefreshed,
   kiosk,
+  focus: urlFocus,
+  setFocus: setUrlFocus,
 }: WidgetProps<IncidentChatConfig>): JSX.Element {
   const settings = useSettings();
-  const selected = useSelectedIncident();
+  const selected = useSelection();
+  const { setFocus } = useFocus({ focus: urlFocus, setFocus: setUrlFocus });
   React.useEffect(() => registerChatWidget(), []);
-  // One chat per context: the selected incident, or '' for the cluster in general.
-  const ctxKey = selected?.id ?? '';
+  // One chat per context: the selected incident, the selected group (in its open or all view), or
+  // '' for the cluster in general.
+  const ctxKey = chatContextKey(selected);
   const [chatIds, setChatIds] = React.useState<Record<string, string>>({});
   const chatId: string | undefined = chatIds[ctxKey];
   const models = useModels(settings);
@@ -303,10 +339,13 @@ function IncidentChatWidget({
     run(async () => {
       if (!chatId) {
         const key = ctxKey;
-        const newId = await createChat(settings, {
-          ...(model ? { model } : {}),
-          ...(selected ? { diagnosisId: selected.id } : {}),
-        });
+        const newId =
+          selected?.kind === 'group'
+            ? await createGroupChat(settings, groupChatRequest(selected), model || undefined)
+            : await createChat(settings, {
+                ...(model ? { model } : {}),
+                ...(selected ? { diagnosisId: selected.id } : {}),
+              });
         try {
           await sendMessage(settings, newId, text);
         } finally {
@@ -331,7 +370,8 @@ function IncidentChatWidget({
       chat.refresh();
     });
 
-  const prompts = selected ? INCIDENT_PROMPTS : EXAMPLE_PROMPTS;
+  const prompts =
+    selected?.kind === 'group' ? GROUP_PROMPTS : selected ? INCIDENT_PROMPTS : EXAMPLE_PROMPTS;
   const loadError = chat.error || models.error;
   return (
     <Box
@@ -359,14 +399,23 @@ function IncidentChatWidget({
             size="small"
             color="primary"
             variant="outlined"
-            label={`About incident: ${selected.alertName}`}
-            onDelete={() => selectIncident(null)}
+            data-chat-context={selected.kind}
+            label={
+              selected.kind === 'group'
+                ? `About group: ${selected.name} · ${incidentWord(
+                    selected.ids.length
+                  )} · worst ${SEVERITY_WORD[selected.worst].toLowerCase()}${
+                    selected.view === 'open' ? ' · open only' : ''
+                  }`
+                : `About incident: ${selected.alertName}`
+            }
+            onDelete={() => setFocus(null)}
             sx={{ maxWidth: '100%' }}
           />
         ) : (
           <Typography variant="caption" color="text.secondary">
-            No incident selected. Select one in the list to ask about it, or ask about the cluster
-            in general.
+            No incident selected. Select one or a whole group in the list to ask about it, or ask
+            about the cluster in general.
           </Typography>
         )}
       </Box>
@@ -394,7 +443,9 @@ function IncidentChatWidget({
                 color="text.secondary"
                 sx={{ fontSize: 13, mb: 1 }}
               >
-                {selected
+                {selected?.kind === 'group'
+                  ? `Ask the agent about the ${selected.name} group`
+                  : selected
                   ? `Ask the agent about ${selected.alertName}`
                   : 'What do you want to know about the cluster?'}
               </Typography>
@@ -454,7 +505,7 @@ export const incidentChatWidget: WidgetDefinition<IncidentChatConfig> = {
   type: 'incidents.chat',
   title: 'Incident chat',
   description:
-    'Chat with the incident agent. It talks about the incident selected in an Incidents widget.',
+    'Chat with the incident agent. It talks about the incident or the group of incidents selected in an Incidents widget.',
   icon: 'mdi:chat-processing-outline',
   category: 'Monitoring',
   defaultSize: { w: 6, h: 14 },

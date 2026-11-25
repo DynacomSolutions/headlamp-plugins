@@ -87,9 +87,40 @@ layout change. The Incidents pages are unchanged.
   The chat then talks about that incident (`diagnosisId`). Each incident keeps its own chat while the
   dashboard stays open. Without a selection, the chat is a general chat about the cluster and the
   open incidents, with a hint above it.
+- **Chat about a group.** With a chat widget on the page, each group header has a "Chat about this
+  group" button (a chat bubble at the right). It selects the whole group for the chat. The rest of
+  the header still opens and closes the group. The selected group has the same outline as a selected
+  row, and the button shows as pressed. The chat header chip then reads, for example,
+  `About group: KubePodCrashLooping · 12 incidents · worst critical · open only`. A second click on
+  the button, or the chip's close button, clears it. Selecting a row clears a group selection, and
+  selecting a group clears a row selection. The suggested prompts change to ones for a group ("What do
+  these incidents have in common?", "Is this one root cause?").
+- **The group is what the list shows.** It holds the incidents of that alert name after the widget
+  filters. With "Hide resolved" on (the default) the group holds open incidents only, and the chip says
+  `open only`. With it off, resolved incidents are in the group too. The chat keeps one thread for each
+  group and view, so a new fire does not empty a chat that is running.
+- **What the agent receives for a group** (`src/groupChat.ts`, `groupChatRequest`). The chat uses the
+  multi-incident request of the Incidents page, `POST /api/chats`, with one more field for large groups:
+  - The newest 10 incidents go as `diagnosisIds`. The agent puts the same detail for each of them in the
+    prompt as for a single incident (alert, summary, likely cause, fixes, evidence), with one shared size
+    budget.
+  - The next 500 incidents, newest first, go as `summaryIds`. The agent puts one short line for each of
+    them (id, severity, status, time, namespace, pod, node, cause) in the prompt, in a fixed budget of
+    characters. Lines that do not fit are counted, not cut in half.
+  - A group of more than 510 incidents sends `groupOmitted` with the number left out. The prompt tells
+    the agent how many incidents the operator chose in total, and that it can read a full diagnosis with
+    its tools.
+  - `groupName` names the group. The agent keeps all of these with the chat.
+- **The selection is in the URL** as path segments after the tab, so a link reproduces the view and Back
+  and Forward undo a selection (each selection is one history entry):
+  `/dashboards/<name>/<tab>/incident/<diagnosis id>` and `/dashboards/<name>/<tab>/group/<alert name>`.
+  The Dashboards plugin keeps these segments opaque and gives them to the widgets as `focus` and
+  `setFocus` (see its README). A link to an incident or group that the view does not hold shows no
+  selection. With an older Dashboards plugin that gives no `focus`, the two widgets keep the selection in
+  memory and the URL stays unchanged.
 - Without a chat widget on the dashboard, a row click opens the incident page.
 - Both widgets come from this one bundle, so they share a small in-memory store
-  (`src/selection.ts`). The selection is not saved.
+  (`src/selection.ts`). The list widget turns the URL focus into a selection and publishes it there.
 
 ## Notifications
 

@@ -357,7 +357,11 @@ const publishSchema = z.object({
 
 const rerunSchema = z.object({ model: z.string().max(200).nullish() }).strict();
 const createChatSchema = z
-  .object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional(), diagnosisIds: z.array(z.string().min(1).max(200)).min(1).max(20).optional() })
+  .object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional(), diagnosisIds: z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
+    groupName: z.string().min(1).max(200).optional(),
+    summaryIds: z.array(z.string().min(1).max(200)).min(1).max(500).optional(),
+    groupOmitted: z.number().int().min(1).max(1_000_000).optional(),
+  })
   .strict();
 const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional(), push: z.string().regex(/^[0-9a-f]{32}$/).optional() });
 const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional() });
