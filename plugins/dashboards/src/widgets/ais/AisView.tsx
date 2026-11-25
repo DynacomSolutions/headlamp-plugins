@@ -346,7 +346,7 @@ function IdentityLine(props: {
   // countdown. The text is as high as the lane allows.
   const lane = Math.max(1, Math.min(LANE_MAX, Math.floor(height / Math.max(1, windows.length))));
   const barHeight = Math.max(1, Math.min(pool ? 5 : BAR_MAX, lane - 2));
-  const countdownFont = Math.max(COUNTDOWN_FONT_MIN, Math.min(COUNTDOWN_FONT_MAX, lane + 2));
+  const countdownFont = Math.max(COUNTDOWN_FONT_MIN, Math.min(COUNTDOWN_FONT_MAX, lane + 1));
   const name = (
     <Box component="span" sx={{ fontSize: pool ? 14 : 13, fontWeight: pool ? 600 : undefined }}>
       {identity.name}
