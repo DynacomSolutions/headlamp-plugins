@@ -6,7 +6,7 @@ import type { Metrics } from '../metrics.js';
 import type { PushService } from '../push/service.js';
 import type { StorageStore } from './store.js';
 import { StorageApply } from './apply.js';
-import { authenticatedMachine, operatorAuth, sessionNetworks, tokenFile, type SessionNetworks } from './auth.js';
+import { authenticatedMachine, operatorAuth, sessionNetworks, tokenFile, type SessionTrust } from './auth.js';
 import { diagnosticHeader, ScheduledDiagnostic } from './diagnostic.js';
 import { notificationAuthority, SessionNotificationAuthority, type StorageNotificationAuthority } from './notification-authority.js';
 import { enrolSchema, StorageNotifications, subscriptionSchema, disabledCoverage, coverageMetrics } from './notifications.js';
@@ -38,7 +38,7 @@ type Settings = {
   reconcileToken: () => string;
   cluster: string;
   humanGroups: ReadonlySet<string>;
-  sessionNetworks?: SessionNetworks;
+  session?: SessionTrust;
   authority?: StorageNotificationAuthority;
   disposable: ReadonlySet<string>;
   applyEnabled: boolean;
@@ -79,9 +79,16 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   } catch {
     throw new Error('Invalid storage operator configuration');
   }
-  let session: SessionNetworks | undefined;
+  let session: SessionTrust | undefined;
   try {
-    session = sessionNetworks(z.array(z.string().min(1).max(64)).max(64).parse(JSON.parse(env.STORAGE_SESSION_PROXY_CIDRS || '[]')));
+    const networks = sessionNetworks(z.array(z.string().min(1).max(64)).max(64).parse(JSON.parse(env.STORAGE_SESSION_PROXY_CIDRS || '[]')));
+    const port = env.STORAGE_SESSION_PORT;
+    // Both settings or neither. Session trust lives only on its own listener.
+    if (Boolean(networks) !== (port !== undefined && port !== '')) throw new Error('Session trust needs both settings');
+    if (networks) {
+      if (!/^\d{1,5}$/.test(port!) || Number(port) > 65535) throw new Error('Invalid session port');
+      session = { networks, port: Number(port) };
+    }
   } catch {
     throw new Error('Invalid storage session proxy configuration');
   }
@@ -106,7 +113,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     filesystemPolicies,
     partialScanScopes,
     humanGroups: new Set(groups),
-    sessionNetworks: session,
+    session,
     // An external authority wins. Without one, a trusted Headlamp session is its own authority.
     authority: notificationAuthority(env) ?? (session ? new SessionNotificationAuthority() : undefined),
     scannerToken: tokenFile(env.STORAGE_SCANNER_TOKEN_FILE),
@@ -130,6 +137,9 @@ export async function storageHttp(deps: HttpHelpers & {
   const active = settings(deps.env ?? process.env);
   const now = deps.now ?? Date.now;
   if (active && !store) throw new Error('Storage incidents require the shared Postgres store');
+  if (active?.session && active.session.port !== 0 && active.session.port === config.port) {
+    throw new Error('Invalid storage session proxy configuration');
+  }
 
   const backend = active && store ? await start(active, store) : undefined;
 
@@ -160,7 +170,7 @@ export async function storageHttp(deps: HttpHelpers & {
     return parsed.data;
   }
 
-  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.sessionNetworks);
+  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.session);
   const diagnostic = new ScheduledDiagnostic(config.dataDir, now);
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {
@@ -259,6 +269,12 @@ export async function storageHttp(deps: HttpHelpers & {
       const counts = new Map(current.receipts.map(row => [row.status, row.count]));
       for (const status of ['queued', 'removed', 'partial', 'stale', 'blocked', 'failed']) metrics.set('headlamp_agent_storage_receipts', { status }, counts.get(status) ?? 0);
       await backend.notifications.metrics(metrics);
+    },
+    /** The port of the dedicated session listener, when session trust is on. 0 means the system picks one. */
+    get sessionPort() { return active?.session?.port; },
+    /** Called with the bound port, so session trust matches only the real session listener. */
+    sessionBound(port: number) {
+      if (active?.session) active.session.port = port;
     },
     async drain() {
       await backend?.apply.drain();

@@ -209,8 +209,13 @@ function parseStorageChat(raw: unknown) {
 
 export const drivePath = (id: string) => `/incident/drives/${encodeURIComponent(id)}`;
 export const chatPath = (id: string) => `/incident/chat/${encodeURIComponent(id)}`;
+/**
+ * Storage calls use the dedicated `session` Service port of the agent, the only port where the agent
+ * trusts the Headlamp session. Every other agent call keeps the configured port.
+ */
+export const STORAGE_SERVICE_PORT = 'session';
 const storageUrl = (settings: Settings, path: string) =>
-  backendUrl(settings, `/api/storage${path}`);
+  backendUrl({ ...settings, servicePort: STORAGE_SERVICE_PORT }, `/api/storage${path}`);
 
 async function request(url: string, body?: unknown, unavailableMessage?: string): Promise<unknown> {
   try {

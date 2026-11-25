@@ -40,7 +40,10 @@ const SESSION_VERSION = '1';
  */
 export class SessionNotificationAuthority implements StorageNotificationAuthority {
   async resolve(kubernetes: KubernetesIdentity) {
-    if (kubernetes.username !== SESSION_OPERATOR || kubernetes.uid !== null) return;
+    // Every other identity gets a clear revoked answer, so a human sees 403 and not an outage.
+    if (kubernetes.username !== SESSION_OPERATOR || kubernetes.uid !== null) {
+      return { kubernetes, recipient: null, entitlement: { status: 'revoked' as const } };
+    }
     return {
       kubernetes,
       recipient: SESSION_RECIPIENT,
