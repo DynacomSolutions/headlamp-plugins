@@ -56,9 +56,9 @@ export class ScheduledDiagnostic {
         const expires = Number(deadline);
         if (now < start || expires <= now || expires > start + maxStartDelaySeconds
             || generation !== diagnosticGeneration()) return undefined;
-        // Consume before any node lease or scanner request. A failed reconcile cannot reuse the claim.
-        unlinkSync(arm);
+        // Spend the match even if the unlink fails. Only a successful unlink grants capture.
         this.spent = true;
+        unlinkSync(arm);
         return { job, nodes: new Set([first, second]) };
       } finally {
         closeSync(parent);

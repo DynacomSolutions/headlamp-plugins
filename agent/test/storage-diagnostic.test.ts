@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { existsSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer, request, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,8 +17,10 @@ const replacement = `${job.slice(0, -1)}2`;
 const nodes = ['worker-1', 'worker-2', 'worker-3'];
 const dispose: Array<() => unknown | Promise<unknown>> = [];
 vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
+vi.mock('node:fs', { spy: true });
 
 afterEach(async () => {
+  vi.mocked(unlinkSync).mockClear();
   for (const close of dispose.splice(0).reverse()) await close();
 });
 
@@ -31,7 +33,8 @@ function fixture() {
   mkdirSync(dataDir, { mode: 0o700 });
   mkdirSync(dir, { mode: 0o700 });
   function write(expires = start + 60, generation = diagnosticGeneration(), mode = 0o600) {
-    writeFileSync(arm, `${job} ${expires} ${generation} ${nodes[0]} ${nodes[1]}\n`, { flag: 'wx', mode });
+    writeFileSync(arm, `${job} ${expires} ${generation} ${nodes[0]} ${nodes[1]}\n`, { flag: 'wx', mode: 0o600 });
+    chmodSync(arm, mode);
   }
   return { root, dataDir, dir, arm, write };
 }
@@ -76,6 +79,21 @@ it('rejects expired or broad windows, stale generations, and non-private control
   expect(existsSync(arm)).toBe(false);
   write();
   expect(claim.claim([job])).toBeUndefined();
+});
+
+it('spends a validated match when unlink fails and refuses a duplicate after recovery', () => {
+  const { dataDir, arm, write } = fixture();
+  const claim = new ScheduledDiagnostic(dataDir, () => (start + 1) * 1000);
+  const unlink = vi.mocked(unlinkSync);
+  write();
+  unlink.mockImplementationOnce(() => { throw new Error('Fixture unlink failure'); });
+  expect(claim.claim([job])).toBeUndefined();
+  expect(unlink).toHaveBeenCalledTimes(1);
+  expect(existsSync(arm)).toBe(true);
+  expect(claim.claim([job])).toBeUndefined();
+  expect(unlink).toHaveBeenCalledTimes(1);
+  unlinkSync(arm);
+  expect(existsSync(arm)).toBe(false);
 });
 
 async function listen(server: Server): Promise<string> {
