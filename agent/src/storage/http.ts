@@ -7,6 +7,7 @@ import type { PushService } from '../push/service.js';
 import type { StorageStore } from './store.js';
 import { StorageApply } from './apply.js';
 import { authenticatedMachine, operatorAuth, tokenFile } from './auth.js';
+import { diagnosticHeader, ScheduledDiagnostic } from './diagnostic.js';
 import { notificationAuthority, type NotificationAuthority } from './notification-authority.js';
 import { enrolSchema, StorageNotifications, subscriptionSchema, disabledCoverage, coverageMetrics } from './notifications.js';
 import { StorageReconciler } from './reconcile.js';
@@ -151,6 +152,7 @@ export async function storageHttp(deps: HttpHelpers & {
   }
 
   const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set());
+  const diagnostic = new ScheduledDiagnostic(config.dataDir, now);
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {
     const method = req.method;
@@ -165,7 +167,8 @@ export async function storageHttp(deps: HttpHelpers & {
     if (root === 'reconcile' && parts.length === 1 && method === 'POST') {
       if (!authenticatedMachine(req, active.reconcileToken())) throw new StorageError(401, 'Reconcile authentication required');
       const { triggers } = await body(req, reconcileSchema, MAX_RECONCILE_BODY_BYTES);
-      const scanned = await reconcile.run(triggers);
+      const job = diagnostic.claim(req.headersDistinct?.[diagnosticHeader]);
+      const scanned = await reconcile.run(triggers, job);
       const applied = await apply.retryPending();
       const ok = scanned && applied;
       notifications.kick();

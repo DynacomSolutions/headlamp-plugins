@@ -1,3 +1,4 @@
+import type { DiagnosticDispatch } from './diagnostic.js';
 import { randomUUID } from 'node:crypto';
 import type { Metrics } from '../metrics.js';
 import { raiseScanQuestion } from './findings.js';
@@ -38,7 +39,7 @@ export class StorageReconciler {
     }
   }
 
-  async run(triggers: Trigger[]): Promise<boolean> {
+  async run(triggers: Trigger[], diagnostic?: DiagnosticDispatch): Promise<boolean> {
     const { nodes } = this.deps;
     const byNode = new Map<string, Trigger[]>();
     for (const trigger of triggers) {
@@ -46,11 +47,13 @@ export class StorageReconciler {
       list.push(trigger);
       byNode.set(trigger.node, list);
     }
-    const results = await Promise.allSettled([...nodes].map(node => this.scanNode(node, byNode.get(node) ?? [])));
+    const results = await Promise.allSettled([...nodes].map(node => this.scanNode(
+      node, byNode.get(node) ?? [], diagnostic?.nodes.has(node) ? diagnostic.job : undefined,
+    )));
     return [...byNode.keys()].every(node => nodes.has(node)) && results.every(result => result.status === 'fulfilled' && result.value);
   }
 
-  private async scanNode(node: string, triggers: Trigger[]): Promise<boolean> {
+  private async scanNode(node: string, triggers: Trigger[], diagnosticJob?: string): Promise<boolean> {
     const { store, scanner, now, metrics, filesystemPolicies } = this.deps;
     const owner = randomUUID();
     let claimed = false;
@@ -77,7 +80,7 @@ export class StorageReconciler {
       claimed = true;
       failure = 'scanner_error';
       const requested = now();
-      const scan = await scanner.scan(node);
+      const scan = await scanner.scan(node, diagnosticJob);
       const received = now();
       const scannedAt = Date.parse(scan.scannedAt);
       if (received >= requested + SCAN_TIMEOUT_MS) throw new RequestDeadlineError();
