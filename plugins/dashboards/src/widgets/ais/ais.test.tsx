@@ -17,9 +17,9 @@ import { LinkContext } from '../../links';
 import { parsePanel } from '../panels/model';
 import {
   AisView,
-  COUNTDOWN_SLOT,
-  countdownMode,
+  COUNTDOWN_WIDTH,
   isStacked,
+  LINE_HEIGHT,
   PERCENT_WIDTH,
   STACK_TILE_COLUMNS,
   STACK_WIDTH,
@@ -842,21 +842,40 @@ describe('reset countdown', () => {
     expect(blue.querySelector('[data-countdown-past]')?.getAttribute('data-countdown')).toBe(
       'Weekly'
     );
-    // The cells stay, so the columns of the lines line up.
-    expect(blue.querySelectorAll('[data-countdowns] > div')).toHaveLength(3);
+    // The 5-hour lane has no reset: its countdown cell is empty, not "now".
+    expect(blue.querySelector('[data-lane="5-hour"] [data-countdown-text]')).toBeNull();
     expect(blue.textContent).not.toMatch(/-\d/);
   });
 
-  it('gives every cell the same fixed width and a gap, so two countdowns never touch', () => {
+  it('puts each countdown in the lane of its own bar, with the same fixed width', () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
     const c = draw();
-    const cells = Array.from(c.querySelectorAll('[data-countdowns] > div')) as HTMLElement[];
+    const cells = Array.from(c.querySelectorAll('[data-lane] > [data-countdown]')) as HTMLElement[];
     expect(cells.length).toBeGreaterThan(0);
-    const style = (e: HTMLElement) => getComputedStyle(e);
     for (const cell of cells) {
-      expect(style(cell).width).toBe(`${COUNTDOWN_SLOT}px`);
-      expect(style(cell).paddingRight).toBe('8px');
-      expect(style(cell).overflow).toBe('hidden');
+      expect(cell.getAttribute('data-countdown')).toBe(
+        cell.parentElement?.getAttribute('data-lane')
+      );
+      expect(getComputedStyle(cell).width).toBe(`${COUNTDOWN_WIDTH}px`);
+      expect(getComputedStyle(cell).overflow).toBe('hidden');
+    }
+    // The cell stands after the track, at the right end of the bar.
+    const lane = rowNamed(c, 'red').querySelector('[data-lane]') as HTMLElement;
+    expect(lane.firstElementChild?.hasAttribute('data-track')).toBe(true);
+    expect(lane.lastElementChild?.hasAttribute('data-countdown-text')).toBe(false);
+    expect(lane.lastElementChild?.getAttribute('data-countdown')).toBe(
+      lane.getAttribute('data-lane')
+    );
+  });
+
+  it('keeps a line at the same height, as the lanes fill it', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const c = draw();
+    for (const row of Array.from(c.querySelectorAll('[data-ais-row]')) as HTMLElement[]) {
+      expect(getComputedStyle(row).height).toBe(`${LINE_HEIGHT}px`);
+      const lanes = Array.from(row.querySelectorAll('[data-lane]')) as HTMLElement[];
+      const sum = lanes.reduce((n, l) => n + parseFloat(getComputedStyle(l).height), 0);
+      expect(sum).toBeLessThanOrEqual(LINE_HEIGHT);
     }
   });
 
@@ -868,50 +887,37 @@ describe('reset countdown', () => {
     }
   });
 
-  it('decides how many countdown cells fit on the width of the row', () => {
-    expect(countdownMode(0, 3, true)).toBe('all');
-    expect(countdownMode(1400, 3, true)).toBe('all');
-    expect(countdownMode(560, 3, true)).toBe('worst');
-    expect(countdownMode(420, 3, false)).toBe('worst');
-    expect(countdownMode(300, 3, false)).toBe('none');
-    expect(countdownMode(1400, 0, true)).toBe('none');
-    // The cells that the mode keeps never take the room of the percentage.
-    expect(PERCENT_WIDTH).toBeGreaterThanOrEqual(40);
-  });
+  it.each([300, 420, 487, 570, 1400])(
+    'at %i px every bar draws its countdown and the percentage stays in full',
+    width => {
+      vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+      const c = withWidth(width, draw);
+      expect(c.querySelector('[data-countdown-mode]')).toBeNull();
+      const red = rowNamed(c, 'red');
+      expect(texts(red)).toEqual({
+        '5-hour': '5h 12m',
+        Weekly: '3d 4h',
+        'Weekly (Fable)': '12m',
+      });
+      // A past reset shows "now" and a missing reset shows no text, at every width.
+      expect(texts(rowNamed(c, 'blue'))).toEqual({ Weekly: 'now' });
+      // A model window draws its bar and countdown but never sets the line.
+      expect(red.querySelector('[data-ais-status]')?.textContent).toBe('50%');
+      expect(red.querySelector('[data-ais-status]')?.getAttribute('data-status')).toBe('ok');
+      for (const row of Array.from(c.querySelectorAll('[data-ais-row]')) as HTMLElement[]) {
+        expect(getComputedStyle(row).gridTemplateColumns).toMatch(
+          new RegExp(`${PERCENT_WIDTH}px$`)
+        );
+      }
+    }
+  );
 
-  it('on a narrow widget draws only the countdown of the window that sets the line', () => {
+  it('keeps the other windows in the tooltip text too', () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const c = withWidth(560, draw);
-    expect(c.querySelector('[data-ais]')?.getAttribute('data-countdown-mode')).toBe('worst');
-    const red = rowNamed(c, 'red');
-    // "Weekly (Fable)" is fuller, but a model window never sets the line.
-    expect(texts(red)).toEqual({ Weekly: '3d 4h' });
-    expect(red.querySelectorAll('[data-countdowns] > div')).toHaveLength(1);
-    // The other countdowns stay in the tooltip text.
+    const red = rowNamed(withWidth(420, draw), 'red');
     expect(red.querySelector('[data-bar]')?.getAttribute('aria-label')).toMatch(
       /5-hour: .*resets .*Weekly \(Fable\): .*resets/
     );
-    // A line with a past reset shows "now" in the same single cell.
-    expect(texts(rowNamed(c, 'blue'))).toEqual({ Weekly: 'now' });
-  });
-
-  it('on a very narrow widget draws no countdown and keeps the percentage', () => {
-    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const c = withWidth(400, draw);
-    expect(c.querySelector('[data-ais]')?.getAttribute('data-countdown-mode')).toBe('none');
-    expect(c.querySelector('[data-countdowns]')).toBeNull();
-    const red = rowNamed(c, 'red');
-    expect(red.querySelector('[data-ais-status]')?.textContent).toBe('50%');
-    expect(getComputedStyle(red as HTMLElement).gridTemplateColumns).toMatch(
-      new RegExp(`${PERCENT_WIDTH}px$`)
-    );
-  });
-
-  it('on a wide widget draws every countdown', () => {
-    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
-    const c = withWidth(1400, draw);
-    expect(c.querySelector('[data-ais]')?.getAttribute('data-countdown-mode')).toBe('all');
-    expect(Object.keys(texts(rowNamed(c, 'red')))).toHaveLength(3);
   });
 
   it('keeps the full reset time in the tooltip text of the bars', () => {
