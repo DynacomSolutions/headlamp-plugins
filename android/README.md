@@ -146,6 +146,18 @@ The workflow needs these repository secrets: the four `HEADLAMPS_UPLOAD_*` value
 The workflow checks the signing certificate against a fixed SHA-256 fingerprint.
 It keeps the bundle and the R8 `mapping.txt` as an artifact for three days.
 
+## Store listing
+
+The Play store listing comes from `fastlane/metadata/android/<language>/`.
+
+- `title.txt` is the app title ("Headlamps").
+- `short_description.txt` and `full_description.txt` are optional. Play keeps the text that it holds when a file is missing.
+- `images/icon.png` is the 512 by 512 store icon. Its source is `images/icon.svg`. Render it again with `rsvg-convert -w 512 -h 512 icon.svg -o icon.png`.
+
+A push to `main` that changes these files publishes the listing only. It makes no bundle and needs no new version code.
+For a manual run, set the `listing_only` input. The run is a dry run unless `publish` is also set.
+The script replaces the icon only when its SHA-256 differs from the icon on Play.
+
 ## First release (one time, for the owner)
 
 Play has no API to create an app or to upload the first bundle. Do these steps by hand.

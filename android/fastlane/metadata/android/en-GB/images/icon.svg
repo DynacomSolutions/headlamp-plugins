@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <!-- Source of icon.png. Same art as android/app/src/main/res/drawable/ic_launcher_foreground.xml on the icon_background colour. -->
+  <rect width="108" height="108" fill="#1F2A37"/>
+  <!-- Headband -->
+  <path fill="#B0BEC5" d="M24,58 Q54,70 84,58 L84,64 Q54,76 24,64 Z"/>
+  <!-- Lamp body -->
+  <path fill="#ECEFF1" d="M38,40 L70,40 Q74,40 74,44 L74,62 Q74,66 70,66 L38,66 Q34,66 34,62 L34,44 Q34,40 38,40 Z"/>
+  <!-- Lens -->
+  <path fill="#FFC107" d="M54,53 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0"/>
+</svg>
