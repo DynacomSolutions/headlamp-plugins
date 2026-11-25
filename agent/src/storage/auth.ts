@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
+import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { requestJson } from './transport.js';
@@ -68,6 +69,33 @@ const accessSchema = z.object({ status: z.object({ allowed: z.boolean(), denied:
 
 const REVIEW_LIMIT = 64 * 1024;
 
+export const SESSION_OPERATOR = 'headlamp-session';
+const MAX_SESSION_CIDRS = 64;
+
+export type SessionNetworks = { has(address: string | undefined): boolean };
+
+/** Parses the CIDRs whose peers the agent trusts as the Headlamp session. Throws on any invalid entry. */
+export function sessionNetworks(cidrs: readonly string[]): SessionNetworks | undefined {
+  if (cidrs.length > MAX_SESSION_CIDRS) throw new Error('Too many session CIDRs');
+  if (!cidrs.length) return;
+  const list = new BlockList();
+  for (const cidr of cidrs) {
+    const match = /^([0-9a-fA-F:.]+)\/(\d{1,3})$/.exec(cidr);
+    const family = match ? isIP(match[1]) : 0;
+    if (!match || !family) throw new Error('Invalid session CIDR');
+    const prefix = Number(match[2]);
+    if (prefix > (family === 4 ? 32 : 128)) throw new Error('Invalid session CIDR');
+    list.addSubnet(match[1], prefix, family === 4 ? 'ipv4' : 'ipv6');
+  }
+  return {
+    has(address) {
+      const plain = address?.replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/i, '').replace(/%.*$/, '');
+      const family = plain ? isIP(plain) : 0;
+      return family !== 0 && list.check(plain!, family === 4 ? 'ipv4' : 'ipv6');
+    },
+  };
+}
+
 export type KubernetesIdentity = { username: string; uid: string | null };
 
 export type Operator = {
@@ -81,6 +109,7 @@ export function operatorAuth(
   config: Pick<Config, 'kubeApi' | 'kubeCaFile' | 'allowedOrigins'>,
   headlampCluster: string,
   humanGroups: ReadonlySet<string>,
+  session?: SessionNetworks,
 ) {
   const isMember = (groups: string[]) => groups.some(group => humanGroups.has(group));
 
@@ -89,6 +118,23 @@ export function operatorAuth(
     const standard = req.headers.authorization;
     const direct = explicit ?? standard;
     const token = direct === undefined ? cookieBearer(req.headers.cookie, headlampCluster) : bearer(direct);
+    if (!token && direct === undefined && session?.has(req.socket.remoteAddress)) {
+      // kube-apiserver strips the user's credentials on the service proxy, so the peer address
+      // (never a forwarded header) is the only proof that the request came through Headlamp.
+      if (verb !== 'get') {
+        const origin = req.headers.origin;
+        if (origin && !config.allowedOrigins.includes(origin)) throw new StorageError(403, 'Origin not allowed');
+        if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) {
+          throw new StorageError(415, 'The content type must be application/json');
+        }
+      }
+      return {
+        name: SESSION_OPERATOR,
+        identity: { username: SESSION_OPERATOR, uid: null },
+        requireRead: async () => {},
+        checkBody() {},
+      };
+    }
     if (!token) throw new StorageError(401, 'Operator authentication required');
     if (!humanGroups.size) throw new StorageError(403, 'Operator membership is not configured');
     if (verb !== 'get') {

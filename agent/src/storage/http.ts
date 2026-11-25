@@ -6,9 +6,9 @@ import type { Metrics } from '../metrics.js';
 import type { PushService } from '../push/service.js';
 import type { StorageStore } from './store.js';
 import { StorageApply } from './apply.js';
-import { authenticatedMachine, operatorAuth, tokenFile } from './auth.js';
+import { authenticatedMachine, operatorAuth, sessionNetworks, tokenFile, type SessionNetworks } from './auth.js';
 import { diagnosticHeader, ScheduledDiagnostic } from './diagnostic.js';
-import { notificationAuthority, type NotificationAuthority } from './notification-authority.js';
+import { notificationAuthority, SessionNotificationAuthority, type StorageNotificationAuthority } from './notification-authority.js';
 import { enrolSchema, StorageNotifications, subscriptionSchema, disabledCoverage, coverageMetrics } from './notifications.js';
 import { StorageReconciler } from './reconcile.js';
 import { StorageIncident } from './service.js';
@@ -38,7 +38,8 @@ type Settings = {
   reconcileToken: () => string;
   cluster: string;
   humanGroups: ReadonlySet<string>;
-  authority?: NotificationAuthority;
+  sessionNetworks?: SessionNetworks;
+  authority?: StorageNotificationAuthority;
   disposable: ReadonlySet<string>;
   applyEnabled: boolean;
   holderEvidenceExpected: boolean;
@@ -78,6 +79,12 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   } catch {
     throw new Error('Invalid storage operator configuration');
   }
+  let session: SessionNetworks | undefined;
+  try {
+    session = sessionNetworks(z.array(z.string().min(1).max(64)).max(64).parse(JSON.parse(env.STORAGE_SESSION_PROXY_CIDRS || '[]')));
+  } catch {
+    throw new Error('Invalid storage session proxy configuration');
+  }
   const applyEnabled = env.STORAGE_APPLY_ENABLED === 'true';
   const holderEvidenceExpected = applyEnabled || disposable.size > 0 || env.STORAGE_EXPECT_HOLDER_EVIDENCE !== 'false';
   let partialScanScopes: ReadonlyMap<string, ExpectedScopes>;
@@ -99,7 +106,9 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     filesystemPolicies,
     partialScanScopes,
     humanGroups: new Set(groups),
-    authority: notificationAuthority(env),
+    sessionNetworks: session,
+    // An external authority wins. Without one, a trusted Headlamp session is its own authority.
+    authority: notificationAuthority(env) ?? (session ? new SessionNotificationAuthority() : undefined),
     scannerToken: tokenFile(env.STORAGE_SCANNER_TOKEN_FILE),
     reconcileToken: tokenFile(env.STORAGE_RECONCILE_TOKEN_FILE),
     cluster: env.STORAGE_HEADLAMP_CLUSTER ?? '',
@@ -151,7 +160,7 @@ export async function storageHttp(deps: HttpHelpers & {
     return parsed.data;
   }
 
-  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set());
+  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.sessionNetworks);
   const diagnostic = new ScheduledDiagnostic(config.dataDir, now);
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {

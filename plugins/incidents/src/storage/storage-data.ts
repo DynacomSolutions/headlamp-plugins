@@ -228,7 +228,9 @@ async function request(url: string, body?: unknown, unavailableMessage?: string)
   } catch (error) {
     const status = (error as { status?: number })?.status;
     if (status === 401)
-      throw new Error('Sign in with a human operator token to access storage incidents.');
+      throw new Error(
+        "The storage agent did not accept this Headlamp session. Reload the page. If this stays, check the agent's STORAGE_SESSION_PROXY_CIDRS."
+      );
     if (status === 403) throw new Error('Storage operator permission required.');
     if (unavailableMessage) throw new Error(unavailableMessage);
     throw error;

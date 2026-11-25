@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { generateVapidKeys, subscriptionId } from '../src/push/webpush.js';
 import { startServer } from '../src/server.js';
+import { sessionNetworks } from '../src/storage/auth.js';
+import { recipientKey, SessionNotificationAuthority } from '../src/storage/notification-authority.js';
 import { StorageQueries, StorageStore } from '../src/storage/store.js';
 import type { Approval, Scan, ScanChecks } from '../src/storage/types.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
@@ -92,7 +94,7 @@ type NodeFixture = {
 };
 
 async function fixture(options: {
-  disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; authorityConfigured?: boolean;
+  disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; authorityConfigured?: boolean; sessionCidrs?: string[];
   contained?: boolean; policyMount?: string; policyDevice?: string;
   partialScopes?: Record<string, Record<string, string>>;
   policies?: Record<string, { mount: string; device: string }[]>;
@@ -248,6 +250,7 @@ async function fixture(options: {
     STORAGE_RECONCILE_TOKEN_FILE: machineFile,
     STORAGE_HEADLAMP_CLUSTER: 'example',
     ...(options.operatorGroups === null ? {} : { STORAGE_OPERATOR_GROUPS: JSON.stringify(options.operatorGroups ?? [operatorGroup]) }),
+    ...(options.sessionCidrs ? { STORAGE_SESSION_PROXY_CIDRS: JSON.stringify(options.sessionCidrs) } : {}),
     ...(authority ? {
       STORAGE_NOTIFICATION_AUTHORITY_URL: `${authority}/entitlement`,
       STORAGE_NOTIFICATION_AUTHORITY_TOKEN_FILE: authorityFile,
@@ -401,6 +404,79 @@ describe('Storage incident normal entry points', () => {
     const f = await fixture({ operatorGroups: groups });
     expect((await f.call(`${api}/incident`)).status).toBe(403);
     expect(f.reviews.every(review => review.path.endsWith('/selfsubjectreviews'))).toBe(true);
+  });
+
+  describe('trusted Headlamp session', () => {
+    const trusted = ['127.0.0.0/31'];
+    const unsetGroups = { operatorGroups: null, sessionCidrs: trusted };
+
+    it('allows reads, writes and approvals from a trusted peer without a token, and no human RBAC reviews', async () => {
+      const f = await fixture({ ...unsetGroups, disposable: true });
+      expect((await f.reconcile()).status).toBe(200);
+      f.reviews.length = 0;
+      const parentResponse = await f.call(`${api}/incident`, { token: false });
+      expect(parentResponse.status).toBe(200);
+      const chat = `${api}/incident/chat/${parentResponse.data.incident.chatId}`;
+      expect((await f.call(chat, { token: false })).status).toBe(200);
+      const send = (headers?: HeadersInit) => f.call(`${chat}/messages`, { token: false, headers, data: { text: 'inventory' } });
+      expect((await send()).status).toBe(200);
+      expect((await send({ origin })).status).toBe(200);
+      const approve = `${api}/incident/plans/${randomUUID()}/approve`;
+      const itemIds = [randomUUID()];
+      expect((await f.call(approve, { token: false, data: { itemIds } })).status).toBe(404);
+      expect((await f.call(approve, { token: false, headers: { origin }, data: { itemIds } })).status).toBe(404);
+      expect(f.reviews).toEqual([]);
+    });
+
+    it('rejects a bad Origin and a non-JSON body, but only on writes', async () => {
+      const f = await fixture(unsetGroups);
+      const chat = `${api}/incident/chat/${(await f.call(`${api}/incident`, { token: false })).data.incident.chatId}`;
+      const message = `${chat}/messages`;
+      expect((await f.call(message, { token: false, headers: { origin: 'https://other.example.com' }, data: { text: 'x' } })).status).toBe(403);
+      expect((await f.call(message, { token: false, headers: { 'content-type': 'text/plain' }, data: { text: 'x' } })).status).toBe(415);
+      expect((await f.call(chat, { token: false, headers: { origin: 'https://other.example.com' } })).status).toBe(200);
+    });
+
+    it('returns 401 from an untrusted peer and ignores forwarded headers', async () => {
+      const f = await fixture({ operatorGroups: null, sessionCidrs: ['198.51.100.0/31'] });
+      const forwarded = {
+        'x-forwarded-for': '198.51.100.1', forwarded: 'for=198.51.100.1', 'x-real-ip': '198.51.100.1', 'x-forwarded-user': 'fixture-operator',
+      };
+      expect((await f.call(`${api}/incident`, { token: false, headers: forwarded })).status).toBe(401);
+      expect((await f.call(`${api}/incident/chat/${randomUUID()}/messages`, { token: false, headers: forwarded, data: { text: 'x' } })).status).toBe(401);
+      expect(f.reviews).toEqual([]);
+    });
+
+    it('keeps the token path unchanged, even from a trusted peer', async () => {
+      const f = await fixture({ sessionCidrs: trusted });
+      expect((await f.call(`${api}/incident`)).status).toBe(200);
+      expect(f.reviews.length).toBeGreaterThan(0);
+      expect((await f.call(`${api}/incident`, { token: invalid })).status).toBe(401);
+      expect((await f.call(`${api}/incident`, { token: serviceAccount })).status).toBe(403);
+      expect((await f.call(`${api}/incident`, { token: false, headers: { cookie: 'headlamp-auth-example.1=credential' } })).status).toBe(200);
+      const unusable = await f.call(`${api}/incident`, { token: false, headers: { authorization: 'Basic abc' } });
+      expect(unusable.status).toBe(401);
+    });
+
+    it('keeps the machine routes on their own tokens', async () => {
+      const f = await fixture(unsetGroups);
+      expect((await f.call(`${api}/reconcile`, { token: false, data: { triggers: [] } })).status).toBe(401);
+      expect((await f.reconcile()).status).toBe(200);
+    });
+
+    it('rejects an invalid session configuration at start', async () => {
+      for (const sessionCidrs of [['not-a-cidr'], ['192.0.2.0/33'], ['192.0.2.0'], Array.from({ length: 65 }, () => '192.0.2.0/32')]) {
+        await expect(fixture({ sessionCidrs })).rejects.toThrow('Invalid storage session proxy configuration');
+      }
+    });
+
+    it('matches IPv4, IPv6 and IPv4-mapped peers exactly', () => {
+      const networks = sessionNetworks(['192.0.2.0/31', 'fd00::/64'])!;
+      expect(['192.0.2.0', '192.0.2.1', '::ffff:192.0.2.1', 'fd00::1'].map(address => networks.has(address))).toEqual([true, true, true, true]);
+      expect(['192.0.2.2', '::ffff:192.0.2.2', '192.0.2.9', 'fd01::1', 'bad', ''].map(address => networks.has(address))).toEqual([false, false, false, false, false, false]);
+      expect(networks.has(undefined)).toBe(false);
+      expect(sessionNetworks([])).toBeUndefined();
+    });
   });
 
   it('verifies named humans, exact RBAC and HttpOnly proxy requests without using a service account fallback', async () => {
@@ -1343,6 +1419,58 @@ describe('Storage incident normal entry points', () => {
       token: `Bearer ${authorityBearer}`, input: { operation: 'check', recipients: [recipient] },
     });
     expect(JSON.stringify(f.authorityRequests.map(request => request.input))).not.toMatch(/groups|fixture-human-credential/);
+  });
+
+  it('enrols the trusted Headlamp session and delivers a notice without an external authority', async () => {
+    const f = await fixture({ pushEnabled: true, authorityConfigured: false, operatorGroups: null, sessionCidrs: ['127.0.0.0/31'] });
+    expect((await f.call(`${api}/incident`, { token: false })).data.notifications.enabled).toBe(true);
+    const device = pushDevice();
+    const subscribe = await f.call(`/api/push/subscriptions/${device.id}`, { token: false, data: {
+      subscription: { endpoint: device.endpoint, keys: device.keys },
+      urls: { incident: '/c/example/incidents/{id}', chat: '/c/example/incidents/chat/{id}' },
+    } });
+    expect(subscribe.status).toBe(200);
+    const registration = `${api}/incident/notifications`;
+    const grant = { subscriptionId: device.id, enabled: true, auth: device.keys.auth, urls: noticeUrls };
+    expect((await f.call(registration, { token: false, data: grant })).status).toBe(200);
+    expect((await f.call(registration, { token: false, data: { ...grant, auth: pushDevice().keys.auth } })).status).toBe(403);
+    expect((await f.call(`${registration}/${device.id}`, { token: false })).status).toBe(200);
+    expect(f.reviews).toEqual([]);
+    const metrics = await f.readMetrics();
+    expect(metrics).toContain('headlamp_agent_storage_push_authority{status="ready"} 1');
+    expect(metrics).toContain('headlamp_agent_storage_push_registered_recipients 1');
+    f.advance(4 * 60 * 60_000);
+    cleanupFixture(f);
+    expect((await f.reconcile()).status).toBe(200);
+    await vi.waitFor(async () => expect(await outcomes(f)).toEqual([{ attempt: 1, result: '201' }]));
+    expect(f.sent).toHaveLength(1);
+    expect((await f.call(`${api}/incident`, { token: false })).data.notices[0].delivery).toMatchObject({ status: 'accepted' });
+    expect((await f.call(registration, { token: false, data: { subscriptionId: device.id, enabled: false, auth: device.keys.auth } })).status).toBe(200);
+    expect((await f.readMetrics())).toContain('headlamp_agent_storage_push_registered_recipients 0');
+  });
+
+  it('keeps the external authority when both it and the session CIDRs are configured', async () => {
+    const f = await fixture({ pushEnabled: true, sessionCidrs: ['127.0.0.0/31'] });
+    await enrolFixture(f);
+    expect(f.authorityRequests).toContainEqual({
+      token: `Bearer ${authorityBearer}`,
+      input: { operation: 'resolve', kubernetes: operatorKubernetes },
+    });
+  });
+
+  it('entitles only the session recipient in the built-in authority', async () => {
+    const authority = new SessionNotificationAuthority();
+    const session = { username: 'headlamp-session', uid: null };
+    expect(await authority.resolve(session)).toEqual({
+      kubernetes: session, recipient: { issuer: 'headlamp', subject: 'session' }, entitlement: { status: 'allowed', version: '1' },
+    });
+    expect(await authority.resolve({ username: 'headlamp-session', uid: 'x' })).toBeUndefined();
+    expect(await authority.resolve({ username: 'someone-else', uid: null })).toBeUndefined();
+    const own = { issuer: 'headlamp', subject: 'session' };
+    const other = { issuer: 'headlamp', subject: 'other' };
+    expect([...(await authority.check([own, other]))!.entries()]).toEqual([
+      [recipientKey(own), { status: 'allowed', version: '1' }], [recipientKey(other), { status: 'revoked' }],
+    ]);
   });
 
   it.each(['membership', 'RBAC get', 'RBAC update', 'regrant', 'grant expiry'])(

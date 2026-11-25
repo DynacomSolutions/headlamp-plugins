@@ -468,9 +468,14 @@ Storage findings and unanswered questions can send a generic Web Push message wi
 affected incident. Headlamp authenticates the operator again when they open the link. Private
 findings stay in Headlamp.
 
-Storage push requires the existing Web Push keys, shared PostgreSQL and an approved server-side
-entitlement authority. The current read-only Headlamp deployment has no approved authority. Leave
-all three authority settings unset there. Findings and questions remain available in Headlamp.
+Storage push requires the existing Web Push keys, shared PostgreSQL and an entitlement authority.
+An external authority, when configured, always wins. Without one, a deployment that sets
+`STORAGE_SESSION_PROXY_CIDRS` (see [Storage session trust](#storage-session-trust)) uses a built-in
+local authority. It entitles only the `headlamp-session` operator, as one shared recipient with
+the issuer `headlamp` and the subject `session`, and revokes every other recipient. It makes no
+network call. The Incidents plugin page `/incidents/notifications` has the enrol control.
+
+Without any authority, leave all three authority settings unset. Findings and questions remain available in Headlamp.
 
 | Setting | Deployment contract |
 | --- | --- |
@@ -545,6 +550,23 @@ preserves accepted sends. If the agent loses the provider result after dispatch,
 unverified delivery and does not resend that attempt. A provider 404 or 410 removes the
 storage enrolment. Provider 2xx means acceptance, and `clientReceived` remains `null`.
 A revocation after the final authority check can occur while a provider request is in flight.
+
+### Storage session trust
+
+Headlamp can run with the service account token and no per-user login. The Incidents plugin then
+calls the agent through the Kubernetes service proxy, and kube-apiserver removes the
+`Authorization` header. Without a token, the storage routes return 401.
+
+Set `STORAGE_SESSION_PROXY_CIDRS` to the addresses that kube-apiserver uses when it proxies to the
+pod, and the agent treats a request without any credential from those addresses as the operator
+`headlamp-session`. This is the same trust as the chat and diagnosis views. Rules:
+
+- The agent reads only the TCP peer address. It never reads `X-Forwarded-For` or other forwarded headers. An IPv4-mapped IPv6 address counts as its IPv4 address.
+- A request with any credential (`Authorization`, `X-Storage-Operator-Token` or a Headlamp cookie) keeps the human-token path: Kubernetes verifies the identity and the RBAC rights. `STORAGE_OPERATOR_GROUPS` applies only there.
+- A request from outside the CIDRs without a credential gets 401.
+- A write needs a JSON body (415 otherwise). An `Origin` header, when present, must be in `ALLOWED_ORIGINS` (403 otherwise).
+- The scanner and reconcile routes keep their own machine tokens.
+- Use only the addresses of the trusted proxy hops. A CIDR that holds pods lets any pod in it act as the operator.
 
 ## Agent launches
 
@@ -733,6 +755,7 @@ turns launching off with a reason. It does not stop the service.
 | `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Webhook diagnoses per hour. Re-runs by hand do not count |
 | `AGENT_MAX_CONCURRENT_RERUNS` | `2` | Re-runs by hand that may be queued or running at one time. More get a 429 |
 | `AGENT_IGNORE_ALERTS` | `Watchdog,InfoInhibitor` | Alert names that are never diagnosed |
+| `STORAGE_SESSION_PROXY_CIDRS` | none | JSON array of at most 64 IPv4 or IPv6 CIDRs, for example `["192.0.2.0/31"]`. See [Storage session trust](#storage-session-trust). An invalid value stops the agent at start |
 
 ## Development
 
