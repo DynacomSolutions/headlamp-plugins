@@ -64,7 +64,13 @@ jobs:
           grep -qx "${{ matrix.plugin }}/LICENSE" <<< "$listing"
           grep -qx "${{ matrix.plugin }}/main.js" <<< "$listing"
           grep -qx "${{ matrix.plugin }}/package.json" <<< "$listing"
-          if [ "${{ matrix.plugin }}" = alerting ]; then grep -qx "alerting/sw.js" <<< "$listing"; fi
+          case "${{ matrix.plugin }}" in
+            alerting|incidents)
+              for file in sw.js push-badge.js badge.png badge-stack.png; do
+                grep -qx "${{ matrix.plugin }}/$file" <<< "$listing"
+              done
+              ;;
+          esac
       - name: Private identifiers in the release archive
         working-directory: .
         env:

@@ -2,7 +2,7 @@
   "name": "alerting",
   "version": "0.1.0",
   "license": "MIT",
-  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE", "sw.js": "sw.js"}},
+  "headlamp": {"extraDist": {"LICENSE": "../../LICENSE", "sw.js": "sw.js", "push-badge.js": "../../shared/push/badge.js", "badge.png": "../../shared/push/badge.png", "badge-stack.png": "../../shared/push/badge-stack.png"}},
   "description": "Headlamp plugin: manage alerting notification channels and routes, GitOps first",
   "scripts": {
     "start": "headlamp-plugin start",
