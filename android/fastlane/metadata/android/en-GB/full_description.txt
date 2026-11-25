@@ -1,0 +1,53 @@
+Headlamps puts live data from your Kubernetes cluster on your Android home screen. It reads the data from your own Headlamp instance. Headlamp is the open source Kubernetes dashboard.
+
+The app has no cluster of its own. You must have a Headlamp instance that your phone can reach.
+
+Widgets
+
+• Node usage: shows CPU and memory use for each node. A small widget shows the cluster totals. A larger widget shows a scrollable node list, with the busiest node first. Bars are green below 75%, amber above 75% and red above 90%.
+• Usage dashboard: shows CPU and memory use of one cluster as rings. The coloured arcs show who uses the capacity, such as the namespaces of Kubernetes. A legend lists each share.
+• Headlamp panel: shows one panel for each widget. You pick the panel when you add the widget. Add more widgets to see more panels. The widget shows a status colour, up to four numbers and a list of rows, worst first.
+
+Panels
+
+The panel list comes from the headlamp-agent in your cluster. The agent supplies these panels:
+• Uptime
+• Usage
+• Usage dashboard
+• Alerts
+• Disks
+• Hardware
+• Sites
+• Updates
+• Incidents
+• GitHub runners
+• Registry
+• VM images
+• Agent resources
+
+The Node usage widget needs the Kubernetes metrics server in the cluster. The Usage dashboard and Headlamp panel widgets need the headlamp-agent.
+
+How to connect
+
+1. Open the app and tap + to add a Headlamp instance.
+2. Enter a display name and the base URL of your instance.
+3. If your instance needs a token, enter a bearer token. Leave the field empty if the network already limits access.
+4. Tap "Test connection". The app shows the clusters that it found, or a clear error.
+5. Add a widget to the home screen. Pick the instance, the cluster and, for a panel widget, the panel.
+
+You can add more than one instance.
+
+Use
+
+• Tap a widget to open the matching page of your Headlamp instance in the browser.
+• Tap Refresh in the widget header to update at once.
+• The widgets also refresh every 15 minutes while at least one widget is on the home screen.
+• A widget shows an error text when the server is not reachable, when it refuses the token, or when the metrics API is missing.
+
+Data and privacy
+
+• The app sends only read requests (GET) to the Headlamp address that you enter. It sends no data to other servers.
+• The data comes from your own cluster through Headlamp. The app has no account system.
+• The app saves your instances on the phone. It encrypts the token with an Android Keystore key before it saves the token.
+• The app excludes its data from Android backup.
+• The app warns you when you enter an http:// address, because such an address sends data without encryption. Use https:// when you can.
