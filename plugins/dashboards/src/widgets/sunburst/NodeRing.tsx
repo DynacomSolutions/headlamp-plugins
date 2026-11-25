@@ -12,6 +12,7 @@ import {
   fitCentreText,
   freeKey,
   layoutNodeArcs,
+  NodeArcKind,
   NodeArcShape,
   nodeSpan,
   SunburstData,
@@ -25,6 +26,12 @@ let patternCounter = 0;
 
 /** The side of a logo before a node label in the ring, in viewBox units. */
 const ICON = 7;
+/** The font size of a pool name and of an identity or provider name in the ring, in viewBox units. */
+const NODE_FONT = 6.2;
+const RING_FONT = 5.4;
+/** The width of a glyph as a share of the font size, and the longest text on one arc. */
+const GLYPH_SHARE = 0.58;
+const MAX_TEXT = 56;
 
 /** The crosshatch: two sets of thin lines at right angles, turned by 45 degrees. */
 const HATCH_STEP = 3.4;
@@ -49,6 +56,60 @@ export const categoryOf = (id: string): string => {
 /** The free capacity of a node. */
 export const freeOf = (n: Pick<SunburstNode, 'capacity' | 'used'>): number =>
   Math.max(0, nodeSpan(n) - Math.max(0, n.used));
+
+/** What names an arc for a paint function: its kind, its node, its category and its own key. */
+export interface ArcRef {
+  kind: NodeArcKind;
+  nodeKey: string;
+  categoryKey: string;
+  key: string;
+}
+
+/** The fill of an arc and the text colour (`ink`) that reads on it. */
+export interface ArcPaint {
+  fill: string;
+  ink: string;
+}
+
+/** What a ring needs to word the text of an arc. */
+export interface ArcTextContext {
+  nodes: ReadonlyArray<SunburstNode>;
+  format: (value: number) => string;
+  unit?: string;
+  /** The text between the parts of a path. Default ` / `. */
+  separator?: string;
+}
+
+/**
+ * The text of an arc, for its tooltip and its screen reader label. `path` is the names from the node
+ * to the arc, `figure` is the value with its share and `note` is the detail of the data, if any.
+ */
+export function arcText(
+  a: NodeArcShape,
+  share: number,
+  ctx: ArcTextContext
+): { path: string; figure: string; note: string; text: string } {
+  const { nodes, format, separator = ' / ' } = ctx;
+  // A unit such as "agents" is plural. One agent is "1 agent".
+  const unit = ctx.unit && a.value === 1 ? ctx.unit.replace(/s$/, '') : ctx.unit;
+  const n = nodes.find(x => x.key === a.nodeKey);
+  let path = a.label;
+  let figure = `${format(a.value)} (${percent(share)})`;
+  if (a.kind === 'node' && unit) figure = `${format(a.value)} ${unit} (${percent(share)})`;
+  else if (a.kind === 'node') {
+    const own = n && nodeSpan(n) > 0 ? ` (${percent(Math.max(0, n.used) / nodeSpan(n))} used)` : '';
+    figure = `${format(a.value)} of ${format(n ? nodeSpan(n) : a.value)}${own}`;
+  } else if (a.kind === 'free') path = `${a.nodeLabel} free`;
+  else if (a.kind === 'category') path = [a.nodeLabel, a.label].join(separator);
+  else path = [a.nodeLabel, a.categoryLabel, a.label].join(separator);
+  if (a.kind === 'free') figure = `${format(a.value)} (${percent(share)})`;
+  if (a.kind === 'category' || a.kind === 'child') {
+    if (unit) figure = `${format(a.value)} ${unit} (${percent(share)})`;
+  }
+  const note = a.kind === 'category' || a.kind === 'child' ? a.detail ?? '' : '';
+  const text = `${path}: ${figure}${note ? `, ${note}` : ''}`;
+  return { path, figure, note, text };
+}
 
 export interface NodeColours {
   baseColour: (categoryKey: string) => string;
@@ -102,7 +163,20 @@ export interface NodeRingProps {
   /** What the values count, for example `agents`. A count has no capacity to fill. */
   unit?: string;
   /** A small logo before a node label in the ring, or null (see `SunburstChartProps`). */
-  labelIcon?: (label: string, size: number, at?: { x: number; y: number }) => JSX.Element | null;
+  labelIcon?: (
+    label: string,
+    size: number,
+    at?: { x: number; y: number },
+    kind?: ArcRef['kind']
+  ) => JSX.Element | null;
+  /** The fill and the ink of an arc. An arc that it gives nothing for keeps the default colours. */
+  paint?: (arc: ArcRef) => ArcPaint | undefined;
+  /** The text between the parts of a path in an arc label. Default ` / `. */
+  pathSeparator?: string;
+  /** Name the identity and the provider arcs on the ring, where the name fits. */
+  ringLabels?: boolean;
+  /** The ring draws no `<title>` of its own, because the parent shows a tooltip. */
+  customTooltip?: boolean;
 }
 
 export function NodeRing({
@@ -117,6 +191,10 @@ export function NodeRing({
   size = 0,
   unit,
   labelIcon,
+  paint,
+  pathSeparator,
+  ringLabels = false,
+  customTooltip = false,
 }: NodeRingProps): JSX.Element {
   const theme = useTheme();
   const hatchId = React.useRef(`sb-hatch-${++patternCounter}`).current;
@@ -147,23 +225,9 @@ export function NodeRing({
   const shownArc = shown
     ? arcs.find(a => arcId(a) === shown) ?? arcs.find(a => arcId(a) === categoryOf(shown))
     : undefined;
-  const nodeOf = (key: string): SunburstNode | undefined => nodes.find(n => n.key === key);
 
-  const arcTitle = (a: NodeArcShape): string => {
-    if (a.kind === 'node' && unit)
-      return `${a.label}: ${format(a.value)} ${unit} (${percent(share(a.value))})`;
-    if (a.kind === 'node') {
-      const n = nodeOf(a.nodeKey);
-      const own =
-        n && nodeSpan(n) > 0 ? ` (${percent(Math.max(0, n.used) / nodeSpan(n))} used)` : '';
-      return `${a.label}: ${format(a.value)} of ${format(n ? nodeSpan(n) : a.value)}${own}`;
-    }
-    if (a.kind === 'free')
-      return `${a.nodeLabel} free: ${format(a.value)} (${percent(share(a.value))})`;
-    const path = a.kind === 'category' ? a.label : `${a.categoryLabel} / ${a.label}`;
-    const note = a.detail ? `, ${a.detail}` : '';
-    return `${a.nodeLabel} / ${path}: ${format(a.value)} (${percent(share(a.value))})${note}`;
-  };
+  const textContext: ArcTextContext = { nodes, format, unit, separator: pathSeparator };
+  const arcTitle = (a: NodeArcShape): string => arcText(a, share(a.value), textContext).text;
 
   const summary =
     nodes.length === 0
@@ -197,11 +261,28 @@ export function NodeRing({
     ? unit
     : `of ${format(data.capacity)} (${percent(capacity > 0 ? Math.min(1, used / capacity) : 0)})`;
 
-  const nodeLabelFits = (a: NodeArcShape): boolean => {
+  /**
+   * What an arc shows on the ring. Without `ringLabels` only a node name shows, whole or not at all. With `ringLabels`, a
+   * node, identity or provider name that is too long for its arc is cut with an ellipsis, down to 4
+   * letters, and a provider arc that fits only its logo shows the logo.
+   */
+  const ringLabel = (a: NodeArcShape): { text: string; icon: boolean } | null => {
+    const kind = a.kind === 'node' || a.kind === 'category' || a.kind === 'child' ? a.kind : null;
+    if (!kind || (kind !== 'node' && !ringLabels)) return null;
+    const font = kind === 'node' ? NODE_FONT : RING_FONT;
     const r = (a.inner + a.outer) / 2;
-    const arcLength = (a.end - a.start) * r;
-    // A logo before the label needs its own room.
-    return arcLength >= a.label.length * 4.4 + 4 + (labelIcon?.(a.label, ICON) ? ICON + 2 : 0);
+    // The text is a straight line along the middle of the arc: long text would leave the ring.
+    const room = Math.min(2 * r * Math.sin(Math.min(a.end - a.start, Math.PI) / 2) - 3, MAX_TEXT);
+    const glyph = font * GLYPH_SHARE;
+    const hasIcon = !!labelIcon?.(a.label, ICON, undefined, kind);
+    const iconRoom = hasIcon ? ICON + 2 : 0;
+    const chars = Math.floor((room - iconRoom) / glyph);
+    const icon = hasIcon;
+    if (chars >= a.label.length) return { text: a.label, icon };
+    if (!ringLabels) return null;
+    if (chars >= 4) return { text: `${a.label.slice(0, chars - 1)}\u2026`, icon };
+    if (hasIcon && room >= ICON + 1) return { text: '', icon };
+    return null;
   };
 
   return (
@@ -252,14 +333,17 @@ export function NodeRing({
           style: { cursor: 'pointer', outline: 'none', opacity: dim ? 0.4 : 1 },
           ...hoverProps(id),
         };
+        const painted = a.kind === 'free' ? undefined : paint?.(a);
         const fill = isFree
           ? `url(#${hatchId})`
+          : painted
+          ? painted.fill
           : a.kind === 'node'
           ? theme.palette.text.primary
           : shade(a);
         const style = {
           fill,
-          fillOpacity: a.kind === 'node' ? colours.nodeTone(a.nodeKey) : 1,
+          fillOpacity: a.kind === 'node' && !painted ? colours.nodeTone(a.nodeKey) : 1,
           stroke: isFree ? hatchColour : surface,
           strokeOpacity: isFree ? 0.3 : 1,
           strokeWidth: isFree ? 0.4 : 0.75,
@@ -282,56 +366,68 @@ export function NodeRing({
             onFocus={kiosk ? undefined : () => onActive(id)}
             onBlur={kiosk ? undefined : () => onActive(null)}
           >
-            <title>{arcTitle(a)}</title>
+            {!customTooltip && <title>{arcTitle(a)}</title>}
           </path>
         ) : (
           <path key={id} {...common} {...style} role="img" aria-label={arcTitle(a)}>
-            <title>{arcTitle(a)}</title>
+            {!customTooltip && <title>{arcTitle(a)}</title>}
           </path>
         );
       })}
-      {arcs
-        .filter(a => a.kind === 'node' && nodeLabelFits(a))
-        .map(a => {
-          const mid = (a.start + a.end) / 2;
-          const r = (a.inner + a.outer) / 2;
-          const x = r * Math.sin(mid);
-          const y = -r * Math.cos(mid);
-          // Turn the text with the arc, and keep it upright in the lower half.
-          const deg = (mid * 180) / Math.PI;
-          const turn = deg > 90 && deg < 270 ? deg + 180 : deg;
-          // A logo goes before the label. The logo and the label together stay centred on the arc.
-          const textWidth = a.label.length * 3.6;
-          const icon = labelIcon?.(a.label, ICON, {
-            x: x - (textWidth + ICON + 1) / 2,
-            y: y - ICON / 2,
-          });
-          return (
-            <g
-              key={`label-${a.key}`}
-              transform={`rotate(${turn.toFixed(2)} ${x.toFixed(3)} ${y.toFixed(3)})`}
-              style={{ pointerEvents: 'none' }}
-            >
-              {icon && (
-                <g data-node-icon={a.key} style={{ color: theme.palette.text.primary }}>
-                  {icon}
-                </g>
-              )}
+      {arcs.map(a => {
+        const label = ringLabel(a);
+        if (!label) return null;
+        const kind = a.kind as ArcRef['kind'];
+        const font = kind === 'node' ? NODE_FONT : RING_FONT;
+        const mid = (a.start + a.end) / 2;
+        const r = (a.inner + a.outer) / 2;
+        const x = r * Math.sin(mid);
+        const y = -r * Math.cos(mid);
+        // Turn the text with the arc, and keep it upright in the lower half.
+        const deg = (mid * 180) / Math.PI;
+        const turn = deg > 90 && deg < 270 ? deg + 180 : deg;
+        // A logo goes before the label. The logo and the label together stay centred on the arc.
+        const textWidth = label.text.length * font * GLYPH_SHARE;
+        const gap = label.text && label.icon ? 1 : 0;
+        const icon = label.icon
+          ? labelIcon?.(
+              a.label,
+              ICON,
+              { x: x - (textWidth + ICON + gap) / 2, y: y - ICON / 2 },
+              kind
+            )
+          : null;
+        const ink = paint?.(a)?.ink ?? theme.palette.text.primary;
+        const id = arcId(a);
+        return (
+          <g
+            key={`label-${id}`}
+            transform={`rotate(${turn.toFixed(2)} ${x.toFixed(3)} ${y.toFixed(3)})`}
+            style={{ pointerEvents: 'none' }}
+          >
+            {icon && (
+              <g data-node-icon={a.key} style={{ color: ink }}>
+                {icon}
+              </g>
+            )}
+            {label.text && (
               <text
                 data-node-label={a.key}
-                x={icon ? x + (ICON + 1) / 2 : x}
+                data-ring-label={a.kind}
+                x={icon ? x + (ICON + gap) / 2 : x}
                 y={y}
                 textAnchor="middle"
                 dominantBaseline="central"
-                fontSize={6.2}
-                fontWeight={600}
-                fill={theme.palette.text.primary}
+                fontSize={font}
+                fontWeight={kind === 'node' ? 600 : 500}
+                fill={ink}
               >
-                {a.label}
+                {label.text}
               </text>
-            </g>
-          );
-        })}
+            )}
+          </g>
+        );
+      })}
       <g
         data-sunburst-centre
         style={{ pointerEvents: 'none' }}

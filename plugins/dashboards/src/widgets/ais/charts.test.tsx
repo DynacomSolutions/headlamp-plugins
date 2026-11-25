@@ -6,6 +6,7 @@ import { parsePanel } from '../panels/model';
 import { legendHeight } from '../sunburst/NodeSunburstChart';
 import { legendColumns, PieChart } from '../sunburst/PieChart';
 import { SunburstChart } from '../sunburst/SunburstChart';
+import { agentPaint, brightness, identityShade, inkOn, mixColour } from './agentRings';
 import {
   accountsNote,
   agentPlacement,
@@ -17,7 +18,9 @@ import {
   parseTokens,
   POOL_NOT_REPORTED,
   poolMembers,
+  PROVIDER_NOT_REPORTED,
   providerIndex,
+  providerOfTool,
 } from './charts';
 
 afterEach(cleanup);
@@ -287,8 +290,8 @@ describe('agentsToSunburst with the Agents table', () => {
       ['red', 1],
     ]);
     expect(one?.categories[0].children?.map(k => [k.label, k.value])).toEqual([
-      ['claude', 2],
-      ['codex', 1],
+      ['Anthropic', 2],
+      ['OpenAI', 1],
     ]);
   });
   it('names an unresolved identity and a missing pool, and has no Other group', () => {
@@ -302,9 +305,9 @@ describe('agentsToSunburst with the Agents table', () => {
     const direct = data.nodes?.find(n => n.label === DIRECT);
     const solo = direct?.categories[0];
     expect(solo?.detail).toMatch(/config-dir 1, session-marker 1/);
-    expect(solo?.children?.map(k => k.detail)).toEqual([
-      'identity source session-marker',
-      'identity source config-dir',
+    expect(solo?.children?.map(k => [k.label, k.detail])).toEqual([
+      ['Anthropic', 'identity source session-marker'],
+      ['OpenAI', 'identity source config-dir'],
     ]);
   });
   it('shows the identity source in the tooltip of the arc', () => {
@@ -312,7 +315,9 @@ describe('agentsToSunburst with the Agents table', () => {
       themed(<SunburstChart data={data} title="Agents" unit="agents" format={v => String(v)} />)
     ).container;
     const titles = Array.from(c.querySelectorAll('path title')).map(t => t.textContent ?? '');
-    expect(titles).toContain('pool-one / blue / claude: 2 (25%), identity source gateway-ledger');
+    expect(titles).toContain(
+      'pool-one / blue / Anthropic: 2 agents (25%), identity source gateway-ledger'
+    );
   });
   it('ignores the old rows when the table exists, and counts one agent for each table row', () => {
     const both = parsePanel({
@@ -478,5 +483,245 @@ describe('agents sunburst chart', () => {
     expect(c.querySelector(`[data-legend-node="${POOL_NOT_REPORTED}"]`)?.textContent).toContain(
       IDENTITY_NOT_REPORTED
     );
+  });
+});
+
+describe('agent rings: pool, identity, provider', () => {
+  const agents = newAgents([
+    tableRow('pool-alpha', 'red', 'claude', 'gateway-session'),
+    tableRow('pool-alpha', 'red', 'claude', 'gateway-session'),
+    tableRow('pool-alpha', 'blue', 'claude', 'gateway-session'),
+    tableRow('', 'green', 'claude', 'config-dir'),
+    tableRow('', 'solo', 'codex', 'config-dir'),
+    tableRow('', 'team-oc', 'opencode', 'session-marker'),
+    tableRow('', 'odd', 'frobnicator', 'config-dir'),
+    tableRow('', '', '', 'unresolved'),
+  ]);
+  const data = agentsToSunburst(agents, null);
+  const direct = data.nodes?.find(n => n.label === DIRECT);
+
+  it('names the agents that are in no pool "Direct Identity"', () => {
+    expect(DIRECT).toBe('Direct Identity');
+    expect(data.nodes?.map(n => [n.label, n.used])).toEqual([
+      [DIRECT, 4],
+      ['pool-alpha', 3],
+      [POOL_NOT_REPORTED, 1],
+    ]);
+  });
+  it('puts the provider in the third ring, one slice for each identity and provider', () => {
+    const pool = data.nodes?.find(n => n.label === 'pool-alpha');
+    expect(pool?.categories.map(c => [c.label, c.value])).toEqual([
+      ['red', 2],
+      ['blue', 1],
+    ]);
+    expect(pool?.categories[0].children?.map(k => [k.key, k.label, k.value])).toEqual([
+      ['red/Anthropic', 'Anthropic', 2],
+    ]);
+    const providers = (n: string) =>
+      direct?.categories.find(c => c.label === n)?.children?.map(k => k.label);
+    expect(providers('solo')).toEqual(['OpenAI']);
+    expect(providers('green')).toEqual(['Anthropic']);
+    expect(providers('team-oc')).toEqual(['OpenCode']);
+  });
+  it('keeps an unknown tool under its own name and gives a missing tool a named slice', () => {
+    expect(providerOfTool('frobnicator')).toBe('frobnicator');
+    expect(providerOfTool('')).toBe(PROVIDER_NOT_REPORTED);
+    expect(providerOfTool(undefined)).toBe(PROVIDER_NOT_REPORTED);
+    expect(providerOfTool('agent')).toBe(PROVIDER_NOT_REPORTED);
+    const odd = direct?.categories.find(c => c.label === 'odd');
+    expect(odd?.children?.map(k => k.label)).toEqual(['frobnicator']);
+    const none = data.nodes?.find(n => n.label === POOL_NOT_REPORTED);
+    expect(none?.categories[0].label).toBe(IDENTITY_NOT_REPORTED);
+    expect(none?.categories[0].children?.map(k => k.label)).toEqual([PROVIDER_NOT_REPORTED]);
+  });
+  it('maps every tool of the feed to its provider', () => {
+    const pairs: Array<[string, string]> = [
+      ['claude', 'Anthropic'],
+      ['codex', 'OpenAI'],
+      ['grok', 'xAI'],
+      ['kimi', 'Kimi'],
+      ['zai', 'Z.ai'],
+      ['ali', 'Alibaba'],
+      ['opencode', 'OpenCode'],
+      ['pi', 'Pi'],
+    ];
+    for (const [tool, provider] of pairs) expect(providerOfTool(tool)).toBe(provider);
+  });
+  it('gives several tools of one provider one slice, and names the tools in its note', () => {
+    const d = agentsToSunburst(
+      newAgents([
+        tableRow('', 'x', 'claude', 'config-dir'),
+        tableRow('', 'x', 'claude', 'config-dir'),
+        tableRow('', 'x', 'anthropic', 'config-dir'),
+      ]),
+      null
+    );
+    const kids = d.nodes?.[0].categories[0].children;
+    expect(kids?.map(k => [k.label, k.value])).toEqual([['Anthropic', 3]]);
+    expect(kids?.[0].detail).toMatch(/^tools claude 2, anthropic 1/);
+  });
+  it('has no Other slice and the ring sizes add up to the agent count', () => {
+    expect(JSON.stringify(data)).not.toMatch(/other|more/i);
+    const sum = (xs: Array<{ value: number }> = []) => xs.reduce((s, x) => s + x.value, 0);
+    for (const n of data.nodes ?? []) {
+      expect(sum(n.categories)).toBe(n.used);
+      for (const c of n.categories) expect(sum(c.children)).toBe(c.value);
+    }
+    expect(data.capacity).toBe(8);
+  });
+});
+
+/** The arc of a kind and a key. The selector is built here, so no test line holds a quoted key. */
+const arcOf = (c: HTMLElement, kind: string, key: string): Element | undefined =>
+  Array.from(c.querySelectorAll(`[data-arc=${kind}]`)).find(
+    e => e.getAttribute('data-key') === key
+  );
+
+describe('agent rings: tooltip path', () => {
+  const data = agentsToSunburst(
+    newAgents([
+      tableRow('pool-alpha', 'red', 'claude', 'gateway-session'),
+      tableRow('pool-alpha', 'red', 'claude', 'gateway-session'),
+      tableRow('', 'solo', 'codex', 'config-dir'),
+    ]),
+    null
+  );
+  const draw = (extra: Record<string, unknown> = {}) =>
+    render(
+      themed(
+        <SunburstChart
+          data={data}
+          title="Agents"
+          unit="agents"
+          format={v => String(v)}
+          pathSeparator=" > "
+          legendChildren
+          tooltip
+          {...extra}
+        />
+      )
+    ).container;
+
+  it('shows the full path and the count of a provider slice on hover', () => {
+    const c = draw();
+    const arc = arcOf(c, 'child', 'red/Anthropic');
+    expect(arc).toBeDefined();
+    expect(c.querySelector('[data-sunburst-tooltip]')).toBeNull();
+    fireEvent.mouseEnter(arc!);
+    const tip = c.querySelector('[data-sunburst-tooltip]');
+    expect(tip?.textContent).toContain('pool-alpha > red > Anthropic');
+    expect(tip?.textContent).toContain('2 agents (67%)');
+    fireEvent.mouseLeave(arc!);
+    expect(c.querySelector('[data-sunburst-tooltip]')).toBeNull();
+  });
+  it('shows the path of a direct identity slice and of a pool', () => {
+    const c = draw();
+    fireEvent.mouseEnter(arcOf(c, 'child', 'solo/OpenAI')!);
+    expect(c.querySelector('[data-sunburst-tooltip]')?.textContent).toContain(
+      'Direct Identity > solo > OpenAI'
+    );
+    fireEvent.mouseEnter(arcOf(c, 'node', 'pool-alpha')!);
+    expect(c.querySelector('[data-sunburst-tooltip]')?.textContent).toContain('pool-alpha');
+  });
+  it('shows the path on a tap in kiosk mode', () => {
+    const c = draw({ kiosk: true });
+    fireEvent.click(arcOf(c, 'child', 'red/Anthropic')!);
+    expect(c.querySelector('[data-sunburst-tooltip]')?.textContent).toContain(
+      'pool-alpha > red > Anthropic'
+    );
+  });
+  it('writes the path in the screen reader label of every arc, and has no native title', () => {
+    const c = draw();
+    const labels = Array.from(c.querySelectorAll('[data-arc]')).map(a =>
+      a.getAttribute('aria-label')
+    );
+    expect(labels).toContain(
+      'pool-alpha > red > Anthropic: 2 agents (67%), identity source gateway-session'
+    );
+    expect(labels).toContain(
+      'Direct Identity > solo > OpenAI: 1 agent (33%), identity source config-dir'
+    );
+    expect(c.querySelectorAll('svg path title').length).toBe(0);
+  });
+  it('lists pool, identity and provider in the legend, and names the identities on the ring', () => {
+    const c = draw({ ringLabels: true });
+    const rows = Array.from(c.querySelectorAll('[data-legend-row]')).map(r =>
+      r.getAttribute('data-legend-row')
+    );
+    expect(rows).toEqual([
+      'pool-alpha',
+      'pool-alpha/red',
+      'pool-alpha/red/red/Anthropic',
+      'Direct Identity',
+      'Direct Identity/solo',
+      'Direct Identity/solo/solo/OpenAI',
+    ]);
+    expect(c.querySelector('[data-ring-label="category"]')?.textContent).toBeTruthy();
+  });
+});
+
+describe('agent ring colours', () => {
+  const data = agentsToSunburst(
+    newAgents([
+      tableRow('pool-b', 'a', 'claude', 'x'),
+      tableRow('pool-b', 'b', 'claude', 'x'),
+      tableRow('pool-b', 'c', 'claude', 'x'),
+      tableRow('pool-a', 'd', 'codex', 'x'),
+      tableRow('', 'e', 'opencode', 'x'),
+      tableRow('', '', '', 'unresolved'),
+    ]),
+    null
+  );
+  const nodes = data.nodes ?? [];
+  const ref = (kind: 'node' | 'category' | 'child', nodeKey: string, key: string) => ({
+    kind,
+    nodeKey,
+    categoryKey: kind === 'node' ? '' : key.split('/')[0],
+    key,
+  });
+  for (const mode of ['dark', 'light'] as const) {
+    it(`keeps the hue of a pool, shades its identities and uses the provider colour (${mode})`, () => {
+      const paint = agentPaint(nodes, mode);
+      const pool = paint(ref('node', 'pool-b', 'pool-b'))!;
+      const shades = ['a', 'b', 'c'].map(k => paint(ref('category', 'pool-b', k))!.fill);
+      expect(new Set(shades).size).toBe(3);
+      expect(shades).not.toContain(pool.fill);
+      // A provider has one colour, whatever the pool is.
+      const anthropic = paint(ref('child', 'pool-b', 'a/Anthropic'))!.fill;
+      expect(paint(ref('child', 'pool-b', 'b/Anthropic'))!.fill).toBe(anthropic);
+      expect(paint(ref('child', 'pool-a', 'd/OpenAI'))!.fill).not.toBe(anthropic);
+      // A pool keeps its colour when another pool appears (the names sort, not the sizes).
+      expect(paint(ref('node', 'pool-a', 'pool-a'))!.fill).not.toBe(pool.fill);
+    });
+    it(`gives each arc an ink that reads on its fill (${mode})`, () => {
+      const paint = agentPaint(nodes, mode);
+      for (const n of nodes) {
+        const all = [
+          paint(ref('node', n.key, n.key))!,
+          ...n.categories.flatMap(c => [
+            paint(ref('category', n.key, c.key))!,
+            ...(c.children ?? []).map(k => paint(ref('child', n.key, k.key))!),
+          ]),
+        ];
+        for (const p of all) {
+          const l = brightness(p.fill);
+          const li = brightness(p.ink);
+          const ratio = (Math.max(l, li) + 0.05) / (Math.min(l, li) + 0.05);
+          expect(ratio).toBeGreaterThan(4.4);
+        }
+      }
+    });
+  }
+  it('paints Direct Identity and the not reported names grey', () => {
+    const paint = agentPaint(nodes, 'dark');
+    const direct = paint(ref('node', DIRECT, DIRECT))!.fill;
+    expect(direct).toBe('#A7ADB5');
+    expect(paint(ref('node', POOL_NOT_REPORTED, POOL_NOT_REPORTED))!.fill).toBe('#6E747D');
+  });
+  it('mixes colours and picks the ink', () => {
+    expect(mixColour('#000000', '#ffffff', 50)).toBe('#808080');
+    expect(inkOn('#000000')).toBe('#ffffff');
+    expect(inkOn('#ffffff')).toBe('#111111');
+    expect(identityShade('#336699', 0, 'dark')).not.toBe(identityShade('#336699', 1, 'dark'));
   });
 });
