@@ -1,6 +1,6 @@
 /*
- * The two charts of the AIS tab. `ais.agents` is the agents sunburst: swap pool (or "Direct"), then
- * the real identity, then the agent. `ais.gateway` is the gateway usage pie: one slice for each app,
+ * The two charts of the AIS tab. `ais.agents` is the agents sunburst: swap pool (or "Direct Identity"),
+ * then the real identity, then the provider of the agent. `ais.gateway` is the gateway usage pie: one slice for each app,
  * at its real size. Both fetch their panels like the AIS widget does, never sooner than the panel's
  * own `refreshSeconds`. See `charts.ts` for the data mapping.
  */
@@ -8,6 +8,7 @@ import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import MenuItem from '@mui/material/MenuItem';
+import { useTheme } from '@mui/material/styles';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
@@ -16,8 +17,10 @@ import { useReportStale } from '../../resilience/stale';
 import { usePanel, usePanelList } from '../panels/data';
 import { sourceOf } from '../panels/PanelPicker';
 import { useSourceLookup, useSources } from '../panels/sourcesConfig';
+import type { ArcRef } from '../sunburst/NodeRing';
 import { PieChart } from '../sunburst/PieChart';
 import { SunburstChart } from '../sunburst/SunburstChart';
+import { agentPaint } from './agentRings';
 import { AIS_PANELS, AisConfig } from './AisWidget';
 import {
   agentsToSunburst,
@@ -102,6 +105,18 @@ function AgentsWidget({
       ),
     [data.nodes]
   );
+  // A pool gets the logo of its provider, an identity none, and a provider its own logo.
+  const labelIcon = React.useCallback(
+    (label: string, size: number, at?: { x: number; y: number }, kind?: ArcRef['kind']) =>
+      kind === 'category'
+        ? null
+        : kind === 'child'
+        ? labelLogo(label, size, at)
+        : poolLogo(label, size, at),
+    [poolLogo]
+  );
+  const mode = useTheme().palette.mode === 'dark' ? 'dark' : 'light';
+  const paint = React.useMemo(() => agentPaint(data.nodes ?? [], mode), [data.nodes, mode]);
   return (
     <Frame
       loading={agents.loading || swap.loading || pending}
@@ -117,7 +132,12 @@ function AgentsWidget({
           unit="agents"
           format={v => String(Math.round(v))}
           kiosk={kiosk}
-          labelIcon={poolLogo}
+          labelIcon={labelIcon}
+          paint={paint}
+          pathSeparator=" > "
+          ringLabels
+          legendChildren
+          tooltip
         />
       ) : (
         <Typography variant="body2" color="text.secondary">
@@ -209,7 +229,7 @@ export const aisAgentsWidget: WidgetDefinition<AisConfig> = {
   type: 'ais.agents',
   title: 'AIS agents by pool and identity',
   description:
-    'A sunburst of the running agents: swap pool or direct, then the logged-in identity, then the agent.',
+    'A sunburst of the running agents: swap pool or direct identity, then the logged-in identity, then the provider.',
   icon: 'mdi:chart-donut',
   category: 'Charts',
   defaultSize: { w: 6, h: 10 },

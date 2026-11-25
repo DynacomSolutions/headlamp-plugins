@@ -19,6 +19,7 @@ import {
   trackPath,
   usedShare,
 } from './geometry';
+import type { ArcPaint, ArcRef } from './NodeRing';
 import { NodeSunburstChart } from './NodeSunburstChart';
 import { childShade, colourAt } from './palette';
 import { clip, percent, RADIUS, VIEW } from './shared';
@@ -44,7 +45,22 @@ export interface SunburstChartProps {
    * A small logo for a node or group label, or null. It sits before the label in the legend, and in
    * the ring label where there is room. `at` is set when the logo sits inside an SVG.
    */
-  labelIcon?: (label: string, size: number, at?: { x: number; y: number }) => JSX.Element | null;
+  labelIcon?: (
+    label: string,
+    size: number,
+    at?: { x: number; y: number },
+    kind?: ArcRef['kind']
+  ) => JSX.Element | null;
+  /** The fill and the ink of an arc (node-first data only). Arcs it gives nothing for keep the default. */
+  paint?: (arc: ArcRef) => ArcPaint | undefined;
+  /** Node-first data: the text between the parts of a path in a tooltip, for example ` > `. */
+  pathSeparator?: string;
+  /** Node-first data: name the category and child arcs on the ring, where the name fits. */
+  ringLabels?: boolean;
+  /** Node-first data: list the children of each category in the legend. */
+  legendChildren?: boolean;
+  /** Node-first data: show a tooltip with the path and the count at the pointer, or at the top when tapped. */
+  tooltip?: boolean;
 }
 
 const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string =>

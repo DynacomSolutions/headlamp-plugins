@@ -2,8 +2,8 @@
  * The data behind the two charts of the AIS tab: the agents sunburst and the gateway usage pie.
  * Both are pure functions of a panel, so a test can check them without a browser.
  *
- * Agents. The ring order is swap pool (or "Direct"), then the real logged-in identity, then the
- * tool. A new AIS source reports each agent with the fields `pool` (null for a direct login),
+ * Agents. The ring order is swap pool (or "Direct Identity"), then the real logged-in identity, then
+ * the provider of the agent tool (Claude Code is Anthropic, Codex is OpenAI). A new AIS source reports each agent with the fields `pool` (null for a direct login),
  * `identity`, `identitySource` and, for a gateway session, `activeIdentity` and `identities` (see
  * `agents.ts`). The active account wins over `identity`. An older source has none of these fields.
  * Its rows carry the tool in `label` and one word in `detail`: an identity name, the name of a pool
@@ -18,15 +18,46 @@ import { splitLabel } from './join';
 /** The ring names for what the panel does not report. These are real states, not a catch-all. */
 export const POOL_NOT_REPORTED = 'Pool not reported';
 export const IDENTITY_NOT_REPORTED = 'Identity not reported';
+const canon = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
 /** The inner ring name of an identity that is in no swap pool. */
-export const DIRECT = 'Direct';
+export const DIRECT = 'Direct Identity';
+/** The outer ring name of an agent whose tool the feed does not name. */
+export const PROVIDER_NOT_REPORTED = 'Provider not reported';
+
+/** The provider of each agent tool, as AiSwitcher names it. The feed has no provider field. */
+const TOOL_PROVIDERS: Record<string, string> = {
+  claude: 'Anthropic',
+  claudecode: 'Anthropic',
+  anthropic: 'Anthropic',
+  codex: 'OpenAI',
+  openai: 'OpenAI',
+  grok: 'xAI',
+  xai: 'xAI',
+  kimi: 'Kimi',
+  zai: 'Z.ai',
+  ali: 'Alibaba',
+  alibaba: 'Alibaba',
+  qwen: 'Alibaba',
+  opencode: 'OpenCode',
+  opencodego: 'OpenCode Go',
+  pi: 'Pi',
+};
+
+/**
+ * The provider of an agent tool. A tool that is not known keeps its own name, so the provider ring
+ * always names a real thing. No tool name gives "Provider not reported".
+ */
+export function providerOfTool(tool: string | undefined): string {
+  const name = (tool ?? '').trim();
+  if (name === '' || /^(agent|other|unknown)$/i.test(name)) return PROVIDER_NOT_REPORTED;
+  return TOOL_PROVIDERS[canon(name)] ?? name;
+}
 
 export interface AgentPlacement {
   pool: string;
   identity: string;
 }
-
-const canon = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /** Which pool each identity belongs to, from the rows of the claude-swap panel ("pool / identity"). */
 export function poolMembers(swap: PanelModel | null | undefined): Map<string, string> {
@@ -164,9 +195,10 @@ const joinNotes = (...parts: Array<string | undefined>): string | undefined => {
 const bump = (m: Map<string, number>, k: string): void => void m.set(k, (m.get(k) ?? 0) + 1);
 
 /**
- * The agents panel as a sunburst: pool (or "Direct"), then the real identity, then the tool. The
- * values are counts. The tooltip of an arc names the identity source of its agents. It also gives the
- * token split per account for agents whose session used more than one account.
+ * The agents panel as a sunburst: pool (or "Direct Identity"), then the real identity, then the
+ * provider of the tool. The values are counts. The tooltip of an arc names the identity source of
+ * its agents. It also gives the token split per account for agents whose session used more than one
+ * account. An arc that merges more than one tool names the tools.
  */
 export function agentsToSunburst(
   agents: PanelModel | null | undefined,
@@ -175,24 +207,32 @@ export function agentsToSunburst(
   interface Leaf {
     n: number;
     sources: Map<string, number>;
+    tools: Map<string, number>;
     accounts: PanelAgentAccount[][];
   }
-  // pool -> identity -> tool -> count and sources, in first-seen order.
+  // pool -> identity -> provider -> count, sources and tools, in first-seen order.
   const tree = new Map<string, Map<string, Map<string, Leaf>>>();
   for (const a of placeAgents(agents, swap)) {
+    const provider = providerOfTool(a.tool);
     const ids = tree.get(a.pool) ?? new Map<string, Map<string, Leaf>>();
-    const tools = ids.get(a.identity) ?? new Map<string, Leaf>();
-    const leaf = tools.get(a.tool) ?? { n: 0, sources: new Map<string, number>(), accounts: [] };
+    const providers = ids.get(a.identity) ?? new Map<string, Leaf>();
+    const leaf = providers.get(provider) ?? {
+      n: 0,
+      sources: new Map<string, number>(),
+      tools: new Map<string, number>(),
+      accounts: [],
+    };
     leaf.n += 1;
     leaf.accounts.push(a.accounts);
     bump(leaf.sources, a.source);
-    tools.set(a.tool, leaf);
-    ids.set(a.identity, tools);
+    bump(leaf.tools, a.tool);
+    providers.set(provider, leaf);
+    ids.set(a.identity, providers);
     tree.set(a.pool, ids);
   }
-  const merge = (leaves: Iterable<Leaf>): Map<string, number> => {
+  const merge = (leaves: Iterable<Leaf>, of: 'sources' | 'tools'): Map<string, number> => {
     const out = new Map<string, number>();
-    for (const l of leaves) for (const [k, n] of l.sources) out.set(k, (out.get(k) ?? 0) + n);
+    for (const l of leaves) for (const [k, n] of l[of]) out.set(k, (out.get(k) ?? 0) + n);
     return out;
   };
   const lists = (leaves: Iterable<Leaf>): PanelAgentAccount[][] =>
@@ -202,18 +242,33 @@ export function agentsToSunburst(
     for (const l of leaves) n += l.n;
     return n;
   };
+  /** "tools claude 3, pi 1" when more than one tool gives the provider. Undefined for one tool. */
+  const toolsNote = (tools: Map<string, number>): string | undefined =>
+    tools.size < 2
+      ? undefined
+      : `tools ${Array.from(tools)
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([name, n]) => `${name} ${n}`)
+          .join(', ')}`;
   const nodes: SunburstNode[] = Array.from(tree, ([pool, ids]) => {
-    const categories = Array.from(ids, ([identity, tools]) => ({
+    const categories = Array.from(ids, ([identity, providers]) => ({
       key: identity,
       label: identity,
-      value: sum(tools.values()),
-      detail: joinNotes(sourceNote(merge(tools.values())), accountsNote(lists(tools.values()))),
-      children: Array.from(tools, ([tool, leaf]) => ({
-        key: `${identity}/${tool}`,
-        label: tool,
+      value: sum(providers.values()),
+      detail: joinNotes(
+        sourceNote(merge(providers.values(), 'sources')),
+        accountsNote(lists(providers.values()))
+      ),
+      children: Array.from(providers, ([provider, leaf]) => ({
+        key: `${identity}/${provider}`,
+        label: provider,
         value: leaf.n,
-        detail: joinNotes(sourceNote(leaf.sources), accountsNote(leaf.accounts)),
-      })),
+        detail: joinNotes(
+          toolsNote(leaf.tools),
+          sourceNote(leaf.sources),
+          accountsNote(leaf.accounts)
+        ),
+      })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label)),
     })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label));
     const used = categories.reduce((s, c) => s + c.value, 0);
     return { key: pool, label: pool, capacity: used, used, categories };
