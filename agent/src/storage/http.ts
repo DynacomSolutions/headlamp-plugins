@@ -6,7 +6,7 @@ import type { Metrics } from '../metrics.js';
 import type { PushService } from '../push/service.js';
 import type { StorageStore } from './store.js';
 import { StorageApply } from './apply.js';
-import { authenticatedMachine, operatorAuth, tokenFile } from './auth.js';
+import { authenticatedMachine, operatorAuth, serviceProxyNetworks, tokenFile } from './auth.js';
 import { diagnosticHeader, ScheduledDiagnostic } from './diagnostic.js';
 import { notificationAuthority, type NotificationAuthority } from './notification-authority.js';
 import { enrolSchema, StorageNotifications, subscriptionSchema, disabledCoverage, coverageMetrics } from './notifications.js';
@@ -42,6 +42,7 @@ type Settings = {
   disposable: ReadonlySet<string>;
   applyEnabled: boolean;
   holderEvidenceExpected: boolean;
+  trustedServiceProxyNetworks: ReturnType<typeof serviceProxyNetworks>;
 };
 
 function settings(env: NodeJS.ProcessEnv): Settings | undefined {
@@ -80,6 +81,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   }
   const applyEnabled = env.STORAGE_APPLY_ENABLED === 'true';
   const holderEvidenceExpected = applyEnabled || disposable.size > 0 || env.STORAGE_EXPECT_HOLDER_EVIDENCE !== 'false';
+  const trustedServiceProxyNetworks = serviceProxyNetworks(env.STORAGE_TRUSTED_SERVICE_PROXY_CIDRS);
   let partialScanScopes: ReadonlyMap<string, ExpectedScopes>;
   try {
     const scopesFile = env.STORAGE_PARTIAL_SCAN_SCOPES_FILE;
@@ -106,6 +108,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     disposable,
     applyEnabled,
     holderEvidenceExpected,
+    trustedServiceProxyNetworks,
   };
 }
 
@@ -151,7 +154,7 @@ export async function storageHttp(deps: HttpHelpers & {
     return parsed.data;
   }
 
-  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set());
+  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.trustedServiceProxyNetworks);
   const diagnostic = new ScheduledDiagnostic(config.dataDir, now);
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {
@@ -159,6 +162,10 @@ export async function storageHttp(deps: HttpHelpers & {
     const parts = path.slice(base.length + 1).split('/');
     const [root, kind, id, action] = parts;
     const parent = root === 'incident' && parts.length === 1 && method === 'GET';
+    const trustedRead = parent
+      || (root === 'incident' && kind === 'drives' && Boolean(id) && parts.length === 3 && method === 'GET')
+      || (root === 'incident' && kind === 'chat' && Boolean(id) && method === 'GET'
+        && (parts.length === 3 || (parts.length === 4 && action === 'transcript')));
     if (!active || !backend) {
       if (parent) return { data: empty };
       throw new StorageError(503, 'Storage incidents are disabled');
@@ -178,7 +185,7 @@ export async function storageHttp(deps: HttpHelpers & {
       return { data: { ok: true } };
     }
     if (root !== 'incident' || !['GET', 'POST'].includes(method ?? '') || parts.length > 4) throw new StorageError(404, 'Storage route not found');
-    const operator = await auth(req, method === 'GET' ? 'get' : kind === 'plans' && action === 'approve' ? 'approve' : 'update');
+    const operator = await auth(req, method === 'GET' ? 'get' : kind === 'plans' && action === 'approve' ? 'approve' : 'update', trustedRead);
     async function operatorBody<T>(schema: z.ZodType<T>, maxBytes?: number) {
       const data = await body(req, schema, maxBytes);
       operator.checkBody(data);

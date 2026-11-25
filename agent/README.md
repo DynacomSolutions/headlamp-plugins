@@ -462,6 +462,22 @@ Make a key pair once, keep it in a Secret, and give it to the pod. This prints t
 node -e "const{generateKeyPairSync}=require('crypto');const{privateKey:k,publicKey:p}=generateKeyPairSync('ec',{namedCurve:'prime256v1'});const d=k.export({format:'jwk'}).d;const j=p.export({format:'jwk'});console.log(JSON.stringify({publicKey:Buffer.concat([Buffer.from([4]),Buffer.from(j.x,'base64url'),Buffer.from(j.y,'base64url')]).toString('base64url'),privateKey:d}))"
 ```
 
+### Storage incident read access
+
+The Incidents plugin reads storage data through the Kubernetes service proxy.
+The agent trusts this route only when the connection peer address matches the configured Kubernetes node CIDRs.
+The agent does not trust forwarded identity headers, `Origin`, or browser cookies for this read path.
+
+| Setting | Deployment contract |
+| --- | --- |
+| `STORAGE_TRUSTED_SERVICE_PROXY_CIDRS` | Comma-separated IPv4 or IPv6 CIDRs for Kubernetes nodes that receive Headlamp service-proxy traffic. The agent refuses an invalid value at startup and leaves this read path unavailable when the setting is empty. |
+
+The trusted path permits only `GET /api/storage/incident`, drive details, chat details and chat transcripts.
+Notification device data and every mutation still require the existing human operator token and Kubernetes reviews.
+Set this value to the node CIDRs used by the Headlamp service proxy. Do not set it to tailnet, gateway or pod CIDRs.
+
+If the deployment does not know the node CIDRs, leave this setting unset and use a human operator token.
+
 ### Storage notification authority
 
 Storage findings and unanswered questions can send a generic Web Push message with a link to the

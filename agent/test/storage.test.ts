@@ -96,6 +96,7 @@ async function fixture(options: {
   contained?: boolean; policyMount?: string; policyDevice?: string;
   partialScopes?: Record<string, Record<string, string>>;
   policies?: Record<string, { mount: string; device: string }[]>;
+  trustedServiceProxyCidrs?: string;
 } = {}) {
   const dir = mkdtempSync(join(process.env.STORAGE_TEST_FIXTURE_ROOT ?? tmpdir(), 'storage-incident-fixture-'));
   dispose.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -255,6 +256,7 @@ async function fixture(options: {
     } : {}),
     STORAGE_APPLY_ENABLED: options.disposable ? 'true' : 'false',
     STORAGE_DISPOSABLE_SCANNERS: options.disposable ? nodes[0] : '',
+    ...(options.trustedServiceProxyCidrs ? { STORAGE_TRUSTED_SERVICE_PROXY_CIDRS: options.trustedServiceProxyCidrs } : {}),
     ...(options.contained ? { STORAGE_EXPECT_HOLDER_EVIDENCE: 'false' } : {}),
     ...(options.policyMount || options.policies ? { STORAGE_FILESYSTEM_POLICIES_FILE: policiesFile } : {}),
     ...(options.partialScopes ? { STORAGE_PARTIAL_SCAN_SCOPES_FILE: scopesFile } : {}),
@@ -401,6 +403,33 @@ describe('Storage incident normal entry points', () => {
     const f = await fixture({ operatorGroups: groups });
     expect((await f.call(`${api}/incident`)).status).toBe(403);
     expect(f.reviews.every(review => review.path.endsWith('/selfsubjectreviews'))).toBe(true);
+  });
+
+  it('allows trusted service-proxy reads and keeps writes and notification data protected', async () => {
+    const f = await fixture({ trustedServiceProxyCidrs: '127.0.0.1/32' });
+    const endpoint = `${api}/incident`;
+    const headers = { 'x-forwarded-user': 'attacker', 'x-remote-user': 'attacker' };
+    const overview = await f.call(endpoint, { token: false, headers });
+    expect(overview.status).toBe(200);
+    expect(overview.data).toMatchObject({ enabled: true, incident: { chatId: expect.any(String) } });
+    const overviewData = overview.data as { incident: { chatId: string } };
+    const chat = `${api}/incident/chat/${overviewData.incident.chatId}`;
+    expect((await f.call(chat, { token: false, headers })).status).toBe(200);
+    expect((await f.call(`${chat}/transcript`, { token: false, headers })).status).toBe(200);
+    expect((await f.call(`${api}/incident/notifications/${'0'.repeat(32)}`, { token: false, headers })).status).toBe(401);
+    expect((await f.call(`${chat}/messages`, { token: false, headers, data: { text: 'inventory' } })).status).toBe(401);
+
+    expect((await f.reconcile()).status).toBe(200);
+    const afterScan = await f.call(endpoint, { token: false, headers });
+    const afterScanData = afterScan.data as { drives: Array<{ id: string }> };
+    const driveId = afterScanData.drives[0].id;
+    expect((await f.call(`${api}/incident/drives/${driveId}`, { token: false, headers })).status).toBe(200);
+    expect((await f.call(`${api}/incident/drives/${driveId}/investigate`, { token: false, headers, data: { kind: 'capacity' } })).status).toBe(401);
+  });
+
+  it('denies direct storage reads without a human token when no service-proxy network is configured', async () => {
+    const f = await fixture({ trustedServiceProxyCidrs: '192.0.2.0/24' });
+    expect((await f.call(`${api}/incident`, { token: false, headers: { 'x-forwarded-user': 'fixture-operator' } })).status).toBe(401);
   });
 
   it('verifies named humans, exact RBAC and HttpOnly proxy requests without using a service account fallback', async () => {

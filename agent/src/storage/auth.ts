@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { IncomingMessage } from 'node:http';
+import { BlockList, isIP } from 'node:net';
 import { z } from 'zod';
 import type { Config } from '../config.js';
 import { requestJson } from './transport.js';
@@ -70,6 +71,36 @@ const REVIEW_LIMIT = 64 * 1024;
 
 export type KubernetesIdentity = { username: string; uid: string | null };
 
+export type TrustedServiceProxyNetworks = ReadonlyArray<BlockList>;
+
+export function serviceProxyNetworks(value: string | undefined): TrustedServiceProxyNetworks {
+  if (!value?.trim()) return [];
+  try {
+    return value.split(',').map(raw => {
+      const match = /^([^/]+)(?:\/(\d+))?$/.exec(raw.trim());
+      const address = match?.[1];
+      const prefixText = match?.[2];
+      const family = isIP(address ?? '');
+      const maxPrefix = family === 4 ? 32 : family === 6 ? 128 : 0;
+      const prefix = prefixText === undefined ? maxPrefix : Number(prefixText);
+      if (!family || !Number.isInteger(prefix) || prefix < 0 || prefix > maxPrefix) throw new Error();
+      const network = new BlockList();
+      network.addSubnet(address!, prefix, family === 4 ? 'ipv4' : 'ipv6');
+      return network;
+    });
+  } catch {
+    throw new Error('Invalid storage service-proxy network configuration');
+  }
+}
+
+function trustedServiceProxy(req: IncomingMessage, networks: TrustedServiceProxyNetworks): boolean {
+  const remote = req.socket.remoteAddress;
+  if (!remote) return false;
+  const address = remote.startsWith('::ffff:') ? remote.slice('::ffff:'.length) : remote;
+  const family = isIP(address);
+  return family !== 0 && networks.some(network => network.check(address, family === 4 ? 'ipv4' : 'ipv6'));
+}
+
 export type Operator = {
   name: string;
   identity: KubernetesIdentity;
@@ -81,10 +112,19 @@ export function operatorAuth(
   config: Pick<Config, 'kubeApi' | 'kubeCaFile' | 'allowedOrigins'>,
   headlampCluster: string,
   humanGroups: ReadonlySet<string>,
+  trustedServiceProxyNetworks: TrustedServiceProxyNetworks = [],
 ) {
   const isMember = (groups: string[]) => groups.some(group => humanGroups.has(group));
 
-  return async (req: IncomingMessage, verb: OperatorVerb): Promise<Operator> => {
+  return async (req: IncomingMessage, verb: OperatorVerb, allowTrustedServiceProxy = false): Promise<Operator> => {
+    if (verb === 'get' && allowTrustedServiceProxy && trustedServiceProxy(req, trustedServiceProxyNetworks)) {
+      return {
+        name: 'headlamp-service-proxy',
+        identity: { username: 'system:headlamp-service-proxy', uid: null },
+        requireRead: async () => undefined,
+        checkBody: () => undefined,
+      };
+    }
     const explicit = req.headers['x-storage-operator-token'];
     const standard = req.headers.authorization;
     const direct = explicit ?? standard;
