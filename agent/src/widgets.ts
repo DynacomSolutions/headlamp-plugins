@@ -739,8 +739,9 @@ async function vmImages(d: PanelDeps): Promise<PanelBody> {
   const [dvs, sources, crons, vms, vmis, pods, nodes] = await Promise.all(
     ['datavolumes.cdi.kubevirt.io', 'datasources.cdi.kubevirt.io', 'dataimportcrons.cdi.kubevirt.io', 'virtualmachines.kubevirt.io', 'virtualmachineinstances.kubevirt.io', 'pods', 'nodes'].map(optional),
   );
-  const repos = vmModel.vmRepos(catalogue.repositories as vmModel.Repo[], vmModel.parsePrefixes(vmModel.DEFAULT_SETTINGS.namePrefixes));
-  const groups = vmModel.groupUsages([...vmModel.podUsages(pods, vmModel.virtualKubeletNodes(nodes)), ...vmModel.vmUsages(vms, vmis, dvs)], repos);
+  const allRepos = catalogue.repositories as vmModel.Repo[];
+  const groups = vmModel.groupUsages([...vmModel.podUsages(pods, vmModel.virtualKubeletNodes(nodes)), ...vmModel.vmUsages(vms, vmis, dvs)], allRepos);
+  const repos = vmModel.vmImageRepos(allRepos, vmModel.parsePrefixes(vmModel.DEFAULT_SETTINGS.namePrefixes), vmModel.vmUsedRepoNames(groups));
   const counts = vmModel.usageCounts(groups);
   const inUse = repos.filter(r => (counts.get(r.name) ?? 0) > 0).length;
 
