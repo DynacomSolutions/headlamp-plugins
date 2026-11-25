@@ -1,0 +1,18 @@
+<!-- Status-bar badge for two or more push notifications: a stack of squares, the Headlamp logo
+     cut out of the front one. Android uses only the alpha channel. Render: scripts/render-push-badges.sh -->
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96">
+  <defs>
+    <mask id="behind">
+      <rect width="96" height="96" fill="#fff"/>
+      <rect x="0" y="16" width="80" height="80" rx="16" fill="#000"/>
+    </mask>
+    <mask id="logo">
+      <rect width="96" height="96" fill="#fff"/>
+      <g transform="translate(25 37.2) scale(1.4)">
+        <path fill="#000" fill-rule="evenodd" d="M25.4969 20.3088V12.7929L23.507 10.1988V5.82788L17.1283 3.53582V0H8.36867V3.53582L1.99001 5.82788V10.1988L0 12.7929V20.3088L1.99001 22.9916L0 29.1749L12.7574 32L25.4969 29.1749L23.507 22.9916L25.4969 20.3088Z M12.7756 22.9917C16.2937 22.9917 19.1543 20.1311 19.1543 16.6131C19.1543 13.095 16.2937 10.2344 12.7756 10.2344C9.2576 10.2344 6.39697 13.0772 6.39697 16.6131C6.39697 20.1488 9.23984 22.9917 12.7756 22.9917Z"/>
+      </g>
+    </mask>
+  </defs>
+  <rect x="20" y="4" width="72" height="72" rx="12" fill="#fff" mask="url(#behind)"/>
+  <rect x="6" y="22" width="68" height="68" rx="12" fill="#fff" mask="url(#logo)"/>
+</svg>
