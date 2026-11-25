@@ -40,6 +40,11 @@ export interface SunburstChartProps {
    * fill, so the node-first chart then shows `<unit>` under the total and no "of capacity" text.
    */
   unit?: string;
+  /**
+   * A small logo for a node or group label, or null. It sits before the label in the legend, and in
+   * the ring label where there is room. `at` is set when the logo sits inside an SVG.
+   */
+  labelIcon?: (label: string, size: number, at?: { x: number; y: number }) => JSX.Element | null;
 }
 
 const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string =>

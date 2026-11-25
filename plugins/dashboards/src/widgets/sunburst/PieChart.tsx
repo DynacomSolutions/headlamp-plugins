@@ -35,6 +35,8 @@ export interface PieChartProps {
   /** The total as text. */
   totalText: string;
   kiosk?: boolean;
+  /** A small logo for the group of a slice, or null. It sits in front of the slice name. */
+  groupIcon?: (group: string, size: number) => JSX.Element | null;
 }
 
 /** The least width of a legend column, the gap between columns and the height of a legend row, in px. */
@@ -52,6 +54,7 @@ export function PieChart({
   title,
   totalText,
   kiosk = false,
+  groupIcon,
 }: PieChartProps): JSX.Element {
   const theme = useTheme();
   const mode = theme.palette.mode === 'dark' ? 'dark' : 'light';
@@ -224,6 +227,15 @@ export function PieChart({
                       opacity: s.value > 0 ? 1 : 0.35,
                     }}
                   />
+                  {groupIcon && (
+                    <Box
+                      component="span"
+                      data-legend-icon={s.group}
+                      sx={{ flex: 'none', width: 12, height: 12, display: 'inline-flex' }}
+                    >
+                      {groupIcon(s.group, 12)}
+                    </Box>
+                  )}
                   <Box
                     component="span"
                     sx={{

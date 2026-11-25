@@ -12,11 +12,12 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { ScrollArea } from '../../components/ScrollArea';
 import { useResolveLink } from '../../links';
+import { isAisSource, labelLogo, ProviderIcon, providerLogoIn } from '../ais/providerIcon';
 import { WidgetFooter } from '../footer';
 import { useElementSize } from '../promql/useElementSize';
 import { iconForLabel, useIconMap } from '../runners/icons';
 import { SunburstChart } from '../sunburst/SunburstChart';
-import { isEmptyPanel, PanelModel, PanelRing, ringToSunburst } from './model';
+import { isEmptyPanel, PanelModel, PanelRing, PanelRow, ringToSunburst } from './model';
 import { PanelBars } from './PanelBars';
 import { PanelLanes } from './PanelLanes';
 import { PanelTables } from './PanelTables';
@@ -144,6 +145,18 @@ export function PanelView({
     () => (display.orgIcons ? (r: { label: string }) => iconForLabel(r.label, iconMap) : undefined),
     [display.orgIcons, iconMap]
   );
+  // The rows and rings of the AIS source show the logo of the AI provider that a label names.
+  const aisSource = isAisSource(sourceId);
+  const providerIcon = React.useMemo(
+    () =>
+      aisSource
+        ? (r: PanelRow): JSX.Element | null => {
+            const key = providerLogoIn(r.label) ?? providerLogoIn(r.detail?.split(',')[0]);
+            return key ? <ProviderIcon name={key} /> : null;
+          }
+        : undefined,
+    [aisSource]
+  );
   // The bars and lanes views keep their own legend fixed and scroll only their rows.
   const showRows = display.showRows !== false;
   const ownScroll = showRows && display.rowLayout !== 'list' && panel.rows.length > 0;
@@ -248,6 +261,7 @@ export function PanelView({
                       title={ring.label}
                       format={ringFormat(ring)}
                       kiosk={kiosk}
+                      labelIcon={aisSource ? labelLogo : undefined}
                     />
                   </Box>
                 ))}
@@ -262,6 +276,7 @@ export function PanelView({
                 source={source}
                 swatch={swatch}
                 nameIcon={nameIcon}
+                providerIcon={providerIcon}
               />
             )}
             {panel.tables.length > 0 && <PanelTables tables={panel.tables} />}

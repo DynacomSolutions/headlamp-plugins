@@ -522,6 +522,14 @@ needed.
   The tool names `claude`, `codex`, `grok`, `kimi`, `zai` and `opencode` map to their providers. A tool with
   no limits (for example `pi`) is its own group. The members of the `claude-swap` panel belong to the
   Anthropic provider. A member with no limit row of its own shows the weekly value of the pool panel.
+- **Provider logos**: every place that names an AI provider shows the real logo of that provider before the
+  name: the group headers, the Claude logo on the pool line, the gateway usage legend, the node rows and the
+  ring labels of the agents chart, and the rows of an AIS panel that name a provider (for example the spend
+  guard). The logos are bundled as path data in `src/widgets/ais/providerIcons.generated.ts` (made by
+  `scripts/gen-provider-icons.mjs` from simple-icons and `@lobehub/icons-static-svg`), so the plugin never
+  fetches a logo from another host. A plain logo uses the text colour, so it reads on the dark kiosk and on
+  the light theme. A name with no known provider shows no logo. The logos stay in the name column and never
+  move the bars, the countdowns or the percentages.
 - **Links** go only to the dashboard tab whose id is the source id (for example `ais-console`). With no such
   tab, or in edit mode, a row has no link.
 - **Not available from the source**: the sessions are one total. The `agents` panel names a pool, not an

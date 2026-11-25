@@ -36,6 +36,7 @@ import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
 import { COUNTDOWN_PAST, COUNTDOWN_TICK_MS, formatCountdown } from './countdown';
 import type { AisGroup, AisIdentity, AisJoint, AisModel } from './join';
+import { PROVIDER_ICON_SIZE,ProviderIcon } from './providerIcon';
 
 /** A widget at least this wide draws the status key. A row at least WIDE_ROW wide draws wide columns. */
 export const WIDE_WIDTH = 640;
@@ -224,6 +225,12 @@ function GroupHeader(props: {
         boxShadow: `inset 0 -1px 0 ${tk.line2}`,
       }}
     >
+      <Box
+        data-group-icon
+        sx={{ flex: 'none', alignSelf: 'center', display: 'inline-flex', color: tk.fg }}
+      >
+        <ProviderIcon name={group.kind === 'pool' ? 'claude' : group.title} />
+      </Box>
       {link && !editing ? (
         <InternalLink to={link} style={LINK_STYLE}>
           {title}
@@ -401,6 +408,11 @@ function IdentityLine(props: {
                 {pool.open ? '▾' : '▸'}
               </ButtonBase>
             )}
+            {pool && (
+              <Box data-pool-icon sx={{ flex: 'none', display: 'inline-flex', color: tk.fg }}>
+                <ProviderIcon name="claude" />
+              </Box>
+            )}
             {loginProblem && login && (
               <Box
                 component="span"
@@ -435,7 +447,7 @@ function IdentityLine(props: {
               data-pool-sub
               sx={{
                 display: 'block',
-                pl: '21px',
+                pl: `${16 + 5 + PROVIDER_ICON_SIZE + 5}px`,
                 fontSize: 11.5,
                 color: tk.mut,
                 whiteSpace: 'nowrap',
