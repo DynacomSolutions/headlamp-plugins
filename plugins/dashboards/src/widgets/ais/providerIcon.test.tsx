@@ -89,22 +89,23 @@ describe('provider logos', () => {
   });
 
   it('knows the Claude pool, the aliases and a label that holds a provider name', () => {
-    expect(providerLogoKey('agent-pool')).toBe('claude');
+    expect(providerLogoKey('claude')).toBe('claude');
+    expect(providerLogoKey('pool-one')).toBeUndefined();
     expect(providerLogoKey('Codex')).toBe('openai');
     expect(providerLogoKey('grok')).toBe('xai');
     expect(providerLogoKey('OpenCode Go')).toBe('opencode');
     expect(providerLogoKey('Google')).toBe('google');
-    expect(providerLogoIn('claude-dynacom')).toBe('claude');
-    expect(providerLogoIn('Anthropic / dynacom')).toBe('anthropic');
-    expect(providerLogoIn('t3-codex-dynacom')).toBe('openai');
+    expect(providerLogoIn('claude-acme')).toBe('claude');
+    expect(providerLogoIn('Anthropic / acme')).toBe('anthropic');
+    expect(providerLogoIn('t3-codex-acme')).toBe('openai');
   });
 
   it('draws no logo for a name that is no provider, never a letter tile', () => {
-    expect(providerLogoKey('dynacom')).toBeUndefined();
+    expect(providerLogoKey('acme')).toBeUndefined();
     expect(providerLogoKey(DIRECT)).toBeUndefined();
     expect(providerLogoIn('Direct')).toBeUndefined();
-    expect(labelLogo('dynacom', 12)).toBeNull();
-    const c = render(themed(<ProviderIcon name="dynacom" />)).container;
+    expect(labelLogo('acme', 12)).toBeNull();
+    const c = render(themed(<ProviderIcon name="acme" />)).container;
     expect(c.querySelector('svg[data-provider-icon]')).toBeNull();
     expect(c.textContent).toBe('');
   });
@@ -183,7 +184,7 @@ describe('logos in the AIS widget', () => {
     stats: [],
     rows: [
       {
-        label: 'agent-pool / blue',
+        label: 'pool-one / blue',
         detail: 'Active, weekly',
         value: '40%',
         fraction: 0.4,
@@ -227,7 +228,7 @@ describe('logos in the AIS widget', () => {
 
   it('shows the Claude logo on the pool line, in the name column', () => {
     const c = draw();
-    const pool = c.querySelector('[data-ais-row^="pool:"], [data-ais-row="agent-pool"]');
+    const pool = c.querySelector('[data-ais-row^="pool:"], [data-ais-row="pool-one"]');
     expect(pool).not.toBeNull();
     const icon = (pool as Element).querySelector('[data-pool-icon] [data-provider-icon]');
     expect(icon?.getAttribute('data-provider-icon')).toBe('claude');
@@ -254,9 +255,9 @@ describe('logos in the AIS widget', () => {
 describe('logos in the charts', () => {
   it('shows the provider logo in front of each gateway legend row', () => {
     const slices = [
-      { key: 'a', label: 'agents-claude', group: 'Claude', value: 90, valueText: '90' },
-      { key: 'b', label: 'x-codex', group: 'Codex', value: 10, valueText: '10' },
-      { key: 'c', label: 'x-ali', group: 'Ali', value: 5, valueText: '5' },
+      { key: 'a', label: 'app-claude', group: 'Claude', value: 90, valueText: '90' },
+      { key: 'b', label: 'app-codex', group: 'Codex', value: 10, valueText: '10' },
+      { key: 'c', label: 'app-ali', group: 'Ali', value: 5, valueText: '5' },
     ];
     const c = render(
       themed(
@@ -291,8 +292,8 @@ describe('logos in the charts', () => {
           detail: '',
           value: '1',
           status: 'ok',
-          pool: 'agent-pool',
-          identity: 'myriad',
+          pool: 'pool-one',
+          identity: 'red',
           provider: 'claude',
         },
         {
@@ -301,7 +302,7 @@ describe('logos in the charts', () => {
           value: '1',
           status: 'ok',
           pool: null,
-          identity: 'dynacom',
+          identity: 'acme',
           provider: 'codex',
         },
       ],

@@ -11,7 +11,6 @@ import { PROVIDER_LOGOS } from './providerIcons.generated';
 const ALIASES: Record<string, string> = {
   claude: 'claude',
   claudecode: 'claude',
-  agentpool: 'claude',
   anthropic: 'anthropic',
   openai: 'openai',
   codex: 'openai',
@@ -42,7 +41,7 @@ export function providerLogoKey(name: string | undefined): string | undefined {
 
 /**
  * The logo id for a label that holds a provider name as one of its parts, for example
- * "claude-dynacom" or "Anthropic / dynacom". The whole label counts first, then each part.
+ * "claude-acme" or "Anthropic / acme". The whole label counts first, then each part.
  */
 export function providerLogoIn(label: string | undefined): string | undefined {
   if (label === undefined) return undefined;
