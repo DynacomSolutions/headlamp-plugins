@@ -2,7 +2,7 @@ import { ApiProxy } from '@kinvolk/headlamp-plugin/lib';
 import type { A2uiMessage } from '../a2ui';
 import { useLoaded } from '../chat-data';
 import { ChatMessage, parseChat } from '../chat-model';
-import { backendUrl, Settings } from '../model';
+import { backendUrl, storageRelayUrl, Settings } from '../model';
 
 export interface StorageIncident {
   enabled: boolean;
@@ -209,21 +209,30 @@ function parseStorageChat(raw: unknown) {
 
 export const drivePath = (id: string) => `/incident/drives/${encodeURIComponent(id)}`;
 export const chatPath = (id: string) => `/incident/chat/${encodeURIComponent(id)}`;
-const storageUrl = (settings: Settings, path: string) =>
-  backendUrl(settings, `/api/storage${path}`);
+const directStorageUrl = (settings: Settings, path: string) => backendUrl(settings, `/api/storage${path}`);
+const storageReadUrl = (path: string) => storageRelayUrl(path);
 
-async function request(url: string, body?: unknown, unavailableMessage?: string): Promise<unknown> {
+async function request(
+  url: string,
+  body?: unknown,
+  unavailableMessage?: string,
+  useRelay = false
+): Promise<unknown> {
   try {
+    const options: RequestInit | undefined = body === undefined
+      ? useRelay
+        ? { headers: {}, credentials: 'same-origin' as const, redirect: 'error' as const }
+        : undefined
+      : {
+          headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
+          body: JSON.stringify(body),
+        };
     return await ApiProxy.request(
       url,
-      body === undefined
-        ? undefined
-        : {
-            headers: { 'Content-Type': 'application/json' },
-            method: 'POST',
-            body: JSON.stringify(body),
-          },
-      false
+      options,
+      false,
+      !useRelay
     );
   } catch (error) {
     const status = (error as { status?: number })?.status;
@@ -235,16 +244,19 @@ async function request(url: string, body?: unknown, unavailableMessage?: string)
   }
 }
 
+const relayRequest = (url: string, _body?: unknown, unavailableMessage?: string) =>
+  request(url, undefined, unavailableMessage, true);
+
 export function postStorage<T>(settings: Settings, path: string, body: unknown): Promise<T> {
-  return request(storageUrl(settings, path), body) as Promise<T>;
+  return request(directStorageUrl(settings, path), body) as Promise<T>;
 }
 
 export function useStorageIncident(settings: Settings) {
   return useLoaded(
-    storageUrl(settings, '/incident'),
+    storageReadUrl('/incident'),
     raw => raw as StorageIncident,
     () => 10000,
-    request
+    relayRequest
   );
 }
 
@@ -252,8 +264,8 @@ export async function loadStorageTranscriptBefore(settings: Settings, id: string
   const query = new URLSearchParams({ before, limit: '24' });
   const unavailableMessage =
     'Earlier messages could not be loaded. Select Load earlier messages to try again.';
-  const raw = await request(
-    storageUrl(settings, `${chatPath(id)}/transcript?${query}`),
+  const raw = await relayRequest(
+    storageReadUrl(`${chatPath(id)}/transcript?${query}`),
     undefined,
     unavailableMessage
   );
@@ -274,7 +286,7 @@ export async function loadStorageTranscriptBefore(settings: Settings, id: string
 
 export function useStorageDrive(settings: Settings, id?: string) {
   return useLoaded(
-    id ? storageUrl(settings, drivePath(id)) : '',
+    id ? storageReadUrl(drivePath(id)) : '',
     raw => raw as DriveDetail,
     data => {
       if (!data) return 10000;
@@ -283,22 +295,22 @@ export function useStorageDrive(settings: Settings, id?: string) {
         ? 2500
         : 10000;
     },
-    request
+    relayRequest
   );
 }
 
 export function useStorageChat(settings: Settings, id?: string) {
   return useLoaded(
-    id ? storageUrl(settings, chatPath(id)) : '',
+    id ? storageReadUrl(chatPath(id)) : '',
     parseStorageChat,
     () => 5000,
-    request
+    relayRequest
   );
 }
 
 export function useStorageNotificationDevice(settings: Settings, id: string) {
   return useLoaded(
-    storageUrl(settings, `/incident/notifications/${encodeURIComponent(id)}`),
+    directStorageUrl(settings, `/incident/notifications/${encodeURIComponent(id)}`),
     raw => raw as { subscriptionId: string; enabled: boolean },
     () => 10000,
     request

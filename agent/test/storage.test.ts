@@ -20,7 +20,10 @@ vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 const human = 'fixture-human-credential';
 const viewer = 'fixture-read-only-credential';
 const serviceAccount = 'fixture-view-service-credential';
+const agentAccount = 'fixture-agent-service-credential';
 const headlampAccount = 'fixture-headlamp-service-credential';
+const relayToken = 'fixture-headlamp-relay-token';
+const relayAudience = 'headlamp-storage-relay';
 const invalid = 'fixture-rejected-credential';
 const machine = 'fixture-reconcile-credential';
 const scanner = 'fixture-scanner-credential';
@@ -60,7 +63,10 @@ async function listener(handle: (req: IncomingMessage, res: ServerResponse) => P
   const respond = (req: IncomingMessage, res: ServerResponse) => void handle(req, res).catch(() => reply(res, 500, {}));
   const server = tls ? createHttpsServer(tls, respond) : createServer(respond);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const close = () => new Promise<void>(resolve => server.close(() => resolve()));
+  const close = () => new Promise<void>(resolve => {
+    server.closeIdleConnections();
+    server.close(() => resolve());
+  });
   dispose.push(close);
   onClose?.(close);
   const address = server.address();
@@ -93,6 +99,7 @@ type NodeFixture = {
 
 async function fixture(options: {
   disposable?: boolean; pushEnabled?: boolean; disabled?: boolean; operatorGroups?: string[] | null; authorityConfigured?: boolean;
+  relayAudience?: string;
   contained?: boolean; policyMount?: string; policyDevice?: string;
   partialScopes?: Record<string, Record<string, string>>;
   policies?: Record<string, { mount: string; device: string }[]>;
@@ -114,6 +121,8 @@ async function fixture(options: {
   let authorityMember = true;
   let authorityVersion = 'fixture-grant-1';
   let authorityResponse: ((input: Record<string, unknown>) => unknown) | undefined;
+  let tokenReviewAudienceOverride: string[] | undefined;
+  let tokenReviewUserOverride: string | undefined;
   const revokedVerbs = new Set<string>();
   const authorityRequests: { token: string | undefined; input: Record<string, unknown> }[] = [];
   const useAuthority = options.pushEnabled && options.authorityConfigured !== false;
@@ -171,11 +180,30 @@ async function fixture(options: {
       res.end();
       return;
     }
-    const valid = [human, viewer, serviceAccount, headlampAccount, automation].includes(token?.slice(7) ?? '');
+    const valid = [human, viewer, serviceAccount, agentAccount, headlampAccount, automation].includes(token?.slice(7) ?? '');
     if (!valid) return reply(res, 401, {});
+    if (path.endsWith('/tokenreviews')) {
+      const spec = input.spec as { token?: string; audiences?: string[] };
+      const requestedAudience = spec?.audiences?.[0];
+      if (token !== `Bearer ${agentAccount}` || spec?.token !== relayToken || !requestedAudience) {
+        return reply(res, 201, { status: { authenticated: false, audiences: [] } });
+      }
+      return reply(res, 201, {
+        status: {
+          authenticated: true,
+          user: {
+            username: tokenReviewUserOverride ?? 'system:serviceaccount:example:headlamp',
+            uid: 'headlamp-uid',
+            groups: ['system:authenticated', 'system:serviceaccounts', 'system:serviceaccounts:example'],
+          },
+          audiences: tokenReviewAudienceOverride ?? [requestedAudience],
+        },
+      });
+    }
     if (path.endsWith('/selfsubjectreviews')) {
       const username = token === `Bearer ${serviceAccount}` ? 'system:serviceaccount:example:viewer'
         : token === `Bearer ${headlampAccount}` ? 'system:serviceaccount:example:headlamp'
+          : token === `Bearer ${agentAccount}` ? 'system:serviceaccount:headlamp-agent:headlamp-agent'
           : token === `Bearer ${human}` ? 'fixture-operator'
             : token === `Bearer ${automation}` ? 'fixture-automation' : 'fixture-reader';
       const groups = ['system:authenticated'];
@@ -184,8 +212,20 @@ async function fixture(options: {
       else groups.push(operatorGroup);
       return reply(res, 201, { status: { userInfo: { username, ...(username === operatorKubernetes.username ? { uid: operatorKubernetes.uid } : {}), groups } } });
     }
-    const spec = input.spec as { resourceAttributes?: { group?: string; resource?: string; verb?: string } };
+    const spec = input.spec as {
+      user?: string;
+      resourceAttributes?: { group?: string; resource?: string; verb?: string };
+    };
     const attrs = spec?.resourceAttributes;
+    if (path.endsWith('/subjectaccessreviews')) {
+      return reply(res, 201, {
+        status: {
+          allowed: token === `Bearer ${agentAccount}` && spec.user === 'system:serviceaccount:example:headlamp'
+            && attrs?.group === rbac && attrs.resource === 'incidents' && attrs.verb === 'get'
+            && !revokedVerbs.has(attrs.verb),
+        },
+      });
+    }
     const allowed = path.endsWith('/selfsubjectaccessreviews') && attrs?.group === rbac && attrs.resource === 'incidents'
       && !revokedVerbs.has(attrs.verb ?? '')
       && (token === `Bearer ${human}` || token === `Bearer ${automation}` || attrs.verb === 'get');
@@ -232,7 +272,7 @@ async function fixture(options: {
   writeFileSync(map, JSON.stringify(addresses));
   writeFileSync(scannerFile, scanner, { mode: 0o600 });
   writeFileSync(machineFile, machine, { mode: 0o600 });
-  writeFileSync(kubeTokenFile, headlampAccount, { mode: 0o600 });
+  writeFileSync(kubeTokenFile, agentAccount, { mode: 0o600 });
   if (options.policies) {
     writeFileSync(policiesFile, JSON.stringify(options.policies));
   } else if (options.policyMount) {
@@ -256,6 +296,7 @@ async function fixture(options: {
     STORAGE_APPLY_ENABLED: options.disposable ? 'true' : 'false',
     STORAGE_DISPOSABLE_SCANNERS: options.disposable ? nodes[0] : '',
     STORAGE_HEADLAMP_SERVICE_ACCOUNT: 'system:serviceaccount:example:headlamp',
+    ...(options.relayAudience ? { STORAGE_HEADLAMP_RELAY_AUDIENCE: options.relayAudience } : {}),
     ...(options.contained ? { STORAGE_EXPECT_HOLDER_EVIDENCE: 'false' } : {}),
     ...(options.policyMount || options.policies ? { STORAGE_FILESYSTEM_POLICIES_FILE: policiesFile } : {}),
     ...(options.partialScopes ? { STORAGE_PARTIAL_SCAN_SCOPES_FILE: scopesFile } : {}),
@@ -301,6 +342,8 @@ async function fixture(options: {
     authority(status: number, member = true) { authorityStatus = status; authorityMember = member; },
     entitlementVersion(version: string) { authorityVersion = version; },
     authorityResponse(override: typeof authorityResponse) { authorityResponse = override; },
+    relayAudiences(audiences: string[]) { tokenReviewAudienceOverride = audiences; },
+    relayUser(username: string) { tokenReviewUserOverride = username; },
     async replica() {
       const replica = await startServer(config, 'test', { store, storageEnv: env, pushFetch, now: () => at });
       dispose.push(() => replica.close());
@@ -404,7 +447,7 @@ describe('Storage incident normal entry points', () => {
     expect(f.reviews.every(review => review.path.endsWith('/selfsubjectreviews'))).toBe(true);
   });
 
-  it('allows the authenticated Headlamp service-proxy reads and keeps writes and notification data protected', async () => {
+  it('keeps legacy Headlamp service-proxy reads when the relay audience is absent', async () => {
     const f = await fixture();
     const endpoint = `${api}/incident`;
     const headers = { 'x-forwarded-user': 'attacker', 'x-remote-user': 'attacker' };
@@ -417,15 +460,63 @@ describe('Storage incident normal entry points', () => {
     expect((await f.call(`${chat}/transcript`, { token: headlampAccount, headers })).status).toBe(200);
     expect((await f.call(`${api}/incident/notifications/${'0'.repeat(32)}`, { token: headlampAccount, headers })).status).toBe(403);
     expect((await f.call(`${chat}/messages`, { token: headlampAccount, headers, data: { text: 'inventory' } })).status).toBe(403);
+    expect((await f.call(endpoint, { token: false, headers })).status).toBe(401);
+    expect((await f.call(endpoint, { token: serviceAccount, headers })).status).toBe(403);
+    expect(f.reviews.some(review => review.path.endsWith('/tokenreviews'))).toBe(false);
 
     expect((await f.reconcile()).status).toBe(200);
     const afterScan = await f.call(endpoint, { token: headlampAccount, headers });
     const afterScanData = afterScan.data as { drives: Array<{ id: string }> };
     const driveId = afterScanData.drives[0].id;
     expect((await f.call(`${api}/incident/drives/${driveId}`, { token: headlampAccount, headers })).status).toBe(200);
-    expect((await f.call(`${api}/incident/drives/${driveId}/investigate`, { token: headlampAccount, headers, data: { kind: 'capacity' } })).status).toBe(403);
-    expect((await f.call(endpoint, { token: false, headers })).status).toBe(401);
-    expect((await f.call(endpoint, { token: serviceAccount, headers })).status).toBe(403);
+    expect((await f.call(`${api}/incident/drives/${driveId}/investigate`, {
+      token: headlampAccount, headers, data: { kind: 'capacity' },
+    })).status).toBe(403);
+  });
+
+  it('accepts only the dedicated relay audience and checks the Headlamp account read grant', async () => {
+    const f = await fixture({ relayAudience });
+    const endpoint = `${api}/incident`;
+    const result = await f.call(endpoint, {
+      token: relayToken,
+      headers: { 'x-forwarded-user': 'attacker', 'x-remote-user': 'attacker' },
+    });
+    expect(result.status).toBe(200);
+    expect(result.data).toMatchObject({ enabled: true, incident: { chatId: expect.any(String) } });
+
+    const tokenReview = f.reviews.find(review => review.path.endsWith('/tokenreviews'));
+    expect(tokenReview).toMatchObject({
+      token: `Bearer ${agentAccount}`,
+      input: {
+        kind: 'TokenReview',
+        spec: { token: relayToken, audiences: [relayAudience] },
+      },
+    });
+    const accessReview = f.reviews.find(review => review.path.endsWith('/subjectaccessreviews'));
+    expect(accessReview).toMatchObject({
+      token: `Bearer ${agentAccount}`,
+      input: {
+        kind: 'SubjectAccessReview',
+        spec: {
+          user: 'system:serviceaccount:example:headlamp',
+          uid: 'headlamp-uid',
+          groups: ['system:authenticated', 'system:serviceaccounts', 'system:serviceaccounts:example'],
+          resourceAttributes: { group: rbac, resource: 'incidents', verb: 'get' },
+        },
+      },
+    });
+
+    expect((await f.call(`${api}/incident/notifications/${'0'.repeat(32)}`, { token: headlampAccount })).status).toBe(403);
+    const chatId = (result.data as { incident: { chatId: string } }).incident.chatId;
+    expect((await f.call(`${api}/incident/chat/${chatId}/messages`, {
+      token: headlampAccount, data: { text: 'inventory' },
+    })).status).toBe(403);
+
+    f.relayAudiences(['another-audience']);
+    expect((await f.call(endpoint, { token: relayToken })).status).toBe(401);
+    f.relayAudiences([relayAudience]);
+    f.relayUser('system:serviceaccount:example:unrelated');
+    expect((await f.call(endpoint, { token: relayToken })).status).toBe(401);
   });
 
   it('denies direct storage reads without the server-side service account credential', async () => {
@@ -446,7 +537,8 @@ describe('Storage incident normal entry points', () => {
     expect((await f.call(endpoint, { token: invalid })).status).toBe(401);
     expect(f.reviews.map(review => review.token)).toEqual([`Bearer ${invalid}`]);
     expect((await f.call(endpoint, { token: serviceAccount })).status).toBe(403);
-    expect((await f.call(endpoint, { token: headlampAccount })).status).toBe(200);
+    expect((await f.call(endpoint, { token: agentAccount })).status).toBe(403);
+    expect((await f.call(endpoint, { token: headlampAccount })).status).toBe(403);
     expect((await f.call(endpoint, { token: automation })).status).toBe(403);
     f.operatorMembership(false);
     expect((await f.call(endpoint)).status).toBe(403);
@@ -483,7 +575,7 @@ describe('Storage incident normal entry points', () => {
       reply(res, incoming.status, await incoming.json());
     });
     const cookie = 'headlamp-auth-example.0=fixture-human-; headlamp-auth-example.1=credential';
-    expect((await f.call(chat, { via: proxy, token: headlampAccount, headers: { 'x-forwarded-user': 'attacker' } })).status).toBe(200);
+    expect((await f.call(chat, { via: proxy, token: headlampAccount, headers: { 'x-forwarded-user': 'attacker' } })).status).toBe(403);
     expect((await f.call(chat, { via: proxy, token: serviceAccount, headers: { 'x-forwarded-user': 'attacker' } })).status).toBe(403);
     expect((await f.call(chat, { via: proxy, token: false, headers: { cookie } })).status).toBe(200);
     expect((await f.call(`${chat}/messages`, { via: proxy, token: false, headers: { cookie }, data: { text: 'inventory' } })).status).toBe(403);
@@ -493,9 +585,8 @@ describe('Storage incident normal entry points', () => {
     for (const token of [serviceAccount, headlampAccount]) {
       expect(f.reviews.filter(review => review.token === `Bearer ${token}`).map(review => review.path)).toEqual([
         '/apis/authentication.k8s.io/v1/selfsubjectreviews',
-        ...(token === headlampAccount ? ['/apis/authorization.k8s.io/v1/selfsubjectaccessreviews'] : []),
-        '/apis/authentication.k8s.io/v1/selfsubjectreviews', '/apis/authentication.k8s.io/v1/selfsubjectreviews',
-        ...(token === headlampAccount ? ['/apis/authorization.k8s.io/v1/selfsubjectaccessreviews'] : []),
+        '/apis/authentication.k8s.io/v1/selfsubjectreviews',
+        '/apis/authentication.k8s.io/v1/selfsubjectreviews',
       ]);
     }
     const allowed = f.reviews.filter(review => review.token === `Bearer ${human}` && review.path.endsWith('selfsubjectaccessreviews'));

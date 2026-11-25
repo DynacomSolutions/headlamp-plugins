@@ -8,6 +8,7 @@ import {
   parseList,
   resolveSettings,
   severityColour,
+  storageRelayUrl,
   summariseDiagnoses,
 } from './model';
 
@@ -28,6 +29,26 @@ describe('settings', () => {
     expect(backendUrl(resolveSettings({}, {}), '/api/diagnoses')).toBe(
       '/api/v1/namespaces/headlamp-agent/services/headlamp-agent:80/proxy/api/diagnoses'
     );
+  });
+  it('pins the Headlamp relay to shared read routes', () => {
+    const driveId = '123e4567-e89b-42d3-a456-426614174000';
+    expect(storageRelayUrl('/incident')).toBe('/api/storage-relay/incident');
+    expect(storageRelayUrl(`/incident/drives/${driveId}`)).toBe(`/api/storage-relay/incident/drives/${driveId}`);
+    expect(storageRelayUrl(`/incident/chat/${driveId}`)).toBe(`/api/storage-relay/incident/chat/${driveId}`);
+    expect(storageRelayUrl(`/incident/chat/${driveId}/transcript?before=${driveId}&limit=24`)).toBe(
+      `/api/storage-relay/incident/chat/${driveId}/transcript?before=${driveId}&limit=24`
+    );
+    for (const path of [
+      '/incident/notifications/device',
+      `/incident/chat/${driveId}/messages`,
+      `/incident/drives/${driveId}/dry-run`,
+      '/incident?unexpected=1',
+      `/incident/chat/${driveId}/transcript?before=invalid&limit=24`,
+      '//attacker.example/incident',
+      '/incident/../incident',
+    ]) {
+      expect(() => storageRelayUrl(path)).toThrow('Invalid storage relay');
+    }
   });
 });
 

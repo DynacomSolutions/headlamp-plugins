@@ -43,6 +43,7 @@ type Settings = {
   applyEnabled: boolean;
   holderEvidenceExpected: boolean;
   headlampServiceAccount: string;
+  relayAudience: string;
 };
 
 function settings(env: NodeJS.ProcessEnv): Settings | undefined {
@@ -85,6 +86,10 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
   if (!headlampServiceAccount || !/^system:serviceaccount:[^:]+:[^:]+$/.test(headlampServiceAccount)) {
     throw new Error('Storage Headlamp service account is required');
   }
+  const relayAudience = env.STORAGE_HEADLAMP_RELAY_AUDIENCE?.trim() ?? '';
+  if (relayAudience && !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(relayAudience)) {
+    throw new Error('Invalid storage Headlamp relay audience');
+  }
   let partialScanScopes: ReadonlyMap<string, ExpectedScopes>;
   try {
     const scopesFile = env.STORAGE_PARTIAL_SCAN_SCOPES_FILE;
@@ -112,6 +117,7 @@ function settings(env: NodeJS.ProcessEnv): Settings | undefined {
     applyEnabled,
     holderEvidenceExpected,
     headlampServiceAccount,
+    relayAudience,
   };
 }
 
@@ -157,7 +163,7 @@ export async function storageHttp(deps: HttpHelpers & {
     return parsed.data;
   }
 
-  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.headlampServiceAccount ?? '');
+  const auth = operatorAuth(config, active?.cluster ?? '', active?.humanGroups ?? new Set(), active?.headlampServiceAccount ?? '', active?.relayAudience ?? '');
   const diagnostic = new ScheduledDiagnostic(config.dataDir, now);
 
   async function dispatch(req: IncomingMessage, path: string): Promise<{ status?: number; data: unknown }> {

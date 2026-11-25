@@ -64,6 +64,18 @@ const identitySchema = z.object({
     userInfo: z.object({ username: z.string().min(1).max(1024), uid: z.string().max(1024).optional(), groups: z.array(z.string()).default([]) }),
   }),
 });
+const tokenReviewSchema = z.object({
+  status: z.object({
+    authenticated: z.boolean().optional(),
+    user: z.object({
+      username: z.string().min(1).max(1024),
+      uid: z.string().max(1024).optional(),
+      groups: z.array(z.string()).default([]),
+      extra: z.record(z.string(), z.array(z.string())).optional(),
+    }).optional(),
+    audiences: z.array(z.string()).default([]),
+  }),
+});
 const accessSchema = z.object({ status: z.object({ allowed: z.boolean(), denied: z.boolean().optional(), evaluationError: z.string().optional() }) });
 
 const REVIEW_LIMIT = 64 * 1024;
@@ -78,10 +90,11 @@ export type Operator = {
 };
 
 export function operatorAuth(
-  config: Pick<Config, 'kubeApi' | 'kubeCaFile' | 'allowedOrigins'>,
+  config: Pick<Config, 'kubeApi' | 'kubeTokenFile' | 'kubeCaFile' | 'allowedOrigins'>,
   headlampCluster: string,
   humanGroups: ReadonlySet<string>,
   headlampServiceAccount: string,
+  relayAudience = '',
 ) {
   const isMember = (groups: string[]) => groups.some(group => humanGroups.has(group));
 
@@ -104,8 +117,10 @@ export function operatorAuth(
     const port = process.env.KUBERNETES_SERVICE_PORT ?? '443';
     const base = config.kubeApi || (host && `https://${host.includes(':') ? `[${host}]` : host}:${port}`);
     if (!base) throw new StorageError(503, 'Operator verification is unavailable');
+    let relayUser: z.infer<typeof tokenReviewSchema>['status']['user'];
+    let relayReviewer: string | undefined;
 
-    async function review(group: string, resource: string, kind: string, spec?: unknown) {
+    async function review(group: string, resource: string, kind: string, spec?: unknown, credential = token!) {
       try {
         const endpoint = new URL(`/apis/${group}/v1/${resource}`, base!);
         if (endpoint.protocol !== 'https:' && !(config.kubeApi && ['127.0.0.1', '[::1]', 'localhost'].includes(endpoint.hostname))) {
@@ -119,16 +134,37 @@ export function operatorAuth(
             if (!config.kubeApi) throw error;
           }
         }
-        return await requestJson(endpoint, {
-          token: token!,
+        const result = await requestJson(endpoint, {
+          token: credential,
           body: { apiVersion: `${group}/v1`, kind, ...(spec ? { spec } : {}) },
           ca,
           timeoutMs: SELF_REVIEW_TIMEOUT_MS,
           limit: REVIEW_LIMIT,
         });
+        return result;
       } catch {
         throw new StorageError(503, 'Operator verification is unavailable');
       }
+    }
+
+    async function relayIdentity(): Promise<KubernetesIdentity | undefined> {
+      if (!allowServerRead || !relayAudience || explicit !== undefined || !standard) return;
+      const reviewer = tokenFile(config.kubeTokenFile)();
+      if (!reviewer) throw new StorageError(503, 'Operator verification is unavailable');
+      const response = await review('authentication.k8s.io', 'tokenreviews', 'TokenReview', {
+        token,
+        audiences: [relayAudience],
+      }, reviewer);
+      if (response.status !== 201) return;
+      const parsed = tokenReviewSchema.safeParse(response.data);
+      const status = parsed.success ? parsed.data.status : undefined;
+      if (!status?.authenticated || !status.user || status.user.username !== headlampServiceAccount
+        || !status.user.groups.includes('system:authenticated')
+        || !status.user.groups.some(group => group.startsWith('system:serviceaccounts'))
+        || status.audiences.length !== 1 || status.audiences[0] !== relayAudience) return;
+      relayUser = status.user;
+      relayReviewer = reviewer;
+      return { username: status.user.username, uid: status.user.uid || null };
     }
 
     async function identity() {
@@ -141,18 +177,26 @@ export function operatorAuth(
       const isHeadlampServiceAccount = user.username === headlampServiceAccount
         && user.groups.includes('system:authenticated')
         && user.groups.some(group => group.startsWith('system:serviceaccounts'));
+      const isServiceAccount = user.username.startsWith('system:serviceaccount:')
+        || user.groups.some(group => group.startsWith('system:serviceaccounts'));
       if (user.username === token || !user.groups.includes('system:authenticated')
-        || (!isHeadlampServiceAccount && (user.username.startsWith('system:')
-          || user.groups.some(group => group.startsWith('system:serviceaccounts')) || !isMember(user.groups)))) {
+        || (!isHeadlampServiceAccount && (user.username.startsWith('system:') || isServiceAccount || !isMember(user.groups)))) {
         throw new StorageError(403, 'Approved human operator membership is required');
       }
       return { username: user.username, uid: user.uid || null };
     }
 
     async function authorise(requested: OperatorVerb) {
-      const access = await review('authorization.k8s.io', 'selfsubjectaccessreviews', 'SelfSubjectAccessReview', {
-        resourceAttributes: { group: STORAGE_RBAC_GROUP, resource: 'incidents', verb: requested },
-      });
+      const resourceAttributes = { group: STORAGE_RBAC_GROUP, resource: 'incidents', verb: requested };
+      const access = relayUser
+        ? await review('authorization.k8s.io', 'subjectaccessreviews', 'SubjectAccessReview', {
+          user: relayUser.username,
+          ...(relayUser.uid ? { uid: relayUser.uid } : {}),
+          groups: relayUser.groups,
+          ...(relayUser.extra ? { extra: relayUser.extra } : {}),
+          resourceAttributes,
+        }, relayReviewer!)
+        : await review('authorization.k8s.io', 'selfsubjectaccessreviews', 'SelfSubjectAccessReview', { resourceAttributes });
       if (access.status === 401) throw new StorageError(401, 'Operator authentication failed');
       if (access.status === 403) throw new StorageError(403, 'Operator permission required');
       const auth = accessSchema.safeParse(access.data);
@@ -160,8 +204,12 @@ export function operatorAuth(
       if (!auth.data.status.allowed || auth.data.status.denied) throw new StorageError(403, 'Operator permission required');
     }
 
-    const verified = await identity();
+    const relay = await relayIdentity();
+    const verified = relay ?? await identity();
     const serverAccount = verified.username === headlampServiceAccount;
+    if (serverAccount && allowServerRead && relayAudience && !relay) {
+      throw new StorageError(403, 'Headlamp relay credential is required');
+    }
     if (serverAccount && (!allowServerRead || verb !== 'get')) {
       throw new StorageError(403, 'Headlamp service account is read-only for shared views');
     }

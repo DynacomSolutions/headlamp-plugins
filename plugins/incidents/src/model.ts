@@ -42,6 +42,38 @@ export function backendUrl(s: Settings, path: string): string {
   }`;
 }
 
+/** Same-origin Headlamp relay for the four shared storage read routes. */
+export function storageRelayUrl(path: string): string {
+  const candidate = path.startsWith('/') ? path : `/${path}`;
+  if (candidate.includes('#') || candidate.includes('\\') || /%(?:2f|5c|2e)/i.test(candidate)) {
+    throw new Error('Invalid storage relay path');
+  }
+  const origin = 'https://storage-relay.invalid';
+  const url = new URL(candidate, origin);
+  const uuid = '[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}';
+  const transcriptPath = new RegExp(`^/incident/chat/${uuid}/transcript$`, 'i');
+  const sharedReadPath = url.pathname === '/incident'
+    || new RegExp(`^/incident/drives/${uuid}$`, 'i').test(url.pathname)
+    || new RegExp(`^/incident/chat/${uuid}$`, 'i').test(url.pathname)
+    || transcriptPath.test(url.pathname);
+  if (url.origin !== origin || url.pathname !== candidate.split(/[?#]/, 1)[0] || !sharedReadPath) {
+    throw new Error('Invalid storage relay path');
+  }
+  const query = Array.from(url.searchParams.entries());
+  const keys = new Set(query.map(([key]) => key));
+  const isTranscript = transcriptPath.test(url.pathname);
+  const before = url.searchParams.get('before');
+  const limit = url.searchParams.get('limit');
+  if ((!isTranscript && query.length > 0)
+    || (isTranscript && (query.length !== 2 || keys.size !== 2 || !keys.has('before') || !keys.has('limit')
+      || keys.size !== query.length || [...keys].some(key => key !== 'before' && key !== 'limit')
+      || before === null || !new RegExp(`^${uuid}$`, 'i').test(before)
+      || limit === null || !/^(?:[1-9]|1\d|2[0-4])$/.test(limit)))) {
+    throw new Error('Invalid storage relay query');
+  }
+  return `/api/storage-relay${url.pathname}${url.search}`;
+}
+
 export type Status = 'queued' | 'running' | 'done' | 'failed';
 
 export interface DiagnosisSummary {
