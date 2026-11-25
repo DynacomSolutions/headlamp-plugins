@@ -48,7 +48,7 @@ export const STACK_TILE_COLUMNS = 3;
 /** True when the widget is narrow: the stat tiles in a grid, no status key. */
 export const isStacked = (width: number): boolean => width > 0 && width < STACK_WIDTH;
 /** The width of the countdown at the right end of each bar, with a gap on the left, in px. */
-export const COUNTDOWN_WIDTH = 42;
+export const COUNTDOWN_WIDTH = 56;
 /** The width reserved for the percentage at the end of a line, in px. The countdowns never take it. */
 export const PERCENT_WIDTH = 44;
 /** The least width of the bar track, as in the grid of a line. */
@@ -61,7 +61,7 @@ const GROUP_HEIGHT = 27;
 const BAR_MAX = 6;
 const LANE_MAX = 12;
 /** The font size of a countdown never goes over this, and never under this, in px. */
-const COUNTDOWN_FONT_MAX = 10;
+const COUNTDOWN_FONT_MAX = 11;
 const COUNTDOWN_FONT_MIN = 8;
 const clamp = (f: number): number => Math.min(1, Math.max(0, f));
 const RANK = { ok: 0, unknown: 1, warn: 2, crit: 3 } as const;
@@ -346,7 +346,7 @@ function IdentityLine(props: {
   // countdown. The text is as high as the lane allows.
   const lane = Math.max(1, Math.min(LANE_MAX, Math.floor(height / Math.max(1, windows.length))));
   const barHeight = Math.max(1, Math.min(pool ? 5 : BAR_MAX, lane - 2));
-  const countdownFont = Math.max(COUNTDOWN_FONT_MIN, Math.min(COUNTDOWN_FONT_MAX, lane + 1.5));
+  const countdownFont = Math.max(COUNTDOWN_FONT_MIN, Math.min(COUNTDOWN_FONT_MAX, lane + 2));
   const name = (
     <Box component="span" sx={{ fontSize: pool ? 14 : 13, fontWeight: pool ? 600 : undefined }}>
       {identity.name}
