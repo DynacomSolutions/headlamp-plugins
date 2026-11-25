@@ -2,11 +2,20 @@ name: Release Headlamps to Play
 on:
   push:
     branches: [main]
-    paths: [android/version.properties]
+    paths:
+      - android/version.properties
+      - android/fastlane/metadata/**/title.txt
+      - android/fastlane/metadata/**/short_description.txt
+      - android/fastlane/metadata/**/full_description.txt
+      - android/fastlane/metadata/**/images/**
   workflow_dispatch:
     inputs:
       publish:
         description: Publish to the internal track. Leave off for a dry run.
+        type: boolean
+        default: false
+      listing_only:
+        description: Push only the store listing (title, text and icon). No build, no bundle, no track change.
         type: boolean
         default: false
 permissions:
@@ -19,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
+      # A push that changes only listing files, or a manual run with listing_only, publishes the listing and no bundle.
+      LISTING_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.listing_only }}
       HEADLAMPS_UPLOAD_KEYSTORE_BASE64: ${{ secrets.HEADLAMPS_UPLOAD_KEYSTORE_BASE64 }}
       HEADLAMPS_UPLOAD_STORE_PASSWORD: ${{ secrets.HEADLAMPS_UPLOAD_STORE_PASSWORD }}
       HEADLAMPS_UPLOAD_KEY_ALIAS: ${{ secrets.HEADLAMPS_UPLOAD_KEY_ALIAS }}
@@ -27,12 +38,25 @@ jobs:
       EXPECTED_SHA256: 6D:DC:D5:F6:A9:4F:4E:F6:13:85:6B:12:E8:D1:B1:BB:9E:82:D1:8F:09:24:3A:FD:23:94:00:19:8E:F7:15:68
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Choose listing only for a push without a version change
+        if: github.event_name == 'push'
+        run: |
+          if git diff --name-only HEAD^ HEAD | grep -qx 'android/version.properties'; then
+            echo "LISTING_ONLY=false" >> "$GITHUB_ENV"
+          else
+            echo "LISTING_ONLY=true" >> "$GITHUB_ENV"
+          fi
       - uses: actions/setup-java@v6
+        if: env.LISTING_ONLY != 'true'
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v6
+        if: env.LISTING_ONLY != 'true'
       - name: Install Android SDK packages
+        if: env.LISTING_ONLY != 'true'
         run: |
           sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           if [ ! -d "$sdk/platforms/android-36" ] || [ ! -d "$sdk/build-tools/36.0.0" ]; then
@@ -40,9 +64,11 @@ jobs:
             "$sdk/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0" > /dev/null
           fi
       - name: Test and build the signed bundle
+        if: env.LISTING_ONLY != 'true'
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest bundleRelease
       - name: Verify the signer
+        if: env.LISTING_ONLY != 'true'
         run: |
           actual="$(keytool -printcert -jarfile android/app/build/outputs/bundle/release/app-release.aab | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -n 1)"
           if [ "$actual" != "$EXPECTED_SHA256" ]; then
@@ -51,6 +77,7 @@ jobs:
           fi
           echo "Signer matches the expected upload certificate."
       - uses: actions/upload-artifact@v7
+        if: env.LISTING_ONLY != 'true'
         with:
           name: headlamps-release
           path: |
@@ -65,6 +92,11 @@ jobs:
           PLAY_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.HEADLAMPS_PLAY_SERVICE_ACCOUNT_JSON_BASE64 }}
           DRY_RUN: ${{ github.event_name != 'push' && !inputs.publish }}
         run: |
-          flag=''
-          if [ "$DRY_RUN" = true ]; then flag='--dry-run'; fi
-          node android/scripts/play-publish.mjs --aab android/app/build/outputs/bundle/release/app-release.aab --track internal $flag
+          flags=()
+          if [ "$DRY_RUN" = true ]; then flags+=(--dry-run); fi
+          if [ "$LISTING_ONLY" = true ]; then
+            flags+=(--listing-only)
+          else
+            flags+=(--aab android/app/build/outputs/bundle/release/app-release.aab --track internal)
+          fi
+          node android/scripts/play-publish.mjs "${flags[@]}"
