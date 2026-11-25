@@ -231,6 +231,11 @@ export function vmRepos(repos: Repo[], prefixes: string[]): Repo[] {
   return repos.filter(r => isVmRepo(r, prefixes));
 }
 
+/** Repositories that look like VM images, plus any repository that a VM disk comes from. */
+export function vmImageRepos(repos: Repo[], prefixes: string[], vmUsed: Set<string>): Repo[] {
+  return repos.filter(r => isVmRepo(r, prefixes) || vmUsed.has(r.name));
+}
+
 /* ---------- image references ---------- */
 
 export interface ImageRef {
@@ -418,6 +423,11 @@ export function groupUsages(usages: Usage[], repos: Repo[]): Group[] {
     if (!g.users.some(x => userKey(x) === userKey(u.user))) g.users.push(u.user);
   }
   return [...groups.values()].sort((a, b) => a.ref.path.localeCompare(b.ref.path) || a.key.localeCompare(b.key));
+}
+
+/** Names of the repositories that at least one VirtualMachine uses. */
+export function vmUsedRepoNames(groups: Group[]): Set<string> {
+  return new Set(groups.filter(g => g.repo && g.users.some(u => u.kind === 'VirtualMachine')).map(g => g.repo!));
 }
 
 /** Distinct users per repository ("repo") and per tag ("repo:tag"). */

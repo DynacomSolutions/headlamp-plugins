@@ -51,9 +51,10 @@ import {
   TreeNode,
   usageCounts,
   virtualKubeletNodes,
-  vmRepos,
+  vmImageRepos,
   vmRows,
   vmUsages,
+  vmUsedRepoNames,
 } from './model';
 
 function Rows({ head, rows }: { head: string[]; rows: React.ReactNode[][] }) {
@@ -408,10 +409,6 @@ export function VmImagesPage() {
   }, [catalogue]);
 
   const allRepos = React.useMemo(() => catalogue?.repositories ?? [], [catalogue]);
-  const repos = React.useMemo(
-    () => vmRepos(allRepos, parsePrefixes(settings.namePrefixes)),
-    [allRepos, settings.namePrefixes]
-  );
   const groups = React.useMemo(
     () =>
       groupUsages(
@@ -419,6 +416,10 @@ export function VmImagesPage() {
         allRepos
       ),
     [pods.items, nodes.items, vms.items, vmis.items, dvs.items, allRepos]
+  );
+  const repos = React.useMemo(
+    () => vmImageRepos(allRepos, parsePrefixes(settings.namePrefixes), vmUsedRepoNames(groups)),
+    [allRepos, settings.namePrefixes, groups]
   );
   const counts = React.useMemo(() => usageCounts(groups), [groups]);
 

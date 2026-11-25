@@ -34,8 +34,10 @@ import {
   TreeNode,
   usageCounts,
   virtualKubeletNodes,
+  vmImageRepos,
   vmRows,
   vmUsages,
+  vmUsedRepoNames,
 } from './model';
 
 const cat = parseCatalogue({
@@ -259,6 +261,29 @@ describe('vmUsages through DataVolumes', () => {
     expect(groups[0].users).toHaveLength(1);
     expect(groups[0].users[0]).toMatchObject({ name: 'h', node: 'node-1' });
     expect(usageCounts(groups).get('win/golden')).toBe(1);
+  });
+});
+
+describe('repositories used by VMs', () => {
+  it('adds a repository outside the name prefixes when a VM uses it, but not when only a pod does', () => {
+    const repos = parseCatalogue({
+      repositories: [
+        { name: 'vm/disk', tags: [{ tag: 'v1' }] },
+        { name: 'win/golden', tags: [{ tag: 'v10' }] },
+        { name: 'web', tags: [{ tag: 'v1' }] },
+      ],
+    }).repositories;
+    const user = (kind: 'Pod' | 'VirtualMachine') => ({ kind, namespace: 'lab', name: 'n', node: null });
+    const groups = groupUsages(
+      [
+        { image: 'x.example.com/win/golden:v10', digestHint: null, user: user('VirtualMachine') },
+        { image: 'x.example.com/web:v1', digestHint: null, user: user('Pod') },
+      ],
+      repos
+    );
+    const used = vmUsedRepoNames(groups);
+    expect([...used]).toEqual(['win/golden']);
+    expect(vmImageRepos(repos, ['vm/'], used).map(r => r.name)).toEqual(['vm/disk', 'win/golden']);
   });
 });
 
