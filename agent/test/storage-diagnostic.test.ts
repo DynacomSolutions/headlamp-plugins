@@ -137,6 +137,7 @@ it('passes one authenticated scheduled pod to exactly two scanners across concur
     store: await podStore(db), now: () => time, storageEnv: {
       STORAGE_SCANNERS_FILE: scanners, STORAGE_SCANNER_TOKEN_FILE: scanToken,
       STORAGE_RECONCILE_TOKEN_FILE: reconcileToken,
+      STORAGE_HEADLAMP_SERVICE_ACCOUNT: 'system:serviceaccount:k8s:headlamp',
     },
   });
   dispose.push(() => agent.close());
