@@ -19,6 +19,7 @@ import {
   AisView,
   COUNTDOWN_WIDTH,
   isStacked,
+  LANE_FONT,
   LINE_HEIGHT,
   PERCENT_WIDTH,
   STACK_TILE_COLUMNS,
@@ -850,6 +851,20 @@ describe('reset countdown', () => {
     expect(lane.firstElementChild?.hasAttribute('data-track')).toBe(true);
     expect(lane.children[1].getAttribute('data-countdown')).toBe(lane.getAttribute('data-lane'));
     expect(lane.lastElementChild?.hasAttribute('data-percent')).toBe(true);
+  });
+
+  it('draws the countdown and the percentage of every bar small, with space between lines', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+    const c = draw();
+    const cells = Array.from(
+      c.querySelectorAll('[data-lane] > [data-countdown], [data-lane] > [data-percent]')
+    ) as HTMLElement[];
+    expect(cells.length).toBeGreaterThan(0);
+    for (const cell of cells) {
+      expect(getComputedStyle(cell).fontSize).toBe(`${LANE_FONT}px`);
+    }
+    // A line of 24 px holds three lanes of 8 px. The text must stay under 8 px.
+    expect(LANE_FONT).toBeLessThanOrEqual(7.5);
   });
 
   it('keeps a line at the same height, as the lanes fill it', () => {

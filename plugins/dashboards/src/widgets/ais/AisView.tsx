@@ -67,7 +67,7 @@ const GROUP_HEIGHT = 27;
 const BAR_MAX = 6;
 const LANE_MAX = 12;
 /** The font size of the countdown and of the percentage of a bar, in px. One size for every line. */
-export const LANE_FONT = 8.5;
+export const LANE_FONT = 7.5;
 const clamp = (f: number): number => Math.min(1, Math.max(0, f));
 
 /**
