@@ -574,6 +574,21 @@ describe('github-runners, registry and vm-images', () => {
     expect(m!.rows[m!.rows.length - 1]).toMatchObject({ label: 'macos-vz/base', detail: '1 tags, used by 1', status: 'ok' });
   });
 
+  it('vm-images: counts VMs whose disks come from registry DataVolumes', async () => {
+    const catalogue = { repositories: [{ name: 'vm/golden', tags: [{ tag: 'v10', digest: 'sha256:aa', sizeBytes: 1024, created: '2026-01-01T00:00:00Z' }] }] };
+    const registryUrl = 'docker://registry.example.com:5000/vm/golden:v10';
+    const lists: Record<string, any[]> = {
+      'datavolumes.cdi.kubevirt.io': [{ metadata: { name: 'disk-1', namespace: 'lab' }, status: { phase: 'Succeeded' }, spec: { source: { registry: { url: registryUrl } } } }],
+      'virtualmachines.kubevirt.io': [
+        { metadata: { name: 'w1', namespace: 'lab' }, status: { printableStatus: 'Running' }, spec: { template: { spec: { volumes: [{ name: 'd', ephemeral: { persistentVolumeClaim: { claimName: 'disk-1' } } }] } } } },
+        { metadata: { name: 'w2', namespace: 'lab' }, status: { printableStatus: 'Running' }, spec: { template: { spec: { volumes: [{ name: 'd', persistentVolumeClaim: { claimName: 'by-hand' } }] } } } },
+      ],
+    };
+    const m = await buildPanel('vm-images', deps({}, { serviceGet: async () => catalogue, kubeList: async kind => lists[kind] ?? [] }));
+    expect(m!.stats.map(s => [s.label, s.value])).toEqual([['Images', '1'], ['In use', '1'], ['Problems', '0'], ['VMs running', '2']]);
+    expect(m!.rows[m!.rows.length - 1]).toMatchObject({ label: 'vm/golden', detail: '1 tags, used by 1' });
+  });
+
   it('vm-images: works when the KubeVirt types are not served', async () => {
     const m = await buildPanel('vm-images', deps({}, { serviceGet: async () => CATALOGUE }));
     expect(m!.status).toBe('ok');
