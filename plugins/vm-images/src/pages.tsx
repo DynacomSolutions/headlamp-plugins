@@ -398,6 +398,7 @@ export function VmImagesPage() {
   const { catalogue, loading, error, refresh } = useCatalogue(settings);
   const vms = useVirtualMachines();
   const vmis = useVirtualMachineInstances();
+  const dvs = useDataVolumes();
   const pods = usePods();
   const nodes = useNodes();
   const [now, setNow] = React.useState(Date.now());
@@ -414,10 +415,10 @@ export function VmImagesPage() {
   const groups = React.useMemo(
     () =>
       groupUsages(
-        [...podUsages(pods.items, virtualKubeletNodes(nodes.items)), ...vmUsages(vms.items, vmis.items)],
+        [...podUsages(pods.items, virtualKubeletNodes(nodes.items)), ...vmUsages(vms.items, vmis.items, dvs.items)],
         allRepos
       ),
-    [pods.items, nodes.items, vms.items, vmis.items, allRepos]
+    [pods.items, nodes.items, vms.items, vmis.items, dvs.items, allRepos]
   );
   const counts = React.useMemo(() => usageCounts(groups), [groups]);
 

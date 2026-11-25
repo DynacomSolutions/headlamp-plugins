@@ -203,6 +203,65 @@ describe('in use', () => {
   });
 });
 
+describe('vmUsages through DataVolumes', () => {
+  const url = 'docker://registry.example.com:5000/win/golden:v10';
+  const dv = (name: string, registry: string | null = url, namespace = 'lab') => ({
+    metadata: { name, namespace },
+    spec: { source: registry ? { registry: { url: registry } } : { http: { url: 'https://example.test/a.img' } } },
+  });
+  const vm = (name: string, volumes: any[], dataVolumeTemplates?: any[]) => ({
+    metadata: { name, namespace: 'lab' },
+    spec: { dataVolumeTemplates, template: { spec: { volumes } } },
+  });
+  const images = (u: { image: string; user: { name: string } }[]) => u.map(x => `${x.user.name}=${x.image}`);
+
+  it('resolves an ephemeral PVC volume', () => {
+    const u = vmUsages([vm('a', [{ name: 'd', ephemeral: { persistentVolumeClaim: { claimName: 'disk-a' } } }])], [], [dv('disk-a')]);
+    expect(images(u)).toEqual([`a=${url}`]);
+  });
+  it('resolves a plain PVC volume', () => {
+    const u = vmUsages([vm('b', [{ name: 'd', persistentVolumeClaim: { claimName: 'disk-b' } }])], [], [dv('disk-b')]);
+    expect(images(u)).toEqual([`b=${url}`]);
+  });
+  it('resolves a dataVolume volume', () => {
+    const u = vmUsages([vm('c', [{ name: 'd', dataVolume: { name: 'disk-c' } }])], [], [dv('disk-c')]);
+    expect(images(u)).toEqual([`c=${url}`]);
+  });
+  it('resolves a dataVolumeTemplate without a listed DataVolume', () => {
+    const tpl = [{ metadata: { name: 'disk-d' }, spec: { source: { registry: { url } } } }];
+    const u = vmUsages([vm('d', [{ name: 'd', dataVolume: { name: 'disk-d' } }], tpl)], []);
+    expect(images(u)).toEqual([`d=${url}`]);
+  });
+  it('leaves a PVC without a DataVolume unmatched', () => {
+    const u = vmUsages([vm('e', [{ name: 'd', persistentVolumeClaim: { claimName: 'by-hand' } }])], [], [dv('other')]);
+    expect(u).toEqual([]);
+  });
+  it('ignores a DataVolume in another namespace and a non-registry source', () => {
+    const vms = [vm('f', [{ name: 'd', persistentVolumeClaim: { claimName: 'x' } }, { name: 'e', persistentVolumeClaim: { claimName: 'y' } }])];
+    expect(vmUsages(vms, [], [dv('x', url, 'elsewhere'), dv('y', null)])).toEqual([]);
+  });
+  it('keeps the containerDisk behaviour', () => {
+    const u = vmUsages([vm('g', [{ name: 'd', containerDisk: { image: 'x.test/vm/disk:v1' } }])], [], [dv('disk-g')]);
+    expect(images(u)).toEqual(['g=x.test/vm/disk:v1']);
+  });
+  it('counts a VM once when two disks use the same image', () => {
+    const repos = parseCatalogue({ repositories: [{ name: 'win/golden', tags: [{ tag: 'v10' }] }] }).repositories;
+    const vms = [
+      vm('h', [
+        { name: 'a', persistentVolumeClaim: { claimName: 'one' } },
+        { name: 'b', dataVolume: { name: 'two' } },
+      ]),
+    ];
+    const vmis = [{ metadata: { name: 'h', namespace: 'lab' }, status: { nodeName: 'node-1' } }];
+    const groups = groupUsages(vmUsages(vms, vmis, [dv('one'), dv('two')]), repos);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ repo: 'win/golden', tag: 'v10' });
+    expect(groups[0].users).toHaveLength(1);
+    expect(groups[0].users[0]).toMatchObject({ name: 'h', node: 'node-1' });
+    expect(usageCounts(groups).get('win/golden')).toBe(1);
+  });
+});
+
 describe('KubeVirt rows', () => {
   it('describes sources and data volumes', () => {
     expect(describeSource({ http: { url: 'https://example.com/a.img' } })).toBe('http: https://example.com/a.img');
