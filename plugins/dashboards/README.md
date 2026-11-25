@@ -491,18 +491,18 @@ needed.
 - **One scroll area** under them. Each pool is a line with its members under it, the served or active one
   first. An identity that is in no pool goes under the real name of its provider. There is no "Other" group,
   no top N and no "+N more" row.
-- **One thin line for each identity**: its name on the left, its limit windows as thin bars one above the
-  other, and at the end the highest window as a small percentage in its status colour. A model window, such as "Weekly (Fable)",
-  has a bar but never counts in this percentage or in any status. A line with only model windows has no
-  percentage. The colour of a bar is
-  the colour of its window in the legend, so no window name is written on a line. A login that needs
+- **One thin line for each identity**: its name on the left and its limit windows as thin bars one above the
+  other. Each bar has its own lane: the bar, its countdown (the time to its reset: "3d 4h", "5h 12m", "12m", "<1m"),
+  then its percentage in the status colour of that window. A model window, such as "Weekly (Fable)", shows its own
+  percentage, but it never sets the status of an identity, a pool or the widget. A line with only model windows has
+  no status. The colour of a bar is the colour of its window in the legend, so no window name is written on a line.
+  Every line (pool, member, provider identity) has the same columns: one name column of one width, then the bars,
+  the countdowns and the percentages at the same x on every line. The indent of a pool member stays inside the name
+  column. A past reset shows "now" (muted). A window with no data or no `resetsAt` shows no countdown. A narrow widget
+  makes the bar tracks shorter and never drops a countdown or a percentage. A login that needs
   attention (expiring, expired) shows a small status icon before the name and tints the line. A login that is
   fine shows nothing. A small dot after the name marks the served member of a pool, and a small ring marks
-  the registry active member. Each bar has its own countdown at its right end, in the same lane: the time to its reset ("3d 4h", "5h 12m", "12m", "<1m"). The
-  countdown has a fixed width, so the tracks of all lines end in the same column, and the percentage keeps its own reserved
-  width, so it is never cut off. A past reset shows "now" (muted). A window with no data or no `resetsAt` shows no text.
-  A narrow widget makes the bar tracks shorter and never drops a countdown. One timer redraws the
-  countdowns every 30 s, with no extra fetch. The tooltip of a line lists every window with its percentage
+  the registry active member. One timer redraws the countdowns every 30 s, with no extra fetch. The tooltip of a line lists every window with its percentage
   and full reset time, and the login state. A widget at least 1000 px wide draws the identities of a group in two columns.
 - **Pool line, joint usage**: the pool line has two text rows, the pool name and "Pool total, N members".
   Its bars are the joint usage of all members, in the same colours as the member bars. For each window,

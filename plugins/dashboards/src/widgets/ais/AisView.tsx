@@ -4,12 +4,14 @@
  * identities that are in no pool). Every identity is one thin line: its name on the left (a small
  * icon before it when the login needs attention, a small dot after it for the served or registry
  * active member of a pool), its limit windows as thin bars stacked in the middle (the colour of a
- * window is the colour of the legend, never written on the line), and at the end the highest limit
- * as a small percentage in its status colour. The percentage has a fixed reserved width, so it is never
- * cut off. Every bar has its own countdown at its right end, in the same lane: the time to the reset of that
- * window ("3d 4h", "5h 12m"). A reset in the past shows "now", muted. A bar with no valid reset shows no
- * text. The countdown has a fixed width, so the bar tracks of all lines end in the same column. A
- * narrow widget makes the tracks shorter and never drops a countdown. One timer redraws the countdowns
+ * window is the colour of the legend, never written on the line). Every bar has its own lane: the bar, then
+ * its countdown (the time to the reset of that window: "3d 4h", "5h 12m"), then its percentage in the status
+ * colour of that window. A reset in the past shows "now", muted. A bar with no valid reset shows no
+ * countdown. Model windows (for example "Weekly (Fable)") show their own percentage too, but they never set
+ * the status of an identity, a pool or the widget (see `join.ts`). All lines (pool, member, provider
+ * identity) share the same columns: the name column has one width, so the bars, the countdowns and the
+ * percentages stand at the same x on every line, and the indent of a member stays inside the name column.
+ * A narrow widget makes the tracks shorter and never drops a countdown or a percentage. One timer redraws the countdowns
  * every 30 s. The tooltip of a line lists every window with its percentage and reset time.
  *
  * The pool is a line of its own with two text rows: the name and "Pool total, N members". Its bars are
@@ -33,8 +35,7 @@ import { STATUS_WORD, StatusMark } from '../panels/StatusMark';
 import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
 import { COUNTDOWN_PAST, COUNTDOWN_TICK_MS, formatCountdown } from './countdown';
-import type { AisGroup, AisIdentity, AisJoint, AisLimit, AisModel } from './join';
-import { isModelLimit } from './join';
+import type { AisGroup, AisIdentity, AisJoint, AisModel } from './join';
 
 /** A widget at least this wide draws the status key. A row at least WIDE_ROW wide draws wide columns. */
 export const WIDE_WIDTH = 640;
@@ -47,12 +48,16 @@ export const STACK_WIDTH = 560;
 export const STACK_TILE_COLUMNS = 3;
 /** True when the widget is narrow: the stat tiles in a grid, no status key. */
 export const isStacked = (width: number): boolean => width > 0 && width < STACK_WIDTH;
-/** The width of the countdown at the right end of each bar, with a gap on the left, in px. */
-export const COUNTDOWN_WIDTH = 56;
-/** The width reserved for the percentage at the end of a line, in px. The countdowns never take it. */
-export const PERCENT_WIDTH = 44;
+/** The width of the countdown after each bar, with a gap on the left, in px. */
+export const COUNTDOWN_WIDTH = 46;
+/** The width of the percentage after each countdown, with a gap on the left, in px. */
+export const PERCENT_WIDTH = 32;
 /** The least width of the bar track, as in the grid of a line. */
 const TRACK_MIN = 24;
+/** The width of the name column of every line, in px. The indent of a member is inside it. */
+export const nameColumn = (wideRow: boolean): number => (wideRow ? 250 : 186);
+/** The indent of a pool member inside the name column, with its rail, in px. */
+const MEMBER_INDENT = 12;
 /** The height of an identity line and of the pool line, in px. */
 export const LINE_HEIGHT = 24;
 export const POOL_LINE_HEIGHT = 42;
@@ -60,29 +65,9 @@ const GROUP_HEIGHT = 27;
 /** The most px of one bar, and of one lane (the bar and its countdown text) in a line. */
 const BAR_MAX = 6;
 const LANE_MAX = 12;
-/** The font size of a countdown never goes over this, and never under this, in px. */
-const COUNTDOWN_FONT_MAX = 11;
-const COUNTDOWN_FONT_MIN = 8;
+/** The font size of the countdown and of the percentage of a bar, in px. One size for every line. */
+export const LANE_FONT = 8.5;
 const clamp = (f: number): number => Math.min(1, Math.max(0, f));
-const RANK = { ok: 0, unknown: 1, warn: 2, crit: 3 } as const;
-
-/**
- * The limit that sets the percentage of a line: the worst status, then the largest fraction.
- * Model windows (for example "Weekly (Fable)") never set it. A line with only model windows has none.
- */
-export function worstLimit(limits: ReadonlyArray<AisLimit>): AisLimit | undefined {
-  let worst: AisLimit | undefined;
-  for (const l of limits) {
-    if (l.fraction === undefined || isModelLimit(l.name)) continue;
-    if (
-      !worst ||
-      RANK[l.status] > RANK[worst.status] ||
-      (RANK[l.status] === RANK[worst.status] && (l.fraction ?? 0) > (worst.fraction ?? 0))
-    )
-      worst = l;
-  }
-  return worst;
-}
 
 /**
  * The time now in ms, redrawn every COUNTDOWN_TICK_MS. One timer serves the whole widget and the
@@ -307,8 +292,8 @@ function laneNames(
 }
 
 /**
- * One thin line: the name (with a login icon and the marks), the stacked bars and the worst
- * percentage. The pool line is the same grid with a second text row under the name.
+ * One thin line: the name (with a login icon and the marks) and the stacked bars, each with its
+ * countdown and its percentage. The pool line is the same grid with a second text row under the name.
  */
 function IdentityLine(props: {
   identity: AisIdentity;
@@ -330,11 +315,9 @@ function IdentityLine(props: {
   /** A member of a pool: drawn one step in. */
   indent?: boolean;
 }): JSX.Element {
-  const { identity, windows, colours, now, link, editing, wide, pool, indent } =
-    props;
+  const { identity, windows, colours, now, link, editing, wide, pool, indent } = props;
   const tk = useTokens();
   const height = pool ? POOL_LINE_HEIGHT : LINE_HEIGHT;
-  const worst = worstLimit(identity.limits);
   const laneTrack = tk.mode === 'dark' ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.07)';
   const login = identity.login;
   const loginProblem = !pool && (login?.status === 'warn' || login?.status === 'crit');
@@ -342,11 +325,10 @@ function IdentityLine(props: {
   const hasData = windows.some(w =>
     identity.limits.some(l => l.name === w && l.fraction !== undefined)
   );
-  // The lanes fill the height of the line, so the line never grows. A lane holds one bar and its
-  // countdown. The text is as high as the lane allows.
+  // The lanes fill the height of the line, so the line never grows. A lane holds one bar, its
+  // countdown and its percentage.
   const lane = Math.max(1, Math.min(LANE_MAX, Math.floor(height / Math.max(1, windows.length))));
   const barHeight = Math.max(1, Math.min(pool ? 5 : BAR_MAX, lane - 2));
-  const countdownFont = Math.max(COUNTDOWN_FONT_MIN, Math.min(COUNTDOWN_FONT_MAX, lane + 1));
   const name = (
     <Box component="span" sx={{ fontSize: pool ? 14 : 13, fontWeight: pool ? 600 : undefined }}>
       {identity.name}
@@ -372,23 +354,41 @@ function IdentityLine(props: {
         data-serving={identity.serving ? '' : undefined}
         sx={{
           display: 'grid',
-          gridTemplateColumns: `${
-            pool ? (wide ? 250 : 200) : wide ? 200 : 148
-          }px minmax(${TRACK_MIN + COUNTDOWN_WIDTH}px, 1fr) ${PERCENT_WIDTH}px`,
+          gridTemplateColumns: `${nameColumn(wide)}px minmax(${
+            TRACK_MIN + COUNTDOWN_WIDTH + PERCENT_WIDTH
+          }px, 1fr)`,
           columnGap: '10px',
           alignItems: 'center',
           height,
           flex: 'none',
           minWidth: 0,
-          pl: indent ? 3 : 1.5,
+          pl: 1.5,
           pr: 1.5,
           ...(pool ? { gridColumn: '1 / -1' } : {}),
           bgcolor: loginProblem && login ? tk.fill[login.status] : 'transparent',
           boxShadow: pool ? `inset 0 -1px 0 ${tk.line2}` : `inset 0 -1px 0 ${tk.line}`,
-          ...(indent ? { borderLeft: `2px solid ${tk.line2}`, ml: 1.5 } : {}),
         }}
       >
-        <Box data-ais-label sx={{ minWidth: 0, lineHeight: 1.15 }}>
+        <Box
+          data-ais-label
+          sx={{
+            minWidth: 0,
+            lineHeight: 1.15,
+            // The indent of a member and its rail stay inside the name column, so the bars of
+            // every line start at the same x.
+            ...(indent
+              ? {
+                  alignSelf: 'stretch',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  ml: `${MEMBER_INDENT}px`,
+                  pl: '10px',
+                  borderLeft: `2px solid ${tk.line2}`,
+                }
+              : {}),
+          }}
+        >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
             {pool && (
               <ButtonBase
@@ -512,13 +512,32 @@ function IdentityLine(props: {
                       overflow: 'hidden',
                       textAlign: 'right',
                       whiteSpace: 'nowrap',
-                      fontSize: countdownFont,
+                      fontSize: LANE_FONT,
                       lineHeight: `${lane}px`,
                       fontVariantNumeric: 'tabular-nums',
                       color: past ? tk.mut : tk.fg2,
                     }}
                   >
                     {text !== '' && <span data-countdown-text>{text}</span>}
+                  </Box>
+                  <Box
+                    data-percent={limit ? laneName : undefined}
+                    data-status={limit?.status}
+                    sx={{
+                      flex: 'none',
+                      width: PERCENT_WIDTH,
+                      boxSizing: 'border-box',
+                      pl: '6px',
+                      overflow: 'hidden',
+                      textAlign: 'right',
+                      whiteSpace: 'nowrap',
+                      fontSize: LANE_FONT,
+                      lineHeight: `${lane}px`,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: limit ? tk.status[limit.status] : tk.mut,
+                    }}
+                  >
+                    {limit?.value ?? ''}
                   </Box>
                 </Box>
               );
@@ -529,20 +548,6 @@ function IdentityLine(props: {
             {pool ? 'No member reports' : 'No limit data'}
           </Box>
         )}
-        <Box
-          data-ais-note
-          data-ais-status
-          data-status={worst?.status ?? identity.status}
-          sx={{
-            textAlign: 'right',
-            fontSize: 12.5,
-            fontVariantNumeric: 'tabular-nums',
-            whiteSpace: 'nowrap',
-            color: worst ? tk.status[worst.status] : tk.mut,
-          }}
-        >
-          {worst?.value ?? ''}
-        </Box>
       </Box>
     </Tooltip>
   );

@@ -24,7 +24,6 @@ import {
   STACK_TILE_COLUMNS,
   STACK_WIDTH,
   WIDE_WIDTH,
-  worstLimit,
 } from './AisView';
 import { isModelLimit, joinAis } from './join';
 
@@ -255,12 +254,15 @@ describe('AisView', () => {
     expect(c.querySelector('[data-ais-list]')?.textContent).not.toMatch(/Logged in/);
   });
 
-  it('draws one thin line for each identity: the name, the bars and the worst percentage', () => {
+  it('draws one thin line for each identity: the name and, for each bar, its percentage', () => {
     const c = view();
     const red = c.querySelector('[data-ais-row="anthropic/red"]') as HTMLElement;
-    expect(red.textContent).toBe('red100%');
+    expect(red.textContent).toBe('red100%100%');
     expect(red.querySelectorAll('[data-lane]')).toHaveLength(2);
-    expect(red.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('crit');
+    expect(red.getAttribute('data-row-status')).toBe('crit');
+    for (const p of Array.from(red.querySelectorAll('[data-percent]'))) {
+      expect(p.getAttribute('data-status')).toBe('crit');
+    }
     // The window names are in the legend only, never on a line.
     const list = c.querySelector('[data-ais-list]') as HTMLElement;
     expect(list.textContent).not.toMatch(/Weekly|5-hour|Monthly/);
@@ -345,8 +347,8 @@ describe('AisView console view', () => {
     expect(row.querySelector('[data-segment="Weekly (Fable)"]')?.getAttribute('data-fill')).toBe(
       '1'
     );
-    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('49%');
-    expect(row.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('ok');
+    expect(row.querySelector('[data-percent="Weekly"]')?.textContent).toBe('49%');
+    expect(row.querySelector('[data-percent="Weekly"]')?.getAttribute('data-status')).toBe('ok');
     expect(row.getAttribute('data-row-status')).toBe('ok');
   });
 
@@ -403,18 +405,6 @@ describe('AisView console view', () => {
   });
 });
 
-describe('worstLimit', () => {
-  it('takes the worst status, then the largest fraction', () => {
-    const w = worstLimit([
-      { name: 'a', value: '50%', fraction: 0.5, status: 'ok' },
-      { name: 'b', value: '20%', fraction: 0.2, status: 'warn' },
-      { name: 'c', value: '30%', fraction: 0.3, status: 'warn' },
-    ]);
-    expect(w?.name).toBe('c');
-    expect(worstLimit([])).toBeUndefined();
-  });
-});
-
 describe('model windows', () => {
   const panel = (id: string, rows: ReturnType<typeof lim>[]) =>
     parsePanel({ version: 1, id, title: id, status: 'ok', summary: '', stats: [], rows });
@@ -431,18 +421,7 @@ describe('model windows', () => {
     expect(isModelLimit('(Fable) Weekly')).toBe(false);
   });
 
-  it('keeps a model window out of worstLimit', () => {
-    const w = worstLimit([
-      { name: 'Weekly', value: '40%', fraction: 0.4, status: 'ok' },
-      { name: 'Weekly (Fable)', value: '100%', fraction: 1, status: 'crit' },
-    ]);
-    expect(w?.name).toBe('Weekly');
-    expect(
-      worstLimit([{ name: 'Weekly (Fable)', value: '100%', fraction: 1, status: 'crit' }])
-    ).toBeUndefined();
-  });
-
-  it('sets the percentage and the status of a line by the other windows, and still draws the bar', () => {
+  it('shows the percentage of a model window, but sets the status by the other windows', () => {
     const m = only([
       lim('Anthropic / blue', 'Weekly', 0.4),
       lim('Anthropic / blue', 'Weekly (Fable)', 1, 'crit'),
@@ -451,8 +430,14 @@ describe('model windows', () => {
     expect(m.status).toBe('ok');
     const c = draw(m);
     const row = c.querySelector('[data-ais-row="anthropic/blue"]') as HTMLElement;
-    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('40%');
-    expect(row.querySelector('[data-ais-note]')?.getAttribute('data-status')).toBe('ok');
+    expect(row.querySelector('[data-percent="Weekly"]')?.textContent).toBe('40%');
+    expect(row.querySelector('[data-percent="Weekly"]')?.getAttribute('data-status')).toBe('ok');
+    // The model window shows its own percentage, in its own status colour.
+    expect(row.querySelector('[data-percent="Weekly (Fable)"]')?.textContent).toBe('100%');
+    expect(row.querySelector('[data-percent="Weekly (Fable)"]')?.getAttribute('data-status')).toBe(
+      'crit'
+    );
+    expect(row.getAttribute('data-row-status')).toBe('ok');
     expect(row.querySelectorAll('[data-lane]')).toHaveLength(2);
     expect(row.querySelector('[data-segment="Weekly (Fable)"]')?.getAttribute('data-fill')).toBe(
       '1'
@@ -473,7 +458,8 @@ describe('model windows', () => {
     expect(m.groups[0].members[0].status).toBe('ok');
     expect(m.status).toBe('ok');
     const row = draw(m).querySelector('[data-ais-row="anthropic/blue"]') as HTMLElement;
-    expect(row.querySelector('[data-ais-note]')?.textContent).toBe('');
+    expect(row.querySelector('[data-percent="Weekly (Fable)"]')?.textContent).toBe('100%');
+    expect(row.getAttribute('data-row-status')).toBe('ok');
     expect(row.querySelector('[data-segment="Weekly (Fable)"]')?.getAttribute('data-fill')).toBe(
       '1'
     );
@@ -717,12 +703,12 @@ describe('AisView stacked (narrow widget)', () => {
         expect(c.querySelector(`[data-ais-row="${m.key}"]`)).not.toBeNull();
   });
 
-  it('puts the name, the bars and one percentage in each line, with no text for the login', () => {
+  it('puts the name, the bars and one percentage for each bar in each line, with no text for the login', () => {
     const c = viewAt(470);
     const row = c.querySelector('[data-ais-row="anthropic/red"]') as HTMLElement;
     expect(row.querySelector('[data-login="crit"]')).not.toBeNull();
     expect(row.querySelectorAll('[data-lane]').length).toBeGreaterThan(0);
-    expect(row.textContent).toBe('red100%');
+    expect(row.textContent).toBe('red100%100%');
     const blue = c.querySelector('[data-ais-row="anthropic/blue"]') as HTMLElement;
     expect(blue.textContent).toBe('blue40%');
   });
@@ -862,10 +848,8 @@ describe('reset countdown', () => {
     // The cell stands after the track, at the right end of the bar.
     const lane = rowNamed(c, 'red').querySelector('[data-lane]') as HTMLElement;
     expect(lane.firstElementChild?.hasAttribute('data-track')).toBe(true);
-    expect(lane.lastElementChild?.hasAttribute('data-countdown-text')).toBe(false);
-    expect(lane.lastElementChild?.getAttribute('data-countdown')).toBe(
-      lane.getAttribute('data-lane')
-    );
+    expect(lane.children[1].getAttribute('data-countdown')).toBe(lane.getAttribute('data-lane'));
+    expect(lane.lastElementChild?.hasAttribute('data-percent')).toBe(true);
   });
 
   it('keeps a line at the same height, as the lanes fill it', () => {
@@ -879,16 +863,74 @@ describe('reset countdown', () => {
     }
   });
 
-  it('reserves a fixed width for the percentage in every line', () => {
+  it('gives every bar its own percentage in a fixed-width cell after the countdown', () => {
     vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
     const c = draw();
-    for (const row of Array.from(c.querySelectorAll('[data-ais-row]')) as HTMLElement[]) {
-      expect(getComputedStyle(row).gridTemplateColumns).toMatch(new RegExp(`${PERCENT_WIDTH}px$`));
+    const red = rowNamed(c, 'red');
+    const lanes = Array.from(red.querySelectorAll('[data-lane]')) as HTMLElement[];
+    expect(lanes).toHaveLength(3);
+    const values: Record<string, string> = {};
+    for (const lane of lanes) {
+      const cell = lane.lastElementChild as HTMLElement;
+      expect(cell.getAttribute('data-percent')).toBe(lane.getAttribute('data-lane'));
+      expect(getComputedStyle(cell).width).toBe(`${PERCENT_WIDTH}px`);
+      expect(lane.children[1].hasAttribute('data-countdown')).toBe(true);
+      values[lane.getAttribute('data-lane') ?? ''] = cell.textContent ?? '';
+    }
+    expect(values).toEqual({ '5-hour': '30%', Weekly: '50%', 'Weekly (Fable)': '90%' });
+    // A bar with no data draws no percentage.
+    const blue = rowNamed(c, 'blue');
+    expect(blue.querySelector('[data-lane="5-hour"] [data-percent]')?.textContent ?? '').toBe(
+      '20%'
+    );
+  });
+
+  it('draws the percentage of each bar in the status colour of its own window', () => {
+    const m = joinAis({
+      limits: parsePanel({
+        version: 1,
+        id: 'limits',
+        title: 'Limits',
+        status: 'ok',
+        summary: '',
+        stats: [],
+        rows: [
+          lim('Anthropic / mix', '5-hour', 0.2, 'ok'),
+          lim('Anthropic / mix', 'Weekly', 0.85, 'warn'),
+          lim('Anthropic / mix', 'Monthly', 1, 'crit'),
+        ],
+      }),
+    });
+    const c = render(
+      wrap(<AisView model={m} sourceId="ais-console" kiosk={false} editing={false} />)
+    ).container;
+    const status = (w: string) =>
+      c.querySelector(`[data-percent="${w}"]`)?.getAttribute('data-status');
+    expect([status('5-hour'), status('Weekly'), status('Monthly')]).toEqual(['ok', 'warn', 'crit']);
+    const colours = ['5-hour', 'Weekly', 'Monthly'].map(
+      w => getComputedStyle(c.querySelector(`[data-percent="${w}"]`) as HTMLElement).color
+    );
+    expect(new Set(colours).size).toBe(3);
+  });
+
+  it('puts every line on the same columns: one name column, so the bars align', () => {
+    vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
+    for (const width of [420, 1400]) {
+      const c = withWidth(width, draw);
+      const rows = Array.from(c.querySelectorAll('[data-ais-row]')) as HTMLElement[];
+      expect(rows.length).toBeGreaterThan(1);
+      const first = (r: HTMLElement) => getComputedStyle(r).gridTemplateColumns.split(' ')[0];
+      const left = (r: HTMLElement) => getComputedStyle(r).paddingLeft;
+      expect(new Set(rows.map(first)).size).toBe(1);
+      expect(new Set(rows.map(left)).size).toBe(1);
+      expect(new Set(rows.map(r => getComputedStyle(r).paddingRight)).size).toBe(1);
+      expect(new Set(rows.map(r => getComputedStyle(r).marginLeft)).size).toBe(1);
+      expect(new Set(rows.map(r => getComputedStyle(r).borderLeftWidth)).size).toBe(1);
     }
   });
 
   it.each([300, 420, 487, 570, 1400])(
-    'at %i px every bar draws its countdown and the percentage stays in full',
+    'at %i px every bar draws its countdown and its percentage in full',
     width => {
       vi.useFakeTimers({ now: NOW, toFake: ['Date', 'setInterval', 'clearInterval'] });
       const c = withWidth(width, draw);
@@ -901,14 +943,10 @@ describe('reset countdown', () => {
       });
       // A past reset shows "now" and a missing reset shows no text, at every width.
       expect(texts(rowNamed(c, 'blue'))).toEqual({ Weekly: 'now' });
-      // A model window draws its bar and countdown but never sets the line.
-      expect(red.querySelector('[data-ais-status]')?.textContent).toBe('50%');
-      expect(red.querySelector('[data-ais-status]')?.getAttribute('data-status')).toBe('ok');
-      for (const row of Array.from(c.querySelectorAll('[data-ais-row]')) as HTMLElement[]) {
-        expect(getComputedStyle(row).gridTemplateColumns).toMatch(
-          new RegExp(`${PERCENT_WIDTH}px$`)
-        );
-      }
+      // A model window draws its bar, countdown and percentage but never sets the line status.
+      expect(red.querySelector('[data-percent="Weekly (Fable)"]')?.textContent).toBe('90%');
+      expect(red.querySelector('[data-percent="Weekly"]')?.textContent).toBe('50%');
+      expect(red.getAttribute('data-row-status')).toBe('ok');
     }
   );
 
