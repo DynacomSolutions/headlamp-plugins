@@ -11,6 +11,7 @@ import {
   parseModels,
 } from './chat-model';
 import { fetchAllDiagnoses } from './data';
+import { GroupChatRequest } from './groupChat';
 import { backendUrl, DiagnosisSummary, Settings } from './model';
 
 const json = (method: string, body?: unknown) => ({
@@ -23,7 +24,11 @@ const json = (method: string, body?: unknown) => ({
 
 export async function createChat(
   s: Settings,
-  body: { model?: string; diagnosisId?: string; diagnosisIds?: string[] }
+  body: {
+    model?: string;
+    diagnosisId?: string;
+    diagnosisIds?: string[];
+  } & Partial<GroupChatRequest>
 ): Promise<string> {
   const res = await ApiProxy.request(backendUrl(s, '/api/chats'), json('POST', body));
   const id = res && typeof res.id === 'string' ? res.id : '';
@@ -42,6 +47,19 @@ export function createIncidentsChat(s: Settings, ids: string[], model?: string):
     ...(model ? { model } : {}),
     ...(unique.length === 1 ? { diagnosisId: unique[0] } : { diagnosisIds: unique }),
   });
+}
+
+/**
+ * Starts one chat about a group of incidents: the multi-incident request with the group name, and the
+ * older incidents of a large group as `summaryIds` (see groupChat.ts for the rule).
+ */
+export function createGroupChat(
+  s: Settings,
+  req: GroupChatRequest,
+  model?: string
+): Promise<string> {
+  if (req.diagnosisIds.length === 0) return Promise.reject(new Error('The group has no incident.'));
+  return createChat(s, { ...(model ? { model } : {}), ...req });
 }
 
 export async function sendMessage(

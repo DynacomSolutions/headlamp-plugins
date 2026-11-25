@@ -89,6 +89,7 @@ import { ConflictError, StoredDashboard } from './storage/storage';
 import {
   baseFilters,
   buildPath,
+  parseFocus,
   parsePath,
   parseQuery,
   pathBase,
@@ -239,6 +240,24 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   // Each tab change is a history push, so Back returns to the tab before. The query stays.
   const goTab = (id: string) =>
     history.push({ pathname: buildPath({ name, tab: id }, base), search: location.search });
+  // What a widget focuses on (a selected incident) is in the path after the tab. A change is a
+  // history push, so Back undoes it. A tab change drops it.
+  const focusKey = parseFocus(location.pathname).join('/');
+  const focus = React.useMemo(() => parseFocus(location.pathname), [focusKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pathname = location.pathname;
+  const search = location.search;
+  const setFocus = React.useCallback(
+    (segments: string[] | null) => {
+      const next = (segments ?? []).filter(Boolean);
+      // Without a tab id (the dashboard has not loaded) the path cannot carry a focus.
+      if (next.join('/') === focusKey || (next.length > 0 && !activeTabId)) return;
+      history.push({
+        pathname: buildPath({ name, tab: activeTabId, focus: next }, pathBase(pathname)),
+        search,
+      });
+    },
+    [history, name, activeTabId, focusKey, pathname, search]
+  );
   const tabIds = React.useMemo(() => spec?.tabs.map(t => t.id) ?? [], [spec?.tabs]);
   const linkTargets = React.useMemo(
     () => ({ base, dashboard: name, tabs: tabIds }),
@@ -440,8 +459,21 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       reportRefreshed: refresh.report,
       cacheScope: `${storage.namespace}/${name}`,
       reportCached: refresh.cached,
+      focus,
+      setFocus,
     }),
-    [filters, signal, editing, save.saving, query.kiosk, refresh, storage.namespace, name]
+    [
+      filters,
+      signal,
+      editing,
+      save.saving,
+      query.kiosk,
+      refresh,
+      storage.namespace,
+      name,
+      focus,
+      setFocus,
+    ]
   );
 
   // Fit to screen height: the grid rows of the tab stretch to fill the screen. It is off while

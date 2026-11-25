@@ -16,6 +16,10 @@ export interface DashboardContextValue {
    * Absent: no widget cache (a test, or a page that is not a dashboard).
    */
   cacheScope?: string;
+  /** The path segments after the tab: what a widget focuses on. Empty when none. */
+  focus?: string[];
+  /** Pushes a history entry that focuses on `segments`, or clears the focus with null. */
+  setFocus?: (segments: string[] | null) => void;
   /** A widget frame tells the header the time of the cached data that its widget shows. */
   reportCached?: (at: number) => void;
 }

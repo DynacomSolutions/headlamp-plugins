@@ -33,6 +33,12 @@ export interface Chat {
   diagnosisId?: string;
   /** Every linked incident, in the order the user chose. A chat about one incident has one entry. */
   diagnosisIds?: string[];
+  /** The alert name of the group the operator chose, when the chat is about a group of incidents. */
+  groupName?: string;
+  /** The rest of a large group: incidents that the system prompt lists in one short line each. */
+  summaryIds?: string[];
+  /** How many older incidents of a very large group the client left out of both lists. */
+  groupOmitted?: number;
   createdAt: string;
   updatedAt: string;
   messages: ChatMessage[];
@@ -104,7 +110,7 @@ export class ChatStore {
     renameSync(tmp, target);
   }
 
-  create(fields: { model: string; diagnosisId?: string; diagnosisIds?: string[] }): Chat {
+  create(fields: { model: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }): Chat {
     const now = new Date().toISOString();
     const ids = [...new Set([...(fields.diagnosisIds ?? []), ...(fields.diagnosisId ? [fields.diagnosisId] : [])])];
     const chat: Chat = {
@@ -112,6 +118,9 @@ export class ChatStore {
       title: DEFAULT_TITLE,
       model: fields.model,
       ...(ids.length ? { diagnosisId: ids[0], diagnosisIds: ids } : {}),
+      ...(fields.groupName ? { groupName: fields.groupName } : {}),
+      ...(fields.summaryIds?.length ? { summaryIds: [...new Set(fields.summaryIds)].filter(id => !ids.includes(id)) } : {}),
+      ...(fields.groupOmitted ? { groupOmitted: fields.groupOmitted } : {}),
       createdAt: now,
       updatedAt: now,
       messages: [],

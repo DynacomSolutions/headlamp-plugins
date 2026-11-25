@@ -10,7 +10,8 @@ and a header or divider.
 ## What it does
 
 - **List** (`/dashboards`): create, open, rename, duplicate and delete dashboards.
-- **Dashboard** (`/dashboards/<name>` or `/dashboards/<name>/<tab>`): view mode and edit mode.
+- **Dashboard** (`/dashboards/<name>` or `/dashboards/<name>/<tab>`): view mode and edit mode. A widget
+  can also keep a selection in the path after the tab (`/dashboards/<name>/<tab>/<a>/<b>`), see **Focus**.
 - **Layout builder**: drag, drop and resize widgets on a 12 column grid
   ([react-grid-layout](https://github.com/react-grid-layout/react-grid-layout)),
   with responsive breakpoints. A palette drawer lists the registered widgets. Each
@@ -286,7 +287,7 @@ The pieces of the contract (see the comments in `src/contract.ts`):
 | Name                           | Purpose                                                                                                                                                                                      |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `WidgetDefinition<C>`          | `type`, `title`, `description`, `icon` (Iconify), `category`, `defaultSize`, `minSize`, `maxSize`, `defaultConfig`, `configSchema` or `SettingsComponent`, `Component`, `selfScroll`, `card` |
-| `WidgetProps<C>`               | `instanceId`, `config`, `filters`, `refreshSignal`, `reportRefreshed(at?)`, `editing`, `kiosk`                                                                                               |
+| `WidgetProps<C>`               | `instanceId`, `config`, `filters`, `refreshSignal`, `reportRefreshed(at?)`, `editing`, `kiosk`, `focus?`, `setFocus?`                                                                                               |
 | `WidgetSettingsProps<C>`       | `config` and `onChange(config)` for a custom settings form                                                                                                                                   |
 | `ConfigField`                  | one field of a generated settings form: `text`, `multiline`, `number`, `boolean` or `select`                                                                                                 |
 | `DashboardFilters`             | `namespaces`, `nodes`, `labelSelector`, `range`                                                                                                                                              |
@@ -321,6 +322,20 @@ The date format uses these letters: `yyyy`, `yy` (year), `MMMM`, `MMM`, `MM`, `M
 `EEEE`, `EEE` (weekday), `dd`, `d` (day), `HH`, `H`, `hh`, `h` (hour), `mm`, `ss`, `a` (AM or PM).
 Quote literal text in single quotes, for example `'Week' d`. Examples: `EEE d MMM yyyy`,
 `yyyy-MM-dd`, `d/M/yyyy`.
+
+
+### Focus: a selection in the URL
+
+A widget that selects something (an incident, a group of incidents) keeps the selection in the page
+path, so a link reproduces the view and Back and Forward undo it. The path is
+`/dashboards/<name>/<tab>/<segment>/<segment>`. The dashboard keeps the segments opaque:
+
+- `focus` (`string[]`, optional): the decoded segments after the tab. Empty when there are none.
+- `setFocus(segments | null)` (optional): pushes one history entry that focuses on `segments`, or clears
+  the focus with `null`. It keeps the query string. When the URL has no tab, it writes the id of the
+  first tab. It does nothing for the same focus, and while the dashboard has not loaded.
+- Opening another tab drops the focus. Both props are absent in an older Dashboards plugin, so a widget
+  that uses them must work without them.
 
 ## Settings
 

@@ -82,7 +82,7 @@ function mount(
 ) {
   return render(
     <MemoryRouter initialEntries={[url]} getUserConfirmation={getUserConfirmation}>
-      <Route path="/dashboards/:name/:tab?" component={DashboardPage} />
+      <Route path="/dashboards/:name/:tab?/:focus*" component={DashboardPage} />
       <Where />
       <Hist />
     </MemoryRouter>
@@ -351,6 +351,94 @@ describe('dashboard page', () => {
     expect(container.ownerDocument.querySelector('[data-kiosk-overlay]')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Exit full screen' }));
     await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops'));
+  });
+
+  it('gives a widget the focus of the URL, and pushes one history entry for a change', async () => {
+    let api: { focus?: string[]; setFocus?: (s: string[] | null) => void } = {};
+    const Probe = (p: { focus?: string[]; setFocus?: (s: string[] | null) => void }) => {
+      api = p;
+      return <span data-testid="focus">{(p.focus ?? []).join('|')}</span>;
+    };
+    getRegistry().registerWidget({
+      type: 'test.focus',
+      title: 'Focus',
+      description: 'Shows the focus.',
+      icon: 'mdi:flask',
+      category: 'Test',
+      defaultSize: { w: 3, h: 3 },
+      minSize: { w: 1, h: 1 },
+      defaultConfig: {},
+      Component: Probe,
+    } as any);
+    spec = addWidget(
+      spec,
+      spec.tabs[0].id,
+      spec.tabs[0].sections[0].id,
+      'test.focus',
+      { w: 3, h: 3 },
+      {}
+    ).spec;
+    const tab = spec.tabs[0].id;
+    // A link with a focus shows it. The query string stays.
+    mount(`/dashboards/ops/${tab}/group/Kube%2FPod%20Down?kiosk=1`);
+    await waitFor(() =>
+      expect(screen.getByTestId('focus').textContent).toBe('group|Kube/Pod Down')
+    );
+    // Clearing pushes the tab path with no focus. Back brings the focus again.
+    act(() => api.setFocus!(null));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe(`/dashboards/ops/${tab}?kiosk=1`)
+    );
+    expect(screen.getByTestId('focus').textContent).toBe('');
+    act(() => api.setFocus!(['incident', 'd 1']));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe(
+        `/dashboards/ops/${tab}/incident/d 1?kiosk=1`
+      )
+    );
+    act(() => router.history!.goBack());
+    await waitFor(() => expect(screen.getByTestId('focus').textContent).toBe(''));
+    act(() => router.history!.goForward());
+    await waitFor(() => expect(screen.getByTestId('focus').textContent).toBe('incident|d 1'));
+    // The same focus again adds no history entry.
+    const length = router.history!.length;
+    act(() => api.setFocus!(['incident', 'd 1']));
+    expect(router.history!.length).toBe(length);
+  });
+
+  it('writes the first tab id into the path when a focus is set on a path with no tab', async () => {
+    let api: { setFocus?: (s: string[] | null) => void } = {};
+    const Probe = (p: { setFocus?: (s: string[] | null) => void }) => {
+      api = p;
+      return <span>focus probe</span>;
+    };
+    getRegistry().registerWidget({
+      type: 'test.focus2',
+      title: 'Focus 2',
+      description: 'Sets the focus.',
+      icon: 'mdi:flask',
+      category: 'Test',
+      defaultSize: { w: 3, h: 3 },
+      minSize: { w: 1, h: 1 },
+      defaultConfig: {},
+      Component: Probe,
+    } as any);
+    spec = addWidget(
+      spec,
+      spec.tabs[0].id,
+      spec.tabs[0].sections[0].id,
+      'test.focus2',
+      { w: 3, h: 3 },
+      {}
+    ).spec;
+    mount('/dashboards/ops');
+    await screen.findByText('focus probe');
+    act(() => api.setFocus!(['group', 'HighCPU']));
+    await waitFor(() =>
+      expect(screen.getByTestId('where').textContent).toBe(
+        `/dashboards/ops/${spec.tabs[0].id}/group/HighCPU`
+      )
+    );
   });
 
   it('keeps every widget mounted when the page enters and leaves full screen', async () => {

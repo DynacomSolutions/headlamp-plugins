@@ -4,6 +4,8 @@
  *   /dashboards                       the list
  *   /dashboards/<name>                a dashboard, first tab
  *   /dashboards/<name>/<tab>          a dashboard, one tab
+ *   /dashboards/<name>/<tab>/<a>/<b>  a thing that a widget focuses on (see `focus`), for example
+ *                                     `/dashboards/ops/incidents/group/HighCPU`
  *
  * Content identity (dashboard and tab) is in the path and changes with history push. View
  * options are in the query and change with history replace:
@@ -29,6 +31,11 @@ export interface DashboardPath {
   name: string;
   /** The tab id, or '' for the first tab. */
   tab: string;
+  /**
+   * The segments after the tab: what a widget focuses on, for example a selected incident. The
+   * dashboard keeps them opaque. It needs a tab in the path, so the page writes the first tab id.
+   */
+  focus?: string[];
 }
 
 export interface DashboardQuery {
@@ -64,11 +71,20 @@ export function parsePath(pathname: string): DashboardPath {
   return { name, tab };
 }
 
+/** The focus segments of a path, decoded. Empty when the path has none or has no tab. */
+export function parseFocus(pathname: string): string[] {
+  const rest = PATH_PATTERN.exec(pathname)?.[2] ?? '';
+  return rest.split('/').filter(Boolean).slice(2).map(safeDecode);
+}
+
 /** A path to the list or to a dashboard. `base` is the cluster prefix from `pathBase`. */
 export function buildPath(p: DashboardPath, base = ''): string {
   if (!p.name) return `${base}${BASE_PATH}`;
-  const tab = p.tab ? `/${encodeURIComponent(p.tab)}` : '';
-  return `${base}${BASE_PATH}/${encodeURIComponent(p.name)}${tab}`;
+  const focus = (p.focus ?? []).filter(Boolean);
+  // A focus needs a tab segment before it. The caller names the first tab when the URL had none.
+  const tab = p.tab || focus.length ? `/${encodeURIComponent(p.tab)}` : '';
+  const tail = focus.map(f => `/${encodeURIComponent(f)}`).join('');
+  return `${base}${BASE_PATH}/${encodeURIComponent(p.name)}${tab}${tail}`;
 }
 
 const sameList = (a: string[], b: string[]): boolean =>

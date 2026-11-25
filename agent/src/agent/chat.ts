@@ -42,6 +42,11 @@ export const MAX_CHAT_INCIDENTS = 20;
 const CONTEXT_CHARS = 48_000;
 const SINGLE_CONTEXT_CHARS = 12_000;
 const MIN_CONTEXT_CHARS = 2_400;
+/** Incidents of a large group that the prompt lists in one short line each, besides the fully linked ones. */
+export const MAX_SUMMARY_INCIDENTS = 500;
+/** Characters for the short lines of a large group. Lines that do not fit are counted, not shown. */
+const SUMMARY_CHARS = 30_000;
+const SUMMARY_LINE_CHARS = 260;
 
 export interface ChatDeps {
   store: ChatStore;
@@ -70,7 +75,25 @@ export function trimHistory(messages: Message[], limit = HISTORY_RESULT_CHARS): 
   return out;
 }
 
-export function systemPrompt(budget: number, diagnosis?: Diagnosis | Diagnosis[]): string {
+/** One short line about an incident, for the incidents of a large group that get no full context. */
+export function summaryLine(d: Diagnosis): string {
+  const cause = d.result?.likelyCause ? ` | cause: ${d.result.likelyCause.replace(/\s+/g, ' ')}` : d.error ? ` | error: ${d.error.replace(/\s+/g, ' ')}` : '';
+  const fires = d.fires && d.fires > 1 ? ` | fired ${d.fires} times` : '';
+  const where = ['namespace', 'pod', 'node', 'instance'].map(k => (d.alert.labels[k] ? `${k}=${d.alert.labels[k]}` : '')).filter(Boolean).join(' ');
+  return clip(`- ${d.id} | ${d.alert.severity || 'unrated'} | ${d.status}${d.resolvedAt ? ', resolved' : ''} | ${d.createdAt}${fires}${where ? ` | ${where}` : ''}${cause}`, SUMMARY_LINE_CHARS);
+}
+
+/** A group of incidents that an operator chose as a whole. */
+export interface GroupContext {
+  /** The alert name of the group. */
+  name: string;
+  /** The other incidents of the group, newest first. Each gets one short line. */
+  summaries: Diagnosis[];
+  /** Older incidents of the group that the client left out. They are counted, not listed. */
+  omitted?: number;
+}
+
+export function systemPrompt(budget: number, diagnosis?: Diagnosis | Diagnosis[], group?: GroupContext): string {
   const parts = [
     readSkill().body,
     [
@@ -90,6 +113,26 @@ export function systemPrompt(budget: number, diagnosis?: Diagnosis | Diagnosis[]
       ...list.map((d, i) => diagnosisContext(d, `Incident ${i + 1} of ${list.length}`, each)),
     );
   }
+  if (group) {
+    const total = list.length + group.summaries.length + (group.omitted ?? 0);
+    const lines: string[] = [];
+    let used = 0;
+    for (const d of group.summaries) {
+      const line = summaryLine(d);
+      if (used + line.length > SUMMARY_CHARS) break;
+      lines.push(line);
+      used += line.length + 1;
+    }
+    const more = group.summaries.length - lines.length;
+    parts.push(
+      [
+        `## The group of incidents: ${group.name}`,
+        `The operator chose the whole group, with ${total} incidents. ${list.length} of them, the newest, have the full context above. The next ${group.summaries.length} have one short line each. Say so when an answer rests on the short lines only, and read a full diagnosis with the tools when you need its detail.`,
+        ...lines,
+        ...(more + (group.omitted ?? 0) > 0 ? [`(${more + (group.omitted ?? 0)} more older incidents are not listed.)`] : []),
+      ].join('\n'),
+    );
+  }
   return parts.join('\n\n');
 }
 
@@ -104,9 +147,10 @@ function diagnosisContext(d: Diagnosis, heading = 'The incident this chat is abo
   return clip(lines.join('\n'), limit);
 }
 
-function linkFields(chat: Chat): { diagnosisId?: string; diagnosisIds?: string[] } {
+function linkFields(chat: Chat): { diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; groupCount?: number } {
   const ids = chatDiagnosisIds(chat);
-  return ids.length ? { diagnosisId: ids[0], diagnosisIds: ids } : {};
+  const group = chat.groupName ? { groupName: chat.groupName, groupCount: ids.length + (chat.summaryIds?.length ?? 0) + (chat.groupOmitted ?? 0) } : {};
+  return ids.length ? { diagnosisId: ids[0], diagnosisIds: ids, ...group } : {};
 }
 
 function summary(store: ChatStore, chat: Chat): ChatSummary {
@@ -139,12 +183,18 @@ export class ChatService {
     return kept.slice(0, limit).map(c => summary(this.deps.store, c));
   }
 
-  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[] }): Promise<{ id: string }> {
+  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }): Promise<{ id: string }> {
     const ids = [...new Set([...(body.diagnosisIds ?? []), ...(body.diagnosisId !== undefined ? [body.diagnosisId] : [])])];
     if (ids.length > MAX_CHAT_INCIDENTS) throw new ChatError(400, `A chat can link at most ${MAX_CHAT_INCIDENTS} incidents`);
+    const summaryIds = [...new Set(body.summaryIds ?? [])];
+    if (summaryIds.length > MAX_SUMMARY_INCIDENTS) throw new ChatError(400, `A group chat can list at most ${MAX_SUMMARY_INCIDENTS} more incidents`);
+    if (summaryIds.length && !ids.length) throw new ChatError(400, 'summaryIds needs diagnosisIds');
     for (const id of ids) if (!(await this.deps.diagnoses.get(id))) throw new ChatError(404, `No diagnosis ${id}`);
+    // An incident that left the store (retention removed it) drops out of the short list. It is not an error.
+    const known: string[] = [];
+    for (const id of summaryIds) if (await this.deps.diagnoses.get(id)) known.push(id);
     const model = await this.modelId(body.model);
-    return { id: this.deps.store.create({ model, diagnosisIds: ids }).id };
+    return { id: this.deps.store.create({ model, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };
   }
 
   private chat(id: string): Chat {
@@ -270,7 +320,11 @@ export class ChatService {
       const names = new Set(specs.map(s => s.name));
       const toolSpecs: ToolSpec[] = specs.map(s => withReason(s));
       const linked = (await Promise.all(chatDiagnosisIds(chat).map(id => this.deps.diagnoses.get(id)))).filter((d): d is Diagnosis => !!d);
-      const system = systemPrompt(budget, linked.length === 1 ? linked[0] : linked);
+      const summaries = chat.summaryIds?.length
+        ? (await Promise.all(chat.summaryIds.map(id => this.deps.diagnoses.get(id)))).filter((d): d is Diagnosis => !!d)
+        : [];
+      const group = chat.groupName && summaries.length ? { name: chat.groupName, summaries, omitted: chat.groupOmitted ?? 0 } : undefined;
+      const system = systemPrompt(budget, linked.length === 1 && !group ? linked[0] : linked, group);
       const past = this.history(chat, reply);
       const turn: Message[] = [];
       const texts: string[] = [];

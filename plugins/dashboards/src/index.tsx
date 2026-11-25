@@ -47,7 +47,7 @@ registerRoute({
 });
 
 registerRoute({
-  path: '/dashboards/:name/:tab?',
+  path: '/dashboards/:name/:tab?/:focus*',
   sidebar: 'dashboards',
   name: 'dashboard',
   exact: true,

@@ -4,6 +4,7 @@ import { defaultFilters, emptySpec } from './spec/model';
 import {
   baseFilters,
   buildPath,
+  parseFocus,
   parsePath,
   parseQuery,
   pathBase,
@@ -110,5 +111,45 @@ describe('query', () => {
   it('uses the spec filters when the view is unknown', () => {
     expect(baseFilters(emptySpec('x'), 'nope')).toEqual(base);
     expect(baseFilters(undefined, '')).toEqual(base);
+  });
+});
+
+describe('focus segments', () => {
+  it('reads the segments after the tab and decodes them', () => {
+    expect(parseFocus('/dashboards/ops/incidents/group/Kube%2FDown')).toEqual([
+      'group',
+      'Kube/Down',
+    ]);
+    expect(parseFocus('/c/main/dashboards/ops/incidents/incident/d-1')).toEqual([
+      'incident',
+      'd-1',
+    ]);
+    expect(parseFocus('/dashboards/ops/incidents')).toEqual([]);
+    expect(parseFocus('/dashboards/ops')).toEqual([]);
+    expect(parseFocus('/dashboards')).toEqual([]);
+  });
+  it('leaves the name and the tab as they were', () => {
+    expect(parsePath('/dashboards/ops/incidents/group/HighCPU')).toEqual({
+      name: 'ops',
+      tab: 'incidents',
+    });
+  });
+  it('round trips a focus with spaces, slashes and percent signs', () => {
+    for (const focus of [
+      ['group', 'High CPU / 100%'],
+      ['incident', 'a b'],
+      ['group', 'ünï'],
+    ]) {
+      const path = buildPath({ name: 'o ps', tab: 'in cidents', focus }, '/c/main');
+      expect(parseFocus(path)).toEqual(focus);
+      expect(parsePath(path)).toEqual({ name: 'o ps', tab: 'in cidents' });
+    }
+    expect(buildPath({ name: 'ops', tab: 'nodes', focus: ['group', 'A'] })).toBe(
+      '/dashboards/ops/nodes/group/A'
+    );
+  });
+  it('writes no focus for an empty list, and keeps a path with no tab as it was', () => {
+    expect(buildPath({ name: 'ops', tab: 'nodes', focus: [] })).toBe('/dashboards/ops/nodes');
+    expect(buildPath({ name: 'ops', tab: '' })).toBe('/dashboards/ops');
   });
 });
