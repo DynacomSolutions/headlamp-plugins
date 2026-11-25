@@ -88,8 +88,19 @@ export function RowList(props: {
   compact?: boolean;
   /** An icon address for a row (for example the org avatar of an `org/repo` label), or undefined. */
   nameIcon?: (row: PanelRow) => string | undefined;
+  /** The logo of the AI provider that a row names, or null. Rows of the AIS source only. */
+  providerIcon?: (row: PanelRow) => JSX.Element | null;
 }): JSX.Element {
-  const { rows, width = 0, editing, source, swatch, compact = false, nameIcon } = props;
+  const {
+    rows,
+    width = 0,
+    editing,
+    source,
+    swatch,
+    compact = false,
+    nameIcon,
+    providerIcon,
+  } = props;
   const tk = useTokens();
   const items = React.useMemo(() => orderRows(rows), [rows]);
   // Under 360 px a bar would leave the label no room.
@@ -97,6 +108,7 @@ export function RowList(props: {
   const withIcon = source !== undefined && rows.some(r => r.icon !== undefined);
   // One slot for every row as soon as one row has an icon, so the labels stay aligned.
   const withNameIcon = nameIcon !== undefined && rows.some(r => nameIcon(r) !== undefined);
+  const withProviderIcon = providerIcon !== undefined && rows.some(r => providerIcon(r) !== null);
   const rowHeight = !compact ? ROW_HEIGHT : withIcon ? COMPACT_ROW_HEIGHT_ICON : COMPACT_ROW_HEIGHT;
   return (
     <Box
@@ -138,6 +150,14 @@ export function RowList(props: {
               />
             )}
             <StatusMark status={r.status} size={16} />
+            {withProviderIcon && (
+              <Box
+                data-row-provider-icon
+                sx={{ flex: 'none', width: 14, height: 14, display: 'inline-flex', color: tk.fg }}
+              >
+                {providerIcon?.(r)}
+              </Box>
+            )}
             {withNameIcon && <GroupIcon src={nameIcon?.(r)} name={r.label} />}
             {withIcon && (
               <Box data-row-icon-cell sx={{ display: 'flex' }}>

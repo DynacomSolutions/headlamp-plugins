@@ -19,7 +19,14 @@ import { useSourceLookup, useSources } from '../panels/sourcesConfig';
 import { PieChart } from '../sunburst/PieChart';
 import { SunburstChart } from '../sunburst/SunburstChart';
 import { AIS_PANELS, AisConfig } from './AisWidget';
-import { agentsToSunburst, gatewaySlices, providerIndex } from './charts';
+import {
+  agentsToSunburst,
+  DIRECT,
+  gatewaySlices,
+  POOL_NOT_REPORTED,
+  providerIndex,
+} from './charts';
+import { labelLogo, poolLabelLogo } from './providerIcon';
 
 const GATEWAY_PANEL = 'gateway-usage';
 
@@ -86,6 +93,15 @@ function AgentsWidget({
     [agents.panel, swap.panel]
   );
   const total = data.nodes?.reduce((s, n) => s + n.used, 0) ?? 0;
+  const poolLogo = React.useMemo(
+    () =>
+      poolLabelLogo(
+        new Set(
+          (data.nodes ?? []).map(n => n.label).filter(l => l !== DIRECT && l !== POOL_NOT_REPORTED)
+        )
+      ),
+    [data.nodes]
+  );
   return (
     <Frame
       loading={agents.loading || swap.loading || pending}
@@ -101,6 +117,7 @@ function AgentsWidget({
           unit="agents"
           format={v => String(Math.round(v))}
           kiosk={kiosk}
+          labelIcon={poolLogo}
         />
       ) : (
         <Typography variant="body2" color="text.secondary">
@@ -148,6 +165,7 @@ function GatewayWidget({
           title="Gateway tokens in 7 days, by app"
           totalText={`${tokens ?? ''} tokens, ${slices.length} apps`.trim()}
           kiosk={kiosk}
+          groupIcon={labelLogo}
         />
       ) : (
         <Typography variant="body2" color="text.secondary">

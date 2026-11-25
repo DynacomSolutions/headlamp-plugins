@@ -124,7 +124,7 @@ export interface AisPanels {
 }
 
 /** The identity provider keys that the login panel uses, and the provider names that the limits panel uses. */
-const LIMIT_PROVIDER: Record<string, string> = {
+export const LIMIT_PROVIDER: Record<string, string> = {
   claude: 'anthropic',
   codex: 'openai',
   grok: 'xai',
@@ -134,7 +134,7 @@ const LIMIT_PROVIDER: Record<string, string> = {
 };
 
 /** The real provider name for each key of the login panel. */
-const PROVIDER_NAME: Record<string, string> = {
+export const PROVIDER_NAME: Record<string, string> = {
   claude: 'Anthropic',
   codex: 'OpenAI',
   grok: 'xAI',

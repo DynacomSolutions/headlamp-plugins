@@ -46,6 +46,7 @@ export function NodeSunburstChart({
   kiosk = false,
   hideLegend = false,
   unit,
+  labelIcon,
 }: SunburstChartProps): JSX.Element {
   const [active, setActive] = React.useState<string | null>(null);
   const [picked, setPicked] = React.useState<string | null>(null);
@@ -115,6 +116,7 @@ export function NodeSunburstChart({
       }}
     >
       {mark}
+      {labelIcon?.(label, 12)}
       <Box
         component="span"
         sx={{
@@ -173,6 +175,7 @@ export function NodeSunburstChart({
         onPick={select}
         size={ringSize}
         unit={unit}
+        labelIcon={labelIcon}
       />
       {legend && (
         <Box

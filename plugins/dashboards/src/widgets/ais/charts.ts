@@ -248,7 +248,7 @@ export interface GatewaySlice {
 }
 
 /** The providers in a fixed order, so a provider keeps its colour when the data changes. */
-const PROVIDER_ORDER = ['claude', 'codex', 'xai', 'zai', 'kimi', 'opencode', 'ali'];
+export const PROVIDER_ORDER = ['claude', 'codex', 'xai', 'zai', 'kimi', 'opencode', 'ali'];
 
 /** The colour index of a provider group. Known providers have a fixed index. */
 export function providerIndex(group: string, all: ReadonlyArray<string>): number {

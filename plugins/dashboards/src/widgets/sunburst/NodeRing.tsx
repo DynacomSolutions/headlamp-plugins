@@ -23,6 +23,9 @@ import { clip, percent, RADIUS, VIEW } from './shared';
 /** Pattern ids must be unique on a page that holds several charts. */
 let patternCounter = 0;
 
+/** The side of a logo before a node label in the ring, in viewBox units. */
+const ICON = 7;
+
 /** The crosshatch: two sets of thin lines at right angles, turned by 45 degrees. */
 const HATCH_STEP = 3.4;
 const HATCH_OPACITY = 0.42;
@@ -98,6 +101,8 @@ export interface NodeRingProps {
   size?: number;
   /** What the values count, for example `agents`. A count has no capacity to fill. */
   unit?: string;
+  /** A small logo before a node label in the ring, or null (see `SunburstChartProps`). */
+  labelIcon?: (label: string, size: number, at?: { x: number; y: number }) => JSX.Element | null;
 }
 
 export function NodeRing({
@@ -111,6 +116,7 @@ export function NodeRing({
   onPick,
   size = 0,
   unit,
+  labelIcon,
 }: NodeRingProps): JSX.Element {
   const theme = useTheme();
   const hatchId = React.useRef(`sb-hatch-${++patternCounter}`).current;
@@ -194,7 +200,8 @@ export function NodeRing({
   const nodeLabelFits = (a: NodeArcShape): boolean => {
     const r = (a.inner + a.outer) / 2;
     const arcLength = (a.end - a.start) * r;
-    return arcLength >= a.label.length * 4.4 + 4;
+    // A logo before the label needs its own room.
+    return arcLength >= a.label.length * 4.4 + 4 + (labelIcon?.(a.label, ICON) ? ICON + 2 : 0);
   };
 
   return (
@@ -293,22 +300,36 @@ export function NodeRing({
           // Turn the text with the arc, and keep it upright in the lower half.
           const deg = (mid * 180) / Math.PI;
           const turn = deg > 90 && deg < 270 ? deg + 180 : deg;
+          // A logo goes before the label. The logo and the label together stay centred on the arc.
+          const textWidth = a.label.length * 3.6;
+          const icon = labelIcon?.(a.label, ICON, {
+            x: x - (textWidth + ICON + 1) / 2,
+            y: y - ICON / 2,
+          });
           return (
-            <text
+            <g
               key={`label-${a.key}`}
-              data-node-label={a.key}
-              x={x}
-              y={y}
               transform={`rotate(${turn.toFixed(2)} ${x.toFixed(3)} ${y.toFixed(3)})`}
-              textAnchor="middle"
-              dominantBaseline="central"
-              fontSize={6.2}
-              fontWeight={600}
-              fill={theme.palette.text.primary}
               style={{ pointerEvents: 'none' }}
             >
-              {a.label}
-            </text>
+              {icon && (
+                <g data-node-icon={a.key} style={{ color: theme.palette.text.primary }}>
+                  {icon}
+                </g>
+              )}
+              <text
+                data-node-label={a.key}
+                x={icon ? x + (ICON + 1) / 2 : x}
+                y={y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={6.2}
+                fontWeight={600}
+                fill={theme.palette.text.primary}
+              >
+                {a.label}
+              </text>
+            </g>
           );
         })}
       <g
