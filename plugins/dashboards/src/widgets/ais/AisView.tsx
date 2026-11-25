@@ -6,12 +6,11 @@
  * active member of a pool), its limit windows as thin bars stacked in the middle (the colour of a
  * window is the colour of the legend, never written on the line), and at the end the highest limit
  * as a small percentage in its status colour. The percentage has a fixed reserved width, so it is never
- * cut off. Between the bars and the percentage is one fixed-width cell for each window of the legend: a
- * dot in the colour of the window and the time to its reset ("3d 4h", "5h 12m"). A reset in the past shows
- * "now", muted. A window with no data or no valid reset leaves its cell empty. When the widget is too narrow
- * for every cell, a line shows one cell, the countdown of the window that sets its percentage, and when it
- * is too narrow for that, none (see `countdownMode`). One timer redraws the countdowns every 30 s. The
- * tooltip of a line lists every window with its percentage and reset time.
+ * cut off. Every bar has its own countdown at its right end, in the same lane: the time to the reset of that
+ * window ("3d 4h", "5h 12m"). A reset in the past shows "now", muted. A bar with no valid reset shows no
+ * text. The countdown has a fixed width, so the bar tracks of all lines end in the same column. A
+ * narrow widget makes the tracks shorter and never drops a countdown. One timer redraws the countdowns
+ * every 30 s. The tooltip of a line lists every window with its percentage and reset time.
  *
  * The pool is a line of its own with two text rows: the name and "Pool total, N members". Its bars are
  * the joint usage of all members (see `jointLimits`). A member with no data for a window shows an
@@ -48,39 +47,22 @@ export const STACK_WIDTH = 560;
 export const STACK_TILE_COLUMNS = 3;
 /** True when the widget is narrow: the stat tiles in a grid, no status key. */
 export const isStacked = (width: number): boolean => width > 0 && width < STACK_WIDTH;
-/** The width of the countdown cell of one window in the line, with its gap on the right, in px. */
-export const COUNTDOWN_SLOT = 64;
+/** The width of the countdown at the right end of each bar, with a gap on the left, in px. */
+export const COUNTDOWN_WIDTH = 42;
 /** The width reserved for the percentage at the end of a line, in px. The countdowns never take it. */
 export const PERCENT_WIDTH = 44;
-/** The room that a row needs besides its cells: padding and the scroll bar. */
-const ROW_PAD = 40;
-/** The least width of the bars, as in the grid of a line. */
-const BARS_MIN = 40;
-const COLUMN_GAP = 10;
-/** The widest name column of a row, in px (the pool line is wider than a member line). */
-const nameWidth = (wideRow: boolean): number => (wideRow ? 250 : 200);
-
-export type CountdownMode = 'all' | 'worst' | 'none';
-
-/**
- * How many countdown cells a line draws. `all` is one cell for each window of the legend. `worst` is
- * one cell, the countdown of the window that sets the percentage of the line, and the other
- * countdowns stay in the tooltip. `none` is no cell. An unmeasured width (0) draws all of them.
- */
-export function countdownMode(rowWidth: number, windows: number, wideRow: boolean): CountdownMode {
-  if (windows === 0) return 'none';
-  if (rowWidth <= 0) return 'all';
-  const room = rowWidth - ROW_PAD - nameWidth(wideRow) - 3 * COLUMN_GAP - PERCENT_WIDTH - BARS_MIN;
-  if (room >= windows * COUNTDOWN_SLOT) return 'all';
-  return room >= COUNTDOWN_SLOT ? 'worst' : 'none';
-}
+/** The least width of the bar track, as in the grid of a line. */
+const TRACK_MIN = 24;
 /** The height of an identity line and of the pool line, in px. */
 export const LINE_HEIGHT = 24;
 export const POOL_LINE_HEIGHT = 42;
 const GROUP_HEIGHT = 27;
-/** The most px of one bar, and of all the bars of a line. */
+/** The most px of one bar, and of one lane (the bar and its countdown text) in a line. */
 const BAR_MAX = 6;
-const BARS_MAX = 18;
+const LANE_MAX = 12;
+/** The font size of a countdown never goes over this, and never under this, in px. */
+const COUNTDOWN_FONT_MAX = 10;
+const COUNTDOWN_FONT_MIN = 8;
 const clamp = (f: number): number => Math.min(1, Math.max(0, f));
 const RANK = { ok: 0, unknown: 1, warn: 2, crit: 3 } as const;
 
@@ -333,10 +315,6 @@ function IdentityLine(props: {
   /** The windows to draw, in the display order. A window that the identity lacks is drawn empty. */
   windows: string[];
   colours: ReturnType<typeof limitColours>;
-  /** Every window name of the widget, in the display order: one countdown cell for each. */
-  slots: ReadonlyArray<string>;
-  /** How many countdown cells the line draws, decided on the width of the widget. */
-  countdowns: CountdownMode;
   /** The time now in ms, for the countdowns. */
   now: number;
   link?: string;
@@ -352,7 +330,7 @@ function IdentityLine(props: {
   /** A member of a pool: drawn one step in. */
   indent?: boolean;
 }): JSX.Element {
-  const { identity, windows, colours, slots, countdowns, now, link, editing, wide, pool, indent } =
+  const { identity, windows, colours, now, link, editing, wide, pool, indent } =
     props;
   const tk = useTokens();
   const height = pool ? POOL_LINE_HEIGHT : LINE_HEIGHT;
@@ -364,11 +342,11 @@ function IdentityLine(props: {
   const hasData = windows.some(w =>
     identity.limits.some(l => l.name === w && l.fraction !== undefined)
   );
-  const laneHeight = Math.max(
-    1,
-    Math.min(pool ? 5 : BAR_MAX, Math.floor(BARS_MAX / Math.max(1, windows.length)) - 1)
-  );
-  const cells = countdowns === 'all' ? slots : countdowns === 'worst' ? [worst?.name ?? ''] : [];
+  // The lanes fill the height of the line, so the line never grows. A lane holds one bar and its
+  // countdown. The text is as high as the lane allows.
+  const lane = Math.max(1, Math.min(LANE_MAX, Math.floor(height / Math.max(1, windows.length))));
+  const barHeight = Math.max(1, Math.min(pool ? 5 : BAR_MAX, lane - 2));
+  const countdownFont = Math.max(COUNTDOWN_FONT_MIN, Math.min(COUNTDOWN_FONT_MAX, lane + 1.5));
   const name = (
     <Box component="span" sx={{ fontSize: pool ? 14 : 13, fontWeight: pool ? 600 : undefined }}>
       {identity.name}
@@ -396,9 +374,7 @@ function IdentityLine(props: {
           display: 'grid',
           gridTemplateColumns: `${
             pool ? (wide ? 250 : 200) : wide ? 200 : 148
-          }px minmax(40px, 1fr) ${
-            cells.length > 0 ? `minmax(0, ${cells.length * COUNTDOWN_SLOT}px) ` : ''
-          }${PERCENT_WIDTH}px`,
+          }px minmax(${TRACK_MIN + COUNTDOWN_WIDTH}px, 1fr) ${PERCENT_WIDTH}px`,
           columnGap: '10px',
           alignItems: 'center',
           height,
@@ -476,42 +452,74 @@ function IdentityLine(props: {
             data-bar
             role="img"
             aria-label={details.join('. ')}
-            sx={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0 }}
+            sx={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}
           >
-            {windows.map(lane => {
-              const limit = identity.limits.find(l => l.name === lane && l.fraction !== undefined);
-              const c = colours.get(lane);
+            {windows.map(laneName => {
+              const limit = identity.limits.find(
+                l => l.name === laneName && l.fraction !== undefined
+              );
+              const c = colours.get(laneName);
               const f = clamp(limit?.fraction ?? 0);
+              const text = limit ? formatCountdown(limit.resetsAt, now) : '';
+              const past = text === COUNTDOWN_PAST;
               return (
                 <Box
-                  key={lane}
-                  data-lane={lane}
+                  key={laneName}
+                  data-lane={laneName}
                   data-missing={limit ? undefined : ''}
-                  sx={{
-                    height: laneHeight,
-                    position: 'relative',
-                    borderRadius: '2px',
-                    overflow: 'hidden',
-                    bgcolor: limit ? laneTrack : 'transparent',
-                    ...(limit ? {} : { boxShadow: `inset 0 0 0 1px ${tk.line2}` }),
-                  }}
+                  sx={{ display: 'flex', alignItems: 'center', height: lane, minWidth: 0 }}
                 >
-                  {limit && (
-                    <Box
-                      data-segment={lane}
-                      data-fill={limit.fraction}
-                      sx={{
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        bottom: 0,
-                        width: f > 0 ? `max(2px, ${f * 100}%)` : 0,
-                        borderRadius: '2px',
-                        bgcolor: c?.colour,
-                        opacity: c?.opacity,
-                      }}
-                    />
-                  )}
+                  <Box
+                    data-track
+                    sx={{
+                      flex: '1 1 0',
+                      minWidth: 0,
+                      height: barHeight,
+                      position: 'relative',
+                      borderRadius: '2px',
+                      overflow: 'hidden',
+                      bgcolor: limit ? laneTrack : 'transparent',
+                      ...(limit ? {} : { boxShadow: `inset 0 0 0 1px ${tk.line2}` }),
+                    }}
+                  >
+                    {limit && (
+                      <Box
+                        data-segment={laneName}
+                        data-fill={limit.fraction}
+                        sx={{
+                          position: 'absolute',
+                          left: 0,
+                          top: 0,
+                          bottom: 0,
+                          width: f > 0 ? `max(2px, ${f * 100}%)` : 0,
+                          borderRadius: '2px',
+                          bgcolor: c?.colour,
+                          opacity: c?.opacity,
+                        }}
+                      />
+                    )}
+                  </Box>
+                  <Box
+                    data-countdown={text === '' ? undefined : laneName}
+                    data-countdown-past={past ? '' : undefined}
+                    sx={{
+                      // A fixed width with a gap on the left: the tracks of all lines end in
+                      // the same column and the text never touches the bar.
+                      flex: 'none',
+                      width: COUNTDOWN_WIDTH,
+                      boxSizing: 'border-box',
+                      pl: '4px',
+                      overflow: 'hidden',
+                      textAlign: 'right',
+                      whiteSpace: 'nowrap',
+                      fontSize: countdownFont,
+                      lineHeight: `${lane}px`,
+                      fontVariantNumeric: 'tabular-nums',
+                      color: past ? tk.mut : tk.fg2,
+                    }}
+                  >
+                    {text !== '' && <span data-countdown-text>{text}</span>}
+                  </Box>
                 </Box>
               );
             })}
@@ -519,69 +527,6 @@ function IdentityLine(props: {
         ) : (
           <Box data-no-limits sx={{ fontSize: 11.5, color: tk.mut }}>
             {pool ? 'No member reports' : 'No limit data'}
-          </Box>
-        )}
-        {cells.length > 0 && (
-          <Box
-            data-countdowns={countdowns}
-            sx={{
-              display: 'flex',
-              minWidth: 0,
-              overflow: 'hidden',
-              fontSize: 10.5,
-              color: tk.fg2,
-              lineHeight: 1,
-            }}
-          >
-            {cells.map((slot, i) => {
-              const limit = windows.includes(slot)
-                ? identity.limits.find(l => l.name === slot && l.fraction !== undefined)
-                : undefined;
-              const text = formatCountdown(limit?.resetsAt, now);
-              const past = text === COUNTDOWN_PAST;
-              const c = colours.get(slot);
-              return (
-                <Box
-                  key={`${i}-${slot}`}
-                  data-countdown={text === '' ? undefined : slot}
-                  data-countdown-past={past ? '' : undefined}
-                  sx={{
-                    // A fixed width with a gap on the right: two cells never touch, and the
-                    // cells of every line stand in the same columns.
-                    width: COUNTDOWN_SLOT,
-                    boxSizing: 'border-box',
-                    pr: '8px',
-                    flex: '0 1 auto',
-                    minWidth: 0,
-                    overflow: 'hidden',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '3px',
-                    whiteSpace: 'nowrap',
-                    fontVariantNumeric: 'tabular-nums',
-                    color: past ? tk.mut : undefined,
-                  }}
-                >
-                  {text !== '' && (
-                    <>
-                      <Box
-                        component="span"
-                        aria-hidden
-                        sx={{
-                          width: 5,
-                          height: 5,
-                          borderRadius: '50%',
-                          flex: 'none',
-                          bgcolor: c?.colour,
-                          opacity: past ? 0.4 : c?.opacity,
-                        }}
-                      />
-                      <span data-countdown-text>{text}</span>
-                    </>
-                  )}
-                </Box>
-              );
-            })}
           </Box>
         )}
         <Box
@@ -651,11 +596,6 @@ export function AisView(props: {
   const wide = root.size.width >= WIDE_WIDTH;
   const wideRow = root.size.width / columns >= WIDE_ROW;
   const stacked = !consoleView && isStacked(root.size.width);
-  const countdowns = countdownMode(
-    (root.size.width - 28 * (columns - 1)) / columns,
-    model.limits.length,
-    wideRow
-  );
   const colours = React.useMemo(() => limitColours(model.limits, tk.mode), [model.limits, tk.mode]);
   // Every link goes to the AIS tab of the dashboard, or is dropped.
   const linkOf = (raw: string | undefined): string | undefined =>
@@ -666,7 +606,6 @@ export function AisView(props: {
       data-ais
       data-ais-view={consoleView ? 'console' : 'overview'}
       data-ais-layout={stacked ? 'stacked' : wide ? 'wide' : 'compact'}
-      data-countdown-mode={countdowns}
       sx={{
         display: 'flex',
         flexDirection: 'column',
@@ -709,8 +648,6 @@ export function AisView(props: {
                     identity={poolIdentity(pool, pool.joint)}
                     windows={model.limits.filter(n => poolWindows.includes(n))}
                     colours={colours}
-                    slots={model.limits}
-                    countdowns={countdowns}
                     now={now}
                     link={linkOf(pool.link)}
                     editing={editing}
@@ -737,8 +674,6 @@ export function AisView(props: {
                       identity={identity}
                       windows={laneNames(identity, model.limits, poolWindows)}
                       colours={colours}
-                      slots={model.limits}
-                      countdowns={countdowns}
                       now={now}
                       link={linkOf(identity.link)}
                       editing={editing}
