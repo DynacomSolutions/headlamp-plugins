@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { PushService } from '../push/service.js';
 import type { Metrics } from '../metrics.js';
 import type { KubernetesIdentity, Operator } from './auth.js';
-import { recipientKey, type Entitlement, type NotificationAuthority, type Recipient } from './notification-authority.js';
+import { recipientKey, type Entitlement, type StorageNotificationAuthority, type Recipient } from './notification-authority.js';
 import { itemViews, pressureStage, scanIsFresh, type StorageNotice } from './inventory.js';
 import type { StorageStore } from './store.js';
 import { StorageError, type Decision, type DriveState } from './types.js';
@@ -76,7 +76,7 @@ export class StorageNotifications {
     store: StorageStore;
     push: PushService;
     now: () => number;
-    authority?: NotificationAuthority;
+    authority?: StorageNotificationAuthority;
   }) {}
 
   private get enabled() {

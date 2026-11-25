@@ -209,8 +209,13 @@ function parseStorageChat(raw: unknown) {
 
 export const drivePath = (id: string) => `/incident/drives/${encodeURIComponent(id)}`;
 export const chatPath = (id: string) => `/incident/chat/${encodeURIComponent(id)}`;
+/**
+ * Storage calls use the dedicated `session` Service port of the agent, the only port where the agent
+ * trusts the Headlamp session. Every other agent call keeps the configured port.
+ */
+export const STORAGE_SERVICE_PORT = 'session';
 const storageUrl = (settings: Settings, path: string) =>
-  backendUrl(settings, `/api/storage${path}`);
+  backendUrl({ ...settings, servicePort: STORAGE_SERVICE_PORT }, `/api/storage${path}`);
 
 async function request(url: string, body?: unknown, unavailableMessage?: string): Promise<unknown> {
   try {
@@ -228,7 +233,9 @@ async function request(url: string, body?: unknown, unavailableMessage?: string)
   } catch (error) {
     const status = (error as { status?: number })?.status;
     if (status === 401)
-      throw new Error('Sign in with a human operator token to access storage incidents.');
+      throw new Error(
+        "The storage agent did not accept this Headlamp session. Reload the page. If this stays, check the agent's STORAGE_SESSION_PROXY_CIDRS."
+      );
     if (status === 403) throw new Error('Storage operator permission required.');
     if (unavailableMessage) throw new Error(unavailableMessage);
     throw error;

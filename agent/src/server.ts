@@ -410,7 +410,7 @@ async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
 }
 
 /** `deps.store` replaces the diagnosis store, for tests. The caller then closes it. */
-export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}): Promise<{ close(): Promise<void>; port: number }> {
+export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}): Promise<{ close(): Promise<void>; port: number; sessionPort?: number }> {
   const store = deps.store ?? (await openDiagnosisStore(config.databaseUrl, config.dataDir, (message, extra) => log('info', message, extra)));
   const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
   const runtime = new Runtime(config, store, launchStore);
@@ -783,7 +783,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
 
   // A socket can close while its request still uses the store.
   const requests = new Set<Promise<void>>();
-  const server = createServer((req, res) => {
+  const onRequest = (req: IncomingMessage, res: ServerResponse) => {
     const request = handleRequest(req, res);
     requests.add(request);
     void request.then(
@@ -793,15 +793,20 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         res.destroy(error instanceof Error ? error : undefined);
       },
     );
-  });
+  };
+  const server = createServer(onRequest);
+  // Session trust (see STORAGE_SESSION_PORT) lives only on this second listener, so the public route to the main port never reaches it.
+  const sessionServer = storage.sessionPort === undefined ? undefined : createServer(onRequest);
 
   async function drain(): Promise<void> {
-    if (server.listening) {
+    const closing = [server, sessionServer].flatMap(listener => {
+      if (!listener?.listening) return [];
       const closed = new Promise<void>((resolve, reject) =>
-        server.close(error => error ? reject(error) : resolve()));
-      server.closeIdleConnections();
-      await closed;
-    }
+        listener.close(error => error ? reject(error) : resolve()));
+      listener.closeIdleConnections();
+      return [closed];
+    });
+    await Promise.all(closing);
     await Promise.allSettled(requests);
     await launches.shutdown();
     await reconciler.stop();
@@ -829,6 +834,18 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         resolve();
       });
     });
+    if (sessionServer) {
+      await new Promise<void>((resolve, reject) => {
+        sessionServer.once('error', reject);
+        sessionServer.listen(storage.sessionPort, config.host, () => {
+          sessionServer.off('error', reject);
+          resolve();
+        });
+      });
+      const sessionAddress = sessionServer.address();
+      if (!sessionAddress || typeof sessionAddress === 'string') throw new Error('Session listener has no TCP address');
+      storage.sessionBound(sessionAddress.port);
+    }
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('HTTP listener has no TCP address');
     port = address.port;
@@ -852,5 +869,5 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   void launches.resume().catch(error => log('error', 'launch resume failed', { error: String(error) }));
   reconciler.start();
   log('info', 'listening', { port, tools: runtime.registry.tools.size, modelConfigured: runner.configured });
-  return { port, close };
+  return { port, sessionPort: sessionServer ? storage.sessionPort : undefined, close };
 }

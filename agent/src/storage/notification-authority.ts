@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { z } from 'zod';
-import { tokenFile, type KubernetesIdentity } from './auth.js';
+import { SESSION_OPERATOR, tokenFile, type KubernetesIdentity } from './auth.js';
 import { requestJson } from './transport.js';
 
 const field = z.string().min(1).max(1024);
@@ -23,7 +23,44 @@ export type Recipient = z.infer<typeof identitySchema>;
 export type Entitlement = z.infer<typeof entitlementSchema>;
 export const recipientKey = ({ issuer, subject }: Recipient) => JSON.stringify([issuer, subject]);
 
-export class NotificationAuthority {
+export type ResolvedRecipient = z.infer<typeof resolveSchema>;
+
+/** The shape that the notification code needs from an authority, external or built in. */
+export interface StorageNotificationAuthority {
+  resolve(kubernetes: KubernetesIdentity): Promise<ResolvedRecipient | undefined>;
+  check(recipients: Recipient[]): Promise<Map<string, Entitlement> | undefined>;
+}
+
+const SESSION_RECIPIENT: Recipient = { issuer: 'headlamp', subject: 'session' };
+const SESSION_VERSION = '1';
+
+/**
+ * Built-in authority for a deployment that trusts the Headlamp session (`STORAGE_SESSION_PROXY_CIDRS`).
+ * Only the `headlamp-session` operator is entitled, as one shared recipient. It makes no network call.
+ */
+export class SessionNotificationAuthority implements StorageNotificationAuthority {
+  async resolve(kubernetes: KubernetesIdentity) {
+    // Every other identity gets a clear revoked answer, so a human sees 403 and not an outage.
+    if (kubernetes.username !== SESSION_OPERATOR || kubernetes.uid !== null) {
+      return { kubernetes, recipient: null, entitlement: { status: 'revoked' as const } };
+    }
+    return {
+      kubernetes,
+      recipient: SESSION_RECIPIENT,
+      entitlement: { status: 'allowed' as const, version: SESSION_VERSION },
+    };
+  }
+
+  async check(recipients: Recipient[]) {
+    const own = recipientKey(SESSION_RECIPIENT);
+    return new Map<string, Entitlement>(recipients.map(recipient => [
+      recipientKey(recipient),
+      recipientKey(recipient) === own ? { status: 'allowed', version: SESSION_VERSION } : { status: 'revoked' },
+    ]));
+  }
+}
+
+export class NotificationAuthority implements StorageNotificationAuthority {
   constructor(private readonly url: URL, private readonly token: () => string, private readonly caFile?: string) {}
 
   private async request<T>(body: unknown, schema: z.ZodType<T>): Promise<T | undefined> {

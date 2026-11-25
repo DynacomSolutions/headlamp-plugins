@@ -468,9 +468,14 @@ Storage findings and unanswered questions can send a generic Web Push message wi
 affected incident. Headlamp authenticates the operator again when they open the link. Private
 findings stay in Headlamp.
 
-Storage push requires the existing Web Push keys, shared PostgreSQL and an approved server-side
-entitlement authority. The current read-only Headlamp deployment has no approved authority. Leave
-all three authority settings unset there. Findings and questions remain available in Headlamp.
+Storage push requires the existing Web Push keys, shared PostgreSQL and an entitlement authority.
+An external authority, when configured, always wins. Without one, a deployment that sets
+`STORAGE_SESSION_PROXY_CIDRS` (see [Storage session trust](#storage-session-trust)) uses a built-in
+local authority. It entitles only the `headlamp-session` operator, as one shared recipient with
+the issuer `headlamp` and the subject `session`. It answers every other identity as revoked, so a
+human token gets 403. It makes no network call. The Incidents plugin page `/incidents/notifications` has the enrol control.
+
+Without any authority, leave all three authority settings unset. Findings and questions remain available in Headlamp.
 
 | Setting | Deployment contract |
 | --- | --- |
@@ -545,6 +550,26 @@ preserves accepted sends. If the agent loses the provider result after dispatch,
 unverified delivery and does not resend that attempt. A provider 404 or 410 removes the
 storage enrolment. Provider 2xx means acceptance, and `clientReceived` remains `null`.
 A revocation after the final authority check can occur while a provider request is in flight.
+
+### Storage session trust
+
+Headlamp can run with the service account token and no per-user login. The Incidents plugin then
+calls the agent through the Kubernetes service proxy, and kube-apiserver removes the
+`Authorization` header. Without a token, the storage routes return 401.
+
+Set both `STORAGE_SESSION_PROXY_CIDRS` and `STORAGE_SESSION_PORT`. The agent then opens a second
+HTTP listener on the session port, with the same handler and the same shutdown and drain
+behaviour as the main listener. On that listener only, a request without any credential from
+the addresses in the CIDRs is the operator `headlamp-session`. This is the same trust as the chat
+and diagnosis views. Rules:
+
+- The session port must be a different port from `PORT`. Publish it only to the service proxy: give it a Service port that no public route uses, and let the network policy admit only the proxy addresses. The main port never trusts a session, so a public route to it cannot become `headlamp-session`.
+- Set both variables or neither. One without the other stops the agent at start.
+- Each CIDR is at most 64 characters, the list has at most 64 entries, and no range is wider than `/24` (IPv4) or `/120` (IPv6). Use only the addresses of the proxy hops. A CIDR that holds pods lets any pod in it act as the operator.
+- The agent reads only the TCP peer address and the local port. It never reads `X-Forwarded-For` or other forwarded headers. An IPv4-mapped IPv6 address counts as its IPv4 address.
+- A request with any credential keeps the human-token path, where Kubernetes verifies the identity and the RBAC rights, and `STORAGE_OPERATOR_GROUPS` applies. Any `Authorization` header, any `X-Storage-Operator-Token` header (even an empty one) and any `headlamp-auth-` cookie count as a credential, and none of them can become a session. A human token cannot use the username `headlamp-session`.
+- A write needs a JSON body (415 otherwise). An `Origin` header, when present, must be in `ALLOWED_ORIGINS` (403 otherwise).
+- The scanner and reconcile routes keep their own machine tokens.
 
 ## Agent launches
 
@@ -733,6 +758,8 @@ turns launching off with a reason. It does not stop the service.
 | `AGENT_MAX_DIAGNOSES_PER_HOUR` | `6` | Webhook diagnoses per hour. Re-runs by hand do not count |
 | `AGENT_MAX_CONCURRENT_RERUNS` | `2` | Re-runs by hand that may be queued or running at one time. More get a 429 |
 | `AGENT_IGNORE_ALERTS` | `Watchdog,InfoInhibitor` | Alert names that are never diagnosed |
+| `STORAGE_SESSION_PROXY_CIDRS` | none | JSON array of at most 64 IPv4 or IPv6 CIDRs, for example `["192.0.2.0/31"]`. See [Storage session trust](#storage-session-trust). An invalid value stops the agent at start |
+| `STORAGE_SESSION_PORT` | none | Port of the dedicated session listener, for example `8081`. Needs `STORAGE_SESSION_PROXY_CIDRS`. See [Storage session trust](#storage-session-trust) |
 
 ## Development
 

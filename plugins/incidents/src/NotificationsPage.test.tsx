@@ -111,7 +111,7 @@ describe('NotificationsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Disable storage notifications' }));
     await waitFor(() =>
       expect(writes()).toContainEqual({
-        url: expect.stringContaining('/api/storage/incident/notifications'),
+        url: '/api/v1/namespaces/headlamp-agent/services/headlamp-agent:session/proxy/api/storage/incident/notifications',
         method: 'POST',
         body: { subscriptionId: ID, enabled: false, auth: Buffer.from(bytes(16)).toString('base64url') },
       })
