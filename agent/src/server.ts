@@ -1,3 +1,4 @@
+import { withMomento } from './agent/mcpTools.js';
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { toNodeHandler } from '@modelcontextprotocol/node';
@@ -283,7 +284,7 @@ export class Runner {
         const client = await this.catalogue.open(queued.modelPinned ? queued.model : undefined);
         const result = await diagnose({
           alert,
-          tools: this.runtime.toolHost(),
+          tools: withMomento(this.runtime.toolHost()),
           model: client,
           budget: this.config.diagnosis.toolBudget,
           source,

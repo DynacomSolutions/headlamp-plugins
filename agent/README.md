@@ -191,6 +191,14 @@ It is the engine's system prompt, the MCP prompt and the MCP skill. The engine
 The diagnosis is kept as JSON with an A2UI surface (the cause, the evidence,
 the fixes, an evidence-trail tab bound to the data model, and the alert).
 
+### Momento tools
+
+Set `MOMENTO_MCP_URL` to the stable Streamable HTTP endpoint. Supply
+`MOMENTO_TOKEN` from a Secret for the Incidents agent. Grant this member
+access only to the incident project. The diagnosis engine can use
+`momento_whoami`, `momento_get_issue`, `momento_search_issues` and
+`momento_report_alert`. Local diagnosis tools stay available if discovery fails.
+
 ### Where diagnoses start
 
 - **vmalert**: `-notifier.url=http://headlamp-agent.<namespace>.svc`. vmalert
