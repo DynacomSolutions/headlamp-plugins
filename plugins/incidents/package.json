@@ -5,7 +5,8 @@
   "headlamp": {
     "extraDist": {
       "LICENSE": "../../LICENSE",
-      "sw.js": "sw.js"
+      "sw.js": "sw.js",
+      "badge.png": "../../shared/push/badge.png"
     }
   },
   "description": "Headlamp plugin: incident diagnoses from the headlamp-agent, rendered from A2UI",
