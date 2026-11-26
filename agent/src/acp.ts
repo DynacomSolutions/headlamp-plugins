@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
 import { agent, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
-import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { mcpTools, toolMetadata, withMomento } from './agent/mcpTools.js';
 import { loadConfig, modelConfigured } from './config.js';
 import { fingerprint } from './alerts.js';
 import { diagnose, type ToolHost } from './agent/engine.js';
 import { ModelCatalogue } from './agent/catalogue.js';
-import type { ChatModel, ToolSpec } from './agent/model.js';
+import type { ChatModel } from './agent/model.js';
 import { A2UI_MIME } from './a2ui/index.js';
 import { alertSchema, diagnosisMarkdown, type Alert, type Diagnosis } from './agent/report.js';
 
@@ -34,40 +34,6 @@ interface Session {
 const LIST_WAIT_MS = 5000;
 
 const log = (message: string) => process.stderr.write(`[headlamp-agent acp] ${message}\n`);
-
-async function mcpTools(url: string, headers: Record<string, string>): Promise<{ host: ToolHost; close(): Promise<void> }> {
-  const client = new Client({ name: 'headlamp-agent-acp', version: '0.1.0' });
-  const transport = new StreamableHTTPClientTransport(new URL(url), { requestInit: { headers } });
-  await client.connect(transport);
-  let cache: ToolSpec[] | undefined;
-  return {
-    host: {
-      async list() {
-        if (!cache) {
-          const out: ToolSpec[] = [];
-          let cursor: string | undefined;
-          do {
-            const page = await client.listTools(cursor ? { cursor } : undefined);
-            for (const t of page.tools) {
-              if (t.name === 'list_diagnoses' || t.name === 'get_diagnosis') continue;
-              out.push({ name: t.name, description: t.description ?? '', parameters: t.inputSchema as Record<string, unknown> });
-            }
-            cursor = page.nextCursor;
-          } while (cursor);
-          cache = out;
-        }
-        return cache;
-      },
-      async call(name, args) {
-        const res = (await client.callTool({ name, arguments: args })) as { isError?: boolean; structuredContent?: unknown; content?: Array<{ type: string; text?: string }> };
-        const text = (res.content ?? []).filter(c => c.type === 'text').map(c => c.text ?? '').join('\n');
-        const summary = text.split('\n')[0] ?? '';
-        return { ok: !res.isError, summary, data: res.structuredContent ?? { text } };
-      },
-    },
-    close: () => client.close(),
-  };
-}
 
 /**
  * The user's own message, without the text a host adds around it. T3 Code, for
@@ -258,7 +224,7 @@ export function startAcp(): void {
         }
         const result = await diagnose({
           alert,
-          tools: mcp.host,
+          tools: withMomento(mcp.host),
           model: modelClient,
           budget: config.diagnosis.toolBudget,
           source: 'acp',
@@ -276,7 +242,7 @@ export function startAcp(): void {
                 content: [{ type: 'content', content: { type: 'text', text: `${event.tool} ${JSON.stringify(event.args)}` } }],
                 // Names the MCP server and tool, so hosts that read it (T3 Code) label the
                 // call headlamp-agent.<tool> instead of a generic "Tool".
-                _meta: { serverId: 'headlamp-agent', toolName: event.tool },
+                _meta: toolMetadata(event.tool),
               });
             } else if (event.type === 'tool_end') {
               await update({
@@ -284,7 +250,7 @@ export function startAcp(): void {
                 toolCallId: event.id,
                 status: event.ok ? 'completed' : 'failed',
                 content: [{ type: 'content', content: { type: 'text', text: event.summary } }],
-                _meta: { serverId: 'headlamp-agent', toolName: event.tool },
+                _meta: toolMetadata(event.tool),
               });
             } else if (event.type === 'thought') {
               await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: event.text } });
