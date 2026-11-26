@@ -374,16 +374,13 @@ async function clickInServiceWorker(payload: Payload) {
   const handlers = new Map<string, (event: WorkerEvent) => void>();
   const showNotification = vi.fn().mockResolvedValue(undefined);
   const openWindow = vi.fn().mockResolvedValue(undefined);
-  // The worker loads the badge helper with importScripts, which runs it in the same global scope.
-  const helper = readFileSync(new URL('../../shared/push/badge.js', import.meta.url), 'utf8');
   const worker = readFileSync(new URL('../../plugins/incidents/sw.js', import.meta.url), 'utf8');
-  runInNewContext(`${helper}\n${worker}`, {
+  runInNewContext(worker, {
     URL,
-    importScripts: () => undefined,
     self: {
       addEventListener: (type: string, handler: (event: WorkerEvent) => void) => handlers.set(type, handler),
-      registration: { scope: `${origin}/headlamp/plugins/incidents/`, showNotification, getNotifications: async () => [] },
-      location: { origin, href: `${origin}/headlamp/plugins/incidents/sw.js` },
+      registration: { scope: `${origin}/headlamp/plugins/incidents/`, showNotification },
+      location: { origin },
       clients: { matchAll: async () => [], openWindow },
     },
   });

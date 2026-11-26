@@ -1,8 +1,6 @@
 /* Service worker for the alerting plugin: shows push notifications and focuses
  * or opens the dashboard when one is clicked. Served next to main.js, so its
  * default scope is the plugin directory, which is all push delivery needs. */
-importScripts('push-badge.js');
-
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
@@ -26,25 +24,19 @@ self.addEventListener('push', event => {
     requireInteraction: urgent,
     data: { url: typeof data.url === 'string' && data.url ? data.url : '/' },
   };
-  event.waitUntil(showBadgedNotification(data.title || 'Alert', options));
-});
-
-self.addEventListener('notificationclose', event => {
-  event.waitUntil(rebadgeAfterClose(event.notification.tag));
+  event.waitUntil(self.registration.showNotification(data.title || 'Alert', options));
 });
 
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const closed = rebadgeAfterClose(event.notification.tag);
   const target = new URL(
     (event.notification.data && event.notification.data.url) || '/',
     self.location.origin
   );
   // Never navigate off-origin from a notification payload.
   const href = target.origin === self.location.origin ? target.href : self.location.origin + '/';
-  const opened = self.clients
-    .matchAll({ type: 'window', includeUncontrolled: true })
-    .then(windows => {
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {
       const existing = windows.find(w => new URL(w.url).origin === self.location.origin);
       if (existing) {
         return existing.focus().then(() => {
@@ -53,6 +45,6 @@ self.addEventListener('notificationclick', event => {
         });
       }
       return self.clients.openWindow(href);
-    });
-  event.waitUntil(Promise.all([closed, opened]));
+    })
+  );
 });

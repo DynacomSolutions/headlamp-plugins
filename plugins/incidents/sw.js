@@ -1,8 +1,6 @@
 /* Service worker for the incident notifications: shows the push the agent sends and opens the
  * incident or the chat when it is tapped. Served next to main.js, so its default scope is the plugin
  * directory, which is all push delivery needs. */
-importScripts('push-badge.js');
-
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
@@ -33,28 +31,22 @@ self.addEventListener('push', event => {
     data: { url: typeof data.url === 'string' && data.url ? data.url : '/' },
   };
   event.waitUntil(
-    showBadgedNotification(
+    self.registration.showNotification(
       typeof data.title === 'string' && data.title ? data.title : 'Incident agent',
       options
     )
   );
 });
 
-self.addEventListener('notificationclose', event => {
-  event.waitUntil(rebadgeAfterClose(event.notification.tag));
-});
-
 self.addEventListener('notificationclick', event => {
   event.notification.close();
-  const closed = rebadgeAfterClose(event.notification.tag);
   const path = (event.notification.data && event.notification.data.url) || '/';
   // Only a path on this site: a payload never sends the user to another origin.
   const safe = typeof path === 'string' && path.startsWith('/') && !path.startsWith('//');
   const target = new URL(basePath() + (safe ? path : '/'), self.location.origin);
   const href = target.origin === self.location.origin ? target.href : self.location.origin + '/';
-  const opened = self.clients
-    .matchAll({ type: 'window', includeUncontrolled: true })
-    .then(windows => {
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(windows => {
       const existing = windows.find(w => new URL(w.url).origin === self.location.origin);
       if (existing) {
         return existing.focus().then(() => {
@@ -63,6 +55,6 @@ self.addEventListener('notificationclick', event => {
         });
       }
       return self.clients.openWindow(href);
-    });
-  event.waitUntil(Promise.all([closed, opened]));
+    })
+  );
 });
