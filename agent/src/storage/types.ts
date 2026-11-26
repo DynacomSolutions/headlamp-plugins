@@ -187,6 +187,8 @@ export type InternalItem = {
   category: ScanItem['category'];
   material: string;
   decisionMaterial: string;
+  /** Pre-change decision hash, which included the size. Read for stored decisions and questions only. */
+  legacyDecisionMaterial?: string;
   path?: string;
   owner?: string;
   reason: string;
