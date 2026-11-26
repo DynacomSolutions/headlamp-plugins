@@ -306,6 +306,7 @@ function IncidentChatWidget({
 
   const messages = chat.data?.messages ?? [];
   const running = !!chat.data?.running;
+  // Shown: the pick, else the model that answered, else the default. Only a pick is sent, so the default order applies otherwise.
   const model = picked ?? chat.data?.model ?? models.data?.default ?? '';
   const scroll = useStickToBottom(messages);
 
@@ -341,9 +342,9 @@ function IncidentChatWidget({
         const key = ctxKey;
         const newId =
           selected?.kind === 'group'
-            ? await createGroupChat(settings, groupChatRequest(selected), model || undefined)
+            ? await createGroupChat(settings, groupChatRequest(selected), picked ?? undefined)
             : await createChat(settings, {
-                ...(model ? { model } : {}),
+                ...(picked ? { model: picked } : {}),
                 ...(selected ? { diagnosisId: selected.id } : {}),
               });
         try {
@@ -358,7 +359,7 @@ function IncidentChatWidget({
         settings,
         chatId,
         text,
-        picked && picked !== chat.data?.model ? picked : undefined
+        picked ?? undefined
       );
       setPicked(null);
       chat.refresh();

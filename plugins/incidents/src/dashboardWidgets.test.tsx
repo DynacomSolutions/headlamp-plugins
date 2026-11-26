@@ -345,7 +345,8 @@ describe('list and chat on one dashboard', () => {
       expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/chats'))).toBe(true)
     );
     const create = calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!;
-    expect(create.body).toMatchObject({ diagnosisId: '1', model: 'claude/opus' });
+    // The default is shown but not sent: the agent applies its default order.
+    expect(create.body).toEqual({ diagnosisId: '1' });
     await waitFor(() =>
       expect(calls.find(c => c.url.endsWith('/api/chats/c1/messages'))?.body).toEqual({
         text: 'why?',
@@ -592,7 +593,6 @@ describe('a group as the chat context', () => {
     const create = calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!;
     // Newest first, and all three in full, with the group name. No short list for a small group.
     expect(create.body).toEqual({
-      model: 'claude/opus',
       diagnosisIds: ['c2', 'c1', 'c0'],
       groupName: 'KubePodCrashLooping',
     });
