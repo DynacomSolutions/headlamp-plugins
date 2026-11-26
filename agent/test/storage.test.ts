@@ -380,7 +380,7 @@ async function clickInServiceWorker(payload: Payload) {
     self: {
       addEventListener: (type: string, handler: (event: WorkerEvent) => void) => handlers.set(type, handler),
       registration: { scope: `${origin}/headlamp/plugins/incidents/`, showNotification },
-      location: { origin },
+      location: { origin, href: `${origin}/headlamp/plugins/incidents/sw.js` },
       clients: { matchAll: async () => [], openWindow },
     },
   });
