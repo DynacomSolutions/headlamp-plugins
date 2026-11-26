@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { mask, maskText } from '../mask.js';
-import type { ModelClient, Message, ToolSpec } from './model.js';
+import type { ChatModel, Message, ToolSpec } from './model.js';
 import { renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis, type EvidenceItem } from './report.js';
 import { readSkill } from './skill.js';
 import { clip, withReason } from './tools.js';
@@ -21,7 +21,7 @@ export type EngineEvent =
 export interface DiagnoseOptions {
   alert: Alert;
   tools: ToolHost;
-  model: ModelClient;
+  model: ChatModel;
   budget: number;
   source: Diagnosis['source'];
   host?: string;
@@ -173,6 +173,8 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
         forceTool: spent || last ? SUBMIT : undefined,
         session: diagnosis.id,
       });
+      // With ordered default models the answering model can differ from the first choice.
+      diagnosis.model = opts.model.name;
       if (completion.text.trim()) emit({ type: 'thought', text: maskText(completion.text.trim()) });
       messages.push({ role: 'assistant', text: completion.text, toolCalls: completion.toolCalls });
       if (completion.toolCalls.length === 0) {

@@ -4,7 +4,7 @@ import { chatDiagnosisIds, DEFAULT_TITLE, type Chat, type ChatMessage, type Chat
 import type { DiagnosisStore } from '../store.js';
 import { ModelCatalogue, UnknownModelError } from './catalogue.js';
 import type { ToolHost } from './engine.js';
-import { ModelClient, type Message, type ToolSpec } from './model.js';
+import type { Message, ToolSpec } from './model.js';
 import type { Diagnosis } from './report.js';
 import { readSkill } from './skill.js';
 import { clip, withReason } from './tools.js';
@@ -163,11 +163,17 @@ export class ChatService {
 
   constructor(private readonly deps: ChatDeps) {}
 
-  /** The full id of a model, or an empty string when none is configured. Unknown ids throw a 400. */
+  /** True when the operator picked this chat's model. Chats saved before the default order keep a model that is not the default. */
+  private pinned(chat: Chat): boolean {
+    return chat.modelPinned ?? (chat.model !== '' && chat.model !== this.deps.catalogue.defaultModel);
+  }
+
+  /** The full id of a model, or an empty string when none is configured. Unknown ids throw a 400. No id gives the default that answers first now. */
   private async modelId(requested?: string): Promise<string> {
     const explicit = requested !== undefined && requested !== '';
     try {
       const r = await this.deps.catalogue.resolve(explicit ? requested : undefined);
+      if (!explicit && this.deps.catalogue.defaultOrder.length > 1) return this.deps.catalogue.currentDefault();
       return `${r.route.id}/${r.model}`;
     } catch (error) {
       if (error instanceof UnknownModelError) throw new ChatError(400, error.message);
@@ -194,7 +200,8 @@ export class ChatService {
     const known: string[] = [];
     for (const id of summaryIds) if (await this.deps.diagnoses.get(id)) known.push(id);
     const model = await this.modelId(body.model);
-    return { id: this.deps.store.create({ model, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };
+    const modelPinned = body.model !== undefined && body.model !== '';
+    return { id: this.deps.store.create({ model, modelPinned, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };
   }
 
   private chat(id: string): Chat {
@@ -219,7 +226,10 @@ export class ChatService {
 
   async patch(id: string, body: { title?: string; model?: string }): Promise<ChatSummary> {
     const chat = this.chat(id);
-    if (body.model !== undefined) chat.model = await this.modelId(body.model);
+    if (body.model !== undefined) {
+      chat.model = await this.modelId(body.model);
+      chat.modelPinned = body.model !== '';
+    }
     if (body.title !== undefined) chat.title = body.title.trim() || DEFAULT_TITLE;
     this.deps.store.save(chat);
     return summary(this.deps.store, chat);
@@ -238,7 +248,9 @@ export class ChatService {
     if (store.running(chat) || this.turns.has(id)) throw new ChatError(409, 'A turn is already running in this chat');
     if (this.turns.size >= this.deps.maxTurns) throw new ChatError(429, 'Too many chat turns are running. Try again in a moment.');
     const wanted = model !== undefined && model !== '' ? model : undefined;
-    const resolved = wanted || !chat.model ? await this.modelId(wanted) : chat.model;
+    // An explicit pick pins the chat to that model. Without one a pinned chat keeps its model, and the others use the default order.
+    const pinned = wanted ? true : this.pinned(chat);
+    const resolved = wanted || !pinned ? await this.modelId(wanted) : chat.model;
     if (!resolved) throw new ChatError(503, 'No model is configured');
     // The checks above await, so a parallel send may have won. Check again, then claim the chat without awaiting.
     if (store.running(chat) || this.turns.has(id)) throw new ChatError(409, 'A turn is already running in this chat');
@@ -247,6 +259,7 @@ export class ChatService {
     this.turns.set(id, controller);
 
     chat.model = resolved;
+    chat.modelPinned = pinned;
     const now = new Date().toISOString();
     if (chat.messages.length === 0 && chat.title === DEFAULT_TITLE) chat.title = text.replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS) || DEFAULT_TITLE;
     chat.messages.push({ id: randomUUID(), role: 'user', text: maskText(text), createdAt: now, status: 'done', steps: [] });
@@ -313,8 +326,8 @@ export class ChatService {
       if (!signal.aborted) store.save(chat);
     };
     try {
-      const resolved = await guard(this.deps.catalogue.resolve(chat.model));
-      const client = new ModelClient(resolved.route, resolved.model);
+      // A pinned chat uses its model as it is. Otherwise the default order applies, with a fallback on a usage failure.
+      const client = await guard(this.deps.catalogue.open(this.pinned(chat) ? chat.model : undefined));
       reply.model = client.name;
       const specs = await guard(host.list());
       const names = new Set(specs.map(s => s.name));
@@ -333,6 +346,9 @@ export class ChatService {
       let answered = false;
       for (let round = 0; round < budget + EXTRA_ROUNDS; round++) {
         const completion = await guard(client.complete({ system, messages: trimHistory([...past, ...turn]), tools: toolSpecs, session: chat.id }));
+        // The default order can move to the next model, so the record names the one that answered.
+        reply.model = client.name;
+        if (!this.pinned(chat)) chat.model = client.name;
         const text = completion.text.trim();
         if (text) {
           texts.push(text);

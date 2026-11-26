@@ -59,14 +59,35 @@ export interface CompleteRequest {
   session: string;
 }
 
-/** A non-2xx answer from the endpoint. */
+/** A non-2xx answer from the endpoint. `retryAfterMs` is the Retry-After header, when it has one. */
 export class ModelHttpError extends Error {
   constructor(
     readonly status: number,
     readonly body: string,
+    readonly retryAfterMs?: number,
   ) {
     super(`Model endpoint answered ${status}: ${body.slice(0, 300)}`);
   }
+}
+
+/** A failed Responses stream: the endpoint answered 200, then sent a failure event. */
+export class ModelStreamError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
+
+/** Retry-After as milliseconds: delta-seconds or an HTTP date. Undefined when absent or not readable. */
+export function parseRetryAfter(value: string | null | undefined, now = Date.now()): number | undefined {
+  const v = (value ?? '').trim();
+  if (!v) return undefined;
+  if (/^\d+(\.\d+)?$/.test(v)) return Math.round(Number(v) * 1000);
+  const at = Date.parse(v);
+  return Number.isFinite(at) ? Math.max(0, at - now) : undefined;
 }
 
 /** (route, model) pairs whose endpoint refused a forced tool_choice. Later calls skip the forced form. */
@@ -75,10 +96,23 @@ const noForcedChoice = new Set<string>();
 /** A request after the forced-tool decision: `mustCall` is set when the tool is named in the prompt instead. */
 type Req = CompleteRequest & { mustCall?: string };
 
-export class ModelClient {
+/** What a run needs from a model: the full id of the model that answers, and one completion call. */
+export interface ChatModel {
+  /** The full id, `<route>/<model>`. With ordered default models it is the one that answered last. */
+  readonly name: string;
+  complete(req: CompleteRequest): Promise<Completion>;
+}
+
+export interface ModelClientOptions {
+  /** Throw a 429 at once, with its Retry-After, instead of retrying. Used when a next model can take over. */
+  failFast429?: boolean;
+}
+
+export class ModelClient implements ChatModel {
   constructor(
     private readonly route: ModelRoute,
     private readonly model: string,
+    private readonly options: ModelClientOptions = {},
   ) {}
 
   /** The full id, `<route>/<model>`. */
@@ -135,8 +169,8 @@ export class ModelClient {
         const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(this.route.timeoutMs) });
         const text = await res.text();
         if (res.ok) return text;
-        const retryable = res.status === 429 || res.status >= 500;
-        lastError = new ModelHttpError(res.status, text);
+        const retryable = (res.status === 429 && !this.options.failFast429) || res.status >= 500;
+        lastError = new ModelHttpError(res.status, text, parseRetryAfter(res.headers.get('retry-after')));
         if (!retryable) break;
         const wait = Math.min(Number(res.headers.get('retry-after') ?? 0) * 1000 || 2000 * (attempt + 1), 20_000);
         await new Promise(r => setTimeout(r, wait));
@@ -256,12 +290,17 @@ export class ModelClient {
  * `error` or at the top of the event, so all three are read. With no message, the raw event shows.
  */
 export function describeStreamFailure(event: any): string {
+  const { message, code, status } = streamFailureFields(event);
+  const head = [String(event?.type ?? 'error'), status !== undefined ? String(status) : '', code ? `(${code})` : ''].filter(Boolean).join(' ');
+  return `Model stream failed: ${head}: ${message || JSON.stringify(event)}`.slice(0, 600);
+}
+
+function streamFailureFields(event: any): { message: string; code: string; status?: number } {
   const err = [event?.response?.error, event?.error, event].find(e => e && typeof e === 'object' && (e.message || e.code)) ?? {};
   const message = typeof err.message === 'string' ? err.message : '';
-  const code = [err.code, err.type].find(c => typeof c === 'string' && c && c !== event?.type);
+  const code = [err.code, err.type].find(c => typeof c === 'string' && c && c !== event?.type) ?? '';
   const status = event?.status ?? event?.status_code ?? err.status ?? err.status_code;
-  const head = [String(event?.type ?? 'error'), typeof status === 'number' ? String(status) : '', code ? `(${code})` : ''].filter(Boolean).join(' ');
-  return `Model stream failed: ${head}: ${message || JSON.stringify(event)}`.slice(0, 600);
+  return { message, code, status: typeof status === 'number' ? status : undefined };
 }
 
 /** The final response object from a Responses stream (SSE, with or without a content-type) or from a plain JSON body. */
@@ -287,7 +326,7 @@ function parseResponses(text: string): Completion {
       }
       if (event.type === 'response.completed' || event.type === 'response.incomplete') response = event.response;
       else if (event.type === 'response.failed' || event.type === 'error') {
-        throw new Error(describeStreamFailure(event));
+        throw new ModelStreamError(describeStreamFailure(event), streamFailureFields(event).code, streamFailureFields(event).status);
       } else if (event.type === 'response.output_item.done' && event.item) items.push(event.item);
     }
   }

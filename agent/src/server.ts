@@ -8,7 +8,6 @@ import { ChatError, ChatService } from './agent/chat.js';
 import { ChatStore } from './chats.js';
 import { diagnose } from './agent/engine.js';
 import { ModelCatalogue, UnknownModelError } from './agent/catalogue.js';
-import { ModelClient } from './agent/model.js';
 import { alertSchema, renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis } from './agent/report.js';
 import { mask, maskText } from './mask.js';
 import { mcpHandler } from './mcp.js';
@@ -194,7 +193,9 @@ export class Runner {
 
   /** Run again a diagnosis that a restart interrupted. It keeps its id and its creation time. */
   async resume(interrupted: Diagnosis): Promise<void> {
-    await this.enqueue(interrupted.alert, interrupted.source, interrupted.id, interrupted.model || undefined);
+    // A picked model stays. Records from before the default order count as picked when they hold a model other than the default.
+    const pinned = interrupted.modelPinned ?? (interrupted.model !== '' && interrupted.model !== this.config.models.defaultModel);
+    await this.enqueue(interrupted.alert, interrupted.source, interrupted.id, pinned ? interrupted.model : undefined);
   }
 
   /** True while the pod stops: it starts no new work. */
@@ -204,10 +205,11 @@ export class Runner {
 
   /**
    * Run a failed diagnosis again under its own id. `model` is a model id (`<route>/<model>`) the caller has checked.
+   * Without `model` the run uses the default order.
    * The failed attempt moves to `previousAttempts`, the error clears and the attempts count starts again.
    * Throws `RerunError` when no record has this id or when it is not failed.
    */
-  async rerun(id: string, model: string): Promise<Diagnosis> {
+  async rerun(id: string, model?: string): Promise<Diagnosis> {
     const current = await this.store.get(id);
     if (!current) throw new RerunError(404, 'Diagnosis not found');
     let moved: Diagnosis | undefined;
@@ -215,7 +217,7 @@ export class Runner {
     const ok = await this.store.update(id, d => {
       if (!d || d.status !== 'failed') return undefined;
       const previous = [...(d.previousAttempts ?? []), { at: d.finishedAt ?? d.createdAt, model: d.model, error: d.error ?? '' }].slice(-MAX_PREVIOUS);
-      moved = { ...d, status: 'queued', error: undefined, finishedAt: undefined, model, attempts: 1, previousAttempts: previous, rerunAt: new Date().toISOString(), owner: this.store.owner, leaseUntil: this.store.lease() };
+      moved = { ...d, status: 'queued', error: undefined, finishedAt: undefined, model: model ?? this.catalogue.currentDefault(), modelPinned: model !== undefined, attempts: 1, previousAttempts: previous, rerunAt: new Date().toISOString(), owner: this.store.owner, leaseUntil: this.store.lease() };
       return moved;
     });
     if (!ok || !moved) {
@@ -225,7 +227,7 @@ export class Runner {
     return this.enqueue(moved.alert, moved.source, id, model);
   }
 
-  /** `model` is a model id (`<route>/<model>`) the caller has checked. Without it the run uses the recorded model or the default. */
+  /** `model` is a model id (`<route>/<model>`) the caller has checked, picked by a person or an alert: it is used as it is, with no fallback. Without it the run uses the default order. */
   async enqueue(alert: Alert, source: Diagnosis['source'], existingId?: string, model?: string): Promise<Diagnosis> {
     const existing = existingId ? await this.store.get(existingId) : undefined;
     // One firing alert has one diagnosis id, so a second pod or a repeated request finds the record and stops.
@@ -240,7 +242,8 @@ export class Runner {
       evidence: [],
       toolCalls: 0,
       toolBudget: this.config.diagnosis.toolBudget,
-      model: model ?? existing?.model ?? this.config.models.defaultModel,
+      model: model ?? this.catalogue.currentDefault(),
+      modelPinned: model !== undefined,
       a2ui: [],
       owner: this.store.owner,
       leaseUntil: this.draining ? DiagnosisStore.released() : this.store.lease(),
@@ -277,8 +280,7 @@ export class Runner {
         const abort = new AbortController();
         // Progress writes run one after another, so an older step never overwrites a newer one.
         let writes: Promise<void> = Promise.resolve();
-        const resolved = await this.catalogue.resolve(queued.model || undefined);
-        const client = new ModelClient(resolved.route, resolved.model);
+        const client = await this.catalogue.open(queued.modelPinned ? queued.model : undefined);
         const result = await diagnose({
           alert,
           tools: this.runtime.toolHost(),
@@ -294,7 +296,7 @@ export class Runner {
             writes = writes.then(async () => {
               if (lost) return;
               try {
-                const ok = await this.store.put({ ...diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts });
+                const ok = await this.store.put({ ...diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), modelPinned: queued.modelPinned, attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts });
                 if (!ok) {
                   // Another process owns the record now. Stop working on it.
                   lost = true;
@@ -309,7 +311,7 @@ export class Runner {
         });
         await writes;
         if (lost) return;
-        if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts }))) return;
+        if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, modelPinned: queued.modelPinned, attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts }))) return;
         log('info', 'diagnosis finished', { id: result.id, alert: alert.name, status: result.status, toolCalls: result.toolCalls, error: result.error });
         if (result.status === 'done') this.onDone({ ...result, createdAt: queued.createdAt });
       } catch (error) {
@@ -449,6 +451,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   let draining = false;
   let rerunTurn: Promise<void> = Promise.resolve();
   const metrics = new Metrics();
+  runner.catalogue.attachMetrics(metrics);
   const storage = await storageHttp({
     config, metrics, push, readBody, send, env: deps.storageEnv, now: deps.now,
     store: store instanceof PgDiagnosisStore ? store.storageIncidentStore() : undefined,
@@ -480,6 +483,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       if (await storage.route(req, res, path)) return;
       if (path === '/metrics' && req.method === 'GET') {
         await storage.metrics();
+        runner.catalogue.refreshMetrics();
         metrics.clear('headlamp_agent_diagnoses_open');
         const counts = new Map<string, number>([['critical', 0], ['warning', 0], ['info', 0]]);
         for (const d of await store.openSummaries()) counts.set(d.alert.severity || 'none', (counts.get(d.alert.severity || 'none') ?? 0) + 1);
@@ -494,7 +498,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           mcp: '/mcp',
           tools: runtime.registry.tools.size,
           providers: runtime.registry.providers.map(p => p.name),
-          diagnosis: { model: config.models.defaultModel || null, models: (await runner.catalogue.list({ waitMs: 2000 })).length, configured: runner.configured, toolBudget: config.diagnosis.toolBudget },
+          diagnosis: { model: config.models.defaultModel || null, defaultOrder: runner.catalogue.defaultOrder, models: (await runner.catalogue.list({ waitMs: 2000 })).length, configured: runner.configured, toolBudget: config.diagnosis.toolBudget },
         });
       }
       // Alertmanager v2 API, the shape vmalert's notifier posts.
@@ -550,7 +554,10 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         } catch {
           /* keep the configured value */
         }
-        return send(res, 200, { default: def || null, models: models.map(({ id, route, model, name }) => ({ id, route, model, name })) });
+        // With ordered default models `default` is the one that answers first now, and `defaultOrder` lists them all.
+        const defaultOrder = runner.catalogue.defaultOrder;
+        if (defaultOrder.length > 1) def = runner.catalogue.currentDefault();
+        return send(res, 200, { default: def || null, defaultOrder, models: models.map(({ id, route, model, name }) => ({ id, route, model, name })) });
       }
       if (path === '/api/widgets' && req.method === 'GET') return send(res, 200, listPanels());
       if (path.startsWith('/api/widgets/') && req.method === 'GET') {
@@ -595,14 +602,15 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         if (!runner.configured) throw new HttpError(503, 'No model is configured for in-cluster diagnosis');
         if (runner.stopping) throw new HttpError(503, 'The agent is restarting. Try again in a moment.');
         // The current default model, unless the body names a valid one. The failed model is not reused.
-        let model: string;
-        try {
-          const r = await runner.catalogue.resolve(parsed.data.model || undefined);
-          model = `${r.route.id}/${r.model}`;
-        } catch (error) {
-          if (parsed.data.model && error instanceof UnknownModelError) throw new HttpError(400, error.message);
-          if (parsed.data.model) throw error;
-          model = config.models.defaultModel;
+        let model: string | undefined;
+        if (parsed.data.model) {
+          try {
+            const r = await runner.catalogue.resolve(parsed.data.model);
+            model = `${r.route.id}/${r.model}`;
+          } catch (error) {
+            if (error instanceof UnknownModelError) throw new HttpError(400, error.message);
+            throw error;
+          }
         }
         // A re-run by hand skips the hourly limit of webhook diagnoses. A small cap on open re-runs guards against abuse.
         // The check and the start run one after another in this pod, so two requests cannot both take the last place.

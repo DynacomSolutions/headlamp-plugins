@@ -302,7 +302,7 @@ it.
 | --- | --- |
 | `AGENT_MODEL_ROUTES_FILE` | Path of a JSON array of routes (below) |
 | `AGENT_MODEL_ROUTES` | The same array, inline |
-| `AGENT_MODEL` | Default model id, used when a run names none |
+| `AGENT_MODEL` | Default model id, used when a run names none. It can be an ordered, comma-separated list of `<route>/<model>` (see Default model order) |
 | `AGENT_MODEL_MAX_TOKENS` / `AGENT_MODEL_TIMEOUT_MS` | Defaults for routes that set neither |
 
 Each route names the environment variables that hold its gateway URL and app
@@ -362,13 +362,14 @@ list shapes.
 
 **Choosing the model.**
 
-- `GET /api/models` returns `{ default, models: [{ id, route, model, name }] }`.
+- `GET /api/models` returns `{ default, defaultOrder, models: [{ id, route, model, name }] }`. With a default order, `default` is the entry that answers first now (the first one that is not in a cool-down) and `defaultOrder` lists every entry.
 - `POST /api/diagnoses` accepts `"model": "<route>/<model>"`. An unknown id gets
   a 400 that lists the valid ids.
 - A webhook alert picks a model with the `agent_model` annotation or label. An
   unknown value logs a warning and uses the default.
-- A run that a restart interrupted resumes with its recorded model. Each
-  diagnosis stores the full id in `model`.
+- A run that a restart interrupted resumes with its recorded model when a
+  person or an alert picked it. Otherwise it uses the default order again.
+  Each diagnosis stores the full id of the model that answered in `model`.
 - The ACP agent returns a `model` select option from `session/new` (grouped by
   route) and accepts `session/set_config_option`, so a host such as T3 Code
   shows a model picker. The listing wait is capped at 5 seconds, then the
@@ -376,6 +377,61 @@ list shapes.
 
 Without a model, the MCP server still works, and alerts are recorded but not
 diagnosed.
+
+### Default model order
+
+`AGENT_MODEL` can hold an ordered, comma-separated list. One value works as
+before, also a bare model id.
+
+```sh
+AGENT_MODEL=grok/grok-4.7,opencode/qwen4-max,zai/glm-5.4,codex/gpt-6.2-astra
+```
+
+- Each entry must be `<route>/<model>`, and its route must be in the routes
+  file. An unknown route, a repeated entry or a bare id in a list stops the
+  start with an error. A route with no credentials is allowed: a run skips it.
+- The first entry is the catalogue `default`.
+- A run that names no model (a diagnosis from a webhook alert, `POST
+  /api/diagnoses` or a re-run with no `model`, a chat with no pick, an ACP
+  session with no pick) uses the first entry that has usage left. It moves to
+  the next entry only when a model reports a usage failure.
+- A model that a person or an alert picks (`agent_model` annotation, `model` in
+  a request, a chat pick, the ACP picker) is used as it is, with no fallback.
+  A chat keeps a pick until the person changes it.
+- The agent records the model that answered in `diagnosis.model` and in the
+  `model` of each chat answer.
+
+**What counts as a usage failure.** Only these:
+
+- HTTP 429 or 402;
+- HTTP 403 whose body names a quota, usage, credit or limit;
+- any answer with a usage error code such as `usage_limit_reached`,
+  `insufficient_quota`, `rate_limit_exceeded` or `quota_exceeded`, in the
+  OpenAI, Anthropic or gateway error shape;
+- a Responses stream that fails with such a code, or with 429 or 402;
+- a route with no credentials (counted as `missing_credentials`).
+
+A 400, a 5xx, a timeout, a network error, a 401 and a tool error never move to
+the next entry. A 429 moves on at once, with no retries, when a next entry can
+take over. The last entry keeps its three tries.
+
+**When the run moves.** Only before the model has answered in the run. After
+the first answer of a diagnosis or a chat turn, a later usage failure is
+reported as it is, because the user may have seen output.
+
+**Cool-down.** A model with a usage failure is skipped for the `Retry-After`
+time (header, or `retry_after` and `resets_in_seconds` in the body), else for
+5 minutes. The agent tries it again after that. When every entry is in a
+cool-down, the run tries the one that recovers first.
+
+**Metrics.**
+
+| Metric | Meaning |
+| --- | --- |
+| `headlamp_agent_model_fallback_total{from,to,reason}` | Runs that moved from one entry to the next. `reason`: `rate_limit`, `payment`, `quota`, `usage_limit`, `missing_credentials` |
+| `headlamp_agent_model_exhausted{model}` | 1 while the entry is in a cool-down, else 0 |
+
+The cool-down is kept in memory in each pod. A restart clears it.
 
 ## Chat
 
@@ -394,7 +450,7 @@ All routes answer JSON and have the same protection as `POST /api/diagnoses`.
 | `GET /api/chats?limit=50&diagnosisId=<id>` | `{ chats: [{ id, title, model, diagnosisId?, diagnosisIds?, updatedAt, running }] }`, newest first. `diagnosisId` keeps the chats linked to that incident |
 | `POST /api/chats` with `{ model?, diagnosisId?, diagnosisIds? }` | 201 `{ id }`. `diagnosisIds` links one chat to 1 to 20 incidents, and the system prompt holds all of them. `diagnosisId` is the same for one incident. An unknown model gets 400 with the valid ids. An unknown diagnosis gets 404. For a chat about a group of incidents the body may also hold `groupName`, `summaryIds` (1 to 500 more incidents, each listed as one short line in the system prompt, only with `diagnosisIds`) and `groupOmitted` (a count of older incidents the client left out). An id in `summaryIds` that no longer exists is dropped without an error. The chat then also returns `groupName` and `groupCount` |
 | `GET /api/chats/<id>` | `{ id, title, model, diagnosisId?, diagnosisIds?, createdAt, updatedAt, running, messages }` |
-| `POST /api/chats/<id>/messages` with `{ text, model? }` | 202 `{ messageId }`. `text` has 1 to 8000 characters. 409 when a turn runs in this chat. 429 above `AGENT_MAX_CHAT_TURNS`. A `model` switches the chat from this turn on |
+| `POST /api/chats/<id>/messages` with `{ text, model? }` | 202 `{ messageId }`. `text` has 1 to 8000 characters. 409 when a turn runs in this chat. 429 above `AGENT_MAX_CHAT_TURNS`. A `model` switches the chat from this turn on, and pins it: no fallback. A chat with no pick uses the default order, and its `model` is the one that answered last |
 | `POST /api/chats/<id>/cancel` | 200. Stops the running turn, which gets the status `cancelled` |
 | `PATCH /api/chats/<id>` with `{ title?, model? }` | 200 with the chat summary |
 | `DELETE /api/chats/<id>` | 204 |

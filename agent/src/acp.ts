@@ -6,7 +6,7 @@ import { loadConfig, modelConfigured } from './config.js';
 import { fingerprint } from './alerts.js';
 import { diagnose, type ToolHost } from './agent/engine.js';
 import { ModelCatalogue } from './agent/catalogue.js';
-import { ModelClient, type ToolSpec } from './agent/model.js';
+import type { ChatModel, ToolSpec } from './agent/model.js';
 import { A2UI_MIME } from './a2ui/index.js';
 import { alertSchema, diagnosisMarkdown, type Alert, type Diagnosis } from './agent/report.js';
 
@@ -26,6 +26,8 @@ interface Session {
   abort?: AbortController;
   /** The model id chosen for this session. Empty means the default. */
   model: string;
+  /** True once the user picked a model: it is used as it is, with no fallback. */
+  modelPinned?: boolean;
 }
 
 /** How long session/new waits for the gateway model lists. */
@@ -199,7 +201,7 @@ export function startAcp(): void {
       let current = '';
       let configOptions: any[] = [];
       if (catalogue.configured) {
-        current = await defaultModelId(catalogue);
+        current = catalogue.defaultOrder.length > 1 ? catalogue.currentDefault() : await defaultModelId(catalogue);
         configOptions = await modelConfigOptions(catalogue, current);
       }
       sessions.set(sessionId, { mcpUrl: url, mcpHeaders: headers, model: current });
@@ -210,6 +212,7 @@ export function startAcp(): void {
       if (!session) throw new Error('Unknown session');
       if (params.configId !== 'model') throw new Error(`Unknown config option "${params.configId}"`);
       session.model = await pickModel(catalogue, (params as { value: unknown }).value);
+      session.modelPinned = true;
       return { configOptions: await modelConfigOptions(catalogue, session.model) };
     })
     .onNotification('session/cancel', ({ params }) => {
@@ -231,10 +234,10 @@ export function startAcp(): void {
         await say('No model is configured. Set AGENT_MODEL and AGENT_MODEL_ROUTES_FILE (or AGENT_MODEL_ROUTES) with AIS_GATEWAY_* variables. For one route, set AIS_GATEWAY_URL, AIS_GATEWAY_TOKEN and AGENT_MODEL_STYLE.');
         return { stopReason: 'end_turn' };
       }
-      let modelClient: ModelClient;
+      let modelClient: ChatModel;
       try {
-        const resolved = await catalogue.resolve(session.model || undefined);
-        modelClient = new ModelClient(resolved.route, resolved.model);
+        // Without a pick the default order applies, with a fallback on a usage failure.
+        modelClient = await catalogue.open(session.modelPinned ? session.model : undefined);
       } catch (error) {
         await say(error instanceof Error ? error.message : String(error));
         return { stopReason: 'end_turn' };

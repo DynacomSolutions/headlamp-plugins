@@ -80,7 +80,10 @@ export interface Diagnosis {
   evidence: EvidenceItem[];
   toolCalls: number;
   toolBudget: number;
+  /** The model that answered. With the default order it can differ from the first choice. */
   model: string;
+  /** True when a person or an alert picked `model`: it was used as it is, with no fallback. Absent on records from before the default order. */
+  modelPinned?: boolean;
   error?: string;
   a2ui: A2uiMessage[];
   /** True when an outside agent (ACP, CLI) published this diagnosis through the API. Its evidence data is not trusted. */

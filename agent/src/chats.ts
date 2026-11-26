@@ -28,7 +28,14 @@ export interface ChatMessage {
 export interface Chat {
   id: string;
   title: string;
+  /** The model of the last answer, or the one the operator picked. */
   model: string;
+  /**
+   * True when the operator picked the model: it is used as it is, with no fallback.
+   * False means the default order applies and `model` is only the last one that answered.
+   * Absent on chats saved before the default order existed: see `ChatService`.
+   */
+  modelPinned?: boolean;
   /** The first linked incident. Kept for clients that know one incident only. */
   diagnosisId?: string;
   /** Every linked incident, in the order the user chose. A chat about one incident has one entry. */
@@ -110,13 +117,14 @@ export class ChatStore {
     renameSync(tmp, target);
   }
 
-  create(fields: { model: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }): Chat {
+  create(fields: { model: string; modelPinned?: boolean; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }): Chat {
     const now = new Date().toISOString();
     const ids = [...new Set([...(fields.diagnosisIds ?? []), ...(fields.diagnosisId ? [fields.diagnosisId] : [])])];
     const chat: Chat = {
       id: randomUUID(),
       title: DEFAULT_TITLE,
       model: fields.model,
+      ...(fields.modelPinned !== undefined ? { modelPinned: fields.modelPinned } : {}),
       ...(ids.length ? { diagnosisId: ids[0], diagnosisIds: ids } : {}),
       ...(fields.groupName ? { groupName: fields.groupName } : {}),
       ...(fields.summaryIds?.length ? { summaryIds: [...new Set(fields.summaryIds)].filter(id => !ids.includes(id)) } : {}),

@@ -22,6 +22,8 @@ const META: Record<string, Meta> = {
   headlamp_agent_storage_push_revoked_recipients: { type: 'gauge', help: 'Devices with a revoked storage grant, or NaN without a decision.' },
   headlamp_agent_storage_push_notices: { type: 'gauge', help: 'Active storage notices by delivery status.' },
   headlamp_agent_storage_push_deliveries: { type: 'gauge', help: 'Durable storage provider deliveries by status.' },
+  headlamp_agent_model_fallback_total: { type: 'counter', help: 'Runs that moved from one default model to the next, by from, to and reason (rate_limit, payment, quota, usage_limit, missing_credentials).' },
+  headlamp_agent_model_exhausted: { type: 'gauge', help: 'Default models in a usage cool-down: 1 while the model is skipped, else 0.' },
   headlamp_agent_diagnoses_open: { type: 'gauge', help: 'Diagnoses that are not resolved, by alert severity.' },
   headlamp_agent_reconcile_runs_total: { type: 'counter', help: 'Reconcile runs of this pod, by result: ok, error (vmalert unreadable) or skipped (another pod leads).' },
   headlamp_agent_reconcile_resolved_total: { type: 'counter', help: 'Open diagnoses that a reconcile run resolved because vmalert no longer has the alert.' },

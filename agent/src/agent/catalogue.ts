@@ -1,5 +1,7 @@
 import { modelConfigured, type ModelRoute, type ModelRoutesConfig } from '../config.js';
-import { routeHeaders } from './model.js';
+import type { Metrics } from '../metrics.js';
+import { FallbackModel, type Candidate, type FallbackReason, type UsageFailure } from './fallback.js';
+import { ModelClient, routeHeaders, type ChatModel } from './model.js';
 
 /** Lists the models each gateway route serves, so a run can pick one. */
 
@@ -30,6 +32,10 @@ interface Listed {
   models: Array<{ id: string; name: string }>;
 }
 
+/** How long an exhausted default model is skipped when the endpoint gave no Retry-After. */
+export const COOLDOWN_MS = 5 * 60_000;
+const COOLDOWN_MIN_MS = 1000;
+const COOLDOWN_MAX_MS = 6 * 3_600_000;
 const LIST_TIMEOUT_MS = 8000;
 const FAILURE_TTL_MS = 30_000;
 /** The Codex backend refuses a model list without a client version. */
@@ -58,6 +64,9 @@ export function parseModelList(body: unknown): Array<{ id: string; name: string 
 export class ModelCatalogue {
   private readonly cache = new Map<string, Listed>();
   private readonly inflight = new Map<string, Promise<Listed>>();
+  /** Default models that hit a usage failure, with the time (ms) they may be tried again. */
+  private readonly exhaustedUntil = new Map<string, number>();
+  private metrics: Metrics | undefined;
 
   constructor(
     private readonly config: ModelRoutesConfig,
@@ -72,6 +81,82 @@ export class ModelCatalogue {
 
   get defaultModel(): string {
     return this.config.defaultModel;
+  }
+
+  /** The ordered default models. One entry when AGENT_MODEL holds one id. */
+  get defaultOrder(): string[] {
+    const order = this.config.defaultOrder;
+    return order?.length ? order : this.config.defaultModel ? [this.config.defaultModel] : [];
+  }
+
+  /** Counters and gauges of the default order go to these metrics. */
+  attachMetrics(metrics: Metrics): void {
+    this.metrics = metrics;
+  }
+
+  /** Skip a default model until the cool-down ends: Retry-After when the endpoint gave it, else 5 minutes. */
+  markExhausted(id: string, failure: UsageFailure): void {
+    const ms = Math.min(COOLDOWN_MAX_MS, Math.max(COOLDOWN_MIN_MS, failure.retryAfterMs ?? COOLDOWN_MS));
+    this.exhaustedUntil.set(id, this.now() + ms);
+    this.refreshMetrics();
+  }
+
+  isExhausted(id: string): boolean {
+    const until = this.exhaustedUntil.get(id);
+    if (until === undefined) return false;
+    if (this.now() >= until) {
+      this.exhaustedUntil.delete(id);
+      return false;
+    }
+    return true;
+  }
+
+  /** Sets headlamp_agent_model_exhausted for every default model: 1 in a cool-down, else 0. */
+  refreshMetrics(): void {
+    if (!this.metrics) return;
+    for (const id of this.defaultOrder) this.metrics.set('headlamp_agent_model_exhausted', { model: id }, this.isExhausted(id) ? 1 : 0);
+  }
+
+  /** The default model a run would try first now: the first one that is usable and not in a cool-down. */
+  currentDefault(): string {
+    const order = this.defaultOrder;
+    return order.find(id => this.qualified(id) && !this.isExhausted(id)) ?? order.find(id => this.qualified(id)) ?? this.config.defaultModel;
+  }
+
+  /**
+   * The chat client for a run. An explicit id gives that model alone, with no fallback.
+   * No id gives the default order: the entries in turn, skipping the ones in a cool-down and the ones whose route has no credentials.
+   * With one default model it is that model, as before.
+   */
+  async open(id?: string): Promise<ChatModel> {
+    const explicit = id !== undefined && id !== '';
+    const order = this.defaultOrder;
+    if (explicit || order.length < 2) {
+      const r = await this.resolve(id);
+      return new ModelClient(r.route, r.model);
+    }
+    if (!this.config.routes.length) throw new Error('No model route is usable. Set AGENT_MODEL_ROUTES_FILE (or AIS_GATEWAY_URL and AIS_GATEWAY_TOKEN).');
+    const usable = order.map(entry => ({ entry, q: this.qualified(entry) }));
+    const available = usable.filter((u): u is { entry: string; q: Resolved } => !!u.q);
+    if (!available.length) throw new Error(`No default model has a usable route. Check the AIS_GATEWAY_* settings for: ${order.join(', ')}`);
+    // An entry with no credentials counts as a move to the next usable entry.
+    usable.forEach((u, i) => {
+      if (u.q) return;
+      const next = usable.slice(i + 1).find(n => n.q);
+      if (next) this.metrics?.inc('headlamp_agent_model_fallback_total', { from: u.entry, to: next.entry, reason: 'missing_credentials' });
+    });
+    let live = available.filter(u => !this.isExhausted(u.entry));
+    // Every model is in a cool-down: try the one that recovers first, so the run is not refused for a stale mark.
+    if (!live.length) live = [[...available].sort((a, b) => (this.exhaustedUntil.get(a.entry) ?? 0) - (this.exhaustedUntil.get(b.entry) ?? 0))[0]!];
+    const candidates: Candidate[] = live.map((u, i) => ({
+      id: `${u.q.route.id}/${u.q.model}`,
+      // A 429 moves on at once when a next model can take over. The last model keeps its retries.
+      client: new ModelClient(u.q.route, u.q.model, { failFast429: i < live.length - 1 }),
+    }));
+    return new FallbackModel(candidates, {
+      exhausted: (model, failure) => this.markExhausted(model, failure),
+      moved: (from, to, reason: FallbackReason) => this.metrics?.inc('headlamp_agent_model_fallback_total', { from, to, reason }),
+    });
   }
 
   private fallback(route: ModelRoute): Listed['models'] {
@@ -141,13 +226,12 @@ export class ModelCatalogue {
       for (const m of models) out.push({ id: `${route.id}/${m.id}`, route: route.id, model: m.id, name: m.name });
     }
     // The default model is always selectable, even when the gateway does not list it.
-    const def = this.config.defaultModel;
-    if (def && !out.some(e => e.id === def || (!def.includes('/') && e.model === def))) {
-      const target = this.qualified(def) ?? this.legacy();
-      if (target) {
-        const id = `${target.route.id}/${target.model}`;
-        if (!out.some(e => e.id === id)) out.push({ id, route: target.route.id, model: target.model, name: target.model });
-      }
+    for (const def of this.defaultOrder) {
+      if (!def || out.some(e => e.id === def || (!def.includes('/') && e.model === def))) continue;
+      const target = this.qualified(def) ?? (this.defaultOrder.length < 2 ? this.legacy() : undefined);
+      if (!target) continue;
+      const id = `${target.route.id}/${target.model}`;
+      if (!out.some(e => e.id === id)) out.push({ id, route: target.route.id, model: target.model, name: target.model });
     }
     return out;
   }
