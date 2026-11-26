@@ -136,102 +136,21 @@ describe('device helpers', () => {
 });
 
 describe('service worker', () => {
-  const ONE = 'https://dash.example.com/plugins/alerting/badge.png';
-  const STACK = 'https://dash.example.com/plugins/alerting/badge-stack.png';
-  /* importScripts runs the helper in the global scope of the worker, so the test puts the helper
-   * source in front of the worker source. */
-  function load(open: any[] = []) {
+  function load() {
     const handlers: Record<string, (e: any) => void> = {};
     const shown: any[] = [];
-    const importScripts = vi.fn();
     const self: any = {
-      location: {
-        origin: 'https://dash.example.com',
-        href: 'https://dash.example.com/plugins/alerting/sw.js',
-      },
+      location: { origin: 'https://dash.example.com' },
       skipWaiting: vi.fn(),
       addEventListener: (n: string, h: any) => (handlers[n] = h),
       registration: {
         showNotification: (t: string, o: any) => (shown.push([t, o]), Promise.resolve()),
-        getNotifications: () => Promise.resolve(open),
       },
       clients: { claim: vi.fn(), matchAll: vi.fn(), openWindow: vi.fn(() => Promise.resolve()) },
     };
-    const source = [
-      readFileSync('../../shared/push/badge.js', 'utf8'),
-      readFileSync('sw.js', 'utf8'),
-    ].join('\n');
-    new Function('self', 'importScripts', source)(self, importScripts);
-    return { handlers, shown, self, importScripts };
+    new Function('self', readFileSync('sw.js', 'utf8'))(self);
+    return { handlers, shown, self };
   }
-  const notification = (tag: string, badge: string) => ({
-    title: `T ${tag}`,
-    body: 'b',
-    tag,
-    data: { url: '/' },
-    requireInteraction: false,
-    timestamp: 1,
-    badge,
-  });
-  it('loads the badge helper', () => {
-    expect(load().importScripts).toHaveBeenCalledWith('push-badge.js');
-  });
-  it('shows the logo badge for one notification', async () => {
-    const { handlers, shown } = load();
-    const e = pushEvent({ title: 'Down', tag: 't' });
-    handlers.push(e);
-    await Promise.all(e.waits);
-    expect(shown).toHaveLength(1);
-    expect(shown[0][1].badge).toBe(ONE);
-  });
-  it('replaces a notification with the same tag and keeps the logo badge', async () => {
-    const { handlers, shown } = load([notification('t', ONE)]);
-    const e = pushEvent({ title: 'Down', tag: 't' });
-    handlers.push(e);
-    await Promise.all(e.waits);
-    expect(shown).toHaveLength(1);
-    expect(shown[0][1].badge).toBe(ONE);
-  });
-  it('shows the stack badge on all notifications when two are open', async () => {
-    const { handlers, shown } = load([notification('a', ONE), notification('b', STACK)]);
-    const e = pushEvent({ title: 'Down', tag: 't' });
-    handlers.push(e);
-    await Promise.all(e.waits);
-    expect(shown[0][1].badge).toBe(STACK);
-    // Only the notification with the old badge is shown again, silently and at its own time.
-    expect(shown).toHaveLength(2);
-    expect(shown[1][0]).toBe('T a');
-    expect(shown[1][1]).toMatchObject({
-      tag: 'a',
-      badge: STACK,
-      silent: true,
-      renotify: false,
-      timestamp: 1,
-    });
-  });
-  it('goes back to the logo badge when one notification is left', async () => {
-    const { handlers, shown } = load([notification('a', STACK), notification('b', STACK)]);
-    const waits: Promise<any>[] = [];
-    handlers.notificationclose({
-      notification: { tag: 'b' },
-      waitUntil: (p: Promise<any>) => waits.push(p),
-    });
-    await Promise.all(waits);
-    expect(shown).toHaveLength(1);
-    expect(shown[0][1]).toMatchObject({ tag: 'a', badge: ONE, silent: true });
-  });
-  it('sets the badge of the rest when a notification is tapped', async () => {
-    const { handlers, shown, self } = load([notification('a', STACK), notification('b', STACK)]);
-    self.clients.matchAll.mockResolvedValue([]);
-    const waits: Promise<any>[] = [];
-    handlers.notificationclick({
-      notification: { tag: 'a', close: vi.fn(), data: { url: '/' } },
-      waitUntil: (p: Promise<any>) => waits.push(p),
-    });
-    await Promise.all(waits);
-    expect(shown).toHaveLength(1);
-    expect(shown[0][1]).toMatchObject({ tag: 'b', badge: ONE });
-  });
   const pushEvent = (payload: any) => {
     const waits: Promise<any>[] = [];
     return {
