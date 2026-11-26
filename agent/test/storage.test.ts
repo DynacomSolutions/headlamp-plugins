@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { createDecipheriv, createECDH, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
+import { createDecipheriv, createECDH, createHash, hkdfSync, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
@@ -1083,7 +1083,7 @@ describe('Storage incident normal entry points', () => {
     expect(f.sent).toEqual([]);
   });
 
-  it('keeps records private, resets Keep on material change, and blocks production approval', async () => {
+  it('keeps records private, keeps Keep across a size change, and blocks production approval', async () => {
     const f = await fixture({ disposable: true });
     let bytes = 500;
     let omitted = false;
@@ -1118,7 +1118,7 @@ describe('Storage incident normal entry points', () => {
     const trigger = { node: nodes[0], filesystemId: 'main', reason: 'capacity' };
     expect((await f.reconcile([trigger])).status).toBe(200);
     const changed = await f.details(drive.id);
-    expect(changed.items.find((row: { id: string }) => row.id === local.id)).toMatchObject({ eligible: true, bytes: 501 });
+    expect(changed.items.find((row: { id: string }) => row.id === local.id)).toMatchObject({ eligible: false, reason: 'Kept by an operator', keep: true, bytes: 501 });
     expect(changed.plans.find((plan: { id: string }) => plan.id === frozen.id)).toEqual(frozen);
     expect(changed.history).toHaveLength(2);
     f.advance(16 * 60_000);
@@ -1127,6 +1127,108 @@ describe('Storage incident normal entry points', () => {
     expect((await f.details(drive.id)).current.complete).toBe(false);
     expect((await f.call(`${path}/dry-run`, { data: {} })).data.items.every((row: { eligible: boolean }) => !row.eligible)).toBe(true);
     expect(JSON.stringify(await f.db.query('SELECT data FROM storage_incident_drives'))).not.toMatch(/private-project|private-holder|private-process/);
+  });
+
+  it('rejects a kept item when its identity changes, not when its size changes', async () => {
+    const f = await fixture({ disposable: true });
+    let holder: string | undefined = 'holder-a';
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({
+      filesystems: [fs('main', '/data')], items: [item('busy', 'main', { inUse: true, holder })], complete: true,
+    });
+    expect((await f.reconcile()).status).toBe(200);
+    const drive = (await f.parent()).drives.find((row: { node: string }) => row.node === nodes[0]);
+    const path = `${api}/incident/drives/${drive.id}`;
+    const row = (await f.details(drive.id)).items[0];
+    expect((await f.call(`${path}/decisions`, { data: { decision: 'keep', itemId: row.id } })).status).toBe(200);
+    expect((await f.details(drive.id)).items[0].keep).toBe(true);
+    holder = 'holder-b';
+    f.advance(16 * 60_000);
+    expect((await f.reconcile([{ node: nodes[0], filesystemId: 'main', reason: 'capacity' }])).status).toBe(200);
+    expect((await f.details(drive.id)).items[0]).toMatchObject({ id: row.id });
+    expect((await f.details(drive.id)).items[0].keep).toBeUndefined();
+  });
+
+  it('raises no new holder question and keeps old decisions and answers after a size change', async () => {
+    const f = await fixture({ disposable: true });
+    let bytes = 0;
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({
+      filesystems: [fs('main', '/data')], items: [item('unknown', 'main', { inUse: undefined, bytes })], complete: true,
+    });
+    expect((await f.reconcile()).status).toBe(200);
+    const drive = (await f.parent()).drives.find((row: { node: string }) => row.node === nodes[0]);
+    const path = `${api}/incident/drives/${drive.id}`;
+    const rescan = async () => {
+      f.advance(16 * 60_000);
+      expect((await f.reconcile([{ node: nodes[0], filesystemId: 'main', reason: 'capacity' }])).status).toBe(200);
+    };
+    const investigate = async (itemId: string) => {
+      const response = await f.call(`${path}/investigate`, { data: { kind: 'eligibility', itemId } });
+      expect(response.status).toBe(200);
+      return ((await f.details(drive.id)).questions as Array<{ id: string; text: string }>).filter(entry => entry.text.startsWith('Who can confirm whether'));
+    };
+    const itemId = (await f.details(drive.id)).items[0].id as string;
+    const [question] = await investigate(itemId);
+    expect(question).toBeDefined();
+    const noticeCount = async () => (await f.parent()).notices.filter((notice: { kind: string }) => notice.kind === 'question').length;
+    const notices = await noticeCount();
+    for (const next of [1_000_000, 2_000_000]) {
+      bytes = next;
+      await rescan();
+      expect((await investigate(itemId)).map(entry => entry.id)).toEqual([question.id]);
+      expect(await noticeCount()).toBe(notices);
+    }
+
+    // Decisions and questions stored with the old hash, which included the size, still apply.
+    const legacy = (size: number) => createHash('sha256').update(JSON.stringify(['build-cache', size, 'fixture-owner', null, null])).digest('hex');
+    const current = (await f.details(drive.id)).items[0];
+    expect(current.bytes).toBe(2_000_000);
+    await f.call(`${path}/decisions`, { data: { decision: 'keep', itemId } });
+    const store = new StorageStore(f.db);
+    await store.transaction(async tx => {
+      const [decision] = await tx.list<{ id: string; material: string }>('decision', drive.id);
+      expect(decision.material).toBe(legacy(0));
+      const rewritten = { ...decision, material: legacy(2_000_000) } as { id: string };
+      await tx.updateRecord('decision', rewritten);
+      const [stored] = await tx.list<{ id: string; fingerprint: string }>('question', drive.id);
+      const requestion = { ...stored, fingerprint: stored.fingerprint.replace(/:[0-9a-f]{64}$/, `:${legacy(2_000_000)}`) } as { id: string };
+      await tx.updateRecord('question', requestion);
+    });
+    await rescan();
+    expect((await f.details(drive.id)).items[0]).toMatchObject({ keep: true, bytes: 2_000_000 });
+    expect((await investigate(itemId)).map(entry => entry.id)).toEqual([question.id]);
+  });
+
+  it('still rejects an approved plan at dispatch when the item size changed', async () => {
+    const f = await fixture({ disposable: true });
+    let bytes = 500;
+    f.nodeFixtures.get(nodes[0])!.scan = () => ({
+      filesystems: [fs('main', '/data')], items: [item('cache', 'main', { bytes })], complete: true, execution: 'disposable',
+    });
+    f.onApply((request, node) => ({ status: 200, data: { ...request, node, receipts: [] } }));
+    expect((await f.reconcile()).status).toBe(200);
+    const drive = (await f.parent()).drives.find((row: { node: string }) => row.node === nodes[0]);
+    const path = `${api}/incident/drives/${drive.id}`;
+    const plan = (await f.call(`${path}/dry-run`, { data: {} })).data;
+    const { itemId } = plan.items[0];
+    // This is the durable state after approval commits and before a worker starts dispatch.
+    const approval: Approval = {
+      id: randomUUID(), planId: plan.id, driveId: drive.id, itemIds: [itemId], by: 'fixture-operator', createdAt: plan.createdAt,
+    };
+    const store = new StorageStore(f.db);
+    await store.transaction(async tx => {
+      await tx.putApproval(approval);
+      await tx.putReceipts([{
+        id: randomUUID(), approvalId: approval.id, planId: plan.id, driveId: drive.id, itemId, status: 'queued',
+        reason: 'Awaiting verified scanner receipt', bytes: 0, updatedAt: approval.createdAt,
+      }]);
+    });
+    bytes = 501;
+    f.advance(60_000);
+    expect((await f.reconcile([{ node: nodes[0], filesystemId: 'main', reason: 'capacity' }])).status).toBe(200);
+    expect(f.applyCalls).toEqual([]);
+    expect(await store.receipts(approval.id)).toEqual([
+      expect.objectContaining({ itemId, status: 'stale', reason: 'The item changed before dispatch' }),
+    ]);
   });
 
   it('accepts one authenticated subset and retries the exact disposable request after partial, busy and gated replies', async () => {

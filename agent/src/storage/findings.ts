@@ -13,11 +13,12 @@ export function publicQuestion({ fingerprint: _fingerprint, ...question }: Store
 export async function raiseQuestion(
   tx: StorageQueries,
   state: DriveState,
-  options: { text: string; fingerprint: string; itemId?: string; external: boolean; stage?: string; now: number },
+  options: { text: string; fingerprint: string; legacyFingerprint?: string; itemId?: string; external: boolean; stage?: string; now: number },
 ): Promise<Question> {
   const { drive } = state;
   const questions = await tx.list<StoredQuestion>('question', drive.id);
-  const existing = questions.find(question => question.fingerprint === options.fingerprint);
+  const existing = questions.find(question => question.fingerprint === options.fingerprint
+    || (options.legacyFingerprint !== undefined && question.fingerprint === options.legacyFingerprint));
   if (existing) return existing;
   const question: StoredQuestion = {
     id: randomUUID(),
@@ -100,6 +101,7 @@ export async function investigate(
       text: current.complete ? 'Who can confirm whether this item is in use?' : 'Who can confirm that the scanner can inspect this drive?',
       itemId: selected?.id,
       fingerprint: current.complete ? `holder:${selected?.id}:${selected?.decisionMaterial}` : 'incomplete-inventory',
+      legacyFingerprint: current.complete && selected?.legacyDecisionMaterial ? `holder:${selected.id}:${selected.legacyDecisionMaterial}` : undefined,
       external: current.complete && selected?.visibility === 'jev',
       now,
     });

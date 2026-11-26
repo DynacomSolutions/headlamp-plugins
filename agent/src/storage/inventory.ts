@@ -22,12 +22,20 @@ function decisionMap(decisions: Decision[]): Map<string, Decision> {
   return latest;
 }
 
+/**
+ * A decision applies while the item identity is unchanged. The size is not part of it. Decisions stored before the size
+ * was removed hashed the size, so the hash with the current size still counts as a match.
+ */
+export function decisionMatches(decision: Pick<Decision, 'material'> | undefined, item: Pick<InternalItem, 'decisionMaterial' | 'legacyDecisionMaterial'>): boolean {
+  return decision !== undefined && (decision.material === item.decisionMaterial || decision.material === item.legacyDecisionMaterial);
+}
+
 export function itemViews(state: DriveState, decisions: Decision[], now: number) {
   const latest = decisionMap(decisions);
   const fresh = scanIsFresh(state, now);
   return state.items.map(item => {
     const decision = latest.get(item.id);
-    const current = decision?.decision === 'defer' || decision?.material === item.decisionMaterial ? decision : undefined;
+    const current = decision?.decision === 'defer' || decisionMatches(decision, item) ? decision : undefined;
     const keep = current?.decision === 'keep';
     const deferUntil = current?.decision === 'defer' && Date.parse(current.until!) > now ? current.until : undefined;
     const mergeEvidence = needsMergeEvidence(item.category) ? item.mergeEvidence ?? 'unavailable' : undefined;
@@ -65,7 +73,11 @@ function normalizeItem(item: ScanItem, node: string, id: string, complete: boole
     scannerId: item.id,
     category: item.category,
     material: hash([node, item.objectKey ? undefined : item.id, item.objectKey, item.path, item.category, item.bytes, item.owner, item.inUse, item.holder, item.eligible, item.visibility, mergeEvidence]),
-    decisionMaterial: hash([item.category, item.bytes, item.owner, item.inUse, item.holder]),
+    // The size is left out on purpose: a size change must not undo a "keep" or raise a new question.
+    // A fixed 0 sits where the size was, so this equals the old hash of an item that was scanned with 0 bytes.
+    decisionMaterial: hash([item.category, 0, item.owner, item.inUse, item.holder]),
+    // The old hash with the real size. It keeps decisions and questions stored before this change valid.
+    legacyDecisionMaterial: hash([item.category, item.bytes, item.owner, item.inUse, item.holder]),
     path: jev ? clean(item.path) : undefined,
     owner: jev ? clean(item.owner) : undefined,
     reason: jev ? clean(item.reason) : eligible ? 'Scanner marked this item eligible' : 'Scanner excluded this item',
