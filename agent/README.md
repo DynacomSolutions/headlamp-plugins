@@ -398,22 +398,35 @@ AGENT_MODEL=grok/grok-4.7,opencode/qwen4-max,zai/glm-5.4,codex/gpt-6.2-astra
 - A model that a person or an alert picks (`agent_model` annotation, `model` in
   a request, a chat pick, the ACP picker) is used as it is, with no fallback.
   A chat keeps a pick until the person changes it.
+- A chat request (create, send, patch) whose `model` is the current default
+  (the first entry that is not in a cool-down) or an earlier default
+  (`codex/gpt-6.2-sol`) counts as no pick. The older Incidents plugin sent the
+  default it showed as a pick. The agent cannot tell that bundle from a person,
+  so a pick of the current default is not pinned either.
+- A chat or diagnosis record saved before the default order has no
+  `modelPinned` flag. With an ordered default it follows the order. With one
+  default model it counts as picked when its model is not the default, as before.
+- A chat with no pick and an ordered default starts on the first entry whose
+  route has credentials, not on the first entry.
 - The agent records the model that answered in `diagnosis.model` and in the
   `model` of each chat answer.
 
 **What counts as a usage failure.** Only these:
 
 - HTTP 429 or 402;
-- HTTP 403 whose body names a quota, usage, credit or limit;
-- any answer with a usage error code such as `usage_limit_reached`,
-  `insufficient_quota`, `rate_limit_exceeded` or `quota_exceeded`, in the
-  OpenAI, Anthropic or gateway error shape;
-- a Responses stream that fails with such a code, or with 429 or 402;
+- HTTP 403 with a usage error code such as `usage_limit_reached`,
+  `insufficient_quota` or `quota_exceeded`, or whose body names a quota, usage,
+  credit or limit;
+- HTTP 502 with the header `x-ais-gateway-error: credential_unavailable`: the
+  AIS gateway has no valid upstream login for the route. It counts as
+  `missing_credentials` and is never retried;
+- a Responses stream that fails with a usage code, or with 429 or 402;
 - a route with no credentials (counted as `missing_credentials`).
 
-A 400, a 5xx, a timeout, a network error, a 401 and a tool error never move to
-the next entry. A 429 moves on at once, with no retries, when a next entry can
-take over. The last entry keeps its three tries.
+Usage codes count only on 429, 402 and 403. A 400, any other 5xx, a timeout, a
+network error, a 401 and a tool error never move to the next entry. A 429 moves
+on at once, with no retries, when a next entry can take over. The last entry
+keeps its three tries on a 429.
 
 **When the run moves.** Only before the model has answered in the run. After
 the first answer of a diagnosis or a chat turn, a later usage failure is

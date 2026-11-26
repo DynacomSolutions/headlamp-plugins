@@ -34,6 +34,11 @@ interface Listed {
 
 /** How long an exhausted default model is skipped when the endpoint gave no Retry-After. */
 export const COOLDOWN_MS = 5 * 60_000;
+/**
+ * Defaults of older releases. The plugin bundle of that time sent the shown default as an explicit pick,
+ * so a request that names one of them counts as no pick when a default order is set.
+ */
+export const PREVIOUS_DEFAULTS: readonly string[] = ['codex/gpt-6.2-sol'];
 const COOLDOWN_MIN_MS = 1000;
 const COOLDOWN_MAX_MS = 6 * 3_600_000;
 const LIST_TIMEOUT_MS = 8000;
@@ -115,6 +120,30 @@ export class ModelCatalogue {
   refreshMetrics(): void {
     if (!this.metrics) return;
     for (const id of this.defaultOrder) this.metrics.set('headlamp_agent_model_exhausted', { model: id }, this.isExhausted(id) ? 1 : 0);
+  }
+
+  /** True when the id names a model of a usable route. */
+  hasRoute(id: string): boolean {
+    return this.qualified(id) !== undefined;
+  }
+
+  /**
+   * True when an explicit model is only an echo of the default: the current first live entry, or a default of an older release.
+   * The old plugin bundle sent the default it showed as a pick. With one default model nothing is an echo.
+   */
+  isDefaultEcho(id: string | undefined): boolean {
+    if (!id || this.defaultOrder.length < 2) return false;
+    return id === this.currentDefault() || PREVIOUS_DEFAULTS.includes(id);
+  }
+
+  /**
+   * Whether a stored record is pinned to its model. The flag wins. A record with no flag comes from before the default order:
+   * with an ordered default it follows the order, with one default model it counts as picked when its model is not the default.
+   */
+  isPinned(flag: boolean | undefined, model: string): boolean {
+    if (flag !== undefined) return flag;
+    if (this.defaultOrder.length > 1) return false;
+    return model !== '' && model !== this.config.defaultModel;
   }
 
   /** The default model a run would try first now: the first one that is usable and not in a cool-down. */

@@ -59,12 +59,16 @@ export interface CompleteRequest {
   session: string;
 }
 
-/** A non-2xx answer from the endpoint. `retryAfterMs` is the Retry-After header, when it has one. */
+/** The header with which the AIS gateway names why it built an error answer itself. */
+export const GATEWAY_ERROR_HEADER = 'x-ais-gateway-error';
+
+/** A non-2xx answer from the endpoint. `retryAfterMs` is the Retry-After header, when it has one. `headers` are the response headers, with lower-case names. */
 export class ModelHttpError extends Error {
   constructor(
     readonly status: number,
     readonly body: string,
     readonly retryAfterMs?: number,
+    readonly headers: Record<string, string> = {},
   ) {
     super(`Model endpoint answered ${status}: ${body.slice(0, 300)}`);
   }
@@ -169,8 +173,14 @@ export class ModelClient implements ChatModel {
         const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(this.route.timeoutMs) });
         const text = await res.text();
         if (res.ok) return text;
-        const retryable = (res.status === 429 && !this.options.failFast429) || res.status >= 500;
-        lastError = new ModelHttpError(res.status, text, parseRetryAfter(res.headers.get('retry-after')));
+        const answered: Record<string, string> = {};
+        res.headers.forEach((value, name) => {
+          answered[name.toLowerCase()] = value;
+        });
+        // A missing or expired upstream login does not heal in seconds: no retries, so the next model takes over at once.
+        const credential = answered[GATEWAY_ERROR_HEADER] === 'credential_unavailable';
+        const retryable = !credential && ((res.status === 429 && !this.options.failFast429) || res.status >= 500);
+        lastError = new ModelHttpError(res.status, text, parseRetryAfter(res.headers.get('retry-after')), answered);
         if (!retryable) break;
         const wait = Math.min(Number(res.headers.get('retry-after') ?? 0) * 1000 || 2000 * (attempt + 1), 20_000);
         await new Promise(r => setTimeout(r, wait));

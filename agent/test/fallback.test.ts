@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChatService } from '../src/agent/chat.js';
-import { ModelCatalogue, COOLDOWN_MS } from '../src/agent/catalogue.js';
+import { ModelCatalogue, COOLDOWN_MS, PREVIOUS_DEFAULTS } from '../src/agent/catalogue.js';
 import { diagnose } from '../src/agent/engine.js';
 import { classifyUsageFailure } from '../src/agent/fallback.js';
-import { ModelHttpError, ModelStreamError, parseRetryAfter, type CompleteRequest } from '../src/agent/model.js';
+import { GATEWAY_ERROR_HEADER, ModelHttpError, ModelStreamError, parseRetryAfter, type CompleteRequest } from '../src/agent/model.js';
 import { ChatStore } from '../src/chats.js';
 import { loadConfig, loadModelRoutes, type ModelRoute, type ModelRoutesConfig } from '../src/config.js';
 import { Metrics } from '../src/metrics.js';
@@ -95,7 +95,8 @@ describe('AGENT_MODEL list', () => {
 });
 
 describe('usage failure detection', () => {
-  const http = (status: number, body: unknown, retryAfterMs?: number) => new ModelHttpError(status, typeof body === 'string' ? body : JSON.stringify(body), retryAfterMs);
+  const http = (status: number, body: unknown, retryAfterMs?: number, headers: Record<string, string> = {}) =>
+    new ModelHttpError(status, typeof body === 'string' ? body : JSON.stringify(body), retryAfterMs, headers);
 
   it('counts 429, 402, a quota 403, usage codes and failed streams', () => {
     expect(classifyUsageFailure(http(429, 'slow down', 7000))).toEqual({ reason: 'rate_limit', retryAfterMs: 7000 });
@@ -103,7 +104,7 @@ describe('usage failure detection', () => {
     expect(classifyUsageFailure(http(403, { error: { message: 'You exceeded your current quota' } }))).toEqual({ reason: 'quota' });
     expect(classifyUsageFailure(http(403, { error: 'Monthly credit limit reached' }))).toEqual({ reason: 'quota' });
     expect(classifyUsageFailure(http(403, { error: { code: 'usage_limit_reached', resets_in_seconds: 90 } }))).toEqual({ reason: 'usage_limit', retryAfterMs: 90_000 });
-    expect(classifyUsageFailure(http(503, { error: { type: 'insufficient_quota' } }))).toEqual({ reason: 'usage_limit' });
+    expect(classifyUsageFailure(http(502, 'AIS gateway: upstream credential unavailable', undefined, { [GATEWAY_ERROR_HEADER]: 'credential_unavailable' }))).toEqual({ reason: 'missing_credentials' });
     expect(classifyUsageFailure(new ModelStreamError('x', 'usage_limit_reached'))).toEqual({ reason: 'usage_limit' });
     expect(classifyUsageFailure(new ModelStreamError('x', 'rate_limit_exceeded'))).toEqual({ reason: 'rate_limit' });
     expect(classifyUsageFailure(new ModelStreamError('x', '', 429))).toEqual({ reason: 'rate_limit' });
@@ -115,6 +116,14 @@ describe('usage failure detection', () => {
     expect(classifyUsageFailure(http(500, 'boom'))).toBeUndefined();
     expect(classifyUsageFailure(http(502, '<html>Bad gateway</html>'))).toBeUndefined();
     expect(classifyUsageFailure(http(403, '<html>Forbidden</html>'))).toBeUndefined();
+    // A word that is not a usage word, and a usage code outside 429, 402 and 403.
+    expect(classifyUsageFailure(http(403, { error: { message: 'The request was limited by policy' } }))).toBeUndefined();
+    expect(classifyUsageFailure(http(503, { error: { type: 'insufficient_quota' } }))).toBeUndefined();
+    expect(classifyUsageFailure(http(400, { error: { code: 'usage_limit_reached' } }))).toBeUndefined();
+    expect(classifyUsageFailure(http(500, { error: { code: 'rate_limit_exceeded' } }))).toBeUndefined();
+    // A 502 from the gateway for another reason, and a credential header on another status.
+    expect(classifyUsageFailure(http(502, 'x', undefined, { [GATEWAY_ERROR_HEADER]: 'upstream_unreachable' }))).toBeUndefined();
+    expect(classifyUsageFailure(http(500, 'x', undefined, { [GATEWAY_ERROR_HEADER]: 'credential_unavailable' }))).toBeUndefined();
     expect(classifyUsageFailure(http(401, 'no'))).toBeUndefined();
     expect(classifyUsageFailure(new ModelStreamError('x', 'server_error', 500))).toBeUndefined();
     expect(classifyUsageFailure(new Error('The operation was aborted due to timeout'))).toBeUndefined();
@@ -171,6 +180,38 @@ describe('ordered default models', () => {
     expect(m.name).toBe('glm/z');
     expect(metrics.get('headlamp_agent_model_fallback_total', { from: 'grok/g', to: 'qwen/q', reason: 'quota' })).toBe(1);
     expect(metrics.get('headlamp_agent_model_fallback_total', { from: 'qwen/q', to: 'glm/z', reason: 'payment' })).toBe(1);
+  });
+
+  it('falls through at once, with no retries, when the gateway has no upstream credential', async () => {
+    const credential = () => fail(502, { error: { message: 'AIS gateway: upstream credential unavailable' } }, { [GATEWAY_ERROR_HEADER]: 'credential_unavailable' });
+    gateway.answers = { grok: [credential()], qwen: [ok('from qwen')] };
+    const { c, metrics } = catalogue();
+    const m = await open(c);
+    expect((await m.complete(req)).text).toBe('from qwen');
+    expect(gateway.hits).toEqual(['grok', 'qwen']);
+    expect(metrics.get('headlamp_agent_model_fallback_total', { from: 'grok/g', to: 'qwen/q', reason: 'missing_credentials' })).toBe(1);
+    expect(c.isExhausted('grok/g')).toBe(true);
+    // Also the last entry makes one call only: a credential does not come back in seconds.
+    gateway.hits = [];
+    gateway.answers = { astra: [credential()] };
+    const last = await open(catalogue(cfg(['astra/a', 'astra/b'])).c);
+    await expect(last.complete(req)).rejects.toMatchObject({ status: 502 });
+    expect(gateway.hits.filter(h => h === 'astra')).toHaveLength(2);
+  });
+
+  it('keeps retrying a plain 502 that the gateway does not mark as a credential failure', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    gateway.answers = { grok: [fail(502, 'bad gateway', { [GATEWAY_ERROR_HEADER]: 'upstream_unreachable' })], qwen: [ok('from qwen')] };
+    const { c } = catalogue();
+    const m = await open(c);
+    const done = m.complete(req).then(
+      () => 'resolved',
+      (e: Error) => e.message,
+    );
+    await vi.runAllTimersAsync();
+    expect(await done).toMatch(/answered 502/);
+    expect(gateway.hits.every(h => h === 'grok')).toBe(true);
+    expect(gateway.hits.length).toBeGreaterThan(1);
   });
 
   it('falls through on a failed Responses stream with a usage code', async () => {
@@ -347,17 +388,18 @@ describe('records the model that answered', () => {
     for (let i = 0; i < 400 && !fn(); i++) await new Promise(r => setTimeout(r, 5));
     expect(fn()).toBe(true);
   };
-  const chatService = () => {
-    const c = new ModelCatalogue(cfg());
+  const chatService = (config = cfg()) => {
+    const c = new ModelCatalogue(config);
+    const store = new ChatStore(dir);
     const chats = new ChatService({
-      store: new ChatStore(dir),
+      store,
       diagnoses: new MemoryDiagnosisStore(),
       tools: { list: async () => [], call: async () => ({ ok: true, summary: '', data: {} }) },
       catalogue: c,
       budget: 2,
       maxTurns: 3,
     });
-    return { c, chats };
+    return { c, chats, store };
   };
 
   it('an unpicked chat moves to the next model and records which one answered', async () => {
@@ -379,23 +421,90 @@ describe('records the model that answered', () => {
 
   it('a chat created with a model, or patched to one, never falls back', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
-    gateway.answers = { grok: [fail(429, 'limit')], qwen: [ok('from qwen')] };
+    gateway.answers = { qwen: [fail(429, 'limit')], glm: [ok('from glm')] };
     const { chats } = chatService();
-    const { id } = await chats.create({ model: 'grok/g' });
+    // The model is not the default, so it is a real pick.
+    const { id } = await chats.create({ model: 'qwen/q' });
     await chats.send(id, 'hello');
     for (let i = 0; i < 20 && (chats.get(id) as any).running; i++) await vi.advanceTimersByTimeAsync(5000);
     const chat = chats.get(id) as any;
-    expect(chat.messages[1]).toMatchObject({ status: 'failed', model: 'grok/g' });
-    expect(chat.model).toBe('grok/g');
-    expect(gateway.hits.every(h => h === 'grok')).toBe(true);
+    expect(chat.messages[1]).toMatchObject({ status: 'failed', model: 'qwen/q' });
+    expect(chat.model).toBe('qwen/q');
+    expect(gateway.hits.every(h => h === 'qwen')).toBe(true);
     // A pick on send pins the chat as well.
     gateway.hits = [];
-    gateway.answers = { qwen: [fail(429, 'limit')], glm: [ok('from glm')] };
+    gateway.answers = { glm: [fail(429, 'limit')], astra: [ok('from astra')] };
     const unpicked = await chats.create({});
-    await chats.send(unpicked.id, 'hello', 'qwen/q');
+    await chats.send(unpicked.id, 'hello', 'glm/z');
     for (let i = 0; i < 20 && (chats.get(unpicked.id) as any).running; i++) await vi.advanceTimersByTimeAsync(5000);
-    expect((chats.get(unpicked.id) as any).messages[1]).toMatchObject({ status: 'failed', model: 'qwen/q' });
-    expect(gateway.hits.every(h => h === 'qwen')).toBe(true);
+    expect((chats.get(unpicked.id) as any).messages[1]).toMatchObject({ status: 'failed', model: 'glm/z' });
+    expect(gateway.hits.every(h => h === 'glm')).toBe(true);
+  });
+
+  it('a default chat uses the first live entry when the first route has no credentials', async () => {
+    gateway.answers = { qwen: [ok('from qwen')] };
+    const { chats } = chatService(cfg(ORDER, ['grok']));
+    // Create and send go through the chat service, not open(): the first entry must not be resolved.
+    const { id } = await chats.create({});
+    expect(chats.get(id)).toMatchObject({ model: 'qwen/q' });
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[1]).toMatchObject({ status: 'done', text: 'from qwen', model: 'qwen/q' });
+    expect(gateway.hits).toEqual(['qwen']);
+    // A patch to no model and a send with no model do not fail either.
+    expect(await chats.patch(id, { model: '' })).toMatchObject({ model: 'qwen/q' });
+    await chats.send(id, 'again');
+    await until(() => !(chats.get(id) as any).running);
+  });
+
+  it('a chat or diagnosis record with no modelPinned follows the new order', async () => {
+    gateway.answers = { grok: [ok('from grok')] };
+    const { chats, store } = chatService();
+    const { id } = await chats.create({});
+    // An old record: the old default, no flag.
+    const old = store.get(id)!;
+    old.model = 'codex/gpt-6.2-sol';
+    delete old.modelPinned;
+    store.save(old);
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[1]).toMatchObject({ status: 'done', model: 'grok/g' });
+    expect(chats.get(id)).toMatchObject({ model: 'grok/g' });
+    expect(gateway.hits).toEqual(['grok']);
+    // With one default model the old inference stays: a model other than the default counts as picked.
+    const one = new ModelCatalogue({ routes: cfg().routes, defaultModel: 'grok/g', defaultOrder: ['grok/g'], skipped: [] });
+    expect(one.isPinned(undefined, 'qwen/q')).toBe(true);
+    expect(one.isPinned(undefined, 'grok/g')).toBe(false);
+    expect(one.isPinned(false, 'qwen/q')).toBe(false);
+    const ordered = new ModelCatalogue(cfg());
+    expect(ordered.isPinned(undefined, 'qwen/q')).toBe(false);
+    expect(ordered.isPinned(true, 'qwen/q')).toBe(true);
+  });
+
+  it('an echo of the default is no pick: the current default and the old default', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    gateway.answers = { grok: [fail(429, 'limit', { 'retry-after': '60' })], qwen: [ok('from qwen')] };
+    const { chats, c } = chatService();
+    expect(PREVIOUS_DEFAULTS).toContain('codex/gpt-6.2-sol');
+    // The old plugin sends the default it shows on create and on send.
+    const a = await chats.create({ model: 'grok/g' });
+    expect(chats.get(a.id)).toMatchObject({ model: 'grok/g' });
+    await chats.send(a.id, 'hello', 'grok/g');
+    for (let i = 0; i < 20 && (chats.get(a.id) as any).running; i++) await vi.advanceTimersByTimeAsync(5000);
+    // Not pinned: it fell through to qwen.
+    expect((chats.get(a.id) as any).messages[1]).toMatchObject({ status: 'done', model: 'qwen/q' });
+    // The shown default is now qwen, and an echo of it, or of the old default, is still no pick.
+    expect(c.currentDefault()).toBe('qwen/q');
+    const b = await chats.create({ model: 'codex/gpt-6.2-sol' });
+    expect(chats.get(b.id)).toMatchObject({ model: 'qwen/q' });
+    const d = await chats.create({ model: 'qwen/q' });
+    gateway.hits = [];
+    await chats.send(d.id, 'hello', 'codex/gpt-6.2-sol');
+    for (let i = 0; i < 20 && (chats.get(d.id) as any).running; i++) await vi.advanceTimersByTimeAsync(5000);
+    expect(gateway.hits).toEqual(['qwen']);
+    // A real pick of another model is still pinned, and has no fallback.
+    const e = await chats.create({ model: 'glm/z' });
+    expect(chats.get(e.id)).toMatchObject({ model: 'glm/z' });
   });
 
   it('a diagnosis run records the model that answered', async () => {

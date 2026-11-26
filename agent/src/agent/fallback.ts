@@ -1,4 +1,4 @@
-import { ModelHttpError, ModelStreamError, type ChatModel, type CompleteRequest, type Completion } from './model.js';
+import { GATEWAY_ERROR_HEADER, ModelHttpError, ModelStreamError, type ChatModel, type CompleteRequest, type Completion } from './model.js';
 
 /**
  * Ordered default models. A run that names no model tries the entries of AGENT_MODEL in order.
@@ -34,7 +34,7 @@ const USAGE_CODES = new Set([
   'plan_limit_reached',
   'too_many_requests',
 ]);
-const USAGE_WORDS = /\b(quota|usage|credits?|limits?|limited|exhausted|billing)\b/i;
+const USAGE_WORDS = /\b(quota|usage|credits?|limits?|exhausted|billing)\b/i;
 
 /** The error object of a JSON body: `{error:{code,type,message}}`, `{code,message}` or `{error:"text"}`. */
 function bodyError(body: string): { code: string; message: string; retryAfterMs?: number } {
@@ -55,10 +55,11 @@ function bodyError(body: string): { code: string; message: string; retryAfterMs?
 /**
  * Tells a usage failure from any other failure. A usage failure is:
  * - HTTP 429 or 402;
- * - HTTP 403 whose body names a quota, usage, credit or limit;
- * - any answer with an explicit usage error code (the gateway and Codex shape: `usage_limit_reached` and the like);
+ * - HTTP 403 with a usage error code (the gateway and Codex shape: `usage_limit_reached` and the like), or whose body names a quota, usage, credit or limit;
+ * - HTTP 502 that the AIS gateway marks `x-ais-gateway-error: credential_unavailable` (the upstream login is missing or expired);
  * - a Responses stream that fails with such a code, or with 429 or 402.
- * Everything else returns undefined: 400 validation, 5xx, timeouts, network errors and tool errors.
+ * Usage codes count only on 429, 402 and 403. Everything else returns undefined: 400 validation, other 5xx,
+ * timeouts, network errors and tool errors.
  */
 export function classifyUsageFailure(error: unknown): UsageFailure | undefined {
   if (error instanceof ModelHttpError) {
@@ -67,8 +68,12 @@ export function classifyUsageFailure(error: unknown): UsageFailure | undefined {
     const keep = (reason: FallbackReason): UsageFailure => ({ reason, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) });
     if (error.status === 429) return keep('rate_limit');
     if (error.status === 402) return keep('payment');
-    if (USAGE_CODES.has(body.code)) return keep('usage_limit');
-    if (error.status === 403 && USAGE_WORDS.test(body.message || body.code)) return keep('quota');
+    if (error.status === 403) {
+      if (USAGE_CODES.has(body.code)) return keep('usage_limit');
+      if (USAGE_WORDS.test(body.message || body.code)) return keep('quota');
+      return undefined;
+    }
+    if (error.status === 502 && error.headers[GATEWAY_ERROR_HEADER] === 'credential_unavailable') return keep('missing_credentials');
     return undefined;
   }
   if (error instanceof ModelStreamError) {

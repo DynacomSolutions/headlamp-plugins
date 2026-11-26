@@ -163,17 +163,32 @@ export class ChatService {
 
   constructor(private readonly deps: ChatDeps) {}
 
-  /** True when the operator picked this chat's model. Chats saved before the default order keep a model that is not the default. */
+  private get catalogue(): ModelCatalogue {
+    return this.deps.catalogue;
+  }
+
+  /** True when the operator picked this chat's model. A chat saved before the default order follows the order (see `ModelCatalogue.isPinned`). */
   private pinned(chat: Chat): boolean {
-    return chat.modelPinned ?? (chat.model !== '' && chat.model !== this.deps.catalogue.defaultModel);
+    return this.deps.catalogue.isPinned(chat.modelPinned, chat.model);
+  }
+
+  /** The model a request picks, or undefined for no pick. An empty id and an echo of the default (sent by an old plugin bundle) are no pick. */
+  private pick(requested?: string): string | undefined {
+    if (requested === undefined || requested === '' || this.deps.catalogue.isDefaultEcho(requested)) return undefined;
+    return requested;
   }
 
   /** The full id of a model, or an empty string when none is configured. Unknown ids throw a 400. No id gives the default that answers first now. */
   private async modelId(requested?: string): Promise<string> {
     const explicit = requested !== undefined && requested !== '';
+    const { catalogue } = this;
+    // An ordered default never resolves its first entry: that route may have no credentials. The first live entry is the default.
+    if (!explicit && catalogue.defaultOrder.length > 1) {
+      const id = catalogue.currentDefault();
+      return catalogue.hasRoute(id) ? id : '';
+    }
     try {
-      const r = await this.deps.catalogue.resolve(explicit ? requested : undefined);
-      if (!explicit && this.deps.catalogue.defaultOrder.length > 1) return this.deps.catalogue.currentDefault();
+      const r = await catalogue.resolve(explicit ? requested : undefined);
       return `${r.route.id}/${r.model}`;
     } catch (error) {
       if (error instanceof UnknownModelError) throw new ChatError(400, error.message);
@@ -199,8 +214,9 @@ export class ChatService {
     // An incident that left the store (retention removed it) drops out of the short list. It is not an error.
     const known: string[] = [];
     for (const id of summaryIds) if (await this.deps.diagnoses.get(id)) known.push(id);
-    const model = await this.modelId(body.model);
-    const modelPinned = body.model !== undefined && body.model !== '';
+    const picked = this.pick(body.model);
+    const model = await this.modelId(picked);
+    const modelPinned = picked !== undefined;
     return { id: this.deps.store.create({ model, modelPinned, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };
   }
 
@@ -227,8 +243,9 @@ export class ChatService {
   async patch(id: string, body: { title?: string; model?: string }): Promise<ChatSummary> {
     const chat = this.chat(id);
     if (body.model !== undefined) {
-      chat.model = await this.modelId(body.model);
-      chat.modelPinned = body.model !== '';
+      const picked = this.pick(body.model);
+      chat.model = await this.modelId(picked);
+      chat.modelPinned = picked !== undefined;
     }
     if (body.title !== undefined) chat.title = body.title.trim() || DEFAULT_TITLE;
     this.deps.store.save(chat);
@@ -247,7 +264,7 @@ export class ChatService {
     const chat = this.chat(id);
     if (store.running(chat) || this.turns.has(id)) throw new ChatError(409, 'A turn is already running in this chat');
     if (this.turns.size >= this.deps.maxTurns) throw new ChatError(429, 'Too many chat turns are running. Try again in a moment.');
-    const wanted = model !== undefined && model !== '' ? model : undefined;
+    const wanted = this.pick(model);
     // An explicit pick pins the chat to that model. Without one a pinned chat keeps its model, and the others use the default order.
     const pinned = wanted ? true : this.pinned(chat);
     const resolved = wanted || !pinned ? await this.modelId(wanted) : chat.model;

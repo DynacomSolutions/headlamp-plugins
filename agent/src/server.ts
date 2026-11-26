@@ -193,8 +193,8 @@ export class Runner {
 
   /** Run again a diagnosis that a restart interrupted. It keeps its id and its creation time. */
   async resume(interrupted: Diagnosis): Promise<void> {
-    // A picked model stays. Records from before the default order count as picked when they hold a model other than the default.
-    const pinned = interrupted.modelPinned ?? (interrupted.model !== '' && interrupted.model !== this.config.models.defaultModel);
+    // A picked model stays. A record with no flag comes from before the default order and follows the order (see `ModelCatalogue.isPinned`).
+    const pinned = this.catalogue.isPinned(interrupted.modelPinned, interrupted.model);
     await this.enqueue(interrupted.alert, interrupted.source, interrupted.id, pinned ? interrupted.model : undefined);
   }
 
