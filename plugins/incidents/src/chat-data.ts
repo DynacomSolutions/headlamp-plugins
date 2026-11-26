@@ -14,14 +14,22 @@ import { fetchAllDiagnoses } from './data';
 import { GroupChatRequest } from './groupChat';
 import { backendUrl, DiagnosisSummary, Settings } from './model';
 
-const json = (method: string, body?: unknown) => ({
+/**
+ * Sent on a chat create request that names a model, and only then. It tells the agent that a person picked the
+ * model, so the agent pins the chat to it, also when it is the default. A request without it may come from an
+ * older bundle that sent the shown default, and the agent then treats a default as no pick.
+ */
+export const MODEL_PICK_HEADER = 'x-incidents-model-pick';
+
+const json = (method: string, body?: unknown, extra: Record<string, string> = {}) => ({
   method,
-  headers: { 'Content-Type': 'application/json' },
+  headers: { 'Content-Type': 'application/json', ...extra },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 
 /* ---------- Calls ---------- */
 
+/** `body.model` is set only when the user picked a model. The default model is never sent. */
 export async function createChat(
   s: Settings,
   body: {
@@ -30,7 +38,10 @@ export async function createChat(
     diagnosisIds?: string[];
   } & Partial<GroupChatRequest>
 ): Promise<string> {
-  const res = await ApiProxy.request(backendUrl(s, '/api/chats'), json('POST', body));
+  const res = await ApiProxy.request(
+    backendUrl(s, '/api/chats'),
+    json('POST', body, body.model ? { [MODEL_PICK_HEADER]: '1' } : {})
+  );
   const id = res && typeof res.id === 'string' ? res.id : '';
   if (!id) throw new Error('The agent did not return a chat id.');
   return id;

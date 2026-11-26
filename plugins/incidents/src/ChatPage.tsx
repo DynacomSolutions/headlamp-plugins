@@ -484,7 +484,8 @@ export function ChatView({ id }: { id?: string }) {
   const incidentNames = useIncidentNames(settings, linkedIds);
   const messages = chat.data?.messages ?? [];
   const running = !!chat.data?.running;
-  // Derived: the pick wins, then the chat's own model, then the agent default.
+  // Derived for display: the pick wins, then the model that answered, then the agent default.
+  // Only a pick is sent as a model. Without one the agent applies its default order (with a fallback by usage).
   const model = picked ?? chat.data?.model ?? models.data?.default ?? '';
   const scroll = useStickToBottom(messages);
 
@@ -512,7 +513,7 @@ export function ChatView({ id }: { id?: string }) {
   const onSend = (text: string) =>
     run(async () => {
       if (!id) {
-        const newId = await createChat(settings, model ? { model } : {});
+        const newId = await createChat(settings, picked ? { model: picked } : {});
         try {
           await sendMessage(settings, newId, text, undefined, pushId);
         } finally {
@@ -525,7 +526,7 @@ export function ChatView({ id }: { id?: string }) {
         settings,
         id,
         text,
-        picked && picked !== chat.data?.model ? picked : undefined,
+        picked ?? undefined,
         pushId
       );
       setPicked(null);

@@ -102,8 +102,13 @@ export interface ModelRoute {
 
 export interface ModelRoutesConfig {
   routes: ModelRoute[];
-  /** Model id used when a run names none: `<route>/<model>` or a bare model id. */
+  /** Model id used when a run names none: `<route>/<model>` or a bare model id. The first entry of `defaultOrder`. */
   defaultModel: string;
+  /**
+   * The ordered default models, from AGENT_MODEL (one id, or a comma-separated list). A run with no explicit
+   * model tries them in order and moves to the next only on a usage failure. Absent means just `defaultModel`.
+   */
+  defaultOrder?: string[];
   /** Routes left out because their URL or token variable is empty. */
   skipped: string[];
 }
@@ -156,9 +161,28 @@ function gatewayEnv(name: unknown, field: string, where: string): string {
   return name;
 }
 
+/**
+ * Checks an ordered default list. A single id keeps its old meaning, so a bare model id still works.
+ * With two or more entries each must be `<route>/<model>` and name a route of the routes file. A route with
+ * no credentials is allowed: the run skips it at run time. A repeated entry or an unknown route throws.
+ */
+function checkDefaultOrder(order: string[], routeIds: Set<string>): void {
+  if (order.length < 2) return;
+  const seen = new Set<string>();
+  for (const entry of order) {
+    const slash = entry.indexOf('/');
+    if (slash <= 0 || slash === entry.length - 1) throw new Error(`AGENT_MODEL: "${entry}" must be <route>/<model> when more than one model is listed`);
+    const route = entry.slice(0, slash);
+    if (!routeIds.has(route)) throw new Error(`AGENT_MODEL: unknown route "${route}" in "${entry}". Known routes: ${[...routeIds].join(', ') || 'none'}`);
+    if (seen.has(entry)) throw new Error(`AGENT_MODEL: "${entry}" is listed twice`);
+    seen.add(entry);
+  }
+}
+
 /** Reads the routes from AGENT_MODEL_ROUTES_FILE or AGENT_MODEL_ROUTES, else builds the single legacy route. */
 export function loadModelRoutes(env: NodeJS.ProcessEnv): ModelRoutesConfig {
-  const defaultModel = (env.AGENT_MODEL ?? '').trim();
+  const defaultOrder = list(env.AGENT_MODEL, []);
+  const defaultModel = defaultOrder[0] ?? '';
   const maxTokens = int(env.AGENT_MODEL_MAX_TOKENS, 4096);
   const timeoutMs = int(env.AGENT_MODEL_TIMEOUT_MS, 120_000);
   let raw: string | undefined;
@@ -174,7 +198,8 @@ export function loadModelRoutes(env: NodeJS.ProcessEnv): ModelRoutesConfig {
     if (url && token) {
       routes.push({ id: 'gateway', style: st, baseUrl: url, apiKey: token, headers: headerMap(env.AGENT_MODEL_HEADERS ? JSON.parse(env.AGENT_MODEL_HEADERS) : undefined, 'AGENT_MODEL_HEADERS'), systemPrefix: env.AGENT_MODEL_SYSTEM_PREFIX ?? '', maxTokens, timeoutMs });
     } else skipped.push('gateway');
-    return { routes, defaultModel, skipped };
+    checkDefaultOrder(defaultOrder, new Set(['gateway']));
+    return { routes, defaultModel, defaultOrder, skipped };
   }
   const parsed = JSON.parse(raw) as unknown;
   if (!Array.isArray(parsed)) throw new Error('The model routes must be a JSON array');
@@ -214,7 +239,8 @@ export function loadModelRoutes(env: NodeJS.ProcessEnv): ModelRoutesConfig {
       timeoutMs: typeof e.timeoutMs === 'number' && e.timeoutMs > 0 ? Math.floor(e.timeoutMs) : timeoutMs,
     });
   }
-  return { routes, defaultModel, skipped };
+  checkDefaultOrder(defaultOrder, seen);
+  return { routes, defaultModel, defaultOrder, skipped };
 }
 
 const emptyLaunchSettings = (): LaunchSettings => ({ projects: {}, model: { instanceId: '', model: '' }, briefPreamble: '', maxRunning: 2, threadUrlTemplate: '' });

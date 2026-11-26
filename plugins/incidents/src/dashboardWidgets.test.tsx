@@ -66,7 +66,7 @@ const view = (ui: React.ReactNode) =>
     </ThemeProvider>
   );
 
-type Call = { url: string; method: string; body: any };
+type Call = { url: string; method: string; body: any; headers?: Record<string, string> };
 let calls: Call[];
 let pageTotal: number | undefined;
 let served: any[] = DIAGNOSES;
@@ -78,7 +78,12 @@ beforeEach(() => {
   request.mockReset();
   request.mockImplementation(async (url: string, params?: any) => {
     const method = params?.method ?? 'GET';
-    calls.push({ url, method, body: params?.body ? JSON.parse(params.body) : undefined });
+    calls.push({
+      url,
+      method,
+      body: params?.body ? JSON.parse(params.body) : undefined,
+      headers: params?.headers,
+    });
     if (url.includes('/api/diagnoses')) {
       const q = new URL(url, 'http://x').searchParams;
       const offset = Number(q.get('offset') ?? 0);
@@ -331,6 +336,26 @@ describe('list and chat on one dashboard', () => {
     expect(await screen.findByText(/No incident selected/)).toBeTruthy();
   });
 
+  it('sends the pick header, and the model, only when the user picked a model', async () => {
+    both();
+    await openGroup('HighCPU');
+    fireEvent.click(
+      (await screen.findByText('cause HighCPU')).closest('[data-incident-row]') as HTMLElement
+    );
+    await screen.findByText('About incident: HighCPU');
+    fireEvent.click(await screen.findByRole('button', { name: /Claude Opus/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Claude Sonnet/ }));
+    const box = screen.getByLabelText('Message') as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: 'why?' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+    await waitFor(() =>
+      expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/chats'))).toBe(true)
+    );
+    const create = calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!;
+    expect(create.body).toEqual({ diagnosisId: '1', model: 'claude/sonnet' });
+    expect(create.headers?.['x-incidents-model-pick']).toBe('1');
+  });
+
   it('creates the chat with the selected incident and sends the message', async () => {
     both();
     await openGroup('HighCPU');
@@ -345,7 +370,9 @@ describe('list and chat on one dashboard', () => {
       expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/chats'))).toBe(true)
     );
     const create = calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!;
-    expect(create.body).toMatchObject({ diagnosisId: '1', model: 'claude/opus' });
+    // The default is shown but not sent: the agent applies its default order.
+    expect(create.body).toEqual({ diagnosisId: '1' });
+    expect(create.headers?.['x-incidents-model-pick']).toBeUndefined();
     await waitFor(() =>
       expect(calls.find(c => c.url.endsWith('/api/chats/c1/messages'))?.body).toEqual({
         text: 'why?',
@@ -592,7 +619,6 @@ describe('a group as the chat context', () => {
     const create = calls.find(c => c.method === 'POST' && c.url.endsWith('/api/chats'))!;
     // Newest first, and all three in full, with the group name. No short list for a small group.
     expect(create.body).toEqual({
-      model: 'claude/opus',
       diagnosisIds: ['c2', 'c1', 'c0'],
       groupName: 'KubePodCrashLooping',
     });

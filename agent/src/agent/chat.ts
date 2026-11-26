@@ -4,10 +4,13 @@ import { chatDiagnosisIds, DEFAULT_TITLE, type Chat, type ChatMessage, type Chat
 import type { DiagnosisStore } from '../store.js';
 import { ModelCatalogue, UnknownModelError } from './catalogue.js';
 import type { ToolHost } from './engine.js';
-import { ModelClient, type Message, type ToolSpec } from './model.js';
+import type { Message, ToolSpec } from './model.js';
 import type { Diagnosis } from './report.js';
 import { readSkill } from './skill.js';
 import { clip, withReason } from './tools.js';
+
+/** The request header with which the Incidents plugin says that a person picked the model of a chat create request. */
+export const MODEL_PICK_HEADER = 'x-incidents-model-pick';
 
 /** An error with the HTTP status the route answers. */
 export class ChatError extends Error {
@@ -163,11 +166,43 @@ export class ChatService {
 
   constructor(private readonly deps: ChatDeps) {}
 
-  /** The full id of a model, or an empty string when none is configured. Unknown ids throw a 400. */
+  private get catalogue(): ModelCatalogue {
+    return this.deps.catalogue;
+  }
+
+  /** True when the operator picked this chat's model. A chat saved before the default order follows the order (see `ModelCatalogue.isPinned`). */
+  private pinned(chat: Chat): boolean {
+    return this.deps.catalogue.isPinned(chat.modelPinned, chat.model);
+  }
+
+  /**
+   * The model a chat create request picks, or undefined for no pick. An empty id is no pick.
+   * With `pickHeader` (the new plugin sent `x-incidents-model-pick: 1`, so a person picked) any model is a real pick, also the current default.
+   * Without it the request may come from an older plugin bundle, which sent the default it showed: a model that is an entry
+   * of the default order or an earlier default is then no pick, and any other model is a pick.
+   */
+  private createPick(requested: string | undefined, pickHeader: boolean): string | undefined {
+    if (requested === undefined || requested === '') return undefined;
+    if (!pickHeader && this.deps.catalogue.isDefaultEcho(requested)) return undefined;
+    return requested;
+  }
+
+  /** The model a send or patch request picks. Any non-empty model is a real pick: the older plugin sent one only after a pick on these routes. */
+  private pick(requested?: string): string | undefined {
+    return requested === undefined || requested === '' ? undefined : requested;
+  }
+
+  /** The full id of a model, or an empty string when none is configured. Unknown ids throw a 400. No id gives the default that answers first now. */
   private async modelId(requested?: string): Promise<string> {
     const explicit = requested !== undefined && requested !== '';
+    const { catalogue } = this;
+    // An ordered default never resolves its first entry: that route may have no credentials. The first live entry is the default.
+    if (!explicit && catalogue.defaultOrder.length > 1) {
+      const id = catalogue.currentDefault();
+      return catalogue.hasRoute(id) ? id : '';
+    }
     try {
-      const r = await this.deps.catalogue.resolve(explicit ? requested : undefined);
+      const r = await catalogue.resolve(explicit ? requested : undefined);
       return `${r.route.id}/${r.model}`;
     } catch (error) {
       if (error instanceof UnknownModelError) throw new ChatError(400, error.message);
@@ -183,7 +218,8 @@ export class ChatService {
     return kept.slice(0, limit).map(c => summary(this.deps.store, c));
   }
 
-  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }): Promise<{ id: string }> {
+  /** `options.pickHeader` is true when the request carried the model-pick header (see `createPick`). */
+  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }, options: { pickHeader?: boolean } = {}): Promise<{ id: string }> {
     const ids = [...new Set([...(body.diagnosisIds ?? []), ...(body.diagnosisId !== undefined ? [body.diagnosisId] : [])])];
     if (ids.length > MAX_CHAT_INCIDENTS) throw new ChatError(400, `A chat can link at most ${MAX_CHAT_INCIDENTS} incidents`);
     const summaryIds = [...new Set(body.summaryIds ?? [])];
@@ -193,8 +229,10 @@ export class ChatService {
     // An incident that left the store (retention removed it) drops out of the short list. It is not an error.
     const known: string[] = [];
     for (const id of summaryIds) if (await this.deps.diagnoses.get(id)) known.push(id);
-    const model = await this.modelId(body.model);
-    return { id: this.deps.store.create({ model, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };
+    const picked = this.createPick(body.model, options.pickHeader === true);
+    const model = await this.modelId(picked);
+    const modelPinned = picked !== undefined;
+    return { id: this.deps.store.create({ model, modelPinned, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };
   }
 
   private chat(id: string): Chat {
@@ -219,7 +257,11 @@ export class ChatService {
 
   async patch(id: string, body: { title?: string; model?: string }): Promise<ChatSummary> {
     const chat = this.chat(id);
-    if (body.model !== undefined) chat.model = await this.modelId(body.model);
+    if (body.model !== undefined) {
+      const picked = this.pick(body.model);
+      chat.model = await this.modelId(picked);
+      chat.modelPinned = picked !== undefined;
+    }
     if (body.title !== undefined) chat.title = body.title.trim() || DEFAULT_TITLE;
     this.deps.store.save(chat);
     return summary(this.deps.store, chat);
@@ -237,8 +279,10 @@ export class ChatService {
     const chat = this.chat(id);
     if (store.running(chat) || this.turns.has(id)) throw new ChatError(409, 'A turn is already running in this chat');
     if (this.turns.size >= this.deps.maxTurns) throw new ChatError(429, 'Too many chat turns are running. Try again in a moment.');
-    const wanted = model !== undefined && model !== '' ? model : undefined;
-    const resolved = wanted || !chat.model ? await this.modelId(wanted) : chat.model;
+    const wanted = this.pick(model);
+    // An explicit pick pins the chat to that model. Without one a pinned chat keeps its model, and the others use the default order.
+    const pinned = wanted ? true : this.pinned(chat);
+    const resolved = wanted || !pinned ? await this.modelId(wanted) : chat.model;
     if (!resolved) throw new ChatError(503, 'No model is configured');
     // The checks above await, so a parallel send may have won. Check again, then claim the chat without awaiting.
     if (store.running(chat) || this.turns.has(id)) throw new ChatError(409, 'A turn is already running in this chat');
@@ -247,6 +291,7 @@ export class ChatService {
     this.turns.set(id, controller);
 
     chat.model = resolved;
+    chat.modelPinned = pinned;
     const now = new Date().toISOString();
     if (chat.messages.length === 0 && chat.title === DEFAULT_TITLE) chat.title = text.replace(/\s+/g, ' ').trim().slice(0, TITLE_CHARS) || DEFAULT_TITLE;
     chat.messages.push({ id: randomUUID(), role: 'user', text: maskText(text), createdAt: now, status: 'done', steps: [] });
@@ -313,8 +358,8 @@ export class ChatService {
       if (!signal.aborted) store.save(chat);
     };
     try {
-      const resolved = await guard(this.deps.catalogue.resolve(chat.model));
-      const client = new ModelClient(resolved.route, resolved.model);
+      // A pinned chat uses its model as it is. Otherwise the default order applies, with a fallback on a usage failure.
+      const client = await guard(this.deps.catalogue.open(this.pinned(chat) ? chat.model : undefined));
       reply.model = client.name;
       const specs = await guard(host.list());
       const names = new Set(specs.map(s => s.name));
@@ -333,6 +378,9 @@ export class ChatService {
       let answered = false;
       for (let round = 0; round < budget + EXTRA_ROUNDS; round++) {
         const completion = await guard(client.complete({ system, messages: trimHistory([...past, ...turn]), tools: toolSpecs, session: chat.id }));
+        // The default order can move to the next model, so the record names the one that answered.
+        reply.model = client.name;
+        if (!this.pinned(chat)) chat.model = client.name;
         const text = completion.text.trim();
         if (text) {
           texts.push(text);

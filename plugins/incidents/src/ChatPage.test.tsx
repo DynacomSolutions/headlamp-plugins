@@ -20,7 +20,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 
 import { ChatPage } from './ChatPage';
 
-type Calls = { url: string; method: string; body: any }[];
+type Calls = { url: string; method: string; body: any; headers?: Record<string, string> }[];
 let calls: Calls;
 let chat: any;
 
@@ -30,7 +30,12 @@ beforeEach(() => {
   request.mockReset();
   request.mockImplementation(async (url: string, params?: any) => {
     const method = params?.method ?? 'GET';
-    calls.push({ url, method, body: params?.body ? JSON.parse(params.body) : undefined });
+    calls.push({
+      url,
+      method,
+      body: params?.body ? JSON.parse(params.body) : undefined,
+      headers: params?.headers,
+    });
     if (url.endsWith('/api/models')) return { default: 'claude/opus', models: MODELS };
     if (url.includes('/api/chats?')) return { chats: [{ ...chat, messages: undefined }] };
     if (method === 'POST' && url.endsWith('/api/chats')) return { id: 'new1' };
@@ -93,7 +98,7 @@ describe('ChatPage', () => {
     fireEvent.click(stop);
     await waitFor(() => expect(posts().some(p => p.url.endsWith('/cancel'))).toBe(true));
   });
-  it('creates a chat with the default model, sends, then opens it', async () => {
+  it('creates a chat without a model when none is picked, sends, then opens it', async () => {
     renderAt('/incidents/chat');
     expect(await screen.findByText(/What do you want to know/)).toBeTruthy();
     await screen.findByRole('button', { name: /Claude Opus/ });
@@ -101,12 +106,25 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(posts()).toHaveLength(2));
     expect(posts()[0].url).toMatch(/\/api\/chats$/);
-    expect(posts()[0].body).toEqual({ model: 'claude/opus' });
+    // The default is shown but not sent: the agent applies its default order, with a fallback by usage.
+    expect(posts()[0].body).toEqual({});
+    // No pick, so no pick header: an older agent and a newer one both read this as no model chosen.
+    expect(posts()[0].headers?.['x-incidents-model-pick']).toBeUndefined();
     expect(posts()[1].url).toContain('/api/chats/new1/messages');
     expect(posts()[1].body).toEqual({ text: 'status?' });
     expect((await screen.findByTestId('loc')).textContent).toBe(
       '/c/test/incidents-chat-thread/new1'
     );
+  });
+  it('creates a chat with the model the user picked', async () => {
+    renderAt('/incidents/chat');
+    fireEvent.click(await screen.findByRole('button', { name: /Claude Opus/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Claude Sonnet/ }));
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'status?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(posts()).toHaveLength(2));
+    expect(posts()[0].body).toEqual({ model: 'claude/sonnet' });
+    expect(posts()[0].headers?.['x-incidents-model-pick']).toBe('1');
   });
   it('links to the diagnosis and the chat list with cluster-scoped URLs', async () => {
     renderAt('/incidents/chat/c1');

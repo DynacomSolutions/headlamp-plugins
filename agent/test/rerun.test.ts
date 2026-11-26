@@ -24,7 +24,7 @@ vi.mock('../src/agent/engine.js', () => ({
   }),
 }));
 
-const { startServer } = await import('../src/server.js');
+const { startServer, Runner } = await import('../src/server.js');
 
 const route = (id: string, models: string[]) => ({ id, style: 'openai' as const, baseUrl: 'http://127.0.0.1:1', apiKey: 'k', headers: {}, systemPrefix: '', models, maxTokens: 10, timeoutMs: 500 });
 
@@ -99,6 +99,25 @@ describe('POST /api/diagnoses/:id/rerun', () => {
     expect(engine.models).toEqual(['one/a']);
     expect((await reader.page()).total).toBe(1);
     await server.close();
+  });
+
+  it('resumes a record with no modelPinned by the default order, and a pinned one by its model', async () => {
+    const c = config();
+    c.models = { ...c.models, defaultOrder: ['one/a', 'two/c'] };
+    const store = await podStore(db, { owner: 'S' });
+    const runner = new Runner({ toolHost: () => ({}) } as never, store, c);
+    // An old record holds the old default and no flag.
+    const oldRecord = failed('old', { status: 'queued', model: 'codex/gpt-6.2-sol' });
+    await reader.put(oldRecord);
+    await runner.resume(oldRecord);
+    await until(async () => (await read('old')).status === 'done');
+    expect(engine.models).toEqual(['one/a']);
+    const pinnedRecord = failed('pinned', { status: 'queued', model: 'two/c', modelPinned: true });
+    await reader.put(pinnedRecord);
+    await runner.resume(pinnedRecord);
+    await until(async () => (await read('pinned')).status === 'done');
+    expect(engine.models).toEqual(['one/a', 'two/c']);
+    await runner.drain();
   });
 
   it('uses the model that the body names', async () => {
