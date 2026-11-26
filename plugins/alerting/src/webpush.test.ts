@@ -171,10 +171,32 @@ describe('service worker', () => {
     expect(shown[0][0]).toBe('Down');
     expect(shown[0][1]).toMatchObject({
       body: 'b',
-      tag: 't',
       requireInteraction: true,
-      data: { url: '/x' },
+      data: { url: '/x', tag: 't' },
     });
+  });
+  it('gives every push its own notification tag so they do not replace each other', async () => {
+    const { handlers, shown } = load();
+    for (let i = 0; i < 2; i++) {
+      const e = pushEvent({ title: 'Test', tag: 'watchdog-test' });
+      handlers.push(e);
+      await Promise.all(e.waits);
+    }
+    const [a, b] = shown.map(s => s[1]);
+    expect(a.tag).not.toBe(b.tag);
+    expect(a.tag.startsWith('watchdog-test-')).toBe(true);
+    expect(b.tag.startsWith('watchdog-test-')).toBe(true);
+    expect(a.data.tag).toBe('watchdog-test');
+    expect(b.data.tag).toBe('watchdog-test');
+    expect(a.renotify).toBeUndefined();
+  });
+  it('falls back to the alert tag when the payload has none', async () => {
+    const { handlers, shown } = load();
+    const e = pushEvent({ title: 'Down' });
+    handlers.push(e);
+    await Promise.all(e.waits);
+    expect(shown[0][1].tag.startsWith('alert-')).toBe(true);
+    expect(shown[0][1].data.tag).toBe('alert');
   });
   it('sets the same monochrome badge on every notification', async () => {
     const { handlers, shown } = load();

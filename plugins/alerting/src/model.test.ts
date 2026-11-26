@@ -1,5 +1,5 @@
 /// <reference types="@kinvolk/headlamp-plugin" />
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ALL_CHANNELS,
   channelFromResource,
@@ -9,10 +9,12 @@ import {
   describeChannels,
   emptyChannel,
   emptyRoute,
+  fresherResource,
   manifestFileName,
   parseList,
   parseState,
   parseStatePayload,
+  pollTestResult,
   resolveEndpoint,
   resolveSettings,
   ROUTE_KINDS,
@@ -442,5 +444,135 @@ describe('route wildcard channel', () => {
     expect(describeChannels([])).toBe('All enabled channels');
     expect(describeChannels(undefined)).toBe('All enabled channels');
     expect(describeChannels(['a', 'b'])).toBe('a, b');
+  });
+});
+
+describe('test result polling', () => {
+  const T = '2026-01-01T00:00:00Z';
+  const ch = (rv: string | undefined, handled: boolean, result?: string): any => ({
+    metadata: {
+      ...(rv ? { resourceVersion: rv } : {}),
+      annotations: {
+        'alerting.example.com/test-requested': T,
+        ...(handled ? { 'alerting.example.com/test-handled': T } : {}),
+      },
+    },
+    ...(result ? { status: { lastResult: result } } : {}),
+  });
+  const clock = () => {
+    let t = 0;
+    return { now: () => t, sleep: vi.fn(async (ms: number) => void (t += ms)) };
+  };
+
+  it('stops when the channel is handled on the second poll', async () => {
+    const c = clock();
+    const fetchChannel = vi
+      .fn()
+      .mockResolvedValueOnce(ch('11', false))
+      .mockResolvedValueOnce(ch('12', true, 'ok'));
+    const seen: any[] = [];
+    const r = await pollTestResult({
+      settings: S,
+      initial: ch('10', false),
+      fetchChannel,
+      ...c,
+      onUpdate: x => seen.push(x),
+    });
+    expect(r.outcome).toBe('handled');
+    expect(fetchChannel).toHaveBeenCalledTimes(2);
+    expect(c.sleep).toHaveBeenCalledTimes(2);
+    expect(c.sleep).toHaveBeenCalledWith(2000);
+    expect(testState(r.resource, S)).toMatchObject({ state: 'handled', result: 'ok' });
+    expect(seen).toHaveLength(2);
+  });
+  it('makes no request when the first object is already handled', async () => {
+    const fetchChannel = vi.fn();
+    const r = await pollTestResult({
+      settings: S,
+      initial: ch('10', true, 'ok'),
+      fetchChannel,
+      ...clock(),
+    });
+    expect(r.outcome).toBe('handled');
+    expect(fetchChannel).not.toHaveBeenCalled();
+  });
+  it('times out after 60 s of pending answers', async () => {
+    const c = clock();
+    const fetchChannel = vi.fn().mockResolvedValue(ch('11', false));
+    const r = await pollTestResult({ settings: S, initial: ch('10', false), fetchChannel, ...c });
+    expect(r.outcome).toBe('timeout');
+    expect(fetchChannel).toHaveBeenCalledTimes(30);
+    expect(c.now()).toBe(60000);
+  });
+  it('carries on after a failed fetch', async () => {
+    const fetchChannel = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('net'))
+      .mockResolvedValueOnce(ch('12', true, 'ok'));
+    const r = await pollTestResult({
+      settings: S,
+      initial: ch('10', false),
+      fetchChannel,
+      ...clock(),
+    });
+    expect(r.outcome).toBe('handled');
+  });
+  it('stops when cancelled', async () => {
+    const fetchChannel = vi.fn().mockResolvedValue(ch('11', false));
+    let cancelled = false;
+    const c = clock();
+    const sleep = vi.fn(async (ms: number) => {
+      await c.sleep(ms);
+      cancelled = true;
+    });
+    const r = await pollTestResult({
+      settings: S,
+      initial: ch('10', false),
+      fetchChannel,
+      now: c.now,
+      sleep,
+      cancelled: () => cancelled,
+    });
+    expect(r.outcome).toBe('cancelled');
+    expect(fetchChannel).not.toHaveBeenCalled();
+  });
+  it('ignores an older polled object', async () => {
+    const c = clock();
+    const fetchChannel = vi
+      .fn()
+      .mockResolvedValueOnce(ch('9', true, 'old'))
+      .mockResolvedValueOnce(ch('12', true, 'ok'));
+    const r = await pollTestResult({
+      settings: S,
+      initial: ch('10', false),
+      fetchChannel,
+      ...c,
+    });
+    expect(r.resource.metadata.resourceVersion).toBe('12');
+  });
+
+  describe('fresherResource', () => {
+    it('prefers the higher resourceVersion, compared as numbers', () => {
+      expect(fresherResource(ch('9', false), ch('10', true), false).metadata.resourceVersion).toBe(
+        '10'
+      );
+      expect(fresherResource(ch('10', true), ch('9', false), true).metadata.resourceVersion).toBe(
+        '10'
+      );
+    });
+    it('falls back to the polled object while polling, else the watched one', () => {
+      const w = ch(undefined, false);
+      const p = ch(undefined, true);
+      expect(fresherResource(w, p, true)).toBe(p);
+      expect(fresherResource(w, p, false)).toBe(w);
+      expect(fresherResource(ch('abc', false), ch('10', true), true).metadata.resourceVersion).toBe(
+        '10'
+      );
+    });
+    it('uses whichever object exists', () => {
+      const w = ch('1', false);
+      expect(fresherResource(w, null, true)).toBe(w);
+      expect(fresherResource(undefined, w, false)).toBe(w);
+    });
   });
 });

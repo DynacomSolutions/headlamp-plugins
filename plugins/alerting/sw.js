@@ -17,14 +17,16 @@ function parsePayload(event) {
 self.addEventListener('push', event => {
   const data = parsePayload(event);
   const urgent = data.kind === 'urgent';
+  const payloadTag = typeof data.tag === 'string' && data.tag ? data.tag : 'alert';
   const options = {
     body: typeof data.body === 'string' ? data.body : '',
-    tag: typeof data.tag === 'string' && data.tag ? data.tag : 'alert',
-    renotify: true,
+    // A unique tag per push: a shared tag would replace the earlier notification, so only one
+    // would show at a time. The payload tag stays in data.tag.
+    tag: payloadTag + '-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
     // White logo on transparent. Without it Android shows a plain square in the status bar.
     badge: new URL('badge.png', self.location.href).href,
     requireInteraction: urgent,
-    data: { url: typeof data.url === 'string' && data.url ? data.url : '/' },
+    data: { url: typeof data.url === 'string' && data.url ? data.url : '/', tag: payloadTag },
   };
   event.waitUntil(self.registration.showNotification(data.title || 'Alert', options));
 });

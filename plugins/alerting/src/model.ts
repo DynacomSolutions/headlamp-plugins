@@ -429,6 +429,81 @@ export function testState(cr: any, s: Pick<Settings, 'group'>): TestState {
   };
 }
 
+/** Numeric resourceVersion, or null when absent or not a plain number. */
+function versionOf(o: any): number | null {
+  const v = o?.metadata?.resourceVersion;
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Picks the fresher of the watched object and the polled one. Higher resourceVersion wins when
+ * both have one. Otherwise the polled object wins while polling, and the watched one afterwards.
+ */
+export function fresherResource(watched: any, polled: any, polling: boolean): any {
+  if (!polled) return watched;
+  if (!watched) return polled;
+  const a = versionOf(watched);
+  const b = versionOf(polled);
+  if (a !== null && b !== null) return b > a ? polled : watched;
+  return polling ? polled : watched;
+}
+
+export const TEST_POLL_INTERVAL_MS = 2000;
+export const TEST_POLL_TIMEOUT_MS = 60000;
+export const TEST_POLL_TIMEOUT_MESSAGE =
+  'No answer from the alert backend after 60 s. Refresh to check.';
+
+export interface PollTestOptions {
+  settings: Pick<Settings, 'group'>;
+  /** First fresh object, normally the PATCH response. */
+  initial: any;
+  fetchChannel: () => Promise<any>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  /** Called with every fresher object seen, so the UI can show it. */
+  onUpdate?: (resource: any) => void;
+  cancelled?: () => boolean;
+  intervalMs?: number;
+  timeoutMs?: number;
+}
+
+export interface PollTestResult {
+  outcome: 'handled' | 'timeout' | 'cancelled';
+  resource: any;
+}
+
+/**
+ * Polls one channel until its test is no longer pending, the timeout passes or the caller cancels.
+ * A failed fetch counts as a missed poll and the loop carries on.
+ */
+export async function pollTestResult(o: PollTestOptions): Promise<PollTestResult> {
+  const interval = o.intervalMs ?? TEST_POLL_INTERVAL_MS;
+  const timeout = o.timeoutMs ?? TEST_POLL_TIMEOUT_MS;
+  let latest = o.initial;
+  if (testState(latest, o.settings).state !== 'pending') {
+    return { outcome: 'handled', resource: latest };
+  }
+  const start = o.now();
+  while (o.now() - start < timeout) {
+    await o.sleep(interval);
+    if (o.cancelled?.()) return { outcome: 'cancelled', resource: latest };
+    let fetched: any;
+    try {
+      fetched = await o.fetchChannel();
+    } catch (e) {
+      continue;
+    }
+    if (o.cancelled?.()) return { outcome: 'cancelled', resource: latest };
+    latest = fresherResource(latest, fetched, true);
+    o.onUpdate?.(latest);
+    if (testState(latest, o.settings).state !== 'pending') {
+      return { outcome: 'handled', resource: latest };
+    }
+  }
+  return { outcome: 'timeout', resource: latest };
+}
+
 /* ---------- service proxy ---------- */
 
 /**
