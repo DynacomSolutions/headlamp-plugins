@@ -127,8 +127,8 @@ layout change. The Incidents pages are unchanged.
 The sidebar entry **Notifications** (`/incidents/notifications`) turns push notifications on for
 this device. It is a subscription of its own, with its own service worker (`sw.js`, served at
 `/plugins/incidents/sw.js`) and its own key from the agent. It does not change the Alerting plugin.
-On Android the status bar shows the Headlamp logo for one notification and a stack of squares for
-two or more. The badges come from `shared/push`; edit the SVGs there and run
+On Android one notification has the normal Headlamp icon. Two or more show a stack of squares in
+the status bar. The badge comes from `shared/push`; edit the SVG there and run
 `scripts/render-push-badges.sh`.
 
 - **Diagnosis ready** sends the alert name, its severity and the likely cause. A tap opens the

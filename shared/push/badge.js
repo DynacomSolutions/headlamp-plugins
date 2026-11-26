@@ -1,12 +1,25 @@
 /* Status-bar badge for push notifications, shared by the service workers of the plugins.
- * Android shows the badge as the small icon of a notification. One open notification shows the
- * Headlamp logo. Two or more show a stack of squares. The service worker loads this file with
- * importScripts, and the PNGs sit next to it in the plugin directory. */
-const BADGE_ONE = new URL('badge.png', self.location.href).href;
+ * Android shows the badge as the small icon of a notification. One open notification sets no
+ * badge, so Android shows the normal Headlamp icon. Two or more show a stack of squares. The
+ * service worker loads this file with importScripts, and the PNG sits next to it in the plugin
+ * directory. */
 const BADGE_STACK = new URL('badge-stack.png', self.location.href).href;
 
+/* The badge for a count of open notifications. Undefined means no badge. */
 function badgeFor(count) {
-  return count > 1 ? BADGE_STACK : BADGE_ONE;
+  return count > 1 ? BADGE_STACK : undefined;
+}
+
+/* A notification with no badge reports an empty string. */
+function badgeOf(notification) {
+  return notification.badge || undefined;
+}
+
+function withBadge(options, badge) {
+  const next = Object.assign({}, options);
+  delete next.badge;
+  if (badge) next.badge = badge;
+  return next;
 }
 
 /* Shows the notification again with a new badge. It is silent and keeps its time, so the user
@@ -14,18 +27,23 @@ function badgeFor(count) {
 function rebadge(notifications, badge) {
   return Promise.all(
     notifications
-      .filter(n => n.badge !== badge)
+      .filter(n => badgeOf(n) !== badge)
       .map(n =>
-        self.registration.showNotification(n.title, {
-          body: n.body,
-          tag: n.tag,
-          data: n.data,
-          requireInteraction: n.requireInteraction,
-          timestamp: n.timestamp,
-          badge,
-          silent: true,
-          renotify: false,
-        })
+        self.registration.showNotification(
+          n.title,
+          withBadge(
+            {
+              body: n.body,
+              tag: n.tag,
+              data: n.data,
+              requireInteraction: n.requireInteraction,
+              timestamp: n.timestamp,
+              silent: true,
+              renotify: false,
+            },
+            badge
+          )
+        )
       )
   );
 }
@@ -37,7 +55,7 @@ function showBadgedNotification(title, options) {
     const others = open.filter(n => n.tag !== options.tag);
     const badge = badgeFor(others.length + 1);
     return self.registration
-      .showNotification(title, Object.assign({}, options, { badge }))
+      .showNotification(title, withBadge(options, badge))
       .then(() => rebadge(others, badge));
   });
 }

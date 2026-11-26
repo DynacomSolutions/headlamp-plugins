@@ -136,7 +136,8 @@ describe('device helpers', () => {
 });
 
 describe('service worker', () => {
-  const ONE = 'https://dash.example.com/plugins/alerting/badge.png';
+  // A notification with no badge reports an empty string.
+  const ONE = '';
   const STACK = 'https://dash.example.com/plugins/alerting/badge-stack.png';
   /* importScripts runs the helper in the global scope of the worker, so the test puts the helper
    * source in front of the worker source. */
@@ -173,24 +174,25 @@ describe('service worker', () => {
     timestamp: 1,
     badge,
   });
+  const hasNoBadge = (options: any) => expect('badge' in options).toBe(false);
   it('loads the badge helper', () => {
     expect(load().importScripts).toHaveBeenCalledWith('push-badge.js');
   });
-  it('shows the logo badge for one notification', async () => {
+  it('sets no badge for one notification, so Android shows the normal icon', async () => {
     const { handlers, shown } = load();
-    const e = pushEvent({ title: 'Down', tag: 't' });
+    const e = pushEvent({ title: 'Down', tag: 't', badge: 'x' });
     handlers.push(e);
     await Promise.all(e.waits);
     expect(shown).toHaveLength(1);
-    expect(shown[0][1].badge).toBe(ONE);
+    hasNoBadge(shown[0][1]);
   });
-  it('replaces a notification with the same tag and keeps the logo badge', async () => {
-    const { handlers, shown } = load([notification('t', ONE)]);
+  it('replaces a notification with the same tag and sets no badge', async () => {
+    const { handlers, shown } = load([notification('t', STACK)]);
     const e = pushEvent({ title: 'Down', tag: 't' });
     handlers.push(e);
     await Promise.all(e.waits);
     expect(shown).toHaveLength(1);
-    expect(shown[0][1].badge).toBe(ONE);
+    hasNoBadge(shown[0][1]);
   });
   it('shows the stack badge on all notifications when two are open', async () => {
     const { handlers, shown } = load([notification('a', ONE), notification('b', STACK)]);
@@ -209,7 +211,7 @@ describe('service worker', () => {
       timestamp: 1,
     });
   });
-  it('goes back to the logo badge when one notification is left', async () => {
+  it('removes the badge when one notification is left', async () => {
     const { handlers, shown } = load([notification('a', STACK), notification('b', STACK)]);
     const waits: Promise<any>[] = [];
     handlers.notificationclose({
@@ -218,7 +220,8 @@ describe('service worker', () => {
     });
     await Promise.all(waits);
     expect(shown).toHaveLength(1);
-    expect(shown[0][1]).toMatchObject({ tag: 'a', badge: ONE, silent: true });
+    expect(shown[0][1]).toMatchObject({ tag: 'a', silent: true });
+    hasNoBadge(shown[0][1]);
   });
   it('sets the badge of the rest when a notification is tapped', async () => {
     const { handlers, shown, self } = load([notification('a', STACK), notification('b', STACK)]);
@@ -230,7 +233,8 @@ describe('service worker', () => {
     });
     await Promise.all(waits);
     expect(shown).toHaveLength(1);
-    expect(shown[0][1]).toMatchObject({ tag: 'b', badge: ONE });
+    expect(shown[0][1]).toMatchObject({ tag: 'b' });
+    hasNoBadge(shown[0][1]);
   });
   const pushEvent = (payload: any) => {
     const waits: Promise<any>[] = [];

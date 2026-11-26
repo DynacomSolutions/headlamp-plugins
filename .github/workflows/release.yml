@@ -66,7 +66,7 @@ jobs:
           grep -qx "${{ matrix.plugin }}/package.json" <<< "$listing"
           case "${{ matrix.plugin }}" in
             alerting|incidents)
-              for file in sw.js push-badge.js badge.png badge-stack.png; do
+              for file in sw.js push-badge.js badge-stack.png; do
                 grep -qx "${{ matrix.plugin }}/$file" <<< "$listing"
               done
               ;;

@@ -7,7 +7,6 @@
       "LICENSE": "../../LICENSE",
       "sw.js": "sw.js",
       "push-badge.js": "../../shared/push/badge.js",
-      "badge.png": "../../shared/push/badge.png",
       "badge-stack.png": "../../shared/push/badge-stack.png"
     }
   },

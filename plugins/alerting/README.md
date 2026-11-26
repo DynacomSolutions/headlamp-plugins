@@ -73,9 +73,9 @@ when a webpush channel exists:
 The service worker (`sw.js`) is shipped beside `main.js`, so it is served at
 `/plugins/alerting/sw.js` with the default scope `/plugins/alerting/`, which is
 enough for push. It shows the notification (urgent ones stay until dismissed)
-and focuses or opens the dashboard on click. On Android the status bar shows the
-Headlamp logo for one notification and a stack of squares for two or more
-(`badge.png`, `badge-stack.png` and `push-badge.js`, from `shared/push`). Push needs a secure context. On
+and focuses or opens the dashboard on click. On Android one notification has the
+normal Headlamp icon, and two or more show a stack of squares in the status bar
+(`badge-stack.png` and `push-badge.js`, from `shared/push`). Push needs a secure context. On
 iPhone and iPad it only works from an app added to the Home Screen; the page
 says so. The service account needs get, list, watch, create and delete on
 `pushsubscriptions` in the namespace.
