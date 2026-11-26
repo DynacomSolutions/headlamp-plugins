@@ -24,6 +24,7 @@ import {
   applyLive,
   createSubscription,
   deleteLive,
+  followTest,
   requestTestSend,
   useResources,
   useSecretKeys,
@@ -43,6 +44,7 @@ import {
   deviceLabel,
   emptyChannel,
   emptyRoute,
+  fresherResource,
   manifestFileName,
   parseList,
   ROUTE_KINDS,
@@ -56,6 +58,7 @@ import {
   subscriptionName,
   subscriptionParts,
   subscriptionResource,
+  TEST_POLL_TIMEOUT_MESSAGE,
   testState,
   toYaml,
   validateChannel,
@@ -435,28 +438,57 @@ function ChannelEditor(props: {
 }
 
 function TestCell({ cr, settings }: { cr: any; settings: Settings }) {
-  const t = testState(cr, settings);
+  const [fresh, setFresh] = React.useState<any>(null);
+  const [phase, setPhase] = React.useState<'idle' | 'polling' | 'timeout'>('idle');
   const [err, setErr] = React.useState<string | null>(null);
+  const alive = React.useRef(true);
+  React.useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  // The watch can stall (seen on phones), so the polled object may be the fresher one.
+  const t = testState(fresherResource(cr, fresh, phase === 'polling'), settings);
+  const pending = phase === 'polling' || (t.state === 'pending' && phase !== 'timeout');
+  const send = () => {
+    setErr(null);
+    setPhase('polling');
+    requestTestSend(settings, cr.metadata.name)
+      .then((patched: any) => {
+        if (!alive.current) return undefined;
+        setFresh(patched);
+        return followTest(settings, cr.metadata.name, patched, {
+          onUpdate: r => alive.current && setFresh(r),
+          cancelled: () => !alive.current,
+        }).then(r => {
+          if (!alive.current || r.outcome === 'cancelled') return;
+          if (r.outcome === 'timeout') {
+            setPhase('timeout');
+            setErr(TEST_POLL_TIMEOUT_MESSAGE);
+          } else {
+            setPhase('idle');
+          }
+        });
+      })
+      .catch(e => {
+        if (!alive.current) return;
+        setPhase('idle');
+        setErr(String(e?.message || e));
+      });
+  };
   return (
     <Box display="flex" alignItems="center" gap={1}>
-      <Button
-        size="small"
-        variant="outlined"
-        disabled={t.state === 'pending'}
-        onClick={() => {
-          setErr(null);
-          requestTestSend(settings, cr.metadata.name).catch(e => setErr(String(e?.message || e)));
-        }}
-      >
+      <Button size="small" variant="outlined" disabled={pending} onClick={send}>
         Send test
       </Button>
-      {t.state === 'pending' && (
+      {pending && (
         <Box display="flex" alignItems="center" gap={0.5}>
           <CircularProgress size={14} />
           <Typography variant="caption">Pending</Typography>
         </Box>
       )}
-      {t.state === 'handled' && (
+      {!pending && t.state === 'handled' && (
         <StatusLabel status={t.result === 'success' || t.result === 'ok' ? 'success' : 'error'}>
           {t.result || 'handled'}
         </StatusLabel>

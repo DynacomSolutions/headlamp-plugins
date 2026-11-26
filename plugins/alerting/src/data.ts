@@ -3,6 +3,8 @@ import React from 'react';
 import {
   CONFIG_KEY,
   parseStatePayload,
+  PollTestResult,
+  pollTestResult,
   resolveEndpoint,
   resolveSettings,
   secretListingFailed,
@@ -153,6 +155,28 @@ export function requestTestSend(s: Settings, name: string): Promise<any> {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/merge-patch+json' },
     body: JSON.stringify(testRequestPatch(s)),
+  });
+}
+
+/** One live read of a channel, used to follow a test without depending on the watch. */
+export function getChannel(s: Settings, name: string): Promise<any> {
+  return ApiProxy.request(`${collectionPath(s, 'NotificationChannel')}/${name}`);
+}
+
+/** Polls the channel after a test request until the backend has handled it, or gives up. */
+export function followTest(
+  s: Settings,
+  name: string,
+  initial: any,
+  opts: { onUpdate?: (resource: any) => void; cancelled?: () => boolean } = {}
+): Promise<PollTestResult> {
+  return pollTestResult({
+    settings: s,
+    initial,
+    fetchChannel: () => getChannel(s, name),
+    sleep: ms => new Promise(r => setTimeout(r, ms)),
+    now: () => Date.now(),
+    ...opts,
   });
 }
 

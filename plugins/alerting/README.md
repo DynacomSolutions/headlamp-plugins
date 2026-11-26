@@ -67,13 +67,15 @@ when a webpush channel exists:
   `webpush.publicKey`, and creates the `PushSubscription`.
 - **Disable on this device** deletes it and unsubscribes the browser.
 - **Send test** uses the normal test-send annotation and reaches every device
-  of the channel.
+  of the channel. The page polls the channel every 2 s for up to 60 s, so the
+  result shows even when the live watch stalls.
 - The device list shows every subscription and can delete any of them.
 
 The service worker (`sw.js`) is shipped beside `main.js`, so it is served at
 `/plugins/alerting/sw.js` with the default scope `/plugins/alerting/`, which is
 enough for push. It shows the notification (urgent ones stay until dismissed)
-and focuses or opens the dashboard on click. Every notification has the same
+and focuses or opens the dashboard on click. Each push is a separate notification:
+the worker gives it a unique tag, so a new push never replaces an earlier one. Every notification has the same
 badge, the Headlamp logo in white on transparent (`badge.png`, from
 `shared/push`). Without it Android shows a plain square in the status bar.
 Push needs a secure context. On
