@@ -20,7 +20,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 
 import { ChatPage } from './ChatPage';
 
-type Calls = { url: string; method: string; body: any }[];
+type Calls = { url: string; method: string; body: any; headers?: Record<string, string> }[];
 let calls: Calls;
 let chat: any;
 
@@ -30,7 +30,12 @@ beforeEach(() => {
   request.mockReset();
   request.mockImplementation(async (url: string, params?: any) => {
     const method = params?.method ?? 'GET';
-    calls.push({ url, method, body: params?.body ? JSON.parse(params.body) : undefined });
+    calls.push({
+      url,
+      method,
+      body: params?.body ? JSON.parse(params.body) : undefined,
+      headers: params?.headers,
+    });
     if (url.endsWith('/api/models')) return { default: 'claude/opus', models: MODELS };
     if (url.includes('/api/chats?')) return { chats: [{ ...chat, messages: undefined }] };
     if (method === 'POST' && url.endsWith('/api/chats')) return { id: 'new1' };
@@ -103,6 +108,8 @@ describe('ChatPage', () => {
     expect(posts()[0].url).toMatch(/\/api\/chats$/);
     // The default is shown but not sent: the agent applies its default order, with a fallback by usage.
     expect(posts()[0].body).toEqual({});
+    // No pick, so no pick header: an older agent and a newer one both read this as no model chosen.
+    expect(posts()[0].headers?.['x-incidents-model-pick']).toBeUndefined();
     expect(posts()[1].url).toContain('/api/chats/new1/messages');
     expect(posts()[1].body).toEqual({ text: 'status?' });
     expect((await screen.findByTestId('loc')).textContent).toBe(
@@ -117,6 +124,7 @@ describe('ChatPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(posts()).toHaveLength(2));
     expect(posts()[0].body).toEqual({ model: 'claude/sonnet' });
+    expect(posts()[0].headers?.['x-incidents-model-pick']).toBe('1');
   });
   it('links to the diagnosis and the chat list with cluster-scoped URLs', async () => {
     renderAt('/incidents/chat/c1');

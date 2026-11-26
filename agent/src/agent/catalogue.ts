@@ -35,8 +35,8 @@ interface Listed {
 /** How long an exhausted default model is skipped when the endpoint gave no Retry-After. */
 export const COOLDOWN_MS = 5 * 60_000;
 /**
- * Defaults of older releases. The plugin bundle of that time sent the shown default as an explicit pick,
- * so a request that names one of them counts as no pick when a default order is set.
+ * Defaults of older releases. The plugin bundle of that time sent the shown default on chat create,
+ * so a create request with no pick header that names one of them counts as no pick when a default order is set.
  */
 export const PREVIOUS_DEFAULTS: readonly string[] = ['codex/gpt-6.2-sol'];
 const COOLDOWN_MIN_MS = 1000;
@@ -128,12 +128,13 @@ export class ModelCatalogue {
   }
 
   /**
-   * True when an explicit model is only an echo of the default: the current first live entry, or a default of an older release.
-   * The old plugin bundle sent the default it showed as a pick. With one default model nothing is an echo.
+   * True when a model on a chat create request, sent with no pick header, is only an echo of a default: any entry of the
+   * default order, or a default of an older release. The older plugin bundle sent the default it showed as a model on create.
+   * With one default model nothing is an echo.
    */
   isDefaultEcho(id: string | undefined): boolean {
     if (!id || this.defaultOrder.length < 2) return false;
-    return id === this.currentDefault() || PREVIOUS_DEFAULTS.includes(id);
+    return this.defaultOrder.includes(id) || PREVIOUS_DEFAULTS.includes(id);
   }
 
   /**

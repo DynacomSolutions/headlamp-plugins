@@ -398,11 +398,18 @@ AGENT_MODEL=grok/grok-4.7,opencode/qwen4-max,zai/glm-5.4,codex/gpt-6.2-astra
 - A model that a person or an alert picks (`agent_model` annotation, `model` in
   a request, a chat pick, the ACP picker) is used as it is, with no fallback.
   A chat keeps a pick until the person changes it.
-- A chat request (create, send, patch) whose `model` is the current default
-  (the first entry that is not in a cool-down) or an earlier default
-  (`codex/gpt-6.2-sol`) counts as no pick. The older Incidents plugin sent the
-  default it showed as a pick. The agent cannot tell that bundle from a person,
-  so a pick of the current default is not pinned either.
+- A chat create request with the header `x-incidents-model-pick: 1` treats its
+  `model` as a real pick, also when it is the current default. The Incidents
+  plugin sends the header only when the person picked a model. The header needs
+  no body field, so the strict create schema is not affected.
+- A chat create request with no such header may come from an older plugin
+  bundle, which sent the default model it showed. Then a `model` that is an
+  entry of the default order, or an earlier default (`codex/gpt-6.2-sol`), is no
+  pick and the chat follows the order. Any other `model` is a pick.
+- A chat send or patch with any non-empty `model` is a real pick. The older
+  plugin sent a model on these routes only after a pick. An empty `model` on a
+  patch unpins the chat.
+- ACP `session/set_config_option` pins any value of the `model` option.
 - A chat or diagnosis record saved before the default order has no
   `modelPinned` flag. With an ordered default it follows the order. With one
   default model it counts as picked when its model is not the default, as before.
@@ -419,7 +426,7 @@ AGENT_MODEL=grok/grok-4.7,opencode/qwen4-max,zai/glm-5.4,codex/gpt-6.2-astra
   credit or limit;
 - HTTP 502 with the header `x-ais-gateway-error: credential_unavailable`: the
   AIS gateway has no valid upstream login for the route. It counts as
-  `missing_credentials` and is never retried;
+  `missing_credentials`. It is never retried, also with a single model;
 - a Responses stream that fails with a usage code, or with 429 or 402;
 - a route with no credentials (counted as `missing_credentials`).
 

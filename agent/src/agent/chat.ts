@@ -9,6 +9,9 @@ import type { Diagnosis } from './report.js';
 import { readSkill } from './skill.js';
 import { clip, withReason } from './tools.js';
 
+/** The request header with which the Incidents plugin says that a person picked the model of a chat create request. */
+export const MODEL_PICK_HEADER = 'x-incidents-model-pick';
+
 /** An error with the HTTP status the route answers. */
 export class ChatError extends Error {
   constructor(
@@ -172,10 +175,21 @@ export class ChatService {
     return this.deps.catalogue.isPinned(chat.modelPinned, chat.model);
   }
 
-  /** The model a request picks, or undefined for no pick. An empty id and an echo of the default (sent by an old plugin bundle) are no pick. */
-  private pick(requested?: string): string | undefined {
-    if (requested === undefined || requested === '' || this.deps.catalogue.isDefaultEcho(requested)) return undefined;
+  /**
+   * The model a chat create request picks, or undefined for no pick. An empty id is no pick.
+   * With `pickHeader` (the new plugin sent `x-incidents-model-pick: 1`, so a person picked) any model is a real pick, also the current default.
+   * Without it the request may come from an older plugin bundle, which sent the default it showed: a model that is an entry
+   * of the default order or an earlier default is then no pick, and any other model is a pick.
+   */
+  private createPick(requested: string | undefined, pickHeader: boolean): string | undefined {
+    if (requested === undefined || requested === '') return undefined;
+    if (!pickHeader && this.deps.catalogue.isDefaultEcho(requested)) return undefined;
     return requested;
+  }
+
+  /** The model a send or patch request picks. Any non-empty model is a real pick: the older plugin sent one only after a pick on these routes. */
+  private pick(requested?: string): string | undefined {
+    return requested === undefined || requested === '' ? undefined : requested;
   }
 
   /** The full id of a model, or an empty string when none is configured. Unknown ids throw a 400. No id gives the default that answers first now. */
@@ -204,7 +218,8 @@ export class ChatService {
     return kept.slice(0, limit).map(c => summary(this.deps.store, c));
   }
 
-  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }): Promise<{ id: string }> {
+  /** `options.pickHeader` is true when the request carried the model-pick header (see `createPick`). */
+  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }, options: { pickHeader?: boolean } = {}): Promise<{ id: string }> {
     const ids = [...new Set([...(body.diagnosisIds ?? []), ...(body.diagnosisId !== undefined ? [body.diagnosisId] : [])])];
     if (ids.length > MAX_CHAT_INCIDENTS) throw new ChatError(400, `A chat can link at most ${MAX_CHAT_INCIDENTS} incidents`);
     const summaryIds = [...new Set(body.summaryIds ?? [])];
@@ -214,7 +229,7 @@ export class ChatService {
     // An incident that left the store (retention removed it) drops out of the short list. It is not an error.
     const known: string[] = [];
     for (const id of summaryIds) if (await this.deps.diagnoses.get(id)) known.push(id);
-    const picked = this.pick(body.model);
+    const picked = this.createPick(body.model, options.pickHeader === true);
     const model = await this.modelId(picked);
     const modelPinned = picked !== undefined;
     return { id: this.deps.store.create({ model, modelPinned, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };

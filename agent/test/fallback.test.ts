@@ -360,6 +360,14 @@ describe('ordered default models', () => {
     expect(c.isExhausted('qwen/q')).toBe(false);
   });
 
+  it('never retries a gateway credential failure, also with one default model', async () => {
+    const one: ModelRoutesConfig = { routes: [route('grok')], defaultModel: 'grok/g', defaultOrder: ['grok/g'], skipped: [] };
+    gateway.answers = { grok: [fail(502, { error: { message: 'AIS gateway: upstream credential unavailable' } }, { [GATEWAY_ERROR_HEADER]: 'credential_unavailable' })] };
+    const { c } = catalogue(one);
+    await expect((await open(c)).complete(req)).rejects.toMatchObject({ status: 502 });
+    expect(gateway.hits).toEqual(['grok']);
+  });
+
   it('is plain with one default model', async () => {
     const one: ModelRoutesConfig = { routes: [route('grok')], defaultModel: 'grok/g', defaultOrder: ['grok/g'], skipped: [] };
     gateway.answers = { grok: [fail(429, 'limit')] };
@@ -423,8 +431,8 @@ describe('records the model that answered', () => {
     vi.useFakeTimers({ toFake: ['setTimeout'] });
     gateway.answers = { qwen: [fail(429, 'limit')], glm: [ok('from glm')] };
     const { chats } = chatService();
-    // The model is not the default, so it is a real pick.
-    const { id } = await chats.create({ model: 'qwen/q' });
+    // The pick header says that a person picked it.
+    const { id } = await chats.create({ model: 'qwen/q' }, { pickHeader: true });
     await chats.send(id, 'hello');
     for (let i = 0; i < 20 && (chats.get(id) as any).running; i++) await vi.advanceTimersByTimeAsync(5000);
     const chat = chats.get(id) as any;
@@ -481,30 +489,52 @@ describe('records the model that answered', () => {
     expect(ordered.isPinned(true, 'qwen/q')).toBe(true);
   });
 
-  it('an echo of the default is no pick: the current default and the old default', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    gateway.answers = { grok: [fail(429, 'limit', { 'retry-after': '60' })], qwen: [ok('from qwen')] };
-    const { chats, c } = chatService();
+  it('a create with no pick header treats an entry of the default order, or an old default, as no pick', async () => {
+    const { chats, c, store } = chatService();
     expect(PREVIOUS_DEFAULTS).toContain('codex/gpt-6.2-sol');
-    // The old plugin sends the default it shows on create and on send.
-    const a = await chats.create({ model: 'grok/g' });
-    expect(chats.get(a.id)).toMatchObject({ model: 'grok/g' });
-    await chats.send(a.id, 'hello', 'grok/g');
-    for (let i = 0; i < 20 && (chats.get(a.id) as any).running; i++) await vi.advanceTimersByTimeAsync(5000);
-    // Not pinned: it fell through to qwen.
-    expect((chats.get(a.id) as any).messages[1]).toMatchObject({ status: 'done', model: 'qwen/q' });
-    // The shown default is now qwen, and an echo of it, or of the old default, is still no pick.
-    expect(c.currentDefault()).toBe('qwen/q');
-    const b = await chats.create({ model: 'codex/gpt-6.2-sol' });
-    expect(chats.get(b.id)).toMatchObject({ model: 'qwen/q' });
-    const d = await chats.create({ model: 'qwen/q' });
-    gateway.hits = [];
-    await chats.send(d.id, 'hello', 'codex/gpt-6.2-sol');
-    for (let i = 0; i < 20 && (chats.get(d.id) as any).running; i++) await vi.advanceTimersByTimeAsync(5000);
-    expect(gateway.hits).toEqual(['qwen']);
-    // A real pick of another model is still pinned, and has no fallback.
-    const e = await chats.create({ model: 'glm/z' });
-    expect(chats.get(e.id)).toMatchObject({ model: 'glm/z' });
+    const pinned = (id: string) => store.get(id)!.modelPinned;
+    // The older plugin sent the default it showed. Any entry of the order, and the old default, is an echo.
+    for (const echo of ['grok/g', 'qwen/q', 'glm/z', 'astra/a', 'codex/gpt-6.2-sol']) {
+      const { id } = await chats.create({ model: echo });
+      expect(pinned(id)).toBe(false);
+      expect(chats.get(id)).toMatchObject({ model: c.currentDefault() });
+    }
+    // Any other model is a pick.
+    const real = await chats.create({ model: 'grok/x' });
+    expect(store.get(real.id)).toMatchObject({ model: 'grok/x', modelPinned: true });
+  });
+
+  it('a create with the pick header pins any model, also the current default', async () => {
+    const { chats, store } = chatService();
+    const a = await chats.create({ model: 'grok/g' }, { pickHeader: true });
+    expect(store.get(a.id)).toMatchObject({ model: 'grok/g', modelPinned: true });
+    const b = await chats.create({ model: 'qwen/q' }, { pickHeader: true });
+    expect(store.get(b.id)).toMatchObject({ model: 'qwen/q', modelPinned: true });
+    // The header with no model is no pick.
+    const c = await chats.create({}, { pickHeader: true });
+    expect(store.get(c.id)!.modelPinned).toBe(false);
+  });
+
+  it('a send or patch with any model is a real pick, also the current default', async () => {
+    gateway.answers = { grok: [ok('from grok')], glm: [ok('from glm')] };
+    const { chats, store } = chatService();
+    // A chat pinned to glm. The user picks the current default (grok) and sends: it runs on grok and stays pinned.
+    const { id } = await chats.create({ model: 'glm/z' }, { pickHeader: true });
+    expect(store.get(id)).toMatchObject({ model: 'glm/z', modelPinned: true });
+    await chats.send(id, 'hello', 'grok/g');
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[1]).toMatchObject({ status: 'done', text: 'from grok', model: 'grok/g' });
+    expect(gateway.hits).toEqual(['grok']);
+    expect(store.get(id)).toMatchObject({ model: 'grok/g', modelPinned: true });
+    // A patch to the current default pins as well.
+    const other = await chats.create({ model: 'glm/z' }, { pickHeader: true });
+    await chats.patch(other.id, { model: 'grok/g' });
+    expect(store.get(other.id)).toMatchObject({ model: 'grok/g', modelPinned: true });
+    // An old default on send is a real pick too, and it is refused when the model is not listed.
+    await expect(chats.send(id, 'again', 'codex/gpt-6.2-sol')).rejects.toMatchObject({ status: 400 });
+    // An empty model on patch unpins and uses the order.
+    await chats.patch(other.id, { model: '' });
+    expect(store.get(other.id)).toMatchObject({ model: 'grok/g', modelPinned: false });
   });
 
   it('a diagnosis run records the model that answered', async () => {
@@ -540,6 +570,43 @@ describe('records the model that answered', () => {
       expect(text).toContain('headlamp_agent_model_exhausted{model="qwen/q"} 0');
       listed = (await (await get('/api/models')).json()) as any;
       expect(listed.default).toBe('qwen/q');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('reads the pick header on chat create over HTTP, and the strict create schema accepts it', async () => {
+    // A gateway credential failure is never retried, so a pinned chat fails at once and an unpinned one moves to the next model.
+    const credential = () => fail(502, { error: { message: 'AIS gateway: upstream credential unavailable' } }, { [GATEWAY_ERROR_HEADER]: 'credential_unavailable' });
+    const config = { ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir, models: cfg() };
+    const server = await startServer(config, 'test');
+    const base = `http://127.0.0.1:${server.port}`;
+    const post = async (path: string, body: unknown, headers: Record<string, string> = {}) => realFetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+    const run = async (headers: Record<string, string>) => {
+      gateway.answers = { grok: [credential()], qwen: [ok('from qwen')] };
+      const res = await post('/api/chats', { model: 'grok/g' }, headers);
+      expect(res.status).toBe(201);
+      const { id } = (await res.json()) as { id: string };
+      expect((await post(`/api/chats/${id}/messages`, { text: 'hi' })).status).toBe(202);
+      return id;
+    };
+    try {
+      const waitDone = async (id: string) => {
+        for (let i = 0; i < 400; i++) {
+          const chat = (await (await realFetch(`${base}/api/chats/${id}`)).json()) as any;
+          if (!chat.running) return chat;
+          await new Promise(r => setTimeout(r, 5));
+        }
+        throw new Error('the turn did not finish');
+      };
+      gateway.hits = [];
+      const withHeader = await waitDone(await run({ 'x-incidents-model-pick': '1' }));
+      expect(withHeader.messages[1]).toMatchObject({ status: 'failed', model: 'grok/g' });
+      expect(gateway.hits).toEqual(['grok']);
+      gateway.hits = [];
+      const noHeader = await waitDone(await run({}));
+      expect(noHeader.messages[1]).toMatchObject({ status: 'done', text: 'from qwen', model: 'qwen/q' });
+      expect(gateway.hits).toEqual(['grok', 'qwen']);
     } finally {
       await server.close();
     }

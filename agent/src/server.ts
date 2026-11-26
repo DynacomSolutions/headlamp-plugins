@@ -4,7 +4,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { z } from 'zod';
 import { loadConfig, modelConfigured, type Config } from './config.js';
 import { AlertGate, diagnosisIdFor, fingerprint, parseAlerts } from './alerts.js';
-import { ChatError, ChatService } from './agent/chat.js';
+import { ChatError, ChatService, MODEL_PICK_HEADER } from './agent/chat.js';
 import { ChatStore } from './chats.js';
 import { diagnose } from './agent/engine.js';
 import { ModelCatalogue, UnknownModelError } from './agent/catalogue.js';
@@ -722,7 +722,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
             const limit = Math.min(Number(url.searchParams.get('limit') ?? 50) || 50, 200);
             return send(res, 200, { chats: chats.list(limit, url.searchParams.get('diagnosisId') || undefined) });
           }
-          if (!id && req.method === 'POST') return send(res, 201, await chats.create(await chatBody(req, createChatSchema)));
+          if (!id && req.method === 'POST') return send(res, 201, await chats.create(await chatBody(req, createChatSchema), { pickHeader: req.headers[MODEL_PICK_HEADER] === '1' }));
           if (id && !action && req.method === 'GET') return send(res, 200, chats.get(id));
           if (id && !action && req.method === 'PATCH') return send(res, 200, await chats.patch(id, await chatBody(req, patchChatSchema)));
           if (id && !action && req.method === 'DELETE') {
