@@ -22,7 +22,7 @@ Words in this document: "MUST", "MUST NOT" and "MAY" have the meaning in RFC 211
 1. The client sends `POST /mcp` with `initialize`. The server picks the highest version that both sides know.
 2. The server answers with the `Mcp-Session-Id` response header. The value is an opaque string of at most 128 visible ASCII characters.
 3. The client MUST send `Mcp-Session-Id` and `MCP-Protocol-Version` on every later request.
-4. The client opens the push stream with `GET /mcp`, header `Accept: text/event-stream` and `Mcp-Session-Id`. The server sends all notifications on this stream. At most one push stream is open per session. A second `GET` closes the older stream.
+4. The client opens the push stream with `GET /mcp`, header `Accept: text/event-stream` and `Mcp-Session-Id`. The server sends all notifications on this stream. At most one push stream is open per session. A second `GET` while a stream is open fails with HTTP 409. The client retries after the server notices the closed connection.
 5. The client sends `DELETE /mcp` with `Mcp-Session-Id` to end the session.
 6. A session ends when it is deleted, or 30 minutes after its last request while no push stream is open. An open push stream keeps the session alive. The server sends an SSE comment line (`: keep-alive`) every 25 seconds.
 7. The server keeps at most 200 sessions. When the limit is reached, `initialize` fails with HTTP 503 and `Retry-After: 30`.
@@ -76,18 +76,7 @@ The Service MUST get `sessionAffinity: ClientIP` (timeout 1800 seconds). During 
 
 ### 2.1 ACP endpoint
 
-| Item | Value |
-| --- | --- |
-| Path | `/acp` |
-| Transport | WebSocket (RFC 6455), subprotocol `acp.v1` |
-| Framing | One JSON-RPC 2.0 message per WebSocket text frame, **newline-delimited**: the frame text ends with `\n`. A receiver MUST also accept a frame without the final newline. A frame holds exactly one message. |
-| Messages | The same ACP messages as the stdio agent (`headlamp-agent acp`): `initialize`, `session/new`, `session/prompt`, `session/update` and the rest of the ACP version the stdio agent speaks. |
-| Authentication | The same bearer token as MCP (section 4). The token goes in the `Authorization` header of the WebSocket upgrade request. A browser client cannot set it, so the query parameter `access_token` is NOT supported. |
-| Scope | `agent:investigate` |
-| Limits | 20 concurrent ACP connections. Maximum frame size 1 MiB. The server pings every 25 seconds and closes a connection that does not answer in 60 seconds. |
-| Close codes | `1000` normal. `4401` authentication failed. `4403` scope missing. `4429` connection limit reached. `1001` the server is draining. |
-
-A failed upgrade returns HTTP `401` or `403` with the error body of section 4.5. ACP incident diagnoses publish through the same diagnosis store as webhook diagnoses, so they raise the same events (section 7).
+The ACP endpoint is `/acp` on the same Service and port (`ws://headlamp-agent.headlamp-agent.svc/acp`). It uses the same token file and the same scope check as MCP (section 4). Its scope is `agent:investigate`. The file [docs/acp-endpoint.md](acp-endpoint.md) is the authority for the framing, limits, close codes and error answers of ACP. This contract does not repeat them. ACP diagnoses publish through the same diagnosis store as webhook diagnoses, so they raise the same events (section 7).
 
 ## 3. Identifiers and shared types
 
@@ -236,36 +225,40 @@ No scope implies another scope. A client that writes notes needs `incidents:read
 
 ### 4.3 Tokens in a Kubernetes Secret
 
+MCP and ACP share one token module (`agent/src/auth/scopes.ts`) and one token file.
+
 | Item | Value |
 | --- | --- |
-| Secret | `headlamp-agent-mcp` in namespace `headlamp-agent` (sealed in the chart, like `headlamp-agent-push`) |
-| Key `<client>.token` | The token of one client. |
-| Key `<client>.scopes` | The scopes of that client, separated by single spaces. |
-| `<client>` | A DNS label, 1 to 40 characters of `a-z0-9-`. It is the actor name in audit entries, timeline entries and metrics. |
-| Mount | Read-only at `/run/mcp-tokens`. The environment variable `MCP_TOKENS_DIR` names the directory. The Secret is `optional`: without it only anonymous mode applies. |
+| Secret | `headlamp-agent-api-tokens` in namespace `headlamp-agent` (sealed in the chart) |
+| Key | `tokens.json` |
+| Mount | Read-only file. The environment variable `AGENT_API_TOKENS_FILE` names the file. |
+| Format | A JSON array: `[{ "name": "example-client", "token": "<at least 16 characters>", "scopes": ["incidents:read"] }]`. An entry may have `"sha256"` (64 hex characters, the SHA-256 of the token) in place of `token`. |
 
-The server reads the directory at start and again at most every 30 seconds when a request carries an unknown token, so a rotation needs no restart. It compares the SHA-256 digests of tokens in constant time. An unknown scope name in `<client>.scopes` makes the server ignore that client and count `reason="bad_scopes"` in the auth failure metric.
+- `name` is the client name. It is the actor in audit entries and timeline entries, and the `client` label of metrics. Use a DNS label of 1 to 40 characters of `a-z0-9-`.
+- `scopes` lists scope names from section 4.2. An entry with a scope name that this contract does not define is refused, and the failure counts as `bad_scopes`.
+- The agent reads the file again when it changes. A Secret update needs no restart.
+- The agent compares SHA-256 digests in constant time. It never logs a token.
+- Two clients MUST NOT share a token.
 
-A token maps to scopes by the client name of its key pair. Two clients MUST NOT share a token. The server refuses to load a directory where two clients have the same token.
-
-### 4.4 Other credentials
+### 4.4 Other callers
 
 | Caller | Scopes granted |
 | --- | --- |
-| Valid bearer token | The scopes of that client. |
-| No token, and `MCP_AUTH=optional` (default in 1.0.0) | `registry:read` only. This keeps the existing anonymous read-only clients working. These callers cannot subscribe. |
-| No token, and `MCP_AUTH=required` | None. HTTP 401. |
-| Request on the `session` port, from a trusted proxy (the existing Headlamp session trust) | All scopes in section 4.2. The actor name is the value the session trust gives (`X-Remote-User`). |
+| Valid bearer token | The scopes of that entry. |
+| No `Authorization` header, and `MCP_AUTH=optional` (default in 1.0.0) | `registry:read` only. This keeps the existing anonymous read-only clients working. These callers get no session and cannot subscribe. |
+| No `Authorization` header, and `MCP_AUTH=required` | None. HTTP 401. |
+| Request on the `session` port | Not served in 1.0.0. The listener treats the request like one on the main port. |
 
-An invalid or expired token always fails with HTTP 401, in both modes. A later release changes the default of `MCP_AUTH` to `required`. That change is announced as a minor contract version.
+A request that carries a bearer header with an unknown token, a token with unknown scopes, or no token file at all, fails with HTTP 401 in both modes. A later release changes the default of `MCP_AUTH` to `required`. That change is announced as a minor contract version. ACP always needs a token (docs/acp-endpoint.md).
 
 ### 4.5 Auth failures
 
 | Case | Response |
 | --- | --- |
-| Missing token, mode `required` | HTTP 401, header `WWW-Authenticate: Bearer realm="headlamp-agent"`, body `{ "error": { "code": "unauthenticated", "message": "..." } }`. |
+| Missing header, mode `required` | HTTP 401, header `WWW-Authenticate: Bearer realm="headlamp-agent"`, body `{ "error": { "code": "unauthenticated", "message": "..." } }`. |
 | Invalid token | HTTP 401, header `WWW-Authenticate: Bearer realm="headlamp-agent", error="invalid_token"`, same body. |
 | Origin not allowed | HTTP 403, JSON-RPC error `-32600`, as before. |
+| Session of another client | HTTP 403, body with code `forbidden`. |
 | Scope missing | See section 12. |
 
 `tools/list` returns only the tools the caller may call. `resources/list` and `resources/templates/list` return only the resources the caller may read.
@@ -274,7 +267,7 @@ An invalid or expired token always fails with HTTP 401, in both modes. A later r
 
 Every tool returns `structuredContent` that matches its output schema, a text content block with a one-line summary, and (as the existing tools do) an A2UI data update. Write tools set `readOnlyHint: false`. `destructiveHint` is `false` for all tools of this contract, because nothing deletes data. Input objects set `additionalProperties: false`. A client MUST NOT send unknown fields.
 
-All write tools accept an optional `requestId` (string, 1 to 64 characters of `A-Za-z0-9._-`). The server remembers the result of a write for 24 hours, keyed by client name, tool name and `requestId`. A repeated call with the same key returns the first result with `replayed: true` and writes nothing again. A repeated key with different arguments fails with `conflict`.
+All write tools accept an optional `requestId` (string, 1 to 64 characters of `A-Za-z0-9._-`). The server remembers the result of a write for 24 hours, keyed by incident, client name, tool name and `requestId`. A repeated call with the same key returns the first result with `replayed: true` and writes nothing again. A repeated key with different arguments fails with `conflict`.
 
 ### 5.1 Incident tools
 
@@ -520,12 +513,12 @@ The server sends it when the result of `resources/list` changes: after `incident
 
 ### 7.5 Filtering by label (test incidents)
 
-A test incident is an incident whose alert has the label `test` with the value `true`. The `Incident.test` field is `true` for it. A test alert SHOULD also carry the label `source` with a short name of the sender (for example `source=ergon-proof`). Test incidents behave like all others, except that the agent MUST NOT send Web Push notifications for them unless the alert also carries the label `push=true`.
+A test incident is an incident whose alert has the label `test` with the value `true`. The `Incident.test` field is `true` for it. A test alert SHOULD also carry the label `source` with a short name of the sender (for example `source=example-client`). Test incidents behave like all others, except that the agent MUST NOT send Web Push notifications for them unless the alert also carries the label `push=true`.
 
 A subscriber filters in one of these ways:
 
 1. Subscribe to `headlamp://incidents?label=test%3Dtrue` (only test incidents), or to `headlamp://incidents?test=false` (no test incidents).
-2. Subscribe to `headlamp://events?label=test%3Dtrue&label=source%3Dergon-proof`. The session gets only matching events.
+2. Subscribe to `headlamp://events?label=test%3Dtrue&label=source%3Dexample-client`. The session gets only matching events.
 3. Subscribe without a filter and filter on `_meta["dev.dynacom.headlamp/event"].labels` in the client.
 
 `list_incidents` takes `labels` and `test` with the same meaning.
@@ -579,7 +572,7 @@ A subscriber filters in one of these ways:
 
 When `Last-Event-ID` or `after` is older than the oldest retained event, the server cannot give the missing events. It then:
 
-1. On the push stream: sends `notifications/resources/list_changed` with `_meta["dev.dynacom.headlamp/event"].kind = "reset"` and the newest `eventId`, then replays from the oldest retained event, then goes live.
+1. On the push stream: sends `notifications/resources/list_changed` with `_meta["dev.dynacom.headlamp/event"].kind = "reset"`, `eventId` equal to the oldest retained id (so the stream ids still grow) and the extra key `latest` (the newest id), then replays from the oldest retained event, then goes live.
 2. On the catch-up resource: sets `reset: true`.
 
 After a reset the client MUST read `headlamp://incidents` (or `list_incidents`) and every incident resource it follows, and use the `latest` id as its new cursor.
@@ -631,8 +624,8 @@ A tool failure returns `isError: true`, a text block with the message and `struc
 | `code` | JSON-RPC code | HTTP | Meaning |
 | --- | --- | --- | --- |
 | `unauthenticated` | n/a | 401 | No token, or an invalid token. |
-| `forbidden` | `-32003` | 403 for transport, 200 for tools | The token lacks the scope. `requiredScope` names it. |
-| `invalid_argument` | `-32602` | 200 | An input does not match its schema. |
+| `forbidden` | `-32003` for `resources/subscribe`; see note | 403 for transport, 200 otherwise | The token lacks the scope. `requiredScope` names it (subscribe only). |
+| `invalid_argument` | `-32602` | 200 | An input does not match its schema. For tools the server answers with a tool result `isError: true` and a text message from the validator, without `structuredContent`. |
 | `not_found` | `-32002` | 200 | The incident, investigation or resource does not exist. |
 | `conflict` | `-32000` | 200 | The state does not allow the action, or a `requestId` is reused with other arguments. |
 | `not_ready` | `-32000` | 200 | The result does not exist yet. |
@@ -642,7 +635,7 @@ A tool failure returns `isError: true`, a text block with the message and `struc
 | `unavailable` | `-32000` | 200 | A dependency is down or not configured (model, metrics backend). |
 | `internal` | `-32603` | 200 | A server fault. The message is generic. |
 
-The `forbidden` result for a tool call is a tool result with `isError: true`. For `resources/read` and `resources/subscribe` it is a JSON-RPC error.
+`resources/subscribe` without the scope fails with JSON-RPC error `-32003`, `data.code = "forbidden"` and `data.requiredScope`. A `tools/call` or `resources/read` without the scope fails as for a disabled item: JSON-RPC error `-32602` with the message `Tool <name> disabled` or `Resource <uri> disabled`. A caller learns the needed scope from `_meta["dev.dynacom.headlamp/scope"]` of the tool in a listing of a client that has the scope, or from this document.
 
 ## 13. Setting "Automatic investigations"
 
