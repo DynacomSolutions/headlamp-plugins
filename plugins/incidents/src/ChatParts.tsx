@@ -128,7 +128,7 @@ export function StreamedAnswer({ source, animate }: { source: string; animate: b
   const shown = useRevealedText(source, animate);
   const revealing = shown.length < source.length;
   return (
-    <Box sx={{ position: 'relative', '& p, & li': { lineHeight: 1.65 } }}>
+    <Box sx={{ position: 'relative', '& p, & li, & td, & th': { fontSize: 15, lineHeight: 1.65 } }}>
       <ChatMarkdown source={shown} />
       {revealing && (
         <Box
@@ -234,7 +234,8 @@ export function Reasoning({
             color: theme.palette.text.secondary,
             maxHeight: 240,
             overflowY: 'auto',
-            '& p': { my: 0.5 },
+            // The thinking is quieter than the answer: smaller and muted, as in the Arc reasoning row.
+            '& p, & li': { my: 0.5, fontSize: 13.5, lineHeight: 1.55, color: theme.palette.text.secondary },
           })}
         >
           <ChatMarkdown source={text} />
@@ -557,7 +558,7 @@ export function UsageLine({
         display: 'flex',
         flexWrap: 'wrap',
         alignItems: 'center',
-        columnGap: 1,
+        columnGap: 0,
         rowGap: 0.25,
         color: 'text.secondary',
         fontVariantNumeric: 'tabular-nums',
@@ -567,16 +568,16 @@ export function UsageLine({
     >
       {copy && <CopyButton text={copy} />}
       {parts.map((p, i) => (
-        <React.Fragment key={p.key}>
-          {i > 0 && (
-            <Box component="span" aria-hidden sx={{ opacity: 0.5 }}>
-              {'·'}
-            </Box>
-          )}
-          <Typography variant="caption" component="span" title={p.title}>
-            {p.text}
-          </Typography>
-        </React.Fragment>
+        <Typography
+          key={p.key}
+          variant="caption"
+          component="span"
+          title={p.title}
+          // The dot belongs to the item after it, so a line never ends with a lone dot.
+          sx={i > 0 ? { ml: 1, '&::before': { content: '"·"', opacity: 0.5, mr: 1 } } : undefined}
+        >
+          {p.text}
+        </Typography>
       ))}
     </Box>
   );

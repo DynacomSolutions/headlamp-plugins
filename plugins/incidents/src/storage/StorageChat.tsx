@@ -363,7 +363,8 @@ export function StorageChatView({
       })
     );
   const messages = chat.data?.messages ?? [];
-  const scroll = useStickToBottom(messages);
+  // A link that names an item shows that item: the thread does not jump to the bottom then.
+  const scroll = useStickToBottom(messages, !(question || finding));
   // The context changes the view, not the history: the query is replaced.
   const setDrive = (id?: string) => history.replace(chatUrl(chatId, id ? { drive: id } : {}));
 
@@ -384,7 +385,7 @@ export function StorageChatView({
             size="small"
             value={drive?.id ?? 'all'}
             onChange={event => setDrive(event.target.value === 'all' ? undefined : event.target.value)}
-            sx={{ minWidth: 180 }}
+            sx={{ minWidth: { xs: '100%', sm: 180 } }}
           >
             <MenuItem value="all">All drives</MenuItem>
             {incident.drives.map(d => (
@@ -407,7 +408,7 @@ export function StorageChatView({
               size="small"
               variant="outlined"
               label={`${size(drive.availableBytes)} free`}
-              sx={{ color: 'text.primary' }}
+              sx={{ color: 'text.primary', display: { xs: 'none', sm: 'inline-flex' } }}
             />
           )}
         </Stack>
