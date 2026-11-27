@@ -603,7 +603,8 @@ export class PgDiagnosisStore extends DiagnosisStore {
       const row = await tx.query('SELECT value FROM agent_settings WHERE key = $1', [key]);
       const old = row.rows[0] ? row.rows[0].value : fallback;
       if (JSON.stringify(old) === JSON.stringify(value)) return undefined;
-      const at = new Date(this.now());
+      // The database clock, like the `at` of the event that this change makes (contract section 8.1).
+      const at = new Date((await tx.query('SELECT clock_timestamp() AS now')).rows[0]!.now);
       await tx.query(
         `INSERT INTO agent_settings (key, value, updated_at, updated_by, updated_via) VALUES ($1, $2::jsonb, $3, $4, $5)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by, updated_via = EXCLUDED.updated_via`,
