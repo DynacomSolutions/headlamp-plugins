@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { SurfaceBuilder, surfaceId, type A2uiMessage, type IconName } from '../a2ui/index.js';
 import { mask } from '../mask.js';
+import type { IncidentState } from '../incidents/types.js';
 
 export const alertSchema = z.object({
   name: z.string(),
@@ -105,6 +106,8 @@ export interface Diagnosis {
   rerunAt?: string;
   /** The failed attempts that re-runs replaced, oldest first. */
   previousAttempts?: PreviousAttempt[];
+  /** Acknowledgement, notes, escalation and timeline (MCP contract). Kept across every write of the record. */
+  incident?: IncidentState;
   /** Set while `status` is `skipped`: why no investigation started and when. A manual run clears it. */
   skipped?: { reason: string; at: string };
   /** Set when a person ran a skipped incident. It never started by itself, so it never used a slot of the hourly limit of automatic ones. */

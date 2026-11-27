@@ -3,6 +3,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Diagnosis } from './agent/report.js';
 import { MemoryPushStore, PgPushStore, PUSH_SCHEMA, type PushStore } from './push/store.js';
+import { finalise, keepIncident } from './incidents/changes.js';
+import { EVENT_SCHEMA, MemoryEventLog, PgEventLog, type EventLog } from './incidents/events.js';
+import { SETTINGS_URI, type NewEvent } from './incidents/types.js';
+import { AUTOMATIC_INVESTIGATIONS_KEY } from './settings.js';
 
 export const LEASE_MS = 60_000;
 const EPOCH = new Date(0).toISOString();
@@ -100,6 +104,8 @@ export abstract class DiagnosisStore {
 
   /** The push subscriptions. They live beside the diagnoses: in the same database, or in memory. */
   abstract pushStore(): PushStore;
+  /** The event log of the MCP contract. Every change of a record writes its events here, in the same transaction. */
+  abstract readonly events: EventLog;
   /** Prepare the store: create the schema and import the old JSON files. Call once before use. */
   abstract init(): Promise<void>;
   abstract close(): Promise<void>;
@@ -231,6 +237,7 @@ export abstract class DiagnosisStore {
       // A writer that holds an older copy (the runner) must not drop what another pod added meanwhile.
       if (next.fires === undefined && current.fires !== undefined) next = { ...next, fires: current.fires };
       if (next.lastFiredAt === undefined && current.lastFiredAt !== undefined) next = { ...next, lastFiredAt: current.lastFiredAt };
+      next = keepIncident(current, next);
       if (current.resolvedAt && !next.resolvedAt) next = { ...next, resolvedAt: current.resolvedAt, ...(next.resolvedNote === undefined && current.resolvedNote !== undefined ? { resolvedNote: current.resolvedNote } : {}) };
     }
     return next;
@@ -241,6 +248,7 @@ export abstract class DiagnosisStore {
 export class MemoryDiagnosisStore extends DiagnosisStore {
   private readonly records = new Map<string, Diagnosis>();
   private readonly push = new MemoryPushStore();
+  readonly events: EventLog = new MemoryEventLog(() => this.now());
 
   pushStore(): PushStore {
     return this.push;
@@ -308,6 +316,9 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
     this.settings.set(key, { value, updatedAt: at, updatedBy: by, updatedVia: via });
     const entry = { key, at, by, via, old, new: value };
     this.audit.push(entry);
+    // The log appends in memory without waiting, so the change and its event are still one step.
+    const stored = await this.events.append(settingEvents(entry));
+    await this.events.committed(stored);
     return entry;
   }
 
@@ -330,9 +341,14 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
 
   async update(id: string, fn: (current: Diagnosis | undefined) => Diagnosis | undefined, options: UpdateOptions = {}): Promise<boolean> {
     // No await between the read and the write, so this is atomic in one process.
-    const next = this.decide(this.records.get(id), fn, options);
-    if (!next) return false;
-    this.records.set(next.id, next);
+    const current = this.records.get(id);
+    const decided = this.decide(current, fn, options);
+    if (!decided) return false;
+    const { record, events } = finalise(current, decided, new Date(this.now()));
+    this.records.set(record.id, record);
+    // The log appends in memory without waiting, so this is still one step.
+    const stored = await this.events.append(events);
+    await this.events.committed(stored);
     return true;
   }
 }
@@ -349,6 +365,8 @@ export interface Db {
   query(text: string, params?: unknown[]): Promise<QueryResult>;
   /** Run `fn` in one transaction. A thrown error rolls it back. */
   transaction<T>(fn: (tx: { query: Db['query'] }) => Promise<T>): Promise<T>;
+  /** Calls `onNotify` for each NOTIFY on `channel`, until the returned function runs. Optional: PGlite tests do without. */
+  listen?(channel: string, onNotify: () => void): Promise<() => Promise<void>>;
   close(): Promise<void>;
 }
 
@@ -395,10 +413,16 @@ const SCHEMA = [
   'ALTER TABLE agent_settings_audit ADD COLUMN IF NOT EXISTS via text',
   'CREATE INDEX IF NOT EXISTS agent_settings_audit_key_idx ON agent_settings_audit (key, id DESC)',
   ...PUSH_SCHEMA,
+  ...EVENT_SCHEMA,
 ];
 
 /** Any 64-bit number. Two pods that start together take this advisory lock, so only one creates the schema. */
 const SCHEMA_LOCK = 7_483_920_115;
+/** The events that a setting change raises (contract section 7.1). `by` is the name that came with the change, empty when none. */
+function settingEvents(e: SettingAudit): NewEvent[] {
+  return e.key === AUTOMATIC_INVESTIGATIONS_KEY ? [{ kind: 'settings.changed', uri: SETTINGS_URI, incidentId: null, labels: {}, actor: e.by || null }] : [];
+}
+
 /** Another 64-bit number, for the lock that orders changes of settings. */
 const SETTINGS_LOCK = 7_483_920_116;
 const SUMMARY_SQL = "(data - 'a2ui' - 'evidence') || jsonb_build_object('evidenceCount', jsonb_array_length(COALESCE(data->'evidence', '[]'::jsonb)))";
@@ -442,9 +466,11 @@ export class PgDiagnosisStore extends DiagnosisStore {
   ) {
     super(options);
     this.push = new PgPushStore(db);
+    this.events = new PgEventLog(db, () => this.now());
   }
 
   private readonly push: PushStore;
+  readonly events: PgEventLog;
 
   pushStore(): PushStore {
     return this.push;
@@ -459,6 +485,7 @@ export class PgDiagnosisStore extends DiagnosisStore {
       await tx.query('SELECT pg_advisory_xact_lock($1)', [SCHEMA_LOCK]);
       for (const statement of SCHEMA) await tx.query(statement);
     });
+    await this.events.start();
     if (this.dataDir) {
       const imported = await this.importFiles(this.dataDir);
       if (imported > 0) this.log('imported diagnoses from the data directory', { imported });
@@ -466,6 +493,7 @@ export class PgDiagnosisStore extends DiagnosisStore {
   }
 
   async close(): Promise<void> {
+    await this.events.close();
     await this.db.close();
   }
 
@@ -568,21 +596,28 @@ export class PgDiagnosisStore extends DiagnosisStore {
   }
 
   async setSetting(key: string, value: unknown, by: string, fallback: unknown, via?: SettingVia): Promise<SettingAudit | undefined> {
-    return this.db.transaction(async tx => {
+    let stored: Awaited<ReturnType<EventLog['append']>> = [];
+    const entry = await this.db.transaction(async tx => {
       // One lock for all settings: two pods that change a setting at once do it one after the other, and the audit keeps both.
       await tx.query('SELECT pg_advisory_xact_lock($1)', [SETTINGS_LOCK]);
       const row = await tx.query('SELECT value FROM agent_settings WHERE key = $1', [key]);
       const old = row.rows[0] ? row.rows[0].value : fallback;
       if (JSON.stringify(old) === JSON.stringify(value)) return undefined;
-      const at = new Date(this.now());
+      // The database clock, like the `at` of the event that this change makes (contract section 8.1).
+      const at = new Date((await tx.query('SELECT clock_timestamp() AS now')).rows[0]!.now);
       await tx.query(
         `INSERT INTO agent_settings (key, value, updated_at, updated_by, updated_via) VALUES ($1, $2::jsonb, $3, $4, $5)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by, updated_via = EXCLUDED.updated_via`,
         [key, JSON.stringify(value), at, by, via ?? null],
       );
       await tx.query('INSERT INTO agent_settings_audit (key, at, by, via, old_value, new_value) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)', [key, at, by, via ?? null, JSON.stringify(old), JSON.stringify(value)]);
-      return { key, at: at.toISOString(), by, via, old, new: value };
+      const done = { key, at: at.toISOString(), by, via, old, new: value };
+      // The event goes into the same transaction as the change: both commit or neither does (contract section 8.2).
+      stored = await this.events.append(settingEvents(done), tx);
+      return done;
     });
+    if (entry) await this.events.committed(stored);
+    return entry;
   }
 
   async settingAudit(key: string, limit: number): Promise<SettingAudit[]> {
@@ -597,18 +632,27 @@ export class PgDiagnosisStore extends DiagnosisStore {
 
   async update(id: string, fn: (current: Diagnosis | undefined) => Diagnosis | undefined, options: UpdateOptions = {}): Promise<boolean> {
     if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`Invalid diagnosis id: ${id}`);
-    return this.db.transaction(async tx => {
+    let stored: Awaited<ReturnType<EventLog['append']>> = [];
+    const ok = await this.db.transaction(async tx => {
       const row = await tx.query('SELECT data FROM diagnoses WHERE id = $1 FOR UPDATE', [id]);
       const current = row.rows[0]?.data as Diagnosis | undefined;
-      const next = this.decide(current, fn, options);
-      if (!next) return false;
-      if (!current) return this.insert(tx, next); // False when another pod created it a moment ago.
+      const decided = this.decide(current, fn, options);
+      if (!decided) return false;
+      const { record: next, events } = finalise(current, decided, new Date(this.now()));
+      if (!current) {
+        if (!(await this.insert(tx, next))) return false; // Another pod created it a moment ago.
+        stored = await this.events.append(events, tx);
+        return true;
+      }
       await tx.query(
         'UPDATE diagnoses SET created_at = $2, status = $3, source = $4, alert_name = $5, fingerprint = $6, starts_at = $7, resolved = $8, lease_until = $9, rerun_at = $10, data = $11::jsonb WHERE id = $1',
         [id, created(next, this.now()), next.status, next.source, next.alert.name ?? '', next.alert.fingerprint ?? '', next.alert.startsAt ?? '', Boolean(next.resolvedAt), lease(next), rerun(next), JSON.stringify(next)],
       );
+      stored = await this.events.append(events, tx);
       return true;
     });
+    if (ok) await this.events.committed(stored);
+    return ok;
   }
 }
 
@@ -636,6 +680,38 @@ export async function connectPg(connectionString: string): Promise<Db> {
       } finally {
         client.release();
       }
+    },
+    async listen(channel, onNotify) {
+      // One connection that stays open, so a notification wakes this pod at once. A lost connection is opened again.
+      let stopped = false;
+      let client: InstanceType<typeof pg.Client> | undefined;
+      const open = async (): Promise<void> => {
+        if (stopped) return;
+        const c = new pg.Client({ connectionString: url.toString(), ssl: mode === 'disable' ? false : { rejectUnauthorized: false } });
+        c.on('notification', () => onNotify());
+        const lost = () => {
+          if (client === c) client = undefined;
+          c.removeAllListeners();
+          c.on('error', () => {});
+          void c.end().catch(() => {});
+          if (!stopped) setTimeout(() => void open().catch(() => {}), 5000).unref();
+        };
+        c.on('error', lost);
+        c.on('end', lost);
+        try {
+          await c.connect();
+          await c.query(`LISTEN ${channel.replace(/[^a-z0-9_]/gi, '')}`);
+        } catch {
+          return lost();
+        }
+        client = c;
+        onNotify(); // Anything written while the connection was down.
+      };
+      await open().catch(() => {});
+      return async () => {
+        stopped = true;
+        await client?.end().catch(() => {});
+      };
     },
     close: () => pool.end(),
   };

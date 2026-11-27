@@ -4,7 +4,7 @@ import type { DiagnosisStore, SettingVia } from './store.js';
 export const AUTOMATIC_INVESTIGATIONS_KEY = 'automatic-investigations';
 /** On, as before the switch existed. */
 export const AUTOMATIC_INVESTIGATIONS_DEFAULT = true;
-/** The kind of the event that a change of the switch makes. The incident event source and MCP use this name. */
+/** The kind of the event that a change of the switch makes. The incident event source uses this name. MCP uses `settings.changed`. */
 export const AUTOMATIC_INVESTIGATIONS_EVENT = 'settings.automatic_investigations.changed';
 
 /** The switch as the API and MCP show it. `updatedAt` and `updatedBy` are absent until the first change. */

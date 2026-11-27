@@ -245,6 +245,22 @@ describe('PushService', () => {
     }
   });
 
+  it('masks secrets in the reason of an escalation push, and sends none for a test incident', async () => {
+    const svc = pushService();
+    const { service } = make(svc.fetchImpl);
+    const d = device();
+    await service.subscribe(d.id, subscribeBody(d));
+    expect(await service.notifyEscalation(diagnosis('esc-1'), 'disk full, password=hunter2hunter2')).toBe(1);
+    const payload = JSON.parse(decrypt(svc.sent[0]!.body, d.ecdh.getPrivateKey(), d.ecdh.getPublicKey(), d.auth));
+    expect(payload.body).not.toContain('hunter2');
+    expect(payload.body).toContain('disk full');
+    const test = diagnosis('esc-2');
+    test.alert.labels = { ...test.alert.labels, test: 'true' };
+    expect(await service.notifyEscalation(test, 'a test')).toBe(0);
+    test.alert.labels.push = 'true';
+    expect(await service.notifyEscalation(test, 'a test with push')).toBe(1);
+  });
+
   it('pushes a ready diagnosis with the alert, severity, likely cause and a path to the incident', async () => {
     const svc = pushService();
     const { service, store } = make(svc.fetchImpl);

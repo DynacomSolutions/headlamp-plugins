@@ -67,7 +67,8 @@ function diagnosesProvider(store: DiagnosisStore): ProviderDefinition {
         async run(args) {
           const d = await store.get(args.id);
           if (!d) throw new Error(`No diagnosis ${args.id}`);
-          const { a2ui: _a2ui, ...rest } = d;
+          // The incident notes and the timeline need `incidents:read` through the incident tools: they are not part of this output (contract section 5.6).
+          const { a2ui: _a2ui, incident: _incident, ...rest } = d;
           return {
             data: { diagnosis: rest },
             summary: `${d.alert.name}: ${d.result?.likelyCause ?? d.status}.`,

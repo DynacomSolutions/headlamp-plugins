@@ -9,6 +9,10 @@ export function pgliteDb(dataDir?: string): Db & { raw: PGlite } {
     raw,
     query: async (text, params) => rows(await raw.query(text, params as never[])),
     transaction: fn => raw.transaction(async tx => fn({ query: async (text, params) => rows(await tx.query(text, params as never[])) })),
+    listen: async (channel, onNotify) => {
+      const stop = await raw.listen(channel, () => onNotify());
+      return async () => void (await stop());
+    },
     close: () => raw.close(),
   };
 }

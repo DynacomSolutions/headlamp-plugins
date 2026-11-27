@@ -34,6 +34,8 @@ export interface Config {
   reconcileSeconds: number;
   models: ModelRoutesConfig;
   diagnosis: DiagnosisConfig;
+  /** Authentication of the MCP endpoint (docs/mcp-contract.md section 4). */
+  mcp: McpConfig;
   launch: LaunchConfig;
   push: PushConfig;
   acp: AcpConfig;
@@ -46,6 +48,12 @@ export interface AcpConfig {
   tokensFile: string;
   /** How long a drain waits for the prompts in flight (AGENT_ACP_DRAIN_TIMEOUT_MS) before it aborts them. Keep it under the pod grace period. */
   drainTimeoutMs: number;
+}
+
+/** `tokensFile` is AGENT_API_TOKENS_FILE (auth/scopes.ts). `auth` optional lets callers without a token read the registry tools only. */
+export interface McpConfig {
+  tokensFile: string;
+  auth: 'optional' | 'required';
 }
 
 /** Web Push to browsers and installed apps. Without both keys push is off. The agent has its own key pair, not the one of the Alerting plugin. */
@@ -385,6 +393,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxLaunches: int(env.AGENT_MAX_LAUNCHES, 200),
     reconcileSeconds: int(env.AGENT_RECONCILE_SECONDS, 60),
     models: loadModelRoutes(env),
+    mcp: { tokensFile: env.AGENT_API_TOKENS_FILE ?? '', auth: env.MCP_AUTH === 'required' ? 'required' : 'optional' },
     diagnosis: {
       runTimeoutMs: int(env.AGENT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS),
       diagnosisTimeoutMs: int(env.AGENT_DIAGNOSIS_TIMEOUT_MS, DEFAULT_DIAGNOSIS_TIMEOUT_MS),

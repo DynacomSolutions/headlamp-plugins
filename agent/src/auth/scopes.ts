@@ -17,6 +17,13 @@ import { readFileSync, statSync } from 'node:fs';
 export const SCOPES = {
   /** Start an investigation and run a prompt on the incident agent. */
   investigate: 'agent:investigate',
+  /** The MCP contract (docs/mcp-contract.md section 4.2). */
+  registryRead: 'registry:read',
+  incidentsRead: 'incidents:read',
+  incidentsWrite: 'incidents:write',
+  incidentsResolve: 'incidents:resolve',
+  storageRead: 'storage:read',
+  settingsRead: 'settings:read',
 } as const;
 
 export type Scope = (typeof SCOPES)[keyof typeof SCOPES];
@@ -51,6 +58,8 @@ export function parseTokens(raw: unknown, warn: (message: string) => void = () =
     if (!item || typeof item !== 'object') return drop('it is not an object');
     const { name, token, sha256: hash, scopes } = item as Record<string, unknown>;
     if (typeof name !== 'string' || !name) return drop('it has no name');
+    // `anonymous` is the name of callers without a token: no token entry may use it (contract section 4.3).
+    if (name.toLowerCase() === 'anonymous') return drop('its name is reserved');
     if (!Array.isArray(scopes)) return drop('it has no scopes list');
     const scopeNames = scopes.filter((s): s is string => typeof s === 'string' && s.length > 0);
     if (!scopeNames.length) return drop('it has no scope');
@@ -85,6 +94,16 @@ export function checkBearer(entries: readonly TokenEntry[], header: string | str
   if (!found) return { ok: false, status: 401, reason: 'invalid' };
   if (!found.scopes.has(scope)) return { ok: false, status: 403, reason: 'scope' };
   return { ok: true, name: found.name, scopes: [...found.scopes] };
+}
+
+/** The entry that a header names, or undefined. For callers that need the scopes of the token, not one scope check. */
+export function lookupBearer(entries: readonly TokenEntry[], header: string | string[] | undefined): TokenEntry | undefined {
+  const token = bearerToken(header);
+  if (!token || !entries.length) return undefined;
+  const presented = sha256(token);
+  let found: TokenEntry | undefined;
+  for (const entry of entries) if (timingSafeEqual(presented, entry.digest) && !found) found = entry;
+  return found;
 }
 
 /**

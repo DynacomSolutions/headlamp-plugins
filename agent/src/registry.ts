@@ -14,6 +14,8 @@ export interface ToolOutcome {
   summary: string;
   /** A2UI data update for the shared summary view. */
   a2ui: A2uiMessage[];
+  /** Set when ok is false: `unavailable` for a fault at run time (a backend), `internal` for a fault of the tool itself. */
+  code?: 'unavailable' | 'internal';
 }
 
 export interface RegisteredTool {
@@ -55,13 +57,13 @@ export class Registry {
 
   async call(name: string, args: unknown, ctxFor: (provider: ProviderDefinition) => ToolContext): Promise<ToolOutcome> {
     const entry = this.tools.get(name);
-    if (!entry) return failure(name, `Unknown tool ${name}`);
+    if (!entry) return failure(name, `Unknown tool ${name}`, 'internal');
     const parsed = entry.tool.input.safeParse(args ?? {});
-    if (!parsed.success) return failure(name, `Invalid arguments: ${z.prettifyError(parsed.error)}`);
+    if (!parsed.success) return failure(name, `Invalid arguments: ${z.prettifyError(parsed.error)}`, 'internal');
     try {
       const result = await entry.tool.run(parsed.data, ctxFor(entry.provider));
       const checked = entry.tool.output.safeParse(result.data);
-      if (!checked.success) return failure(name, `Tool returned data that does not match its output schema: ${z.prettifyError(checked.error)}`);
+      if (!checked.success) return failure(name, `Tool returned data that does not match its output schema: ${z.prettifyError(checked.error)}`, 'internal');
       const data = mask(checked.data);
       const summary = maskText(result.summary);
       const view: SummaryView = mask({
@@ -71,15 +73,16 @@ export class Registry {
       });
       return { tool: name, ok: true, data, summary, a2ui: [summaryViewData(view)] };
     } catch (error) {
-      return failure(name, maskText(error instanceof Error ? error.message : String(error)));
+      return failure(name, maskText(error instanceof Error ? error.message : String(error)), 'unavailable');
     }
   }
 }
 
-function failure(tool: string, message: string): ToolOutcome {
+function failure(tool: string, message: string, code: 'unavailable' | 'internal'): ToolOutcome {
   return {
     tool,
     ok: false,
+    code,
     data: { error: message },
     summary: message,
     a2ui: [summaryViewData({ title: `${tool} failed`, summary: message, rows: [] })],
