@@ -123,6 +123,21 @@ describe('ModelPicker', () => {
     expect(screen.getAllByRole('option')).toHaveLength(1);
   });
 
+  describe('list heading', () => {
+    it('names the open provider and identity as text, not only in a tooltip', () => {
+      setup({ models: MODELS_TWO_IDENTITIES, value: 'claude/sonnet' });
+      openPicker();
+      const heading = () => document.querySelector('[data-picker-heading]')!.textContent;
+      expect(heading()).toBe('Claude \u00b7 Pool');
+      fireEvent.click(screen.getByRole('tab', { name: 'Claude \u00b7 Account A' }));
+      expect(heading()).toBe('Claude \u00b7 Account A');
+      fireEvent.click(screen.getByRole('tab', { name: 'Favourites' }));
+      expect(heading()).toBe('Favourites');
+      fireEvent.change(search(), { target: { value: 'opus' } });
+      expect(heading()).toBe('Search results');
+    });
+  });
+
   describe('identities', () => {
     it('shows no identity badge when each provider has one identity', () => {
       setup();

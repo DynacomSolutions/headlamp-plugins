@@ -55,7 +55,13 @@ describe('picker helpers', () => {
     expect(providerName('zai')).toBe('Z.ai');
     expect(providerName('other')).toBe('other');
     expect(providerIcon('claude')).toBe('simple-icons:anthropic');
-    expect(providerIcon('kimi')).toBe('mdi:robot-outline');
+    expect(providerIcon('other')).toBe('mdi:robot-outline');
+  });
+  it('gives every known provider its own icon', () => {
+    const routes = ['claude', 'codex', 'grok', 'kimi', 'opencode', 'zai'];
+    const icons = routes.map(providerIcon);
+    expect(new Set(icons).size).toBe(routes.length);
+    expect(icons).not.toContain('mdi:robot-outline');
   });
   it('lists one instance per identity, in first-seen order, with a badge only when a provider has several', () => {
     expect(instancesOf(MODELS).map(i => i.route)).toEqual(['claude', 'codex', 'kimi']);

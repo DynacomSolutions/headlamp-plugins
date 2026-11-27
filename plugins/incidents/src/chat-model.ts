@@ -222,6 +222,9 @@ const PROVIDER_ICONS: Record<string, string> = {
   claude: 'simple-icons:anthropic',
   codex: 'simple-icons:openai',
   grok: 'simple-icons:x',
+  kimi: 'simple-icons:kimi',
+  opencode: 'simple-icons:opencode',
+  zai: 'mdi:alpha-z-box',
 };
 
 export const GENERIC_ICON = 'mdi:robot-outline';

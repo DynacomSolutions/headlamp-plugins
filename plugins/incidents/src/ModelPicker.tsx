@@ -219,6 +219,12 @@ export function ModelPicker(props: ModelPickerProps) {
     }
   };
 
+  const activeInstance = instanceOf(active);
+  const headingText = searching
+    ? 'Search results'
+    : activeInstance
+    ? `${activeInstance.name} · ${activeInstance.identity}`
+    : 'Favourites';
   const emptyText = searching
     ? EMPTY_TEXT.search
     : active === FAVOURITES
@@ -369,6 +375,26 @@ export function ModelPicker(props: ModelPickerProps) {
                 onKeyDown={onKeyDown}
                 inputProps={{ 'aria-label': 'Search models' }}
               />
+            </Box>
+            {/* The name of the list, as text: a phone has no hover, so the tooltip of the rail is not enough. */}
+            <Box
+              data-picker-heading
+              sx={theme => ({
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                px: 1.5,
+                py: 0.75,
+                minHeight: 32,
+                borderBottom: `1px solid ${theme.palette.divider}`,
+                color: theme.palette.text.secondary,
+              })}
+            >
+              {!searching && activeInstance && <InstanceIcon instance={{ ...activeInstance, showBadge: false }} size={14} />}
+              {!searching && !activeInstance && <Icon icon="mdi:star" width={14} height={14} />}
+              <Typography variant="caption" fontWeight={600} noWrap component="h3" sx={{ m: 0 }}>
+                {headingText}
+              </Typography>
             </Box>
             <Box
               ref={setList}
