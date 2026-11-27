@@ -13,6 +13,7 @@ import { mcpBuilder } from './mcp.js';
 import { McpEndpoint } from './mcp/endpoint.js';
 import { TokenStore } from './mcp/auth.js';
 import { McpMetrics } from './mcp/metrics.js';
+import { PvWatch } from './mcp/pv-watch.js';
 import { IncidentService } from './incidents/service.js';
 import { alwaysOn, type AutomaticInvestigationsView } from './incidents/settings.js';
 import { Runtime, serviceGet } from './runtime.js';
@@ -418,7 +419,7 @@ async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
 }
 
 /** `deps.store` replaces the diagnosis store, for tests. The caller then closes it. */
-export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; automaticInvestigations?: AutomaticInvestigationsView; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}): Promise<{ close(): Promise<void>; port: number; sessionPort?: number }> {
+export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; automaticInvestigations?: AutomaticInvestigationsView; watchVolumes?: boolean; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}): Promise<{ close(): Promise<void>; port: number; sessionPort?: number }> {
   const store = deps.store ?? (await openDiagnosisStore(config.databaseUrl, config.dataDir, (message, extra) => log('info', message, extra)));
   const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
   const runtime = new Runtime(config, store, launchStore);
@@ -492,6 +493,8 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     send,
   });
   await mcp.start();
+  // The event source of `storage.updated`: a watch on PersistentVolumes. Only in a cluster (tests and local runs use KUBE_API and start none).
+  const volumeWatch = deps.watchVolumes !== false && process.env.KUBERNETES_SERVICE_HOST ? new PvWatch(runtime.kube, store.events, (level, message, extra) => log(level, message, extra)) : undefined;
   // The log keeps events 7 days (contract section 8.2). Removal runs once an hour, not to find changes.
   const prune = setInterval(() => void store.events.prune().catch(() => undefined), 3600_000);
   prune.unref();
@@ -852,6 +855,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
 
   async function drain(): Promise<void> {
     // Open push streams never end by themselves: close the MCP sessions first, so the listeners can close.
+    await volumeWatch?.stop();
     await mcp.close();
     const closing = [server, sessionServer].flatMap(listener => {
       if (!listener?.listening) return [];
@@ -922,6 +926,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   runner.start();
   void launches.resume().catch(error => log('error', 'launch resume failed', { error: String(error) }));
   reconciler.start();
+  volumeWatch?.start(); // after the warm render, so readiness does not wait for the Kubernetes API
   log('info', 'listening', { port, tools: runtime.registry.tools.size, modelConfigured: runner.configured });
   return { port, sessionPort: sessionServer ? storage.sessionPort : undefined, close };
 }

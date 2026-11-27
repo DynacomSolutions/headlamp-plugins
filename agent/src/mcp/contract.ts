@@ -307,12 +307,10 @@ export async function readContractResource(d: ContractDeps, parsed: ParsedUri, w
     case 'contract':
       return { contract: CONTRACT_VERSION, scopes: SCOPES, eventKinds: EVENT_KINDS, retentionHours: RETENTION_MS / 3600_000 };
     case 'events': {
-      if (parsed.after === undefined) {
-        const head = await d.events.head();
-        return { events: [], nextAfter: head.latest ?? '0', hasMore: false, latest: head.latest, oldestRetained: head.oldestRetained, reset: false };
-      }
-      const page = await d.events.readAfter(BigInt(parsed.after), parsed.limit ?? 100, { kinds: parsed.kinds, labels: parsed.labels });
-      return { ...page, events: page.events.map(publicEvent) };
+      const head = await d.events.head();
+      if (parsed.after === undefined) return { logId: head.logId, events: [], nextAfter: head.latest ?? '0', hasMore: false, latest: head.latest, oldestRetained: head.oldestRetained, reset: false, retentionHours: RETENTION_MS / 3600_000 };
+      const page = await d.events.readAfter(BigInt(parsed.after), parsed.limit ?? 100, { kinds: parsed.kinds, labels: parsed.labels, scopes: who.scopes });
+      return { ...page, events: page.events.map(publicEvent), reset: page.reset || (parsed.logId !== undefined && parsed.logId.toLowerCase() !== head.logId.toLowerCase()) };
     }
   }
 }
@@ -337,8 +335,8 @@ const TEMPLATES: Array<{ name: string; text: string; types: ParsedUri['type'][];
   { name: 'incident', text: 'headlamp://incidents/{id}', types: ['incident'], title: 'Incident' },
   { name: 'incident-timeline', text: 'headlamp://incidents/{id}/timeline', types: ['timeline'], title: 'Incident timeline' },
   { name: 'investigation', text: 'headlamp://investigations/{id}', types: ['investigation'], title: 'Investigation' },
-  { name: 'incidents-filtered', text: 'headlamp://incidents{?state,severity,label,test}', types: ['incidents'], title: 'Incidents with a filter' },
-  { name: 'event-log-catch-up', text: 'headlamp://events{?after,limit,kind,label}', types: ['events'], title: 'Event log catch-up' },
+  { name: 'incidents-filtered', text: 'headlamp://incidents{?state,severity*,label*,test}', types: ['incidents'], title: 'Incidents with a filter' },
+  { name: 'event-log-catch-up', text: 'headlamp://events{?after,logId,limit,kind*,label*}', types: ['events'], title: 'Event log catch-up' },
   { name: 'storage-by-node', text: 'headlamp://storage/{kind}/{node}', types: ['storage'], title: 'Storage of one node' },
 ];
 
@@ -363,7 +361,9 @@ export function registerContract(server: McpServer, d: ContractDeps, who: Princi
         } catch (error) {
           const e = error instanceof IncidentError ? error : new IncidentError(/unavailable|answered \d+|fetch failed|ECONN|timed out/i.test(String((error as Error)?.message)) ? 'unavailable' : 'internal', error instanceof Error ? error.message : String(error));
           d.metrics.toolError(t.name, e.code);
-          return { isError: true, content: [{ type: 'text' as const, text: e.message }], structuredContent: { error: { code: e.code, message: e.message, ...e.extra } } };
+          // No structuredContent: a generic client would check it against the output schema (contract section 5).
+          const body = { code: e.code, message: e.message, ...e.extra };
+          return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(body) }], _meta: { 'headlamp-agent/error': body } };
         }
       },
     );
@@ -379,13 +379,16 @@ export function registerContract(server: McpServer, d: ContractDeps, who: Princi
       { title: r.title, description: r.description, mimeType: 'application/json' },
       async uri => json(uri, await guard(d, () => readContractResource(d, parseUri(uri.toString())!, who))),
     );
-    if (scope && !who.scopes.has(scope)) registered.disable();
+    if (denied(who, parsed, scope)) registered.disable();
   }
   for (const t of TEMPLATES) {
-    const scope = scopeForUri(parseUri(t.text.replace('{id}', 'x').replace('{kind}', 'volumes').replace('{node}', 'n').replace(/\{\?.*\}/, ''))!);
+    const sample = parseUri(t.text.replace('{id}', 'x').replace('{kind}', 'volumes').replace('{node}', 'n').replace(/\{\?.*\}/, ''))!;
+    const scope = scopeForUri(sample);
+    // The SDK lists a template through its callback, also when the template is disabled: give a callback only to a caller that may read it.
+    const list = t.name === 'incident' && who.scopes.has('incidents:read') ? async () => ({ resources: await activeIncidentResources(d) }) : undefined;
     const registered = server.registerResource(
       t.name,
-      new ResourceTemplate(template(t.text, t.types), { list: t.name === 'incident' ? async () => ({ resources: await activeIncidentResources(d) }) : undefined }),
+      new ResourceTemplate(template(t.text, t.types), { list }),
       { title: t.title, mimeType: 'application/json' },
       async (uri: URL) => {
         const parsed = parseUri(uri.toString());
@@ -393,8 +396,14 @@ export function registerContract(server: McpServer, d: ContractDeps, who: Princi
         return json(uri, await guard(d, () => readContractResource(d, parsed, who)));
       },
     );
-    if (scope && !who.scopes.has(scope)) registered.disable();
+    if (denied(who, sample, scope)) registered.disable();
   }
+}
+
+/** True when the caller may not read the resource. The event log needs a token, any scope (contract section 6.1). */
+function denied(who: Principal, parsed: ParsedUri, scope: Scope | undefined): boolean {
+  if (parsed.type === 'events') return who.anonymous;
+  return scope !== undefined && !who.scopes.has(scope);
 }
 
 /** Turns a contract error into a JSON-RPC error with the contract code. */

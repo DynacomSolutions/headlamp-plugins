@@ -3,9 +3,11 @@ import { z } from 'zod';
 const str = z.string();
 const maybe = <T extends z.ZodType>(t: T) => t.nullable();
 const labels = z.record(z.string(), z.string());
+/** An open enumeration (contract section 3.8): typed as a string, so a later minor version can add a value. */
+const open = (known: string[]) => z.string().describe(`Open enumeration. Known values: ${known.join(', ')}. A client must accept other values.`);
 
 export const investigationSummary = z.object({
-  status: z.enum(['none', 'queued', 'running', 'done', 'failed']),
+  status: open(['none', 'queued', 'running', 'done', 'failed']),
   attempt: z.number().int(),
   model: maybe(str),
   startedAt: maybe(str),
@@ -18,7 +20,7 @@ export const incident = z.object({
   id: str,
   uri: str,
   name: str,
-  severity: z.enum(['critical', 'warning', 'info', 'none']),
+  severity: open(['critical', 'warning', 'info', 'none']),
   state: z.enum(['open', 'acknowledged', 'resolved']),
   escalated: z.boolean(),
   labels,
@@ -49,7 +51,7 @@ export const investigation = investigationSummary.extend({
 export const timelineEntry = z.object({
   seq: z.number().int(),
   at: str,
-  kind: z.enum(['fired', 'refired', 'alert_resolved', 'investigation_queued', 'investigation_started', 'investigation_done', 'investigation_failed', 'acknowledged', 'note', 'escalated', 'resolved']),
+  kind: open(['fired', 'refired', 'alert_resolved', 'investigation_queued', 'investigation_started', 'investigation_done', 'investigation_failed', 'acknowledged', 'note', 'escalated', 'resolved']),
   actor: str,
   text: maybe(str),
   data: maybe(z.record(z.string(), z.unknown())),
@@ -79,6 +81,7 @@ export const eventSchema = z.object({
 });
 
 export const eventPage = z.object({
+  logId: str,
   events: z.array(eventSchema),
   nextAfter: str,
   hasMore: z.boolean(),

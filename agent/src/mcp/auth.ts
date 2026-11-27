@@ -7,15 +7,18 @@ export interface Principal {
   client: string;
   scopes: ReadonlySet<Scope>;
   anonymous: boolean;
+  /** The SHA-256 digest of the token in hex. A session belongs to this digest, not to the client name. Empty for anonymous. */
+  digest: string;
 }
 
 export type AuthFailure = 'missing' | 'invalid' | 'bad_scopes';
 
-export const ANONYMOUS: Principal = { client: 'anonymous', scopes: new Set<Scope>(['registry:read']), anonymous: true };
+export const ANONYMOUS: Principal = { client: 'anonymous', scopes: new Set<Scope>(['registry:read']), anonymous: true, digest: '' };
 
 /**
  * Bearer tokens from the shared token file (`AGENT_API_TOKENS_FILE`, see auth/scopes.ts and contract section 4.3).
- * The file is read again when it changes. An entry with a scope name this contract does not know is refused.
+ * The file is read again when it changes. A scope name that this contract does not know is ignored: it grants nothing,
+ * and it is counted once for each client (contract section 4.3).
  */
 export class TokenStore {
   private readonly read: () => TokenEntry[];
@@ -29,19 +32,27 @@ export class TokenStore {
     this.read = read ?? tokensFromFile(path);
   }
 
-  /** The principal of the Authorization header, `undefined` when the token is unknown or has unknown scopes. */
+  /** The principal of the Authorization header, `undefined` when the token is unknown. */
   lookup(header: string | string[] | undefined): Principal | undefined {
     const entry = lookupBearer(this.read(), header);
-    if (!entry) return undefined;
-    const bad = [...entry.scopes].filter(s => !SCOPES.includes(s as Scope));
-    if (bad.length) {
-      if (!this.reported.has(entry.name)) {
-        this.reported.add(entry.name);
-        this.onBadScopes();
-      }
-      return undefined;
+    return entry ? this.principal(entry) : undefined;
+  }
+
+  private principal(entry: TokenEntry): Principal {
+    const known = [...entry.scopes].filter(s => SCOPES.includes(s as Scope)) as Scope[];
+    if (known.length !== entry.scopes.size && !this.reported.has(entry.name)) {
+      this.reported.add(entry.name);
+      this.onBadScopes();
     }
-    return { client: entry.name, scopes: entry.scopes as ReadonlySet<Scope>, anonymous: false };
+    return { client: entry.name, scopes: new Set(known), anonymous: false, digest: entry.digest.toString('hex') };
+  }
+
+  /** True while the token of `who` is in the file with at least the scopes that it had (contract section 1.1, rule 9). */
+  stillValid(who: Principal): boolean {
+    if (who.anonymous) return true;
+    const entry = this.read().find(e => e.digest.toString('hex') === who.digest);
+    if (!entry) return false;
+    return [...who.scopes].every(s => entry.scopes.has(s));
   }
 }
 

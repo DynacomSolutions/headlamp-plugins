@@ -33,7 +33,7 @@ vi.mock('../src/agent/engine.js', () => ({
 const { startServer } = await import('../src/server.js');
 
 const ALL = 'registry:read incidents:read incidents:write incidents:resolve agent:investigate storage:read settings:read';
-const TOKENS = { full: ['t-full-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ALL], reader: ['t-read-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'incidents:read'], writer: ['t-writ-cccccccccccccccccccccccccccccccc', 'incidents:read incidents:write'], badscope: ['t-badd-dddddddddddddddddddddddddddddddd', 'bogus:scope'] } as const;
+const TOKENS = { full: ['t-full-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ALL], reader: ['t-read-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'incidents:read'], writer: ['t-writ-cccccccccccccccccccccccccccccccc', 'incidents:read incidents:write'], badscope: ['t-badd-dddddddddddddddddddddddddddddddd', 'bogus:scope'], mixed: ['t-mixd-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', 'incidents:read bogus:scope'] } as const;
 
 let dir: string;
 let server: Awaited<ReturnType<typeof startServer>>;
@@ -49,7 +49,7 @@ beforeAll(async () => {
   config.diagnosis = { ...config.diagnosis, maxPerHour: 10_000 };
   config.mcp = { tokensFile: join(dir, 'tokens.json'), auth: 'optional' };
   store = new MemoryDiagnosisStore({ now: () => clock });
-  server = await startServer(config, 'test', { store });
+  server = await startServer(config, 'test', { store, watchVolumes: false });
   base = `http://127.0.0.1:${server.port}`;
 });
 afterAll(async () => {
@@ -87,6 +87,13 @@ async function fire(labels: Record<string, string> = {}, severity = 'critical'):
 }
 
 const structured = (r: any) => r.structuredContent as any;
+/** The Error of a failed tool call: in `_meta`, never in `structuredContent` (contract section 5). */
+const failure = (r: any) => {
+  expect(r.isError).toBe(true);
+  expect(r.structuredContent).toBeUndefined();
+  expect(JSON.parse(r.content[0].text)).toEqual(r._meta['headlamp-agent/error']);
+  return r._meta['headlamp-agent/error'] as { code: string; message: string };
+};
 
 describe('auth', () => {
   it('serves anonymous callers the registry tools only, and no session', async () => {
@@ -104,10 +111,13 @@ describe('auth', () => {
     expect(metrics).toMatch(/headlamp_agent_mcp_auth_failures_total\{reason="invalid"\} [1-9]/);
   });
 
-  it('refuses a token whose entry names an unknown scope', async () => {
-    const res = await fetch(`${base}/mcp`, { method: 'POST', headers: { ...auth('badscope'), 'content-type': 'application/json' }, body: '{}' });
-    expect(res.status).toBe(401);
+  it('ignores an unknown scope name, grants nothing for it and counts it', async () => {
+    const res = await fetch(`${base}/mcp`, { method: 'POST', headers: { ...auth('badscope'), 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) });
+    expect(res.status).toBe(200); // the token is valid
     expect(await (await fetch(`${base}/metrics`)).text()).toMatch(/headlamp_agent_mcp_auth_failures_total\{reason="bad_scopes"\} [1-9]/);
+    const { client } = await connect('mixed'); // a valid scope next to an unknown one keeps its access
+    expect((await client.listTools()).tools.map(t => t.name)).toContain('list_incidents');
+    await client.close();
   });
 
   it('opens a session for a token and declares the contract', async () => {
@@ -227,9 +237,9 @@ describe('incident tools', () => {
     expect(next.incidents[0].id).not.toBe(page.incidents[0].id);
     const bad = await client.callTool({ name: 'list_incidents', arguments: { cursor: 'garbage' } });
     expect(bad.isError).toBe(true);
-    expect(structured(bad).error.code).toBe('cursor_expired');
+    expect(failure(bad).code).toBe('cursor_expired');
     const notFound = await client.callTool({ name: 'get_incident', arguments: { incidentId: 'missing' } });
-    expect(structured(notFound).error.code).toBe('not_found');
+    expect(failure(notFound).code).toBe('not_found');
     await client.close();
   });
 
@@ -244,7 +254,7 @@ describe('incident tools', () => {
     const replay = structured(await client.callTool({ name: 'acknowledge_incident', arguments: { incidentId: id, note: 'looking', requestId: 'r1' } }));
     expect(replay.replayed).toBe(true);
     const conflict = await client.callTool({ name: 'acknowledge_incident', arguments: { incidentId: id, note: 'different', requestId: 'r1' } });
-    expect(structured(conflict).error.code).toBe('conflict');
+    expect(failure(conflict).code).toBe('request_conflict');
     const note = structured(await client.callTool({ name: 'add_incident_note', arguments: { incidentId: id, text: 'a note', requestId: 'n1' } }));
     expect(note.entry).toMatchObject({ kind: 'note', actor: 'full', text: 'a note' });
     const noteAgain = structured(await client.callTool({ name: 'add_incident_note', arguments: { incidentId: id, text: 'a note', requestId: 'n1' } }));
@@ -259,7 +269,7 @@ describe('incident tools', () => {
     const resAgain = structured(await client.callTool({ name: 'resolve_incident', arguments: { incidentId: id } }));
     expect(resAgain.changed).toBe(false);
     const escLate = await client.callTool({ name: 'escalate_incident', arguments: { incidentId: id, reason: 'late' } });
-    expect(structured(escLate).error.code).toBe('conflict');
+    expect(failure(escLate).code).toBe('conflict');
     const tl = structured(await client.callTool({ name: 'get_incident_timeline', arguments: { incidentId: id } }));
     const kinds = tl.entries.map((e: any) => e.kind);
     expect(kinds[0]).toBe('fired');
@@ -308,7 +318,7 @@ describe('incident tools', () => {
     for (let i = 0; i < 100 && engine.started.length === before; i++) await sleep(20);
     expect(engine.started.length).toBe(before + 1);
     const badModel = await client.callTool({ name: 'start_investigation', arguments: { incidentId: id, force: true, model: 'nope/none' } });
-    expect(structured(badModel).error.code).toBe('invalid_argument');
+    expect(failure(badModel).code).toBe('invalid_argument');
     await client.close();
   });
 
@@ -327,7 +337,7 @@ describe('incident tools', () => {
     for (const name of ['list_storage_volumes', 'list_storage_disks', 'get_storage_smart', 'get_storage_capacity', 'list_nodes', 'list_workloads']) {
       const r = await client.callTool({ name, arguments: {} });
       expect(r.isError).toBe(true);
-      expect(['unavailable', 'internal']).toContain(structured(r).error.code);
+      expect(['unavailable', 'internal']).toContain(failure(r).code);
     }
     await client.close();
   });
@@ -434,7 +444,7 @@ describe('replay with Last-Event-ID', () => {
     const t = await fire({ test: 'true', source: 'replay-test' });
     await until(() => first.frames.some(f => f.data?.method === 'notifications/resources/updated'));
     const lastSeen = first.frames.filter(f => f.data?.method === 'notifications/resources/updated').at(-1)!.id!;
-    expect(lastSeen).toMatch(/^\d+$/);
+    expect(lastSeen).toMatch(/^\d+\.\d+$/);
     first.close();
     await sleep(50);
     // Events while no stream is open.
@@ -443,9 +453,13 @@ describe('replay with Last-Event-ID', () => {
     await store.update(t.id, d => (d ? { ...d, incident: { ...(d.incident ?? { timeline: [] }), timeline: [...(d.incident?.timeline ?? []), { seq: 0, at: 'x', kind: 'note', actor: 'raw', text: 'late', data: null }], noteCount: 1 } } : undefined), { force: true });
     const second = await open('full', lastSeen, first.sid);
     await until(() => second.frames.filter(f => f.data?.method === 'notifications/resources/updated').length >= 3);
-    const ids = second.frames.filter(f => f.id && /^\d+$/.test(f.id)).map(f => BigInt(f.id!));
-    expect(ids[0]).toBe(BigInt(lastSeen)); // from the last id, inclusive: at least once.
-    expect(ids).toEqual([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
+    const sse = second.frames.filter(f => f.id && /^\d+\.\d+$/.test(f.id)).map(f => f.id!);
+    expect(sse).not.toContain(lastSeen); // strictly after the last id: no repeat (contract section 8.4)
+    expect(new Set(sse).size).toBe(sse.length); // unique ids
+    const key = (id: string) => id.split('.').map(Number) as [number, number];
+    const ordered = [...sse].sort((a, b) => key(a)[0] - key(b)[0] || key(a)[1] - key(b)[1]);
+    expect(sse).toEqual(ordered);
+    expect(key(sse[0]!)[0]).toBeGreaterThanOrEqual(key(lastSeen)[0]);
     const sources = second.frames.filter(f => f.data?.method === 'notifications/resources/updated').map(f => f.data.params._meta['headlamp-agent/event'].labels.source);
     expect(sources.every((s: string) => s === 'replay-test')).toBe(true);
     // Live events continue after the replay.
@@ -464,7 +478,7 @@ describe('replay with Last-Event-ID', () => {
     await store.events.prune();
     clock -= 8 * 24 * 3600_000;
     await fire();
-    const again = await open('full', '2', first.sid);
+    const again = await open('full', '2.1', first.sid);
     await until(() => again.frames.some(f => f.data?.params?._meta?.['headlamp-agent/event']?.kind === 'reset'));
     again.close();
   });

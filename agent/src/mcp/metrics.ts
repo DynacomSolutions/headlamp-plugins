@@ -1,9 +1,9 @@
 import type { Metrics } from '../metrics.js';
 
-/** The MCP metrics of contract section 10, on the shared registry. */
+/** The MCP metrics of contract appendix A, on the shared registry. */
 export class McpMetrics {
   constructor(private readonly m: Metrics) {
-    for (const reason of ['missing', 'invalid', 'bad_scopes', 'scope']) m.inc('headlamp_agent_mcp_auth_failures_total', { reason }, 0);
+    for (const reason of ['unconfigured', 'missing', 'invalid', 'scope', 'origin', 'bad_scopes']) m.inc('headlamp_agent_mcp_auth_failures_total', { reason }, 0);
   }
 
   toolCall(tool: string, client: string): void {
@@ -14,7 +14,7 @@ export class McpMetrics {
     this.m.inc('headlamp_agent_mcp_tool_errors_total', { tool, code });
   }
 
-  authFailure(reason: 'missing' | 'invalid' | 'bad_scopes' | 'scope'): void {
+  authFailure(reason: 'unconfigured' | 'missing' | 'invalid' | 'scope' | 'origin' | 'bad_scopes'): void {
     this.m.inc('headlamp_agent_mcp_auth_failures_total', { reason });
   }
 

@@ -51,7 +51,8 @@ export function parseTokens(raw: unknown): TokenEntry[] {
   for (const item of list) {
     if (!item || typeof item !== 'object') continue;
     const { name, token, sha256: hash, scopes } = item as Record<string, unknown>;
-    if (typeof name !== 'string' || !name || !Array.isArray(scopes)) continue;
+    // `anonymous` is the name of callers without a token: no token entry may use it (contract section 4.3).
+    if (typeof name !== 'string' || !name || name.toLowerCase() === 'anonymous' || !Array.isArray(scopes)) continue;
     const scopeNames = scopes.filter((s): s is string => typeof s === 'string' && s.length > 0);
     if (!scopeNames.length) continue;
     let digest: Buffer | undefined;

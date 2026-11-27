@@ -146,7 +146,7 @@ export type ParsedUri =
   | { type: 'incident'; id: string }
   | { type: 'timeline'; id: string }
   | { type: 'investigation'; id: string }
-  | { type: 'events'; kinds: string[]; labels: Record<string, string>; after?: string; limit?: number }
+  | { type: 'events'; kinds: string[]; labels: Record<string, string>; after?: string; limit?: number; logId?: string }
   | { type: 'settings' }
   | { type: 'storage'; kind: string; node?: string }
   | { type: 'contract' };
@@ -176,6 +176,10 @@ export function parseUri(uri: string): ParsedUri | undefined {
   const parts = [url.hostname, ...url.pathname.split('/').filter(Boolean)].map(decodeURIComponent);
   const q = url.searchParams;
   const [head, a, b] = parts;
+  // A URI with a query key that its template does not name does not match the template (contract section 6.2).
+  const allowed = head === 'incidents' && parts.length === 1 ? ['state', 'severity', 'label', 'test'] : head === 'events' && parts.length === 1 ? ['after', 'logId', 'limit', 'kind', 'label'] : [];
+  for (const key of q.keys()) if (!allowed.includes(key)) return undefined;
+  if (url.hash) return undefined;
   if (head === 'contract' && parts.length === 1) return { type: 'contract' };
   if (head === 'settings' && a === 'automatic-investigations' && parts.length === 2) return { type: 'settings' };
   if (head === 'storage' && a && STORAGE_KINDS.includes(a) && parts.length <= 3) return { type: 'storage', kind: a, node: b };
@@ -212,7 +216,9 @@ export function parseUri(uri: string): ParsedUri | undefined {
     const limitText = q.get('limit');
     const limit = limitText === null ? undefined : Number(limitText);
     if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1 && limit <= 500)) return undefined;
-    return { type: 'events', kinds: q.getAll('kind'), labels, after, limit };
+    const logId = q.get('logId') ?? undefined;
+    if (logId !== undefined && !/^[0-9a-f-]{36}$/i.test(logId)) return undefined;
+    return { type: 'events', kinds: q.getAll('kind'), labels, after, limit, logId };
   }
   return undefined;
 }
@@ -255,8 +261,9 @@ export function scopeForUri(parsed: ParsedUri): Scope | undefined {
     case 'incidents':
     case 'incident':
     case 'timeline':
-    case 'events':
       return 'incidents:read';
+    case 'events':
+      return undefined; // any valid token (contract section 6.1)
     case 'investigation':
       return 'agent:investigate';
     case 'settings':
@@ -264,6 +271,22 @@ export function scopeForUri(parsed: ParsedUri): Scope | undefined {
     case 'storage':
       return 'storage:read';
     case 'contract':
-      return undefined;
+      return 'registry:read';
   }
+}
+
+/** The scope of the primary URI of an event kind (contract section 7.1). `undefined`: any valid token may see it. */
+export function eventScope(kind: string): Scope | undefined {
+  if (kind.startsWith('incident.')) return 'incidents:read';
+  if (kind.startsWith('investigation.')) return 'agent:investigate';
+  if (kind.startsWith('settings.')) return 'settings:read';
+  if (kind.startsWith('storage.')) return 'storage:read';
+  return undefined;
+}
+
+/** True when a caller with `scopes` may see the event (contract section 8.7). Unknown kinds are hidden. */
+export function canSee(scopes: ReadonlySet<string>, kind: string): boolean {
+  if (kind === 'reset') return true;
+  const scope = eventScope(kind);
+  return scope !== undefined && scopes.has(scope);
 }
