@@ -96,6 +96,18 @@ export interface ModelRoute {
   systemPrefix: string;
   /** Allowlist of model ids. Also the list used when the gateway cannot list models. */
   models?: string[];
+  /**
+   * The provider the route belongs to (`claude`, `codex`, ...). A gateway app serves one provider, and one provider may have
+   * several apps: the pool app and apps pinned to one account. Routes with the same provider are the identities of that provider.
+   * Absent means the route id.
+   */
+  provider?: string;
+  /** The size of the context window in tokens, for models of this route whose gateway list does not state it. */
+  contextWindow?: number;
+  /** Price per million tokens in US dollars, for the cost line under an answer. Absent means no cost is shown. */
+  pricing?: { input: number; output: number };
+  /** The name of the identity this route uses, for the picker: `Pool`, or the account of a pinned app. Absent means `Pool`. */
+  identity?: string;
   maxTokens: number;
   timeoutMs: number;
 }
@@ -113,9 +125,26 @@ export interface ModelRoutesConfig {
   skipped: string[];
 }
 
+/** The wall-clock limit of one run when AGENT_RUN_TIMEOUT_MS is not set. */
+export const DEFAULT_RUN_TIMEOUT_MS = 15 * 60_000;
+
+/** A time limit as words: `15 minutes`, or `3 seconds` for a short limit. */
+export function formatLimit(ms: number): string {
+  if (ms >= 60_000) {
+    const m = Math.round(ms / 60_000);
+    return `${m} ${m === 1 ? 'minute' : 'minutes'}`;
+  }
+  const sec = Math.max(1, Math.round(ms / 1000));
+  return `${sec} ${sec === 1 ? 'second' : 'seconds'}`;
+}
+
 export interface DiagnosisConfig {
-  /** Tool calls the model may make per diagnosis. */
-  toolBudget: number;
+  /**
+   * The wall-clock limit of one diagnosis or one chat turn, in milliseconds. There is no cap on tool calls: a run ends when the
+   * model answers, when the context is full, when a person stops it, or at this limit (AGENT_RUN_TIMEOUT_MS, default 15 minutes).
+   * AGENT_TOOL_BUDGET of older releases is accepted and ignored.
+   */
+  runTimeoutMs: number;
   /** Alert severities that start a diagnosis from the webhook. */
   severities: string[];
   /** Upper bound on webhook-started diagnoses per hour (protects the model quota). */
@@ -154,6 +183,14 @@ function headerMap(value: unknown, where: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(value)) out[k] = String(v);
   return out;
+}
+
+/** A short display text. `pattern` limits the characters when set. */
+function label(value: unknown, field: string, where: string, pattern?: RegExp): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > 60 || (pattern && !pattern.test(value))) {
+    throw new Error(`${where}: ${field} must be a short text${pattern ? ' of letters, digits, dot, dash or underscore' : ''}`);
+  }
+  return value.trim();
 }
 
 function gatewayEnv(name: unknown, field: string, where: string): string {
@@ -227,6 +264,11 @@ export function loadModelRoutes(env: NodeJS.ProcessEnv): ModelRoutesConfig {
       if (!Array.isArray(e.models) || e.models.some(m => typeof m !== 'string')) throw new Error(`${where}: models must be an array of strings`);
       models = e.models as string[];
     }
+    const contextWindow = typeof e.contextWindow === 'number' && e.contextWindow > 0 ? Math.floor(e.contextWindow) : undefined;
+    const price = e.pricing as { input?: unknown; output?: unknown } | undefined;
+    const pricing = price && typeof price.input === 'number' && typeof price.output === 'number' && price.input >= 0 && price.output >= 0 ? { input: price.input, output: price.output } : undefined;
+    const provider = e.provider === undefined ? undefined : label(e.provider, 'provider', where, /^[a-z0-9][a-z0-9_.-]*$/i);
+    const identity = e.identity === undefined ? undefined : label(e.identity, 'identity', where);
     routes.push({
       id,
       style: st,
@@ -235,6 +277,10 @@ export function loadModelRoutes(env: NodeJS.ProcessEnv): ModelRoutesConfig {
       headers: headerMap(e.headers, where),
       systemPrefix: typeof e.systemPrefix === 'string' ? e.systemPrefix : '',
       models,
+      ...(contextWindow ? { contextWindow } : {}),
+      ...(pricing ? { pricing } : {}),
+      ...(provider ? { provider } : {}),
+      ...(identity ? { identity } : {}),
       maxTokens: typeof e.maxTokens === 'number' && e.maxTokens > 0 ? Math.floor(e.maxTokens) : maxTokens,
       timeoutMs: typeof e.timeoutMs === 'number' && e.timeoutMs > 0 ? Math.floor(e.timeoutMs) : timeoutMs,
     });
@@ -317,7 +363,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     reconcileSeconds: int(env.AGENT_RECONCILE_SECONDS, 60),
     models: loadModelRoutes(env),
     diagnosis: {
-      toolBudget: int(env.AGENT_TOOL_BUDGET, 10),
+      runTimeoutMs: int(env.AGENT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS),
       severities: list(env.AGENT_DIAGNOSE_SEVERITIES, ['warning', 'critical']).map(s => s.toLowerCase()),
       maxPerHour: int(env.AGENT_MAX_DIAGNOSES_PER_HOUR, 6),
       maxConcurrentReruns: int(env.AGENT_MAX_CONCURRENT_RERUNS, 2),

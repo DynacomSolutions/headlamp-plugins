@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mask, maskText } from '../mask.js';
-import { chatDiagnosisIds, DEFAULT_TITLE, type Chat, type ChatMessage, type ChatStep, type ChatStore } from '../chats.js';
+import { chatDiagnosisIds, DEFAULT_TITLE, type Chat, type ChatMessage, type ChatStep, type ChatStore, type ChatUsage } from '../chats.js';
+import { DEFAULT_RUN_TIMEOUT_MS, formatLimit } from '../config.js';
 import type { DiagnosisStore } from '../store.js';
-import { ModelCatalogue, UnknownModelError } from './catalogue.js';
+import { ModelCatalogue, UnknownIdentityError, UnknownModelError } from './catalogue.js';
 import type { ToolHost } from './engine.js';
+import { trimHistory } from './history.js';
 import type { Message, ToolSpec } from './model.js';
 import type { Diagnosis } from './report.js';
 import { readSkill } from './skill.js';
@@ -22,12 +24,11 @@ export class ChatError extends Error {
   }
 }
 
-/** The text of all tool results kept in the history sent to the model. Older results go first. */
-const HISTORY_RESULT_CHARS = 120_000;
-/** Model calls allowed beyond the tool budget, so the model can still answer once it is spent. */
-const EXTRA_ROUNDS = 4;
+/** Share of the context window after which the next call is the last one: the model must answer. */
+const CONTEXT_FULL = 0.9;
+const STEP_OUTPUT_CHARS = 4000;
+const STEP_ARGS_CHARS = 1500;
 const TITLE_CHARS = 60;
-const REMOVED = '[older tool result removed to keep the history short]';
 
 export interface ChatSummary {
   id: string;
@@ -56,27 +57,15 @@ export interface ChatDeps {
   diagnoses: DiagnosisStore;
   tools: ToolHost;
   catalogue: ModelCatalogue;
-  /** Tool calls per turn. */
-  budget: number;
+  /** Wall-clock limit of one turn in milliseconds. Default 15 minutes. There is no cap on tool calls. */
+  timeoutMs?: number;
   /** Turns that may run at once across chats. */
   maxTurns: number;
   /** Called when an answer is done, with the push subscription of the page that asked (if it named one). Must not throw. */
   onAnswer?: (event: { chatId: string; subscription: string; text: string }) => void;
 }
 
-/** Replaces the oldest tool results with a short note until the kept results fit `limit` characters. */
-export function trimHistory(messages: Message[], limit = HISTORY_RESULT_CHARS): Message[] {
-  const out: Message[] = messages.map(m => (m.role === 'tool' ? { role: 'tool', results: m.results.map(r => ({ ...r })) } : m));
-  const results = out.flatMap(m => (m.role === 'tool' ? m.results : []));
-  let total = results.reduce((n, r) => n + r.content.length, 0);
-  for (const r of results) {
-    if (total <= limit) break;
-    if (r.content === REMOVED) continue;
-    total -= r.content.length - REMOVED.length;
-    r.content = REMOVED;
-  }
-  return out;
-}
+export { trimHistory };
 
 /** One short line about an incident, for the incidents of a large group that get no full context. */
 export function summaryLine(d: Diagnosis): string {
@@ -96,13 +85,13 @@ export interface GroupContext {
   omitted?: number;
 }
 
-export function systemPrompt(budget: number, diagnosis?: Diagnosis | Diagnosis[], group?: GroupContext): string {
+export function systemPrompt(diagnosis?: Diagnosis | Diagnosis[], group?: GroupContext): string {
   const parts = [
     readSkill().body,
     [
       '## Chat mode',
       'You are chatting with an operator about this cluster and its incidents. Answer in Markdown, in plain words, and keep it short.',
-      `You have the read-only tools. Use them when you need facts, and give each call a \`reason\`. You may make at most ${budget} tool calls for each answer.`,
+      `You have the read-only tools. Use them when you need facts, and give each call a \`reason\`. Make as many calls as the question needs, then answer.`,
       'There is no submit_diagnosis tool in this chat: ignore any instruction to call it. Answer in text when you have enough facts.',
       'You cannot change anything. Say so when asked, and show the command or the change for the operator to make.',
     ].join('\n'),
@@ -187,6 +176,16 @@ export class ChatService {
     return requested;
   }
 
+  /** The model of a request with the identity applied. A bad identity is a 400. */
+  private identified(model: string | undefined, identity: string | undefined): string | undefined {
+    try {
+      return this.catalogue.withIdentity(model, identity);
+    } catch (error) {
+      if (error instanceof UnknownIdentityError) throw new ChatError(400, error.message);
+      throw error;
+    }
+  }
+
   /** The model a send or patch request picks. Any non-empty model is a real pick: the older plugin sent one only after a pick on these routes. */
   private pick(requested?: string): string | undefined {
     return requested === undefined || requested === '' ? undefined : requested;
@@ -219,7 +218,7 @@ export class ChatService {
   }
 
   /** `options.pickHeader` is true when the request carried the model-pick header (see `createPick`). */
-  async create(body: { model?: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }, options: { pickHeader?: boolean } = {}): Promise<{ id: string }> {
+  async create(body: { model?: string; identity?: string; diagnosisId?: string; diagnosisIds?: string[]; groupName?: string; summaryIds?: string[]; groupOmitted?: number }, options: { pickHeader?: boolean } = {}): Promise<{ id: string }> {
     const ids = [...new Set([...(body.diagnosisIds ?? []), ...(body.diagnosisId !== undefined ? [body.diagnosisId] : [])])];
     if (ids.length > MAX_CHAT_INCIDENTS) throw new ChatError(400, `A chat can link at most ${MAX_CHAT_INCIDENTS} incidents`);
     const summaryIds = [...new Set(body.summaryIds ?? [])];
@@ -229,7 +228,9 @@ export class ChatService {
     // An incident that left the store (retention removed it) drops out of the short list. It is not an error.
     const known: string[] = [];
     for (const id of summaryIds) if (await this.deps.diagnoses.get(id)) known.push(id);
-    const picked = this.createPick(body.model, options.pickHeader === true);
+    // An identity is sent only after a person picked it, so it counts as a pick like the pick header.
+    const requested = this.identified(body.model, body.identity);
+    const picked = this.createPick(requested, options.pickHeader === true || !!body.identity);
     const model = await this.modelId(picked);
     const modelPinned = picked !== undefined;
     return { id: this.deps.store.create({ model, modelPinned, diagnosisIds: ids, ...(body.groupName ? { groupName: body.groupName } : {}), summaryIds: known, ...(body.groupOmitted ? { groupOmitted: body.groupOmitted } : {}) }).id };
@@ -255,10 +256,10 @@ export class ChatService {
     };
   }
 
-  async patch(id: string, body: { title?: string; model?: string }): Promise<ChatSummary> {
+  async patch(id: string, body: { title?: string; model?: string; identity?: string }): Promise<ChatSummary> {
     const chat = this.chat(id);
     if (body.model !== undefined) {
-      const picked = this.pick(body.model);
+      const picked = this.pick(this.identified(body.model, body.identity));
       chat.model = await this.modelId(picked);
       chat.modelPinned = picked !== undefined;
     }
@@ -274,12 +275,12 @@ export class ChatService {
   }
 
   /** Starts one assistant turn. Returns the id of the assistant message. */
-  async send(id: string, text: string, model?: string, subscription?: string): Promise<{ messageId: string }> {
+  async send(id: string, text: string, model?: string, subscription?: string, identity?: string): Promise<{ messageId: string }> {
     const { store } = this.deps;
     const chat = this.chat(id);
     if (store.running(chat) || this.turns.has(id)) throw new ChatError(409, 'A turn is already running in this chat');
     if (this.turns.size >= this.deps.maxTurns) throw new ChatError(429, 'Too many chat turns are running. Try again in a moment.');
-    const wanted = this.pick(model);
+    const wanted = this.pick(this.identified(model, identity));
     // An explicit pick pins the chat to that model. Without one a pinned chat keeps its model, and the others use the default order.
     const pinned = wanted ? true : this.pinned(chat);
     const resolved = wanted || !pinned ? await this.modelId(wanted) : chat.model;
@@ -349,14 +350,19 @@ export class ChatService {
   }
 
   private async run(chat: Chat, reply: ChatMessage, controller: AbortController, subscription?: string): Promise<void> {
-    const { store, tools: host, budget } = this.deps;
-    const signal = controller.signal;
+    const { store, tools: host } = this.deps;
+    const limit = this.deps.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    const started = Date.now();
+    const userSignal = controller.signal;
+    // The turn ends at the time limit too. A model call and a retry in flight stop with it.
+    const signal = AbortSignal.any([userSignal, AbortSignal.timeout(limit)]);
     const cancelled = new Promise<never>((_, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true }));
     cancelled.catch(() => undefined);
     const guard = <T>(p: Promise<T>): Promise<T> => Promise.race([p, cancelled]);
     const save = () => {
-      if (!signal.aborted) store.save(chat);
+      if (!userSignal.aborted) store.save(chat);
     };
+    const usage: ChatUsage = { inputTokens: 0, outputTokens: 0, contextTokens: 0, calls: 0 };
     try {
       // A pinned chat uses its model as it is. Otherwise the default order applies, with a fallback on a usage failure.
       const client = await guard(this.deps.catalogue.open(this.pinned(chat) ? chat.model : undefined));
@@ -369,47 +375,88 @@ export class ChatService {
         ? (await Promise.all(chat.summaryIds.map(id => this.deps.diagnoses.get(id)))).filter((d): d is Diagnosis => !!d)
         : [];
       const group = chat.groupName && summaries.length ? { name: chat.groupName, summaries, omitted: chat.groupOmitted ?? 0 } : undefined;
-      const system = systemPrompt(budget, linked.length === 1 && !group ? linked[0] : linked, group);
+      const system = systemPrompt(linked.length === 1 && !group ? linked[0] : linked, group);
       const past = this.history(chat, reply);
       const turn: Message[] = [];
-      const texts: string[] = [];
-      let calls = 0;
+      const thoughts: string[] = [];
+      let final = '';
       let n = 0;
       let answered = false;
-      for (let round = 0; round < budget + EXTRA_ROUNDS; round++) {
-        const completion = await guard(client.complete({ system, messages: trimHistory([...past, ...turn]), tools: toolSpecs, session: chat.id }));
+      let wrapUp = false;
+      // The usage of the turn shows live: a client reads it while the turn runs.
+      const publishUsage = () => {
+        const labels = this.catalogue.labels(client.name);
+        const price = this.catalogue.pricing(client.name);
+        const window = this.catalogue.contextWindow(client.name);
+        reply.usage = {
+          ...usage,
+          ...(window ? { contextWindow: window } : {}),
+          ...(price ? { costUsd: (usage.inputTokens * price.input + usage.outputTokens * price.output) / 1_000_000 } : {}),
+          ...(labels ?? {}),
+          durationMs: Date.now() - started,
+        };
+      };
+      // A turn ends when the model answers with no tool call, when the context is full (the last call has no tools), when a person
+      // stops it, or at the time limit. A tool call is never refused for its count.
+      for (;;) {
+        if (signal.aborted) throw new Error('cancelled');
+        const completion = await guard(
+          client.complete({
+            system,
+            messages: trimHistory([...past, ...turn]),
+            tools: wrapUp ? [] : toolSpecs,
+            session: chat.id,
+            signal,
+          }),
+        );
         // The default order can move to the next model, so the record names the one that answered.
         reply.model = client.name;
         if (!this.pinned(chat)) chat.model = client.name;
+        usage.calls++;
+        usage.inputTokens += completion.usage.input;
+        usage.outputTokens += completion.usage.output;
+        usage.contextTokens = completion.usage.input;
+        publishUsage();
         const text = completion.text.trim();
-        if (text) {
-          texts.push(text);
-          reply.text = maskText(texts.join('\n\n'));
-        }
         turn.push({ role: 'assistant', text: completion.text, toolCalls: completion.toolCalls });
         if (completion.toolCalls.length === 0) {
+          if (text) final = text;
           answered = true;
+          save();
           break;
+        }
+        // Text next to tool calls is the model thinking aloud: it shows as progress, not as the answer.
+        if (text) {
+          thoughts.push(text);
+          reply.thinking = maskText(thoughts.join('\n\n'));
         }
         const results: Array<{ id: string; name: string; content: string; isError: boolean }> = [];
         for (const call of completion.toolCalls) {
           const { reason, ...args } = (call.args ?? {}) as Record<string, unknown>;
-          const step: ChatStep = { id: `s${++n}`, tool: call.name, reason: maskText(typeof reason === 'string' && reason ? reason : '(no reason given)'), status: 'running' };
+          const begun = Date.now();
+          const step: ChatStep = {
+            id: `s${++n}`,
+            tool: call.name,
+            reason: maskText(typeof reason === 'string' && reason ? reason : '(no reason given)'),
+            status: 'running',
+            startedAt: new Date(begun).toISOString(),
+            args: shortArgs(args),
+          };
           reply.steps.push(step);
           save();
           const finish = (ok: boolean, text: string, content: string): void => {
             step.ok = ok;
             step.summary = maskText(text);
+            step.output = clip(content, STEP_OUTPUT_CHARS);
             step.status = 'done';
+            step.endedAt = new Date().toISOString();
+            step.durationMs = Date.now() - begun;
             results.push({ id: call.id, name: call.name, content, isError: !ok });
             save();
           };
           if (!names.has(call.name)) {
             finish(false, `There is no tool named ${call.name}.`, `There is no tool named ${call.name}.`);
-          } else if (calls >= budget) {
-            finish(false, 'Tool budget used up.', 'The tool budget for this answer is used up. Answer with what you have.');
           } else {
-            calls++;
             try {
               const out = await guard(host.call(call.name, args));
               finish(out.ok, out.summary, clip(maskText(JSON.stringify(mask(out.data)))));
@@ -421,10 +468,18 @@ export class ChatService {
           }
         }
         turn.push({ role: 'tool', results });
+        // A full context ends the turn: the next call has no tools, so the model answers with what it has.
+        const window = this.catalogue.contextWindow(client.name);
+        if (window && usage.contextTokens >= window * CONTEXT_FULL) {
+          wrapUp = true;
+          turn.push({ role: 'user', text: 'The context window is nearly full. Answer now with what you have. Do not call a tool.' });
+        }
         save();
       }
-      if (signal.aborted) return;
+      if (userSignal.aborted) return;
+      reply.text = maskText(final || thoughts.join('\n\n'));
       if (!reply.text) throw new Error(answered ? 'The model gave no answer' : 'The model kept calling tools and did not answer');
+      publishUsage();
       reply.trace = mask(turn);
       reply.status = 'done';
       store.save(chat);
@@ -436,18 +491,29 @@ export class ChatService {
         }
       }
     } catch (error) {
-      if (signal.aborted) return;
+      if (userSignal.aborted) return;
       reply.status = 'failed';
-      reply.error = maskText(error instanceof Error ? error.message : String(error));
+      const timedOut = signal.aborted;
+      reply.error = timedOut ? `The turn took longer than ${formatLimit(limit)} and was stopped.` : maskText(error instanceof Error ? error.message : String(error));
       for (const s of reply.steps) {
         if (s.status === 'running') {
           s.status = 'done';
           s.ok = false;
+          s.endedAt = new Date().toISOString();
         }
       }
+      if (usage.calls) reply.usage = { ...usage, durationMs: Date.now() - started };
       store.save(chat);
     } finally {
       if (this.turns.get(chat.id) === controller) this.turns.delete(chat.id);
     }
   }
+}
+
+/** The arguments of a tool call for the card: masked, and cut short when they are long. */
+function shortArgs(args: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!Object.keys(args).length) return undefined;
+  const masked = mask(args) as Record<string, unknown>;
+  const text = JSON.stringify(masked);
+  return text.length <= STEP_ARGS_CHARS ? masked : { truncated: clip(text, STEP_ARGS_CHARS) };
 }

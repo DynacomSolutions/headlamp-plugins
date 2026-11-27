@@ -404,7 +404,6 @@ describe('records the model that answered', () => {
       diagnoses: new MemoryDiagnosisStore(),
       tools: { list: async () => [], call: async () => ({ ok: true, summary: '', data: {} }) },
       catalogue: c,
-      budget: 2,
       maxTurns: 3,
     });
     return { c, chats, store };
@@ -547,7 +546,7 @@ describe('records the model that answered', () => {
         return { text: '', toolCalls: [{ id: 'c', name: 'submit_diagnosis', args: { summary: 's', likelyCause: 'c', confidence: 'low', signals: [], fixes: [{ title: 't', detail: 'd', recommended: true }], verify: 'v' } }], stop: 'tool_use', usage: { input: 0, output: 0 } };
       },
     };
-    const d = await diagnose({ alert: { name: 'A', severity: 'warning', labels: {}, annotations: {}, startsAt: '2026-11-26T00:00:00Z', fingerprint: 'f' }, tools: { list: async () => [], call: async () => ({ ok: true, summary: '', data: {} }) }, model, budget: 1, source: 'api' });
+    const d = await diagnose({ alert: { name: 'A', severity: 'warning', labels: {}, annotations: {}, startsAt: '2026-11-26T00:00:00Z', fingerprint: 'f' }, tools: { list: async () => [], call: async () => ({ ok: true, summary: '', data: {} }) }, model, source: 'api' });
     expect(d.model).toBe('qwen/q');
   });
 

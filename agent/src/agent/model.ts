@@ -54,9 +54,11 @@ export interface CompleteRequest {
   system: string;
   messages: Message[];
   tools: ToolSpec[];
-  /** Force one named tool (used for the final submit after the budget is spent). */
+  /** Force one named tool (used for the final submit). */
   forceTool?: string;
   session: string;
+  /** Aborts the call: the request in flight and the retries stop. */
+  signal?: AbortSignal;
 }
 
 /** The header with which the AIS gateway names why it built an error answer itself. */
@@ -166,11 +168,13 @@ export class ModelClient implements ChatModel {
   }
 
   /** POST with retries on 429, 5xx and network errors. Returns the raw body text. */
-  private async postText(url: string, headers: Record<string, string>, body: unknown): Promise<string> {
+  private async postText(url: string, headers: Record<string, string>, body: unknown, abort?: AbortSignal): Promise<string> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (abort?.aborted) throw new Error('cancelled');
       try {
-        const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(this.route.timeoutMs) });
+        const timeout = AbortSignal.timeout(this.route.timeoutMs);
+        const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: abort ? AbortSignal.any([timeout, abort]) : timeout });
         const text = await res.text();
         if (res.ok) return text;
         const answered: Record<string, string> = {};
@@ -185,6 +189,7 @@ export class ModelClient implements ChatModel {
         const wait = Math.min(Number(res.headers.get('retry-after') ?? 0) * 1000 || 2000 * (attempt + 1), 20_000);
         await new Promise(r => setTimeout(r, wait));
       } catch (error) {
+        if (abort?.aborted) throw new Error('cancelled');
         lastError = error;
         await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
       }
@@ -192,8 +197,8 @@ export class ModelClient implements ChatModel {
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
-  private async post(url: string, headers: Record<string, string>, body: unknown): Promise<any> {
-    return JSON.parse(await this.postText(url, headers, body));
+  private async post(url: string, headers: Record<string, string>, body: unknown, abort?: AbortSignal): Promise<any> {
+    return JSON.parse(await this.postText(url, headers, body, abort));
   }
 
   private async anthropic(req: Req): Promise<Completion> {
@@ -218,13 +223,13 @@ export class ModelClient implements ChatModel {
     };
     if (req.forceTool) body.tool_choice = { type: 'tool', name: req.forceTool };
     const headers = routeHeaders(this.route, req.session);
-    const res = await this.post(`${this.route.baseUrl}/v1/messages`, headers, body);
+    const res = await this.post(`${this.route.baseUrl}/v1/messages`, headers, body, req.signal);
     const blocks: any[] = Array.isArray(res.content) ? res.content : [];
     return {
       text: blocks.filter(b => b.type === 'text').map(b => b.text).join('\n'),
       toolCalls: blocks.filter(b => b.type === 'tool_use').map(b => ({ id: b.id, name: b.name, args: b.input })),
       stop: res.stop_reason ?? '',
-      usage: { input: res.usage?.input_tokens ?? 0, output: res.usage?.output_tokens ?? 0 },
+      usage: { input: (res.usage?.input_tokens ?? 0) + (res.usage?.cache_read_input_tokens ?? 0) + (res.usage?.cache_creation_input_tokens ?? 0), output: res.usage?.output_tokens ?? 0 },
     };
   }
 
@@ -248,7 +253,7 @@ export class ModelClient implements ChatModel {
     };
     if (req.forceTool) body.tool_choice = { type: 'function', function: { name: req.forceTool } };
     const headers = routeHeaders(this.route, req.session);
-    const res = await this.post(`${this.route.baseUrl}/chat/completions`, headers, body);
+    const res = await this.post(`${this.route.baseUrl}/chat/completions`, headers, body, req.signal);
     const choice = res.choices?.[0] ?? {};
     const msg = choice.message ?? {};
     const toolCalls: ToolCall[] = (msg.tool_calls ?? []).map((c: any, i: number) => {
@@ -289,7 +294,7 @@ export class ModelClient implements ChatModel {
       stream: true,
     };
     if (req.forceTool) body.tool_choice = { type: 'function', name: req.forceTool };
-    const text = await this.postText(`${this.route.baseUrl}/responses`, routeHeaders(this.route, req.session), body);
+    const text = await this.postText(`${this.route.baseUrl}/responses`, routeHeaders(this.route, req.session), body, req.signal);
     return parseResponses(text);
   }
 }

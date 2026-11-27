@@ -85,10 +85,10 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function service(calls: string[] = [], overrides: { maxTurns?: number; diagnoses?: DiagnosisStore } = {}) {
+function service(calls: string[] = [], overrides: { maxTurns?: number; diagnoses?: DiagnosisStore; timeoutMs?: number } = {}) {
   const store = new ChatStore(dir);
   const diagnoses = overrides.diagnoses ?? new MemoryDiagnosisStore();
-  const chats = new ChatService({ store, diagnoses, tools: host(calls), catalogue: new ModelCatalogue(models()), budget: 2, maxTurns: overrides.maxTurns ?? 3 });
+  const chats = new ChatService({ store, diagnoses, tools: host(calls), catalogue: new ModelCatalogue(models()), maxTurns: overrides.maxTurns ?? 3, ...(overrides.timeoutMs ? { timeoutMs: overrides.timeoutMs } : {}) });
   return { store, chats, diagnoses };
 }
 
@@ -124,19 +124,25 @@ describe('chat service', () => {
     expect(mid.title).toBe('Why is web-1 failing?');
     await until(() => (chats.get(id) as any).messages[1].steps[0]?.status === 'done');
     const during = (chats.get(id) as any).messages[1];
-    expect(during).toMatchObject({ id: messageId, role: 'assistant', status: 'running', text: 'Let me look.' });
+    expect(during).toMatchObject({ id: messageId, role: 'assistant', status: 'running', text: '', thinking: 'Let me look.' });
     expect(during.steps[0]).toMatchObject({ tool: 'get_resource', reason: 'Is the pod healthy?', ok: true, summary: 'Pod is CrashLoopBackOff.', status: 'done' });
+    // The card shows the arguments, the result and how long the call took.
+    expect(during.steps[0].args).toEqual({ kind: 'Pod' });
+    expect(during.steps[0].output).toContain('"kind":"Pod"');
+    expect(typeof during.steps[0].durationMs).toBe('number');
+    expect(during.steps[0].startedAt).toBeTruthy();
+    expect(during.usage).toMatchObject({ calls: 1 });
     release();
     await until(() => !(chats.get(id) as any).running);
     const done = chats.get(id) as any;
     expect(done.messages[0]).toMatchObject({ role: 'user', text: '  Why is   web-1 failing?  ', status: 'done' });
-    expect(done.messages[1]).toMatchObject({ status: 'done', text: 'Let me look.\n\nThe pod is crash looping.', model: 'gateway/m1' });
+    expect(done.messages[1]).toMatchObject({ status: 'done', text: 'The pod is crash looping.', thinking: 'Let me look.', model: 'gateway/m1', usage: { calls: 2, identity: 'Pool', provider: 'gateway' } });
     expect(done.messages[1].trace).toBeUndefined();
     expect(calls).toEqual(['get_resource']);
-    // The second model call saw the masked tool result, and the system prompt names the budget.
+    // The second model call saw the masked tool result, and the system prompt sets no cap on tool calls.
     const second = script.requests[1];
     expect(JSON.stringify(second)).not.toContain(FAKE_TOKEN);
-    expect(second.messages[0].content).toContain('at most 2 tool calls');
+    expect(second.messages[0].content).not.toMatch(/at most \d+ tool calls/);
     expect(second.messages.some((m: any) => m.role === 'tool')).toBe(true);
     expect(second.tools[0].function.parameters.required).toContain('reason');
   });
@@ -183,31 +189,159 @@ describe('chat service', () => {
     chats.cancel(id);
     const c = chats.get(id) as any;
     expect(c.running).toBe(false);
-    expect(c.messages[1]).toMatchObject({ status: 'cancelled', text: 'Looking.' });
+    expect(c.messages[1]).toMatchObject({ status: 'cancelled', thinking: 'Looking.' });
     await new Promise(r => setTimeout(r, 20));
     expect((chats.get(id) as any).messages[1].status).toBe('cancelled');
     chats.cancel(id);
     await expect(chats.send(id, 'next')).resolves.toBeTruthy();
   });
 
-  it('marks a failed model call and a used-up budget', async () => {
+  it('runs every tool call the model asks for, and marks a failed model call', async () => {
     const calls: string[] = [];
     const { chats } = service(calls);
     const call = { name: 'get_resource', args: { reason: 'again' } };
-    script.queue.push({ calls: [call, call, call] }, { text: 'Done with two.' });
+    script.queue.push({ calls: [call, call, call, call, call, call, call, call, call, call, call, call] }, { text: 'Done with twelve.' });
     const { id } = await chats.create({});
     await chats.send(id, 'hello');
     await until(() => !(chats.get(id) as any).running);
     const m = (chats.get(id) as any).messages[1];
     expect(m.status).toBe('done');
-    expect(calls).toHaveLength(2);
-    expect(m.steps.map((s: any) => s.ok)).toEqual([true, true, false]);
-    expect(m.steps[2].summary).toMatch(/budget/);
+    expect(calls).toHaveLength(12);
+    expect(m.steps.every((s: any) => s.ok === true)).toBe(true);
 
     vi.stubGlobal('fetch', async (input: string) => (String(input).startsWith(GW) ? new Response('bad key', { status: 401 }) : realFetch(input)));
     await chats.send(id, 'again');
     await until(() => !(chats.get(id) as any).running);
     expect((chats.get(id) as any).messages[3]).toMatchObject({ status: 'failed', error: expect.stringContaining('401') });
+  });
+
+  it('shows a running tool step before it ends, with its start time and no duration', async () => {
+    let finish: () => void = () => undefined;
+    const slow: ToolHost = {
+      list: host().list,
+      call: async () => {
+        await new Promise<void>(r => (finish = r));
+        return { ok: true, summary: 'slow ok', data: {} };
+      },
+    };
+    const store = new ChatStore(dir);
+    const chats = new ChatService({ store, diagnoses: new MemoryDiagnosisStore(), tools: slow, catalogue: new ModelCatalogue(models()), maxTurns: 3 });
+    script.queue.push({ calls: [{ name: 'get_resource', args: { reason: 'wait' } }] }, { text: 'Done.' });
+    const { id } = await chats.create({});
+    await chats.send(id, 'go');
+    await until(() => (chats.get(id) as any).messages[1].steps[0]?.status === 'running');
+    const step = (chats.get(id) as any).messages[1].steps[0];
+    expect(step.startedAt).toBeTruthy();
+    expect(step.durationMs).toBeUndefined();
+    finish();
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[1].steps[0].durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('stops the turn for real: the model call in flight is aborted', async () => {
+    const { chats } = service();
+    let aborted = false;
+    const realStub = globalThis.fetch;
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).startsWith(GW) && !String(input).endsWith('/models')) {
+        script.requests.push(JSON.parse(String(init?.body)));
+        return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); }));
+      }
+      return realStub(input as string, init);
+    });
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => script.requests.length === 1);
+    chats.cancel(id);
+    await until(() => aborted);
+    expect((chats.get(id) as any).messages[1].status).toBe('cancelled');
+  });
+
+  it('ends a turn at the time limit and says so', async () => {
+    const { chats } = service([], { timeoutMs: 150 });
+    // The model keeps calling tools: only the time limit ends the turn.
+    for (let i = 0; i < 400; i++) script.queue.push(async () => { await new Promise(r => setTimeout(r, 20)); return { calls: [{ name: 'get_resource', args: { reason: 'again' } }] }; });
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    const m = (chats.get(id) as any).messages[1];
+    expect(m).toMatchObject({ status: 'failed', error: 'The turn took longer than 1 second and was stopped.'.replace('1 second', '150 ms'.replace('150 ms', '1 second')) });
+    expect(m.steps.length).toBeGreaterThan(2);
+  });
+
+  it('calls no tool in the last call when the context is nearly full', async () => {
+    const config = models();
+    config.routes[0].contextWindow = 1000;
+    const store = new ChatStore(dir);
+    const chats = new ChatService({ store, diagnoses: new MemoryDiagnosisStore(), tools: host(), catalogue: new ModelCatalogue(config), maxTurns: 3 });
+    // The first call reports 950 tokens of input, 95% of the window.
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (!url.startsWith(GW) || url.endsWith('/models')) return realFetch(input as string, init);
+      const body = JSON.parse(String(init?.body));
+      script.requests.push(body);
+      const first = script.requests.length === 1;
+      const message = first
+        ? { content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'get_resource', arguments: JSON.stringify({ reason: 'x' }) } }] }
+        : { content: 'Answer from what I have.', tool_calls: [] };
+      return new Response(JSON.stringify({ choices: [{ message, finish_reason: 'stop' }], usage: { prompt_tokens: first ? 950 : 990, completion_tokens: 10 } }), { status: 200 });
+    });
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    const done = chats.get(id) as any;
+    expect(done.messages[1]).toMatchObject({ status: 'done', text: 'Answer from what I have.' });
+    expect(script.requests[1].tools ?? []).toEqual([]);
+    expect(JSON.stringify(script.requests[1].messages)).toContain('context window is nearly full');
+    expect(done.messages[1].usage).toMatchObject({ inputTokens: 1940, outputTokens: 20, contextTokens: 990, contextWindow: 1000, calls: 2 });
+  });
+
+  it('reports the cost when the route states a price', async () => {
+    const config = models();
+    config.routes[0].pricing = { input: 3, output: 15 };
+    const store = new ChatStore(dir);
+    const chats = new ChatService({ store, diagnoses: new MemoryDiagnosisStore(), tools: host(), catalogue: new ModelCatalogue(config), maxTurns: 3 });
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      if (!String(input).startsWith(GW) || String(input).endsWith('/models')) return realFetch(input as string, init);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1000, completion_tokens: 100 } }), { status: 200 });
+    });
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[1].usage.costUsd).toBeCloseTo(0.0045, 6);
+  });
+
+  it('answers from the identity the person picked, and refuses a model of another identity', async () => {
+    const config: ModelRoutesConfig = {
+      routes: [
+        { id: 'gateway', provider: 'claude', identity: 'Pool', style: 'openai', baseUrl: GW, apiKey: 'k', headers: {}, systemPrefix: '', models: ['m1'], maxTokens: 100, timeoutMs: 1000 },
+        { id: 'gateway-a', provider: 'claude', identity: 'Account A', style: 'openai', baseUrl: `${GW}/a`, apiKey: 'k', headers: {}, systemPrefix: '', models: ['m1'], maxTokens: 100, timeoutMs: 1000 },
+      ],
+      defaultModel: 'gateway/m1',
+      skipped: [],
+    };
+    const store = new ChatStore(dir);
+    const chats = new ChatService({ store, diagnoses: new MemoryDiagnosisStore(), tools: host(), catalogue: new ModelCatalogue(config), maxTurns: 3 });
+    const urls: string[] = [];
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (!url.startsWith(GW) || url.endsWith('/models')) return url.startsWith(GW) ? new Response('no', { status: 500 }) : realFetch(input as string, init);
+      urls.push(url);
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} }), { status: 200 });
+    });
+    const { id } = await chats.create({ model: 'm1', identity: 'gateway-a' });
+    expect((chats.get(id) as any).model).toBe('gateway-a/m1');
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    expect(urls[0]).toBe(`${GW}/a/chat/completions`);
+    expect((chats.get(id) as any).messages[1].usage).toMatchObject({ identity: 'Account A', provider: 'claude' });
+    // A send with the other identity switches the chat and pins it.
+    await chats.send(id, 'again', 'm1', undefined, 'gateway');
+    await until(() => !(chats.get(id) as any).running);
+    expect(urls[1]).toBe(`${GW}/chat/completions`);
+    await expect(chats.send(id, 'x', 'gateway-a/m1', undefined, 'gateway')).rejects.toMatchObject({ status: 400, message: expect.stringContaining('belongs to the identity') });
+    await expect(chats.create({ model: 'm1', identity: 'nope' })).rejects.toMatchObject({ status: 400, message: expect.stringContaining('Unknown identity') });
+    await expect(chats.create({ identity: 'gateway' })).rejects.toMatchObject({ status: 400 });
   });
 
   it('puts the diagnosis into the system prompt', async () => {
@@ -224,7 +358,7 @@ describe('chat service', () => {
     expect(system).toContain('KubePodCrashLooping');
     expect(system).toContain('Memory limit too low.');
     expect(system).toContain('OOMKilled seen');
-    expect(systemPrompt(3)).not.toContain('KubePodCrashLooping');
+    expect(systemPrompt()).not.toContain('KubePodCrashLooping');
   });
 
   it('links one chat to several incidents and puts all of them into the system prompt', async () => {
@@ -298,7 +432,7 @@ describe('chat service', () => {
 
   it('counts the short lines that do not fit instead of cutting one in half', () => {
     const many = Array.from({ length: 300 }, (_, i) => ({ ...diagnosis(`s${i}`), result: { ...diagnosis(`s${i}`).result!, likelyCause: 'x'.repeat(400) } }));
-    const prompt = systemPrompt(3, [diagnosis('d1'), diagnosis('d2')], { name: 'Big', summaries: many });
+    const prompt = systemPrompt([diagnosis('d1'), diagnosis('d2')], { name: 'Big', summaries: many });
     expect(prompt).toContain('The next 300 have');
     expect(prompt).toMatch(/\(\d+ more older incidents are not listed\.\)/);
     expect(prompt.length).toBeLessThan(48_000 + 30_000 + 30_000);
@@ -315,7 +449,7 @@ describe('chat service', () => {
   it('shares the prompt budget between the linked incidents', () => {
     const big = (id: string): Diagnosis => ({ ...diagnosis(id), evidence: Array.from({ length: 400 }, (_, i) => ({ id: `e${i}`, tool: 'get_resource', reason: 'r', summary: 'x'.repeat(100), ok: true })) });
     const ids = Array.from({ length: 20 }, (_, i) => `d${i}`);
-    const prompt = systemPrompt(3, ids.map(big));
+    const prompt = systemPrompt(ids.map(big));
     for (const id of ids) expect(prompt).toContain(`Diagnosis ${id}`);
     expect(prompt.length).toBeLessThan(80_000);
   });
@@ -371,7 +505,7 @@ describe('chat routes', () => {
     const base = `http://127.0.0.1:${server.port}`;
     try {
       const listed = await api(base, 'GET', '/api/models');
-      expect(listed.body.models[0]).toEqual({ id: 'gateway/m1', route: 'gateway', model: 'm1', name: 'm1' });
+      expect(listed.body.models[0]).toEqual({ id: 'gateway/m1', route: 'gateway', model: 'm1', name: 'm1', provider: 'gateway', identity: 'Pool' });
       expect((await api(base, 'GET', '/api/chats')).body).toEqual({ chats: [] });
       expect((await api(base, 'POST', '/api/chats', { model: 'gateway/zzz' })).status).toBe(400);
       expect((await api(base, 'POST', '/api/chats', { diagnosisId: 'nope' })).status).toBe(404);

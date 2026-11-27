@@ -70,20 +70,32 @@ describe('diagnosis engine', () => {
     expect(plan.map(p => p.tool)).toEqual(['list_alert_rules', 'get_resource', 'get_pod_logs', 'list_events']);
   });
 
-  it('keeps to the tool budget, forces the submit and checks evidence ids', async () => {
+  it('has no tool cap: it runs every call the model asks for, forces the submit near the time limit and checks evidence ids', async () => {
     const calls: string[] = [];
     const requests: CompleteRequest[] = [];
-    const d = await diagnose({ alert, tools: host(calls), model: model(requests), budget: 3, source: 'api' });
+    const slow: ToolHost = { ...host(calls), call: async (name, args) => { await new Promise(r => setTimeout(r, 25)); return host(calls).call(name, args); } };
+    const d = await diagnose({ alert, tools: slow, model: model(requests), timeoutMs: 600, source: 'api' });
     expect(d.status).toBe('done');
-    expect(d.toolCalls).toBe(3);
-    expect(calls.filter(c => c === 'query_metrics_range')).toHaveLength(3);
+    // The scripted model asks for two tools a turn and submits only when forced: far more than the old cap of ten.
+    expect(d.toolCalls).toBeGreaterThan(4);
+    expect(calls.filter(c => c === 'query_metrics_range')).toHaveLength(d.toolCalls);
     expect(requests.at(-1)?.forceTool).toBe('submit_diagnosis');
     expect(requests.at(-1)?.tools.map(t => t.name)).toEqual(['submit_diagnosis']);
+    expect(requests.slice(0, -1).every(r => !r.forceTool)).toBe(true);
     expect(d.result?.signals[0].evidence).toEqual(['e2']);
-    expect(d.evidence.map(e => e.id)).toEqual(['e1', 'e2', 'e3', 'e4', 't1', 't2', 't3']);
+    expect(d.evidence.slice(0, 4).map(e => e.id)).toEqual(['e1', 'e2', 'e3', 'e4']);
+    expect(d.toolBudget).toBeUndefined();
     expect(JSON.stringify(requests)).not.toContain(FAKE_TOKEN);
     expect(requests[0].tools.find(t => t.name === 'get_resource')?.parameters.required).toContain('reason');
     expect(d.a2ui[0]).toHaveProperty('createSurface');
+    expect(JSON.stringify(d.a2ui)).not.toMatch(/\d+\/\d+ tool calls/);
+  });
+
+  it('fails at the time limit when the model never submits', async () => {
+    const never = { name: 'x', complete: async (req: CompleteRequest) => { await new Promise((_, reject) => req.signal?.addEventListener('abort', () => reject(new Error('cancelled')))); return undefined as never; } } as unknown as ModelClient;
+    const d = await diagnose({ alert, tools: host([]), model: never, timeoutMs: 80, source: 'api' });
+    expect(d.status).toBe('failed');
+    expect(d.error).toBe('The diagnosis took longer than 0 seconds.'.replace('0 seconds', '1 second'));
   });
 
   it('fails cleanly when the model errors', async () => {
@@ -93,7 +105,7 @@ describe('diagnosis engine', () => {
         throw new Error('Model endpoint answered 401');
       },
     } as unknown as ModelClient;
-    const d = await diagnose({ alert, tools: host([]), model: broken, budget: 3, source: 'api' });
+    const d = await diagnose({ alert, tools: host([]), model: broken, source: 'api' });
     expect(d.status).toBe('failed');
     expect(d.error).toMatch(/401/);
     expect(d.a2ui[0]).toHaveProperty('createSurface');
@@ -101,7 +113,7 @@ describe('diagnosis engine', () => {
 
   it('fails with a clear error when the forced final turn returns no submit_diagnosis', async () => {
     const mute = { name: 'x', complete: async () => ({ text: 'No.', stop: 'end', usage: { input: 0, output: 0 }, toolCalls: [] }) } as unknown as ModelClient;
-    const d = await diagnose({ alert, tools: host([]), model: mute, budget: 1, source: 'api' });
+    const d = await diagnose({ alert, tools: host([]), model: mute, source: 'api' });
     expect(d.status).toBe('failed');
     expect(d.error).toBe('The model did not submit a diagnosis');
   });
@@ -112,7 +124,7 @@ describe('diagnosis engine', () => {
       list: async () => ['dns_placement_status', 'dns_placement_plan', 'list_events'].map(name => ({ name, description: name, parameters: { type: 'object', properties: {} } })),
       call: async name => ({ ok: true, summary: `${name} ok`, data: { changes: [{ host: 'app.example.com', note: `token=${FAKE_TOKEN}` }] } }),
     };
-    const d = await diagnose({ alert: dnsAlert, tools, model: model([]), budget: 1, source: 'api' });
+    const d = await diagnose({ alert: dnsAlert, tools, model: model([]), timeoutMs: 400, source: 'api' });
     const plan = d.evidence.find(e => e.tool === 'dns_placement_plan');
     expect(plan?.data).toMatchObject({ changes: [{ host: 'app.example.com' }] });
     expect(JSON.stringify(plan?.data)).not.toContain(FAKE_TOKEN);

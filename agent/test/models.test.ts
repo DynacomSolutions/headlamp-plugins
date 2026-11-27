@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, loadModelRoutes, modelConfigured, type ModelRoute, type ModelRoutesConfig } from '../src/config.js';
-import { ModelCatalogue, UnknownModelError } from '../src/agent/catalogue.js';
+import { ModelCatalogue, parseModelList, UnknownIdentityError, UnknownModelError } from '../src/agent/catalogue.js';
 import { ModelClient } from '../src/agent/model.js';
 import { defaultModelId, modelConfigOptions, pickModel } from '../src/acp.js';
 
@@ -417,5 +417,67 @@ describe('model client', () => {
       expect(rs[1].body).not.toHaveProperty('tool_choice');
       expect(rs[1].body.instructions).toContain('You must call the q tool now.');
     });
+  });
+});
+
+describe('identities of a provider', () => {
+  const two = (): ModelRoutesConfig => ({
+    routes: [
+      route('claude', { provider: 'claude', identity: 'Pool', models: ['opus'], contextWindow: 200000, pricing: { input: 3, output: 15 } }),
+      route('claude-account-a', { provider: 'claude', identity: 'Account A', models: ['opus'] }),
+      route('grok', { models: ['g'] }),
+    ],
+    defaultModel: 'grok/g',
+    skipped: [],
+  });
+
+  it('reads provider, identity, context window and pricing from a route, and refuses bad values', () => {
+    const file = JSON.stringify([
+      { id: 'claude-a', style: 'anthropic', urlEnv: 'AIS_GATEWAY_A_URL', tokenEnv: 'AIS_GATEWAY_A_TOKEN', provider: 'claude', identity: 'Account A', contextWindow: 200000, pricing: { input: 3, output: 15 } },
+    ]);
+    const base = { AGENT_MODEL_ROUTES: file, AGENT_MODEL: 'claude-a/m', AIS_GATEWAY_A_URL: 'https://gw.example.com/a', AIS_GATEWAY_A_TOKEN: 't' };
+    expect(loadModelRoutes(env(base)).routes[0]).toMatchObject({ provider: 'claude', identity: 'Account A', contextWindow: 200000, pricing: { input: 3, output: 15 } });
+    const bad = JSON.stringify([{ id: 'x', style: 'openai', urlEnv: 'AIS_GATEWAY_A_URL', tokenEnv: 'AIS_GATEWAY_A_TOKEN', provider: 'not valid!' }]);
+    expect(() => loadModelRoutes(env({ ...base, AGENT_MODEL_ROUTES: bad, AGENT_MODEL: 'x/m' }))).toThrow(/provider must be a short text/);
+  });
+
+  it('lists each model with its provider, its identity and its context window', async () => {
+    vi.stubGlobal('fetch', async () => json({ data: [{ id: 'opus', context_window: 123000 }] }));
+    const entries = await new ModelCatalogue(two()).list();
+    expect(entries.find(e => e.id === 'claude/opus')).toMatchObject({ provider: 'claude', identity: 'Pool', contextWindow: 123000 });
+    expect(entries.find(e => e.id === 'claude-account-a/opus')).toMatchObject({ provider: 'claude', identity: 'Account A' });
+    expect(entries.find(e => e.id === 'grok/g')).toMatchObject({ provider: 'grok', identity: 'Pool' });
+  });
+
+  it('reads the context size from the fields the gateways use', () => {
+    const sizes = parseModelList({ data: [{ id: 'a', context_window: 1 }, { id: 'b', max_input_tokens: 2 }, { id: 'c', context_length: 3 }, { id: 'd' }] }).map(m => m.contextWindow);
+    expect(sizes).toEqual([1, 2, 3, undefined]);
+  });
+
+  it('gives a bare model the prefix of the identity, keeps a matching id, and refuses a mismatch or an unknown identity', () => {
+    const c = new ModelCatalogue(two());
+    expect(c.withIdentity('opus', 'claude-account-a')).toBe('claude-account-a/opus');
+    expect(c.withIdentity('claude-account-a/opus', 'claude-account-a')).toBe('claude-account-a/opus');
+    expect(c.withIdentity('claude/opus', undefined)).toBe('claude/opus');
+    expect(() => c.withIdentity('claude/opus', 'claude-account-a')).toThrow(UnknownIdentityError);
+    expect(() => c.withIdentity('opus', 'nope')).toThrow(/Unknown identity "nope"/);
+    expect(() => c.withIdentity(undefined, 'grok')).toThrow(/needs a model/);
+  });
+
+  it('knows the context window and the price of a model of a route', () => {
+    const c = new ModelCatalogue(two());
+    expect(c.contextWindow('claude/opus')).toBe(200000);
+    expect(c.pricing('claude/opus')).toEqual({ input: 3, output: 15 });
+    expect(c.labels('claude-account-a/opus')).toEqual({ provider: 'claude', identity: 'Account A' });
+    expect(c.contextWindow('grok/g')).toBeUndefined();
+  });
+});
+
+describe('run time limit', () => {
+  it('replaces the tool budget: the old variable is accepted and ignored', () => {
+    const cfg = loadConfig({ AGENT_TOOL_BUDGET: '3' } as NodeJS.ProcessEnv);
+    expect(cfg.diagnosis).not.toHaveProperty('toolBudget');
+    expect(cfg.diagnosis.runTimeoutMs).toBe(15 * 60_000);
+    expect(loadConfig({ AGENT_RUN_TIMEOUT_MS: '120000' } as NodeJS.ProcessEnv).diagnosis.runTimeoutMs).toBe(120000);
   });
 });

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { DEFAULT_RUN_TIMEOUT_MS, formatLimit } from '../config.js';
 import { mask, maskText } from '../mask.js';
+import { trimHistory } from './history.js';
 import type { ChatModel, Message, ToolSpec } from './model.js';
 import { renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis, type EvidenceItem } from './report.js';
 import { readSkill } from './skill.js';
@@ -22,7 +24,8 @@ export interface DiagnoseOptions {
   alert: Alert;
   tools: ToolHost;
   model: ChatModel;
-  budget: number;
+  /** Wall-clock limit of the run in milliseconds. A run that is near it must submit. Default 15 minutes. */
+  timeoutMs?: number;
   source: Diagnosis['source'];
   host?: string;
   id?: string;
@@ -34,7 +37,8 @@ const SUBMIT = 'submit_diagnosis';
 /** Tools whose full result is kept in the evidence item, so an agent can start from it. */
 const KEEP_DATA = new Set(['dns_placement_plan']);
 const KEEP_DATA_CHARS = 30_000;
-const MAX_TURNS = 16;
+/** Share of the time limit after which the model may only submit. */
+const SUBMIT_AT = 0.8;
 
 function urlHost(instance: string | undefined): string | undefined {
   if (!instance) return undefined;
@@ -45,7 +49,7 @@ function urlHost(instance: string | undefined): string | undefined {
   }
 }
 
-/** The deterministic first look, chosen from the alert's labels; costs no budget. */
+/** The deterministic first look, chosen from the alert's labels; calls no model. */
 export function evidencePlan(alert: Alert, available: Set<string>): Array<{ tool: string; reason: string; args: Record<string, unknown> }> {
   const l = alert.labels;
   const plan: Array<{ tool: string; reason: string; args: Record<string, unknown> }> = [];
@@ -93,6 +97,10 @@ export function evidencePlan(alert: Alert, available: Set<string>): Array<{ tool
 
 export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
   const started = Date.now();
+  const limit = opts.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+  const elapsed = () => Date.now() - started;
+  // The run signal ends at the limit, so a model call or a tool call in flight does not outlast it.
+  const runSignal = opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(limit)]) : AbortSignal.timeout(limit);
   const diagnosis: Diagnosis = {
     id: opts.id ?? randomUUID(),
     createdAt: new Date().toISOString(),
@@ -102,7 +110,6 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
     alert: mask(opts.alert),
     evidence: [],
     toolCalls: 0,
-    toolBudget: opts.budget,
     model: opts.model.name,
     a2ui: [],
   };
@@ -157,30 +164,36 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
         text: [
           `## Alert\n${JSON.stringify(diagnosis.alert, null, 2)}`,
           `## Evidence pack\n${facts.join('\n\n')}`,
-          `## Budget\nYou may make ${opts.budget} more tool calls. Each tool call needs a \`reason\`. Results are numbered t1, t2, ... in order. Finish with ${SUBMIT}.`,
+          `## Method\nCall as many tools as you need. Each tool call needs a \`reason\`. Results are numbered t1, t2, ... in order. Stop when the evidence is enough, and finish with ${SUBMIT}. The run has a time limit of ${formatLimit(limit)}.`,
         ].join('\n\n'),
       },
     ];
     let t = 0;
-    for (let turn = 0; turn < MAX_TURNS; turn++) {
+    let nudges = 0;
+    for (;;) {
       if (opts.signal?.aborted) throw new Error('cancelled');
-      const spent = diagnosis.toolCalls >= opts.budget;
-      const last = turn === MAX_TURNS - 1;
+      if (runSignal.aborted) throw new Error(`The diagnosis took longer than ${formatLimit(limit)}.`);
+      // Near the time limit the model may only submit what it has.
+      const late = elapsed() >= limit * SUBMIT_AT;
       const completion = await opts.model.complete({
         system: skill.body,
-        messages,
-        tools: spent || last ? [submit] : [...tools, submit],
-        forceTool: spent || last ? SUBMIT : undefined,
+        messages: trimHistory(messages),
+        tools: late ? [submit] : [...tools, submit],
+        forceTool: late ? SUBMIT : undefined,
         session: diagnosis.id,
+        signal: runSignal,
       });
       // With ordered default models the answering model can differ from the first choice.
       diagnosis.model = opts.model.name;
       if (completion.text.trim()) emit({ type: 'thought', text: maskText(completion.text.trim()) });
       messages.push({ role: 'assistant', text: completion.text, toolCalls: completion.toolCalls });
       if (completion.toolCalls.length === 0) {
+        // A model that answers in plain text twice after the nudge will not submit: stop, do not wait for the time limit.
+        if (++nudges > 2) break;
         messages.push({ role: 'user', text: `Call ${SUBMIT} now with your diagnosis.` });
         continue;
       }
+      nudges = 0;
       const results: Array<{ id: string; name: string; content: string; isError: boolean }> = [];
       let submitted = false;
       for (const call of completion.toolCalls) {
@@ -193,10 +206,6 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
           diagnosis.result = sanitizeResult(parsed.data, known);
           submitted = true;
           results.push({ id: call.id, name: call.name, content: 'Diagnosis recorded.', isError: false });
-          continue;
-        }
-        if (diagnosis.toolCalls >= opts.budget) {
-          results.push({ id: call.id, name: call.name, content: `The tool budget is used up. Call ${SUBMIT} with what you have.`, isError: true });
           continue;
         }
         if (!names.has(call.name)) {
@@ -216,7 +225,8 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
     diagnosis.status = 'done';
   } catch (error) {
     diagnosis.status = 'failed';
-    diagnosis.error = maskText(error instanceof Error ? error.message : String(error));
+    const timedOut = runSignal.aborted && !opts.signal?.aborted;
+    diagnosis.error = timedOut ? `The diagnosis took longer than ${formatLimit(limit)}.` : maskText(error instanceof Error ? error.message : String(error));
   }
   diagnosis.finishedAt = new Date().toISOString();
   diagnosis.a2ui = renderDiagnosis(diagnosis);
