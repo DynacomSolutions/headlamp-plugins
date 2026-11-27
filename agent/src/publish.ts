@@ -20,8 +20,6 @@ export const publishSchema = z.object({
     // Records of older releases carry a tool budget. It is accepted and not kept.
     toolBudget: z.number().int().min(0).max(1000).optional(),
     model: z.string().max(120).default(''),
-    /** The name of the token that started the run (ACP). A label, never the token. */
-    client: z.string().max(80).optional(),
     createdAt: z.string().optional(),
   }),
 });
@@ -70,7 +68,8 @@ interface EvidenceLike {
   data?: unknown;
 }
 
-export type PublishInput = z.infer<typeof publishSchema>['diagnosis'];
+/** The parsed body, plus the audit label that only the ACP endpoint may set (the name of the token that started the run). */
+export type PublishInput = z.infer<typeof publishSchema>['diagnosis'] & { client?: string };
 
 /**
  * Stores a diagnosis that an outside agent made. Its full tool data is dropped: a launch brief never trusts it.

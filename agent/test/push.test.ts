@@ -563,6 +563,19 @@ describe('push in the server', () => {
     }
   });
 
+  it('never stores a client label from the body of a published diagnosis', async () => {
+    const { server, store, api } = await start();
+    try {
+      const res = await api('POST', '/api/diagnoses', { diagnosis: { alert: { name: 'DiskFull', severity: 'warning' }, status: 'failed', error: 'x', client: 'forged-token' } });
+      expect(res.status).toBe(201);
+      const stored = await store.get(res.body.id);
+      expect(stored?.error).toBe('x');
+      expect(stored?.client).toBeUndefined();
+    } finally {
+      await server.close();
+    }
+  });
+
   it('pushes a chat answer when the asking page is hidden, and not when it is visible', async () => {
     const { server, api } = await start();
     const d = device();

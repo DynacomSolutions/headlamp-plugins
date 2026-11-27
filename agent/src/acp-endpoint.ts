@@ -212,8 +212,9 @@ export class AcpEndpoint {
       publish: async d => {
         const { a2ui: _a2ui, finishedAt: _f, resolvedAt: _r, ...rest } = d;
         // A long run can pass a limit of the schema (60 evidence items, 2000 characters). Cut first, so the diagnosis is not lost.
-        const parsed = publishSchema.parse({ diagnosis: fitForPublish({ ...rest, client, source: 'acp', status: d.status === 'done' ? 'done' : 'failed' }) });
-        const saved = await storePublished(this.deps.store, parsed.diagnosis);
+        const parsed = publishSchema.parse({ diagnosis: fitForPublish({ ...rest, source: 'acp', status: d.status === 'done' ? 'done' : 'failed' }) });
+        // The label comes from the token, set here after the parse. The HTTP route never takes it from a body.
+        const saved = await storePublished(this.deps.store, { ...parsed.diagnosis, client });
         if (saved.status === 'done') this.deps.onPublished?.(saved);
         return saved.id;
       },
