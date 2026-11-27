@@ -13,6 +13,7 @@ import { generateVapidKeys, subscriptionId } from '../src/push/webpush.js';
 import { startServer } from '../src/server.js';
 import { sessionNetworks } from '../src/storage/auth.js';
 import { recipientKey, SessionNotificationAuthority } from '../src/storage/notification-authority.js';
+import { enrolSchema, notificationUrl } from '../src/storage/notifications.js';
 import { StorageQueries, StorageStore } from '../src/storage/store.js';
 import type { Approval, Scan, ScanChecks } from '../src/storage/types.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
@@ -2001,5 +2002,32 @@ describe('Storage incident normal entry points', () => {
     expect((await f.call(chat)).data).toEqual(compact);
     expect((await f.call(`${transcript}?before=${archived.nextBefore}&limit=2`)).data).toEqual(first);
     expect((await f.details(notice.driveId)).questions[0].answer).toBe(answerText);
+  });
+});
+
+describe('storage notification URL templates', () => {
+  const grant = (urls: object) => ({ subscriptionId: 'a'.repeat(32), enabled: true, auth: 'A'.repeat(22), urls });
+  const chat = {
+    question: '/c/example/incidents/chat/{chatId}?drive={driveId}&question={id}',
+    cleanup: '/c/example/incidents/chat/{chatId}?drive={driveId}&finding={id}',
+  };
+
+  it('accepts the chat form and the drive pages of earlier releases', () => {
+    expect(enrolSchema.safeParse(grant(chat)).success).toBe(true);
+    expect(enrolSchema.safeParse(grant(noticeUrls)).success).toBe(true);
+  });
+
+  it('refuses a template that is not one of the two forms, or that has the wrong item kind', () => {
+    expect(enrolSchema.safeParse(grant({ ...chat, question: chat.cleanup })).success).toBe(false);
+    expect(enrolSchema.safeParse(grant({ ...chat, question: '/c/example/incidents/chat/{chatId}?drive={driveId}&question={id}&x=1' })).success).toBe(false);
+    expect(enrolSchema.safeParse(grant({ ...chat, question: 'https://other.example.com/incidents/chat/{chatId}?drive={driveId}&question={id}' })).success).toBe(false);
+    expect(enrolSchema.safeParse(grant({ ...chat, cleanup: '/c/example/incidents/chat/{chatId}?drive={driveId}&finding={id}/../x' })).success).toBe(false);
+  });
+
+  it('fills the chat, the drive and the item, and leaves an older template as it was', () => {
+    const values = { chatId: 'c1', driveId: 'd1', id: 'q1' };
+    expect(notificationUrl(chat.question, values)).toBe('/c/example/incidents/chat/c1?drive=d1&question=q1');
+    expect(notificationUrl(chat.cleanup, values)).toBe('/c/example/incidents/chat/c1?drive=d1&finding=q1');
+    expect(notificationUrl(noticeUrls.question, values)).toBe('/c/example/incidents/storage/drives/d1/questions/q1');
   });
 });
