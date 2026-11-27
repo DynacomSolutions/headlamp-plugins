@@ -236,6 +236,8 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
   `POST /api/diagnoses {"diagnosis": {...}}` so Headlamp shows it. Send it an
   alert as JSON or as `AlertName label=value …`, describe a symptom, or send
   `diagnose` to take the most severe firing alert.
+- **ACP over the network**: the same agent on `/acp` (WebSocket, bearer token with
+  the scope `agent:investigate`). See [docs/acp-endpoint.md](../docs/acp-endpoint.md).
 
 `GET /api/diagnoses` and `GET /api/diagnoses/<id>` serve the Incidents plugin.
 `GET /api/diagnoses?limit=<n>&offset=<n>` answers `{ total, diagnoses }`, newest first. `limit` is 200 at most.
@@ -867,6 +869,8 @@ turns launching off with a reason. It does not stop the service.
 | `AGENT_RUN_TIMEOUT_MS` | `900000` | Wall-clock limit of one chat turn, in milliseconds. There is no cap on tool calls. `AGENT_TOOL_BUDGET` of older releases is read and ignored |
 | `AGENT_DIAGNOSIS_TIMEOUT_MS` | `480000` | Wall-clock limit of one diagnosis that the webhook, a rerun or a resume starts. Diagnoses run one after another, so it is shorter than a chat turn |
 | `AGENT_MAX_MODEL_CALLS` | `60` | Soft cap on the model calls of one run (at least 2). The call that reaches it must submit (diagnosis) or answer without tools (chat) |
+| `AGENT_ACP_MAX_SESSIONS` | `4` | ACP sessions that may be open at once on `/acp`. `0` turns the endpoint off |
+| `AGENT_API_TOKENS_FILE` | empty | JSON file of scoped bearer tokens, mounted from a Secret. Without it `/acp` answers 401 |
 | `AGENT_MAX_CHAT_TURNS` | `3` | Chat turns that may run at once across all chats. More get a 429 |
 | `T3_URL` | – | Base URL of the T3 server. Launching agents is off without it |
 | `T3_TOKEN_FILE` | – | Path of a mounted file with the T3 bearer token (plain text, or the JSON of `t3 auth session issue --json`). Read on each use, so a rotated token needs no restart. Needs the scopes `orchestration:read` and `orchestration:operate` |

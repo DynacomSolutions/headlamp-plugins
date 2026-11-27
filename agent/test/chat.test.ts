@@ -332,14 +332,18 @@ describe('chat service', () => {
   });
 
   it('fails with a clear error when the model keeps calling tools in the wrap-up call too', async () => {
-    const { chats } = service([], { timeoutMs: 150 });
-    for (let i = 0; i < 400; i++) script.queue.push(async () => { await new Promise(r => setTimeout(r, 20)); return { calls: [{ name: 'get_resource', args: { reason: 'again' } }] }; });
+    // The wrap-up starts at the soft cap on model calls, not at a time: the result does not depend on how fast the host is.
+    // With a cap of 3 the third call is the wrap-up call. Two calls run a tool each, and the wrap-up call asks for a tool again.
+    const { chats } = service([], { maxModelCalls: 3 });
+    for (let i = 0; i < 10; i++) script.queue.push({ calls: [{ name: 'get_resource', args: { reason: 'again' } }] });
     const { id } = await chats.create({});
     await chats.send(id, 'hello');
     await until(() => !(chats.get(id) as any).running);
     const m = (chats.get(id) as any).messages[1];
     expect(m).toMatchObject({ status: 'failed', error: 'The model kept calling tools and did not answer' });
-    expect(m.steps.length).toBeGreaterThan(2);
+    expect(m.steps).toHaveLength(2);
+    expect(script.requests).toHaveLength(3);
+    expect(script.requests[2].tool_choice).toBe('none');
     // The wrap-up call ignored its tool calls: they are not in the saved history, which has no results for them.
     const stored = (store => store.get(id))(new ChatStore(dir));
     expect(stored?.messages[1].trace ?? []).toEqual([]);

@@ -36,6 +36,16 @@ export interface Config {
   diagnosis: DiagnosisConfig;
   launch: LaunchConfig;
   push: PushConfig;
+  acp: AcpConfig;
+}
+
+export interface AcpConfig {
+  /** ACP sessions that may be open at once on the /acp endpoint (AGENT_ACP_MAX_SESSIONS). 0 turns the endpoint off. */
+  maxSessions: number;
+  /** JSON file with the scoped bearer tokens, mounted from a Secret (AGENT_API_TOKENS_FILE). Without it every /acp request fails with 401. */
+  tokensFile: string;
+  /** How long a drain waits for the prompts in flight (AGENT_ACP_DRAIN_TIMEOUT_MS) before it aborts them. Keep it under the pod grace period. */
+  drainTimeoutMs: number;
 }
 
 /** Web Push to browsers and installed apps. Without both keys push is off. The agent has its own key pair, not the one of the Alerting plugin. */
@@ -391,6 +401,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       subject: (env.PUSH_SUBJECT ?? '').trim() || 'mailto:noreply@example.com',
       extraHosts: list(env.PUSH_EXTRA_HOSTS, []).map(h => h.toLowerCase()),
       maxPer10Min: int(env.PUSH_MAX_PER_10_MIN, 10),
+    },
+    acp: {
+      maxSessions: Math.max(0, int(env.AGENT_ACP_MAX_SESSIONS, 4)),
+      tokensFile: env.AGENT_API_TOKENS_FILE ?? '',
+      drainTimeoutMs: Math.max(0, int(env.AGENT_ACP_DRAIN_TIMEOUT_MS, 20_000)),
     },
   };
 }
