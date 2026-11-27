@@ -15,7 +15,7 @@ import { TokenStore } from './mcp/auth.js';
 import { McpMetrics } from './mcp/metrics.js';
 import { PvWatch } from './mcp/pv-watch.js';
 import { IncidentService } from './incidents/service.js';
-import { alwaysOn, type AutomaticInvestigationsView } from './incidents/settings.js';
+import { fromSetting, type AutomaticInvestigationsView } from './incidents/settings.js';
 import { publishSchema, storePublished } from './publish.js';
 import { Runtime, serviceGet } from './runtime.js';
 import { PanelError, buildPanel, listPanels } from './widgets.js';
@@ -566,7 +566,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     maxConcurrentReruns: config.diagnosis.maxConcurrentReruns,
     now: deps.now,
   });
-  const contract = { runtime, incidents, events: store.events, settings: deps.automaticInvestigations ?? alwaysOn, metrics: mcpMetrics };
+  const contract = { runtime, incidents, events: store.events, settings: deps.automaticInvestigations ?? { get: async () => fromSetting(await automatic.get()) }, metrics: mcpMetrics };
   const buildMcp = await mcpBuilder(runtime, store, version, contract);
   const mcp = new McpEndpoint({
     contract,

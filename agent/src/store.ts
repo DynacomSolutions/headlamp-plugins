@@ -5,6 +5,8 @@ import type { Diagnosis } from './agent/report.js';
 import { MemoryPushStore, PgPushStore, PUSH_SCHEMA, type PushStore } from './push/store.js';
 import { finalise, keepIncident } from './incidents/changes.js';
 import { EVENT_SCHEMA, MemoryEventLog, PgEventLog, type EventLog } from './incidents/events.js';
+import { SETTINGS_URI, type NewEvent } from './incidents/types.js';
+import { AUTOMATIC_INVESTIGATIONS_KEY } from './settings.js';
 
 export const LEASE_MS = 60_000;
 const EPOCH = new Date(0).toISOString();
@@ -314,6 +316,9 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
     this.settings.set(key, { value, updatedAt: at, updatedBy: by, updatedVia: via });
     const entry = { key, at, by, via, old, new: value };
     this.audit.push(entry);
+    // The log appends in memory without waiting, so the change and its event are still one step.
+    const stored = await this.events.append(settingEvents(entry));
+    await this.events.committed(stored);
     return entry;
   }
 
@@ -413,6 +418,11 @@ const SCHEMA = [
 
 /** Any 64-bit number. Two pods that start together take this advisory lock, so only one creates the schema. */
 const SCHEMA_LOCK = 7_483_920_115;
+/** The events that a setting change raises (contract section 7.1). `by` is the name that came with the change, empty when none. */
+function settingEvents(e: SettingAudit): NewEvent[] {
+  return e.key === AUTOMATIC_INVESTIGATIONS_KEY ? [{ kind: 'settings.changed', uri: SETTINGS_URI, incidentId: null, labels: {}, actor: e.by || null }] : [];
+}
+
 /** Another 64-bit number, for the lock that orders changes of settings. */
 const SETTINGS_LOCK = 7_483_920_116;
 const SUMMARY_SQL = "(data - 'a2ui' - 'evidence') || jsonb_build_object('evidenceCount', jsonb_array_length(COALESCE(data->'evidence', '[]'::jsonb)))";
@@ -586,7 +596,8 @@ export class PgDiagnosisStore extends DiagnosisStore {
   }
 
   async setSetting(key: string, value: unknown, by: string, fallback: unknown, via?: SettingVia): Promise<SettingAudit | undefined> {
-    return this.db.transaction(async tx => {
+    let stored: Awaited<ReturnType<EventLog['append']>> = [];
+    const entry = await this.db.transaction(async tx => {
       // One lock for all settings: two pods that change a setting at once do it one after the other, and the audit keeps both.
       await tx.query('SELECT pg_advisory_xact_lock($1)', [SETTINGS_LOCK]);
       const row = await tx.query('SELECT value FROM agent_settings WHERE key = $1', [key]);
@@ -599,8 +610,13 @@ export class PgDiagnosisStore extends DiagnosisStore {
         [key, JSON.stringify(value), at, by, via ?? null],
       );
       await tx.query('INSERT INTO agent_settings_audit (key, at, by, via, old_value, new_value) VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)', [key, at, by, via ?? null, JSON.stringify(old), JSON.stringify(value)]);
-      return { key, at: at.toISOString(), by, via, old, new: value };
+      const done = { key, at: at.toISOString(), by, via, old, new: value };
+      // The event goes into the same transaction as the change: both commit or neither does (contract section 8.2).
+      stored = await this.events.append(settingEvents(done), tx);
+      return done;
     });
+    if (entry) await this.events.committed(stored);
+    return entry;
   }
 
   async settingAudit(key: string, limit: number): Promise<SettingAudit[]> {
