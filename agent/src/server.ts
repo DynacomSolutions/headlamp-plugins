@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { toNodeHandler } from '@modelcontextprotocol/node';
 import { z } from 'zod';
 import { loadConfig, modelConfigured, type Config } from './config.js';
 import { AlertGate, diagnosisIdFor, fingerprint, parseAlerts } from './alerts.js';
@@ -10,7 +9,12 @@ import { diagnose } from './agent/engine.js';
 import { ModelCatalogue, UnknownModelError } from './agent/catalogue.js';
 import { alertSchema, renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis } from './agent/report.js';
 import { mask, maskText } from './mask.js';
-import { mcpHandler } from './mcp.js';
+import { mcpBuilder } from './mcp.js';
+import { McpEndpoint } from './mcp/endpoint.js';
+import { TokenStore } from './mcp/auth.js';
+import { McpMetrics } from './mcp/metrics.js';
+import { IncidentService } from './incidents/service.js';
+import { alwaysOn, type AutomaticInvestigationsView } from './incidents/settings.js';
 import { Runtime, serviceGet } from './runtime.js';
 import { PanelError, buildPanel, listPanels } from './widgets.js';
 import { DiagnosisStore, openDiagnosisStore, PgDiagnosisStore } from './store.js';
@@ -53,9 +57,9 @@ class HttpError extends Error {
   }
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const text = JSON.stringify(body);
-  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers });
   res.end(text);
 }
 
@@ -414,7 +418,7 @@ async function chatBody<T>(req: IncomingMessage, schema: z.ZodType<T>): Promise<
 }
 
 /** `deps.store` replaces the diagnosis store, for tests. The caller then closes it. */
-export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}): Promise<{ close(): Promise<void>; port: number; sessionPort?: number }> {
+export async function startServer(config: Config = loadConfig(), version = '0.0.0', deps: { store?: DiagnosisStore; automaticInvestigations?: AutomaticInvestigationsView; storageEnv?: NodeJS.ProcessEnv; pushFetch?: typeof fetch; now?: () => number; signal?: AbortSignal } = {}): Promise<{ close(): Promise<void>; port: number; sessionPort?: number }> {
   const store = deps.store ?? (await openDiagnosisStore(config.databaseUrl, config.dataDir, (message, extra) => log('info', message, extra)));
   const launchStore = new LaunchStore(config.dataDir, config.maxLaunches);
   const runtime = new Runtime(config, store, launchStore);
@@ -448,12 +452,53 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   });
   // Webhook diagnoses in the shared store, so a rollout or a second pod does not reset the hourly cap.
   const gate = new AlertGate(config.diagnosis, since => store.countStartedSince(since));
-  const mcp = await mcpHandler(runtime, store, version);
-  const mcpNode = toNodeHandler(mcp);
+  const metrics = new Metrics();
+  const mcpMetrics = new McpMetrics(metrics);
+  store.events.onRecorded = kind => mcpMetrics.eventRecorded(kind);
+  const incidents = new IncidentService({
+    store,
+    runner: {
+      get configured() {
+        return runner.configured;
+      },
+      rerun: (id, model) => runner.rerun(id, model),
+      enqueue: (alert, source, id, model) => runner.enqueue(alert, source, id, model),
+      async resolveModel(model) {
+        try {
+          const r = await runner.catalogue.resolve(model);
+          return `${r.route.id}/${r.model}`;
+        } catch (error) {
+          if (error instanceof UnknownModelError) throw Object.assign(error, { unknown: true });
+          throw error;
+        }
+      },
+    },
+    onEscalate: (d, reason) => void push.notifyEscalation(d, reason),
+    maxConcurrentReruns: config.diagnosis.maxConcurrentReruns,
+    now: deps.now,
+  });
+  const contract = { runtime, incidents, events: store.events, settings: deps.automaticInvestigations ?? alwaysOn, metrics: mcpMetrics };
+  const buildMcp = await mcpBuilder(runtime, store, version, contract);
+  const mcp = new McpEndpoint({
+    contract,
+    build: async who => buildMcp(who),
+    tokens: new TokenStore(config.mcp.tokensFile, () => mcpMetrics.authFailure('bad_scopes')),
+    authMode: config.mcp.auth,
+    allowedOrigins: config.allowedOrigins,
+    metrics: mcpMetrics,
+    events: store.events,
+    log: (level, message, extra) => log(level, message, extra),
+    readBody,
+    send,
+  });
+  await mcp.start();
+  // The log keeps events 7 days (contract section 8.2). Removal runs once an hour, not to find changes.
+  const prune = setInterval(() => void store.events.prune().catch(() => undefined), 3600_000);
+  prune.unref();
+  void store.events.prune().catch(() => undefined);
   let ready = false;
   let draining = false;
   let rerunTurn: Promise<void> = Promise.resolve();
-  const metrics = new Metrics();
   runner.catalogue.attachMetrics(metrics);
   const storage = await storageHttp({
     config, metrics, push, readBody, send, env: deps.storageEnv, now: deps.now,
@@ -478,15 +523,12 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         res.setHeader('connection', 'close');
         return send(res, 503, { error: 'Agent is draining' });
       }
-      if (path === '/mcp') {
-        const origin = req.headers.origin;
-        if (origin && !config.allowedOrigins.includes(origin)) return send(res, 403, { jsonrpc: '2.0', error: { code: -32600, message: 'Origin not allowed' } });
-        return void (await mcpNode(req, res));
-      }
+      if (path === '/mcp') return void (await mcp.handle(req, res));
       if (await storage.route(req, res, path)) return;
       if (path === '/metrics' && req.method === 'GET') {
         await storage.metrics();
         runner.catalogue.refreshMetrics();
+        mcpMetrics.gauges({ ...mcp.stats(), logEvents: await store.events.count().catch(() => undefined) });
         metrics.clear('headlamp_agent_diagnoses_open');
         const counts = new Map<string, number>([['critical', 0], ['warning', 0], ['info', 0]]);
         for (const d of await store.openSummaries()) counts.set(d.alert.severity || 'none', (counts.get(d.alert.severity || 'none') ?? 0) + 1);
@@ -809,6 +851,8 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   const sessionServer = storage.sessionPort === undefined ? undefined : createServer(onRequest);
 
   async function drain(): Promise<void> {
+    // Open push streams never end by themselves: close the MCP sessions first, so the listeners can close.
+    await mcp.close();
     const closing = [server, sessionServer].flatMap(listener => {
       if (!listener?.listening) return [];
       const closed = new Promise<void>((resolve, reject) =>
@@ -823,7 +867,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     await chats.drain();
     await runner.drain();
     await storage.drain();
-    await mcp.close();
+    clearInterval(prune);
     if (!deps.store) await store.close();
   }
 

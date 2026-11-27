@@ -1,32 +1,38 @@
 import { randomUUID } from 'node:crypto';
-import { createMcpHandler, McpServer, ResourceTemplate, type McpHttpHandler } from '@modelcontextprotocol/server';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { SkillCatalog, memorySkillFiles } from '@modelcontextprotocol/server/ext/skills';
 import { z } from 'zod';
 import { A2UI_MIME, SUMMARY_VIEW_URI, summaryViewTemplate } from './a2ui/index.js';
 import { readSkill } from './agent/skill.js';
 import type { Runtime } from './runtime.js';
 import type { DiagnosisStore } from './store.js';
+import type { Principal } from './mcp/auth.js';
+import { registerContract, type ContractDeps } from './mcp/contract.js';
 
 export const SERVER_NAME = 'headlamp-agent';
 export const DIAGNOSIS_URI = 'a2ui://headlamp-agent/diagnoses/{id}';
 
 const INSTRUCTIONS = `Read-only view of a Kubernetes cluster and everything its Headlamp plugins see: resources, events, pod logs, metrics (PromQL), vmalert alerts and rules, SMART disk health, disk performance and capacity, node temperatures, uptime probes, component updates, sites and the alerting backend's target state. Nothing here can change the cluster, and secrets are masked.
+Incident tools (list_incidents, get_incident, acknowledge_incident and the rest) and the headlamp:// resources follow the contract in docs/mcp-contract.md. With a bearer token and a session, subscribe to headlamp://incidents or headlamp://events to get notifications without polling.
 Start an investigation with cluster_overview or list_alerts. To diagnose an alert, use the diagnose_incident prompt or the incident-diagnosis skill, and check list_diagnoses first: the cluster's own agent may already have diagnosed it.
 Every tool returns structuredContent, a text summary and an A2UI v1.0 data update (application/a2ui+json) for the template at ${SUMMARY_VIEW_URI}.`;
 
-/** Builds the stateless MCP handler (2026-07-28 per-request envelope, plus 2025-era clients without sessions). */
-export async function mcpHandler(runtime: Runtime, store: DiagnosisStore, version: string): Promise<McpHttpHandler> {
+/**
+ * Builds the function that makes one MCP server for one caller. Stateless requests call it for each request,
+ * stateful sessions once. Tools and resources outside the caller's scopes are registered but disabled, so they are not listed.
+ */
+export async function mcpBuilder(runtime: Runtime, store: DiagnosisStore, version: string, contract: ContractDeps): Promise<(who: Principal) => McpServer> {
   const skill = readSkill();
   const catalog = await SkillCatalog.load(memorySkillFiles({ 'incident-diagnosis/SKILL.md': skill.raw }), { prefix: SERVER_NAME });
   const template = JSON.stringify(summaryViewTemplate());
   const ui = { resourceUri: SUMMARY_VIEW_URI, mimeType: A2UI_MIME };
 
-  const factory = () => {
+  return (who: Principal): McpServer => {
     const server = new McpServer({ name: SERVER_NAME, version, title: 'Headlamp agent layer' }, { instructions: INSTRUCTIONS });
 
     for (const entry of runtime.registry.tools.values()) {
       const { tool, provider } = entry;
-      server.registerTool(
+      const registered = server.registerTool(
         tool.name,
         {
           title: tool.title,
@@ -37,7 +43,9 @@ export async function mcpHandler(runtime: Runtime, store: DiagnosisStore, versio
           _meta: { ui, 'headlamp-agent/provider': provider.name },
         },
         async (args: unknown) => {
+          contract.metrics.toolCall(tool.name, who.client);
           const out = await runtime.registry.call(tool.name, args, p => runtime.context(p));
+          if (!out.ok) contract.metrics.toolError(tool.name, 'tool_failed');
           const a2ui = {
             type: 'resource' as const,
             resource: { uri: `a2ui://headlamp-agent/results/${tool.name}/${randomUUID()}`, mimeType: A2UI_MIME, text: JSON.stringify(out.a2ui) },
@@ -50,6 +58,7 @@ export async function mcpHandler(runtime: Runtime, store: DiagnosisStore, versio
           };
         },
       );
+      if (!who.scopes.has('registry:read')) registered.disable();
     }
 
     server.registerResource(
@@ -59,7 +68,7 @@ export async function mcpHandler(runtime: Runtime, store: DiagnosisStore, versio
       async uri => ({ contents: [{ uri: uri.href, mimeType: A2UI_MIME, text: template }] }),
     );
 
-    server.registerResource(
+    const diagnosisSurface = server.registerResource(
       'diagnosis-surface',
       new ResourceTemplate(DIAGNOSIS_URI, {
         list: async () => ({
@@ -74,6 +83,7 @@ export async function mcpHandler(runtime: Runtime, store: DiagnosisStore, versio
         return { contents: [{ uri: uri.href, mimeType: A2UI_MIME, text: JSON.stringify(d.a2ui) }] };
       },
     );
+    if (!who.scopes.has('incidents:read')) diagnosisSurface.disable();
 
     server.registerPrompt(
       'diagnose_incident',
@@ -96,8 +106,7 @@ export async function mcpHandler(runtime: Runtime, store: DiagnosisStore, versio
     );
 
     catalog.attach(server);
+    registerContract(server, contract, who);
     return server;
   };
-
-  return createMcpHandler(factory, { responseMode: 'json' });
 }

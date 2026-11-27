@@ -20,7 +20,9 @@ describe('MCP endpoint', () => {
     await client.connect(new StreamableHTTPClientTransport(new URL(`${url}/mcp`)));
     const { tools } = await client.listTools();
     expect(tools.length).toBeGreaterThan(15);
-    for (const t of tools) {
+    // An anonymous caller sees the registry tools and the two read-only extras of the contract, nothing that writes.
+    expect(tools.map(t => t.name)).not.toContain('acknowledge_incident');
+    for (const t of tools.filter(t => (t._meta as Record<string, unknown>)?.['headlamp-agent/provider'])) {
       expect(t.annotations?.readOnlyHint).toBe(true);
       expect(t.outputSchema).toBeTruthy();
       expect((t._meta as { ui?: { mimeType?: string } })?.ui?.mimeType).toBe('application/a2ui+json');
