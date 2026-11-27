@@ -61,9 +61,15 @@ export class AlertGate {
   ) {}
 
   async wants(alert: Alert): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const eligible = this.eligible(alert);
+    return eligible.ok ? this.room() : eligible;
+  }
+
+  /** The alert filter only: the ignore list and the severities. It has no hourly limit and counts nothing. */
+  eligible(alert: Alert): { ok: true } | { ok: false; reason: string } {
     if (this.config.ignoreAlerts.includes(alert.name)) return { ok: false, reason: 'ignored alert' };
     if (!this.config.severities.includes(alert.severity)) return { ok: false, reason: `severity "${alert.severity}" is not diagnosed` };
-    return this.room();
+    return { ok: true };
   }
 
   /** Only the hourly limit of webhook diagnoses. */

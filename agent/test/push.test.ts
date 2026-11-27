@@ -287,6 +287,18 @@ describe('PushService', () => {
     expect(svc.sent).toHaveLength(0);
   });
 
+  it('pushes an incident that opened with no investigation, and only that', async () => {
+    const svc = pushService();
+    const { service } = make(svc.fetchImpl);
+    const d = device();
+    await service.subscribe(d.id, subscribeBody(d));
+    expect(await service.notifyIncident(diagnosis('s-1', 'critical', { status: 'queued' }))).toBe(0);
+    expect(await service.notifyIncident(diagnosis('s-1', 'critical', { status: 'skipped' }))).toBe(1);
+    const s = svc.sent[0]!;
+    const payload = JSON.parse(decrypt(s.body, d.ecdh.getPrivateKey(), d.ecdh.getPublicKey(), d.auth));
+    expect(payload).toMatchObject({ kind: 'diagnosis', title: 'Incident opened: KubePodCrashLooping (critical)', tag: 'incident-s-1', url: '/c/main/incidents/s-1' });
+  });
+
   it('applies the diagnosis switch and the severity filter per device', async () => {
     const svc = pushService();
     const { service } = make(svc.fetchImpl);

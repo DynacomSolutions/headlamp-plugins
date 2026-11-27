@@ -251,6 +251,27 @@ export class PushService {
     }
   }
 
+  /**
+   * An incident opened and no investigation started, because the setting "Automatic investigations" is off.
+   * It reaches the same devices as a ready diagnosis, so the incident is not missed. Never throws.
+   */
+  async notifyIncident(d: Diagnosis): Promise<number> {
+    if (!this.enabled || d.status !== 'skipped') return 0;
+    try {
+      const title = brief(`Incident opened: ${d.alert.name} (${d.alert.severity || 'no severity'})`, TITLE_CHARS);
+      const body = brief(d.alert.annotations.summary || d.alert.annotations.description || 'Automatic investigations are off. Open the incident to start one.');
+      let sent = 0;
+      for (const r of await this.deps.store.list()) {
+        if (!wantsDiagnosis(r.settings, d.alert.severity)) continue;
+        if (await this.send(r, { kind: 'diagnosis', title, body, tag: `incident-${d.id}`, url: r.urls.incident.replace('{id}', encodeURIComponent(d.id)) })) sent++;
+      }
+      return sent;
+    } catch (error) {
+      this.log('warn', 'incident push failed', { id: d.id, error: String(error) });
+      return 0;
+    }
+  }
+
   /** The agent finished a chat answer for the device `subscription`. Never throws. */
   async notifyChatAnswer(subscription: string, chatId: string, answer: string): Promise<boolean> {
     if (!this.enabled) return false;

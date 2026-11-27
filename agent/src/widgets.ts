@@ -528,10 +528,10 @@ async function incidents(d: PanelDeps): Promise<PanelBody> {
     const state = open && x.status === 'done' ? 'open' : String(x.status);
     const target = issueTarget(x.labels);
     const working = open && (x.status === 'queued' || x.status === 'running' || launched.has(String(x.id)));
-    const agent = working ? 'working' : x.status === 'failed' ? 'failed' : x.status === 'done' ? 'diagnosed' : '';
+    const agent = working ? 'working' : x.status === 'failed' ? 'failed' : x.status === 'done' ? 'diagnosed' : x.status === 'skipped' ? 'skipped' : '';
     return {
       label: String(x.alert),
-      detail: String(x.likelyCause || state).slice(0, 160),
+      detail: String(x.likelyCause || (x.status === 'skipped' ? 'Not investigated' : state)).slice(0, 160),
       value: open ? state : 'resolved',
       status: !open ? 'ok' : x.status === 'failed' ? 'unknown' : x.severity === 'critical' ? 'crit' : 'warn',
       link: x.id ? `/c/{cluster}/incidents/${encodeURIComponent(String(x.id))}` : undefined,

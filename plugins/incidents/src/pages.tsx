@@ -9,6 +9,7 @@ import React from 'react';
 import { Link as RouterLink, useHistory, useParams } from 'react-router-dom';
 import { A2uiRenderer } from './a2ui';
 import { AgentActions } from './AgentActions';
+import { AutomaticInvestigationsCard } from './AutomaticInvestigationsCard';
 import { createChat } from './chat-data';
 import { ChatPage } from './ChatPage';
 import { rerunDiagnosis, useDiagnoses, useDiagnosis, useSettings } from './data';
@@ -32,6 +33,7 @@ export function IncidentsPage() {
   );
   return (
     <SectionBox title="Incidents">
+      <AutomaticInvestigationsCard />
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           Could not load diagnoses: {error}
@@ -84,9 +86,10 @@ function IncidentDetail({ id }: { id: string }) {
           <Button size="small" variant="outlined" onClick={ask}>
             Ask about this incident
           </Button>
-          {data?.status === 'failed' && (
+          {(data?.status === 'failed' || data?.status === 'skipped') && (
             <RerunButton
               key={data.status}
+              label={data.status === 'skipped' ? 'Investigate' : undefined}
               onRerun={async () => {
                 await rerunDiagnosis(settings, id);
                 await refresh();

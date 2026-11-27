@@ -126,6 +126,28 @@ describe('joinIssues', () => {
     expect(find('ProbeSlow', 'b.example.com').agent).toBe('none');
   });
 
+  it('shows a skipped incident as not investigated, and ranks it under a failed one', () => {
+    const one = joinIssues(
+      {
+        alerts: panel('alerts', []),
+        incidents: panel('incidents', [incident('s1', 'Quiet', 't', { agent: 'skipped', state: 'skipped' })]),
+      },
+      NOW
+    );
+    expect(one.groups[0]).toMatchObject({ agent: 'skipped', cause: '' });
+    const both = joinIssues(
+      {
+        alerts: panel('alerts', []),
+        incidents: panel('incidents', [
+          incident('s1', 'Mixed', 't', { agent: 'skipped', state: 'skipped' }),
+          incident('s2', 'Mixed', 't', { agent: 'failed', state: 'failed' }),
+        ]),
+      },
+      NOW
+    );
+    expect(both.groups[0]!.agent).toBe('failed');
+  });
+
   it('shows a group of incidents resolved today as resolved, and drops older ones', () => {
     const g = find('OldIssue', 'ns/x');
     expect(g).toMatchObject({ state: 'resolved', status: 'ok', count: 2 });

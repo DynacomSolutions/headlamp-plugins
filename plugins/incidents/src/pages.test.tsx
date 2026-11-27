@@ -27,6 +27,13 @@ vi.mock('./chat-data', () => ({
 }));
 vi.mock('./data', () => ({
   useSettings: () => ({}),
+  saveAutomaticInvestigations: vi.fn(),
+  useAutomaticInvestigations: () => ({
+    loading: false,
+    error: null,
+    data: { enabled: true },
+    refresh: async () => {},
+  }),
   useDiagnoses: () => ({
     loading: false,
     error: null,

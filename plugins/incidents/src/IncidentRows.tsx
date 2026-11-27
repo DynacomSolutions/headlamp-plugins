@@ -26,6 +26,7 @@ export const STATUS_WORD: Record<Status, string> = {
   running: 'Running',
   done: 'Analysed',
   failed: 'Analysis failed',
+  skipped: 'Not investigated',
 };
 
 /** The status words of a group header. They are lower case, so they read as a list. */
@@ -34,10 +35,11 @@ const STATUS_MIX_WORD: Record<Status, string> = {
   running: 'running',
   queued: 'queued',
   done: 'analysed',
+  skipped: 'not investigated',
 };
 
 /** Statuses in the order a header lists them: what needs attention comes first. */
-const STATUS_ORDER: Status[] = ['failed', 'running', 'queued', 'done'];
+const STATUS_ORDER: Status[] = ['failed', 'skipped', 'running', 'queued', 'done'];
 
 /** A widget narrower than this (in px) hides the status word of an analysed row. */
 export const NARROW_BELOW = 520;
@@ -83,7 +85,7 @@ export function groupByAlert(rows: DiagnosisSummary[]): IncidentGroup[] {
         name,
         rows: [],
         worst: severityGroup(d.severity),
-        byStatus: { queued: 0, running: 0, done: 0, failed: 0 },
+        byStatus: { queued: 0, running: 0, done: 0, failed: 0, skipped: 0 },
       };
       groups.set(name, g);
     }
@@ -242,9 +244,10 @@ function Row(props: {
             {STATUS_WORD[d.status]}
           </Box>
         )}
-        {onRerun && d.status === 'failed' && (
+        {onRerun && (d.status === 'failed' || d.status === 'skipped') && (
           <RerunButton
             key={d.status}
+            label={d.status === 'skipped' ? 'Investigate' : undefined}
             touch={touch}
             alertName={d.alertName || d.id}
             compact
