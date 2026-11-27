@@ -140,11 +140,12 @@ export class Runner {
   /** Turn an automatic record that is queued or running here into a skipped incident. False when it is not that any more. */
   private async skipStored(id: string, path: AutomaticPath): Promise<boolean> {
     let stored: Diagnosis | undefined;
+    // No force: a record that another pod holds with a live lease is not ours to change.
     const ok = await this.store.update(id, d => {
-      if (!d || (d.status !== 'queued' && d.status !== 'running') || !isAutomatic(d)) return undefined;
+      if (!d || (d.status !== 'queued' && d.status !== 'running') || !isAutomatic(d) || d.owner !== this.store.owner) return undefined;
       stored = this.skippedRecord(d);
       return stored;
-    }, { force: true });
+    });
     if (ok && stored) this.options.onSkipped?.(stored, path);
     return ok;
   }
@@ -281,7 +282,7 @@ export class Runner {
     const ok = await this.store.update(id, d => {
       if (!d || (d.status !== 'failed' && d.status !== 'skipped')) return undefined;
       const previous = d.status === 'failed' ? [...(d.previousAttempts ?? []), { at: d.finishedAt ?? d.createdAt, model: d.model, error: d.error ?? '' }].slice(-MAX_PREVIOUS) : d.previousAttempts;
-      moved = { ...d, status: 'queued', error: undefined, skipped: undefined, finishedAt: undefined, model: model ?? this.catalogue.currentDefault(), modelPinned: model !== undefined, attempts: 1, previousAttempts: previous, rerunAt: new Date().toISOString(), owner: this.store.owner, leaseUntil: this.store.lease() };
+      moved = { ...d, status: 'queued', error: undefined, skipped: undefined, ...(d.status === 'skipped' || d.wasSkipped ? { wasSkipped: true as const } : {}), finishedAt: undefined, model: model ?? this.catalogue.currentDefault(), modelPinned: model !== undefined, attempts: 1, previousAttempts: previous, rerunAt: new Date().toISOString(), owner: this.store.owner, leaseUntil: this.store.lease() };
       return moved;
     });
     if (!ok || !moved) {
@@ -312,6 +313,7 @@ export class Runner {
       leaseUntil: this.draining ? DiagnosisStore.released() : this.store.lease(),
       attempts: existing ? (existing.attempts ?? 1) : 1,
       rerunAt: existing?.rerunAt,
+      wasSkipped: existing?.wasSkipped,
       previousAttempts: existing?.previousAttempts,
     };
     queued.a2ui = renderDiagnosis(queued);
@@ -366,7 +368,7 @@ export class Runner {
             writes = writes.then(async () => {
               if (lost) return;
               try {
-                const ok = await this.store.put({ ...diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), modelPinned: queued.modelPinned, attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts });
+                const ok = await this.store.put({ ...diagnosis, createdAt: queued.createdAt, owner: this.store.owner, leaseUntil: this.store.lease(), modelPinned: queued.modelPinned, attempts: queued.attempts, rerunAt: queued.rerunAt, wasSkipped: queued.wasSkipped, previousAttempts: queued.previousAttempts });
                 if (!ok) {
                   // Another process owns the record now. Stop working on it.
                   lost = true;
@@ -381,7 +383,7 @@ export class Runner {
         });
         await writes;
         if (lost) return;
-        if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, modelPinned: queued.modelPinned, attempts: queued.attempts, rerunAt: queued.rerunAt, previousAttempts: queued.previousAttempts }))) return;
+        if (!(await this.store.put({ ...result, createdAt: queued.createdAt, owner: this.store.owner, modelPinned: queued.modelPinned, attempts: queued.attempts, rerunAt: queued.rerunAt, wasSkipped: queued.wasSkipped, previousAttempts: queued.previousAttempts }))) return;
         log('info', 'diagnosis finished', { id: result.id, alert: alert.name, status: result.status, toolCalls: result.toolCalls, error: result.error });
         if (result.status === 'done') this.onDone({ ...result, createdAt: queued.createdAt });
       } catch (error) {
@@ -465,6 +467,19 @@ function guardWrite(req: IncomingMessage, config: Config): void {
   if (!/^application\/json\s*(;|$)/i.test(req.headers['content-type'] ?? '')) throw new HttpError(415, 'The content type must be application/json');
 }
 
+/**
+ * Who changed a setting, and how the change arrived. A call through the Kubernetes service proxy (Headlamp) has
+ * `X-Forwarded-Uri`. Then only the name in the body counts, which the plugin takes from its own session. A direct
+ * call can send any header or name, so its name is only a claim. No name gives an empty string, never a made-up one.
+ * The kube-apiserver audit log is the true record of who wrote through the proxy.
+ */
+function settingCaller(req: IncomingMessage, claimed?: string): { by: string; via: 'proxy' | 'direct' } {
+  const first = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v) || undefined;
+  if (first(req.headers['x-forwarded-uri'])) return { by: maskText((claimed ?? '').slice(0, 80)), via: 'proxy' };
+  const name = first(req.headers['x-remote-user']) ?? first(req.headers['x-forwarded-user']) ?? claimed ?? '';
+  return { by: maskText(name.slice(0, 80)), via: 'direct' };
+}
+
 /** Who asked. The service proxy does not pass the user on, so this is a label for the record, not proof. */
 function operator(req: IncomingMessage, claimed?: string): string {
   const header = req.headers['x-remote-user'] ?? req.headers['x-forwarded-user'];
@@ -499,9 +514,20 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   });
   const metrics = new Metrics();
   const automatic = new AutomaticInvestigations(store, log);
+  // A start path must never lose an alert because the setting cannot be read: an unreadable setting counts as off.
+  // The incident then opens with no investigation, and a person can start it by hand.
+  const automaticForStart = async (): Promise<boolean> => {
+    try {
+      return await automatic.enabled();
+    } catch (error) {
+      metrics.inc('headlamp_agent_automatic_investigations_read_errors_total');
+      log('warn', 'setting unreadable, treated as off', { setting: 'automatic-investigations', error: error instanceof Error ? error.message : String(error) });
+      return false;
+    }
+  };
   // A push is best effort and never holds up the diagnosis or the answer.
   const runner = new Runner(runtime, store, config, undefined, d => void push.notifyDiagnosis(d), {
-    automatic: () => automatic.enabled(),
+    automatic: automaticForStart,
     onSkipped: (d, path) => {
       metrics.inc('headlamp_agent_automatic_investigations_skipped_total', { path });
       void push.notifyIncident(d);
@@ -564,7 +590,14 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       if (path === '/metrics' && req.method === 'GET') {
         await storage.metrics();
         runner.catalogue.refreshMetrics();
-        metrics.set('headlamp_agent_automatic_investigations_enabled', {}, (await automatic.enabled()) ? 1 : 0);
+        // A failed read must not fail the scrape. The error counter shows it and the gauge keeps no value.
+        metrics.clear('headlamp_agent_automatic_investigations_enabled');
+        try {
+          metrics.set('headlamp_agent_automatic_investigations_enabled', {}, (await automatic.enabled()) ? 1 : 0);
+        } catch (error) {
+          metrics.inc('headlamp_agent_automatic_investigations_read_errors_total');
+          log('warn', 'setting unreadable at scrape', { error: error instanceof Error ? error.message : String(error) });
+        }
         metrics.clear('headlamp_agent_diagnoses_open');
         const counts = new Map<string, number>([['critical', 0], ['warning', 0], ['info', 0]]);
         for (const d of await store.openSummaries()) counts.set(d.alert.severity || 'none', (counts.get(d.alert.severity || 'none') ?? 0) + 1);
@@ -596,7 +629,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           // The same alert fired again (vmalert restarted, or the alert flapped): it joins the open diagnosis. A failed one does not take it in, so a new run can retry.
           const open = await store.findOpenByFingerprint(alert.fingerprint);
           // A skipped incident takes the repeat while the setting is off. Once it is on, the repeat starts the investigation.
-          const switchedOn = await automatic.enabled();
+          const switchedOn = await automaticForStart();
           if (open && open.status !== 'failed' && (open.status !== 'skipped' || !switchedOn)) {
             if (await store.attachFire(open.id, alert.startsAt)) metrics.inc('headlamp_agent_alert_repeats_merged_total');
             continue;
@@ -606,6 +639,9 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
             if (!gate.eligible(alert).ok) continue;
             const d = await runner.openSkipped(alert, 'webhook');
             log('info', 'automatic investigation skipped: setting off', { id: d.id, alert: alert.name, path: 'webhook' });
+            // A race (two pods) or an older record can leave other open ones of this fingerprint. The newest stays, as on the start path.
+            const folded = (await store.foldDuplicates(alert.fingerprint).catch(() => undefined))?.folded ?? 0;
+            if (folded) metrics.inc('headlamp_agent_reconcile_folded_total', {}, folded);
             continue;
           }
           const verdict = await gate.wants(alert);
@@ -780,7 +816,8 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         if (req.method === 'PUT' || req.method === 'POST') {
           guardWrite(req, config);
           const body = await chatBody(req, automaticInvestigationsSchema);
-          const { state, changed } = await automatic.set(body.enabled, operator(req, body.by));
+          const who = settingCaller(req, body.by);
+          const { state, changed } = await automatic.set(body.enabled, who.by, who.via);
           return send(res, 200, { ...state, changed, changes: await automatic.audit(10) });
         }
         res.setHeader('allow', 'GET, PUT, POST');

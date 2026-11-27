@@ -105,6 +105,8 @@ export interface Diagnosis {
   previousAttempts?: PreviousAttempt[];
   /** Set while `status` is `skipped`: why no investigation started and when. A manual run clears it. */
   skipped?: { reason: string; at: string };
+  /** Set when a person ran a skipped incident. It never started by itself, so it never used a slot of the hourly limit of automatic ones. */
+  wasSkipped?: true;
 }
 
 /** Commands a fix may show: reads and checks only. Anything else is dropped from the fix, its text stays. */

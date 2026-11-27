@@ -221,19 +221,30 @@ the store at each check, so a change shows on all pods at once.
   `rerunAt` set) resumes after a restart whatever the switch says.
 - Storage scans start no model diagnosis, so the switch has no storage path.
 - **API**: `GET /api/settings/automatic-investigations` answers
-  `{enabled, updatedAt?, updatedBy?, changes: [{kind, at, by, old, new}]}` (the last 10 changes).
+  `{enabled, updatedAt?, updatedBy?, updatedVia?, changes: [{kind, at, by, via?, old, new}]}` (the last 10 changes).
   `PUT` (or `POST`, because the service proxy maps POST to the same right as the other writes) with
-  `{"enabled": true|false}` changes it. A write has the same protection as the other writes (allowed
-  origin, JSON body). `by` is the `X-Remote-User` header, else `operator`. A write of the same value
-  changes nothing and adds no audit entry.
+  `{"enabled": true|false, "by"?: "<name>"}` changes it. A write has the same protection as the other writes
+  (allowed origin, JSON body). A write of the same value changes nothing and adds no audit entry.
+- **Who changed it**: the agent cannot check a caller, so a name is a label and not proof. The plugin asks the
+  cluster who the user is (a `SelfSubjectReview`) and sends the name as `by`. A call through the Kubernetes service
+  proxy has the header `X-Forwarded-Uri`. It is stored as `via: "proxy"` with the name from `by` only, and the
+  headers are ignored. A call without that header is `via: "direct"`. Its name comes from `X-Remote-User`,
+  `X-Forwarded-User` or `by`, and Headlamp shows it as "(claimed)". A call with no name stores an empty
+  name, never a made-up one, and Headlamp shows "via Headlamp". The true record of a write through the proxy is
+  the kube-apiserver audit log. When scoped tokens exist, the token name will be the real caller.
+- **Read errors**: when the store cannot be read, a start path treats the setting as off. The alert still opens
+  an incident and sends the push. `headlamp_agent_automatic_investigations_read_errors_total` counts the
+  failures. A stored value that is not true or false gives the default (on) and one warning in the log.
+- **The hourly limit**: a skipped incident that a person runs later (`wasSkipped`) never uses a slot of the
+  hourly limit of automatic investigations.
 - **Audit**: every change writes one row to `agent_settings_audit` (key, time, who, old, new) in the
   same transaction as the change, and one `setting changed` line to the log.
 - **Metrics**: `headlamp_agent_automatic_investigations_enabled` (1 on, 0 off, read from the store at each
   scrape) and `headlamp_agent_automatic_investigations_skipped_total{path}`.
 - **For MCP**: `src/settings.ts` exports `getAutomaticInvestigations(store)` and the class
   `AutomaticInvestigations` (`get`, `set`, `audit`, `onChange`). Its `onChange` listener gets
-  `{kind: "settings.automatic_investigations.changed", at, by, old, new}` after each change made on that
-  pod. The agent has no incident event source yet, so the MCP worker wires this event in when it adds one.
+  `{kind: "settings.automatic_investigations.changed", at, by, via?, old, new}` after each change made on that
+  pod. These exports stay stable: the MCP server reads the setting through `getAutomaticInvestigations`. The agent has no incident event source yet, so the MCP worker wires this event in when it adds one.
 
 ### Where diagnoses start
 

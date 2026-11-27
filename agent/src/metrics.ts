@@ -26,6 +26,7 @@ const META: Record<string, Meta> = {
   headlamp_agent_model_exhausted: { type: 'gauge', help: 'Default models in a usage cool-down: 1 while the model is skipped, else 0.' },
   headlamp_agent_automatic_investigations_enabled: { type: 'gauge', help: 'The setting "Automatic investigations": 1 while on, 0 while off. Read from the shared store at each scrape.' },
   headlamp_agent_automatic_investigations_skipped_total: { type: 'counter', help: 'Automatic investigations that did not start because the setting is off, by path: webhook, resume or queued.' },
+  headlamp_agent_automatic_investigations_read_errors_total: { type: 'counter', help: 'Reads of the setting "Automatic investigations" that failed. The agent then treats the setting as off, so the incident opens without an investigation.' },
   headlamp_agent_diagnoses_open: { type: 'gauge', help: 'Diagnoses that are not resolved, by alert severity.' },
   headlamp_agent_reconcile_runs_total: { type: 'counter', help: 'Reconcile runs of this pod, by result: ok, error (vmalert unreadable) or skipped (another pod leads).' },
   headlamp_agent_reconcile_resolved_total: { type: 'counter', help: 'Open diagnoses that a reconcile run resolved because vmalert no longer has the alert.' },
@@ -55,6 +56,7 @@ export class Metrics {
     for (const result of ['success', 'error']) this.inc('headlamp_agent_storage_reconcile_total', { result }, 0);
     for (const result of ['complete', 'incomplete', 'timeout', 'error']) this.inc('headlamp_agent_storage_scan_total', { result }, 0);
     for (const result of ['ok', 'error', 'skipped']) this.inc('headlamp_agent_reconcile_runs_total', { result }, 0);
+    this.inc('headlamp_agent_automatic_investigations_read_errors_total', {}, 0);
     for (const path of ['webhook', 'resume', 'queued']) this.inc('headlamp_agent_automatic_investigations_skipped_total', { path }, 0);
   }
 
