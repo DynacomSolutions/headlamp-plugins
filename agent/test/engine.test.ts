@@ -91,6 +91,38 @@ describe('diagnosis engine', () => {
     expect(JSON.stringify(d.a2ui)).not.toMatch(/\d+\/\d+ tool calls/);
   });
 
+  it('does not wait for a listener and survives one that throws or rejects', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    try {
+      let events = 0;
+      const rejecting = async () => {
+        events++;
+        throw new Error('The socket is closed');
+      };
+      const first = await diagnose({ alert, tools: host([]), model: model([]), timeoutMs: 300, source: 'api', onEvent: rejecting });
+      expect(first.status).toBe('done');
+      const second = await diagnose({
+        alert,
+        tools: host([]),
+        model: model([]),
+        timeoutMs: 300,
+        source: 'api',
+        onEvent: () => {
+          events++;
+          throw new Error('A listener failed');
+        },
+      });
+      expect(second.status).toBe('done');
+      expect(events).toBeGreaterThan(4);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+
   it('fails at the time limit when the model never submits', async () => {
     // The last call has its own short limit (the call limit of the model), so it ends too.
     const never = { name: 'x', callTimeoutMs: 60, complete: async (req: CompleteRequest) => { await new Promise((_, reject) => req.signal?.addEventListener('abort', () => reject(new Error('cancelled')))); return undefined as never; } } as unknown as ModelClient;
