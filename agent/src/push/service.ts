@@ -40,6 +40,11 @@ export function severityGroup(severity: string): SeverityGroup {
 }
 
 /** Does this device want a push for a diagnosis of this severity? */
+/** A test incident (label test=true) sends no push, unless it also has push=true (MCP contract section 7.5). */
+export function isQuietTest(d: Pick<Diagnosis, 'alert'>): boolean {
+  return d.alert.labels.test === 'true' && d.alert.labels.push !== 'true';
+}
+
 export function wantsDiagnosis(settings: PushSettings, severity: string): boolean {
   return settings.diagnosis && settings.severities.includes(severityGroup(severity));
 }
@@ -213,6 +218,7 @@ export class PushService {
   /** A diagnosis reached `done`: push to every device that wants this severity. Never throws. */
   async notifyDiagnosis(d: Diagnosis): Promise<number> {
     if (!this.enabled || d.status !== 'done') return 0;
+    if (isQuietTest(d)) return 0;
     try {
       const title = brief(`Diagnosis ready: ${d.alert.name} (${d.alert.severity || 'no severity'})`, TITLE_CHARS);
       const body = brief(d.result?.likelyCause ?? d.result?.summary ?? 'Open the incident to read the diagnosis.');
@@ -224,6 +230,23 @@ export class PushService {
       return sent;
     } catch (error) {
       this.log('warn', 'diagnosis push failed', { id: d.id, error: String(error) });
+      return 0;
+    }
+  }
+
+  /** An operator or a client escalated an incident: push to every device with diagnosis pushes on, whatever the severity. Never throws. */
+  async notifyEscalation(d: Pick<Diagnosis, 'id' | 'alert'>, reason: string): Promise<number> {
+    if (!this.enabled || isQuietTest(d)) return 0;
+    try {
+      const title = brief(`Escalated: ${d.alert.name} (${d.alert.severity || 'no severity'})`, TITLE_CHARS);
+      let sent = 0;
+      for (const r of await this.deps.store.list()) {
+        if (!r.settings.diagnosis) continue;
+        if (await this.send(r, { kind: 'diagnosis', title, body: brief(reason), tag: `escalation-${d.id}`, url: r.urls.incident.replace('{id}', encodeURIComponent(d.id)) })) sent++;
+      }
+      return sent;
+    } catch (error) {
+      this.log('warn', 'escalation push failed', { id: d.id, error: String(error) });
       return 0;
     }
   }

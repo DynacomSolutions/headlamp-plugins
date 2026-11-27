@@ -3,6 +3,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Diagnosis } from './agent/report.js';
 import { MemoryPushStore, PgPushStore, PUSH_SCHEMA, type PushStore } from './push/store.js';
+import { finalise, keepIncident } from './incidents/changes.js';
+import { EVENT_SCHEMA, MemoryEventLog, PgEventLog, type EventLog } from './incidents/events.js';
 
 export const LEASE_MS = 60_000;
 const EPOCH = new Date(0).toISOString();
@@ -77,6 +79,8 @@ export abstract class DiagnosisStore {
 
   /** The push subscriptions. They live beside the diagnoses: in the same database, or in memory. */
   abstract pushStore(): PushStore;
+  /** The event log of the MCP contract. Every change of a record writes its events here, in the same transaction. */
+  abstract readonly events: EventLog;
   /** Prepare the store: create the schema and import the old JSON files. Call once before use. */
   abstract init(): Promise<void>;
   abstract close(): Promise<void>;
@@ -198,6 +202,7 @@ export abstract class DiagnosisStore {
       // A writer that holds an older copy (the runner) must not drop what another pod added meanwhile.
       if (next.fires === undefined && current.fires !== undefined) next = { ...next, fires: current.fires };
       if (next.lastFiredAt === undefined && current.lastFiredAt !== undefined) next = { ...next, lastFiredAt: current.lastFiredAt };
+      next = keepIncident(current, next);
       if (current.resolvedAt && !next.resolvedAt) next = { ...next, resolvedAt: current.resolvedAt, ...(next.resolvedNote === undefined && current.resolvedNote !== undefined ? { resolvedNote: current.resolvedNote } : {}) };
     }
     return next;
@@ -208,6 +213,7 @@ export abstract class DiagnosisStore {
 export class MemoryDiagnosisStore extends DiagnosisStore {
   private readonly records = new Map<string, Diagnosis>();
   private readonly push = new MemoryPushStore();
+  readonly events: EventLog = new MemoryEventLog(() => this.now());
 
   pushStore(): PushStore {
     return this.push;
@@ -276,9 +282,14 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
 
   async update(id: string, fn: (current: Diagnosis | undefined) => Diagnosis | undefined, options: UpdateOptions = {}): Promise<boolean> {
     // No await between the read and the write, so this is atomic in one process.
-    const next = this.decide(this.records.get(id), fn, options);
-    if (!next) return false;
-    this.records.set(next.id, next);
+    const current = this.records.get(id);
+    const decided = this.decide(current, fn, options);
+    if (!decided) return false;
+    const { record, events } = finalise(current, decided, new Date(this.now()));
+    this.records.set(record.id, record);
+    // The log appends in memory without waiting, so this is still one step.
+    const stored = await this.events.append(events);
+    await this.events.committed(stored);
     return true;
   }
 }
@@ -295,6 +306,8 @@ export interface Db {
   query(text: string, params?: unknown[]): Promise<QueryResult>;
   /** Run `fn` in one transaction. A thrown error rolls it back. */
   transaction<T>(fn: (tx: { query: Db['query'] }) => Promise<T>): Promise<T>;
+  /** Calls `onNotify` for each NOTIFY on `channel`, until the returned function runs. Optional: PGlite tests do without. */
+  listen?(channel: string, onNotify: () => void): Promise<() => Promise<void>>;
   close(): Promise<void>;
 }
 
@@ -324,6 +337,7 @@ const SCHEMA = [
     until timestamptz NOT NULL
   )`,
   ...PUSH_SCHEMA,
+  ...EVENT_SCHEMA,
 ];
 
 /** Any 64-bit number. Two pods that start together take this advisory lock, so only one creates the schema. */
@@ -365,9 +379,11 @@ export class PgDiagnosisStore extends DiagnosisStore {
   ) {
     super(options);
     this.push = new PgPushStore(db);
+    this.events = new PgEventLog(db, () => this.now());
   }
 
   private readonly push: PushStore;
+  readonly events: PgEventLog;
 
   pushStore(): PushStore {
     return this.push;
@@ -382,6 +398,7 @@ export class PgDiagnosisStore extends DiagnosisStore {
       await tx.query('SELECT pg_advisory_xact_lock($1)', [SCHEMA_LOCK]);
       for (const statement of SCHEMA) await tx.query(statement);
     });
+    await this.events.start();
     if (this.dataDir) {
       const imported = await this.importFiles(this.dataDir);
       if (imported > 0) this.log('imported diagnoses from the data directory', { imported });
@@ -389,6 +406,7 @@ export class PgDiagnosisStore extends DiagnosisStore {
   }
 
   async close(): Promise<void> {
+    await this.events.close();
     await this.db.close();
   }
 
@@ -490,18 +508,27 @@ export class PgDiagnosisStore extends DiagnosisStore {
 
   async update(id: string, fn: (current: Diagnosis | undefined) => Diagnosis | undefined, options: UpdateOptions = {}): Promise<boolean> {
     if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`Invalid diagnosis id: ${id}`);
-    return this.db.transaction(async tx => {
+    let stored: Awaited<ReturnType<EventLog['append']>> = [];
+    const ok = await this.db.transaction(async tx => {
       const row = await tx.query('SELECT data FROM diagnoses WHERE id = $1 FOR UPDATE', [id]);
       const current = row.rows[0]?.data as Diagnosis | undefined;
-      const next = this.decide(current, fn, options);
-      if (!next) return false;
-      if (!current) return this.insert(tx, next); // False when another pod created it a moment ago.
+      const decided = this.decide(current, fn, options);
+      if (!decided) return false;
+      const { record: next, events } = finalise(current, decided, new Date(this.now()));
+      if (!current) {
+        if (!(await this.insert(tx, next))) return false; // Another pod created it a moment ago.
+        stored = await this.events.append(events, tx);
+        return true;
+      }
       await tx.query(
         'UPDATE diagnoses SET created_at = $2, status = $3, source = $4, alert_name = $5, fingerprint = $6, starts_at = $7, resolved = $8, lease_until = $9, rerun_at = $10, data = $11::jsonb WHERE id = $1',
         [id, created(next, this.now()), next.status, next.source, next.alert.name ?? '', next.alert.fingerprint ?? '', next.alert.startsAt ?? '', Boolean(next.resolvedAt), lease(next), rerun(next), JSON.stringify(next)],
       );
+      stored = await this.events.append(events, tx);
       return true;
     });
+    if (ok) await this.events.committed(stored);
+    return ok;
   }
 }
 
@@ -529,6 +556,38 @@ export async function connectPg(connectionString: string): Promise<Db> {
       } finally {
         client.release();
       }
+    },
+    async listen(channel, onNotify) {
+      // One connection that stays open, so a notification wakes this pod at once. A lost connection is opened again.
+      let stopped = false;
+      let client: InstanceType<typeof pg.Client> | undefined;
+      const open = async (): Promise<void> => {
+        if (stopped) return;
+        const c = new pg.Client({ connectionString: url.toString(), ssl: mode === 'disable' ? false : { rejectUnauthorized: false } });
+        c.on('notification', () => onNotify());
+        const lost = () => {
+          if (client === c) client = undefined;
+          c.removeAllListeners();
+          c.on('error', () => {});
+          void c.end().catch(() => {});
+          if (!stopped) setTimeout(() => void open().catch(() => {}), 5000).unref();
+        };
+        c.on('error', lost);
+        c.on('end', lost);
+        try {
+          await c.connect();
+          await c.query(`LISTEN ${channel.replace(/[^a-z0-9_]/gi, '')}`);
+        } catch {
+          return lost();
+        }
+        client = c;
+        onNotify(); // Anything written while the connection was down.
+      };
+      await open().catch(() => {});
+      return async () => {
+        stopped = true;
+        await client?.end().catch(() => {});
+      };
     },
     close: () => pool.end(),
   };

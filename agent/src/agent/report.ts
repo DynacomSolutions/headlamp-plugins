@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { SurfaceBuilder, surfaceId, type A2uiMessage, type IconName } from '../a2ui/index.js';
 import { mask } from '../mask.js';
+import type { IncidentState } from '../incidents/types.js';
 
 export const alertSchema = z.object({
   name: z.string(),
@@ -99,6 +100,8 @@ export interface Diagnosis {
   rerunAt?: string;
   /** The failed attempts that re-runs replaced, oldest first. */
   previousAttempts?: PreviousAttempt[];
+  /** Acknowledgement, notes, escalation and timeline (MCP contract). Kept across every write of the record. */
+  incident?: IncidentState;
 }
 
 /** Commands a fix may show: reads and checks only. Anything else is dropped from the fix, its text stays. */
