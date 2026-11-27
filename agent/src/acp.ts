@@ -261,6 +261,7 @@ export function startAcp(): void {
           tools: mcp.host,
           model: modelClient,
           timeoutMs: config.diagnosis.runTimeoutMs,
+          maxModelCalls: config.diagnosis.maxModelCalls,
           source: 'acp',
           host: process.env.HEADLAMP_AGENT_HOST_NAME ?? 'acp',
           signal: abort.signal,

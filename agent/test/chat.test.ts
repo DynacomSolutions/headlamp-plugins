@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ChatError, ChatService, systemPrompt, trimHistory } from '../src/agent/chat.js';
+import { ChatError, ChatService, RESTART_NOTE, systemPrompt, trimHistory } from '../src/agent/chat.js';
 import { ModelCatalogue } from '../src/agent/catalogue.js';
 import type { ToolHost } from '../src/agent/engine.js';
 import type { Message } from '../src/agent/model.js';
@@ -85,10 +85,10 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function service(calls: string[] = [], overrides: { maxTurns?: number; diagnoses?: DiagnosisStore; timeoutMs?: number } = {}) {
+function service(calls: string[] = [], overrides: { maxTurns?: number; diagnoses?: DiagnosisStore; timeoutMs?: number; maxModelCalls?: number } = {}) {
   const store = new ChatStore(dir);
   const diagnoses = overrides.diagnoses ?? new MemoryDiagnosisStore();
-  const chats = new ChatService({ store, diagnoses, tools: host(calls), catalogue: new ModelCatalogue(models()), maxTurns: overrides.maxTurns ?? 3, ...(overrides.timeoutMs ? { timeoutMs: overrides.timeoutMs } : {}) });
+  const chats = new ChatService({ store, diagnoses, tools: host(calls), catalogue: new ModelCatalogue(models()), maxTurns: overrides.maxTurns ?? 3, ...(overrides.timeoutMs ? { timeoutMs: overrides.timeoutMs } : {}), ...(overrides.maxModelCalls ? { maxModelCalls: overrides.maxModelCalls } : {}) });
   return { store, chats, diagnoses };
 }
 
@@ -257,19 +257,103 @@ describe('chat service', () => {
     expect((chats.get(id) as any).messages[1].status).toBe('cancelled');
   });
 
-  it('ends a turn at the time limit and says so', async () => {
+  it('clears the model pick when a patch sends an empty model, also with an identity', async () => {
+    const { chats, store } = service();
+    const { id } = await chats.create({ model: 'gateway/m2' });
+    expect(store.get(id)?.modelPinned).toBe(true);
+    await chats.patch(id, { model: '', identity: 'gateway' });
+    expect(store.get(id)?.modelPinned).toBe(false);
+    // An identity with no model at all is still refused.
+    await expect(chats.patch(id, { identity: 'gateway' })).resolves.toBeTruthy();
+    await expect(chats.send(id, 'x', undefined, undefined, 'gateway')).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('ends a turn at the time limit with one last call that answers from the work so far', async () => {
+    const { chats } = service([], { timeoutMs: 200 });
+    // The first call works and asks for a tool. The second hangs past the limit. The last call, with its own short limit, answers.
+    script.queue.push(async () => ({ calls: [{ name: 'get_resource', args: { reason: 'look' } }] }));
+    script.queue.push(async () => {
+      await new Promise(r => setTimeout(r, 600));
+      return { text: 'late' };
+    });
+    script.queue.push(async () => ({ text: 'Partial answer from the tool result.' }));
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    const m = (chats.get(id) as any).messages[1];
+    expect(m).toMatchObject({ status: 'done', text: 'Partial answer from the tool result.' });
+    const last = script.requests.at(-1);
+    expect(last.tool_choice).toBe('none');
+    expect(last.tools).toHaveLength(1);
+    // The history that went with the last call is valid: every tool call has its result.
+    const roles = last.messages.map((x: any) => x.role);
+    expect(roles).toContain('tool');
+  });
+
+  it('closes the tool calls that had no result when the limit hits during a tool call', async () => {
+    const slowHost: ToolHost = { ...host(), call: async () => { await new Promise(r => setTimeout(r, 2000)); return { ok: true, summary: 'late', data: {} }; } };
+    const store = new ChatStore(dir);
+    const chats = new ChatService({ store, diagnoses: new MemoryDiagnosisStore(), tools: slowHost, catalogue: new ModelCatalogue(models()), maxTurns: 3, timeoutMs: 200 });
+    script.queue.push(async () => ({ calls: [{ name: 'get_resource', args: { reason: 'slow' } }, { name: 'get_resource', args: { reason: 'slower' } }] }));
+    script.queue.push(async () => ({ text: 'Answer without the slow tools.' }));
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[1]).toMatchObject({ status: 'done', text: 'Answer without the slow tools.' });
+    const toolMessages = script.requests.at(-1).messages.filter((x: any) => x.role === 'tool');
+    expect(toolMessages).toHaveLength(2);
+    expect(JSON.stringify(toolMessages)).toContain('time limit');
+  });
+
+  it('fails with a clear error when the model keeps calling tools in the wrap-up call too', async () => {
     const { chats } = service([], { timeoutMs: 150 });
-    // The model keeps calling tools: only the time limit ends the turn.
     for (let i = 0; i < 400; i++) script.queue.push(async () => { await new Promise(r => setTimeout(r, 20)); return { calls: [{ name: 'get_resource', args: { reason: 'again' } }] }; });
     const { id } = await chats.create({});
     await chats.send(id, 'hello');
     await until(() => !(chats.get(id) as any).running);
     const m = (chats.get(id) as any).messages[1];
-    expect(m).toMatchObject({ status: 'failed', error: 'The turn took longer than 1 second and was stopped.'.replace('1 second', '150 ms'.replace('150 ms', '1 second')) });
+    expect(m).toMatchObject({ status: 'failed', error: 'The model kept calling tools and did not answer' });
     expect(m.steps.length).toBeGreaterThan(2);
+    // The wrap-up call ignored its tool calls: they are not in the saved history, which has no results for them.
+    const stored = (store => store.get(id))(new ChatStore(dir));
+    expect(stored?.messages[1].trace ?? []).toEqual([]);
   });
 
-  it('calls no tool in the last call when the context is nearly full', async () => {
+  it('wraps up at the soft cap on model calls: the last call has tool_choice none and the wrap-up line is sent once', async () => {
+    const { chats } = service([], { maxModelCalls: 4 });
+    for (let i = 0; i < 3; i++) script.queue.push(async () => ({ calls: [{ name: 'get_resource', args: { reason: `r${i}` } }] }));
+    script.queue.push(async () => ({ text: 'Final answer.' }));
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[1]).toMatchObject({ status: 'done', text: 'Final answer.' });
+    expect(script.requests).toHaveLength(4);
+    expect(script.requests.slice(0, 3).every((r: any) => r.tool_choice === undefined)).toBe(true);
+    expect(script.requests[3].tool_choice).toBe('none');
+    expect(JSON.stringify(script.requests[3].messages).split('The run must end now').length - 1).toBe(1);
+  });
+
+  it('ends running turns with an agent restarted note when the pod drains', async () => {
+    const { chats } = service();
+    let aborted = false;
+    let called = false;
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      if (!String(input).startsWith(GW)) return realFetch(input as string, init);
+      called = true;
+      return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => { aborted = true; reject(new Error('cancelled')); }));
+    });
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => called);
+    const started = Date.now();
+    await chats.drain();
+    // The turn does not run to its 15 minute limit.
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(aborted).toBe(true);
+    expect((chats.get(id) as any).messages[1]).toMatchObject({ status: 'failed', error: RESTART_NOTE });
+  });
+
+  it('calls no tool in the last call when the context is nearly full, and keeps the tool list', async () => {
     const config = models();
     config.routes[0].contextWindow = 1000;
     const store = new ChatStore(dir);
@@ -291,8 +375,10 @@ describe('chat service', () => {
     await until(() => !(chats.get(id) as any).running);
     const done = chats.get(id) as any;
     expect(done.messages[1]).toMatchObject({ status: 'done', text: 'Answer from what I have.' });
-    expect(script.requests[1].tools ?? []).toEqual([]);
-    expect(JSON.stringify(script.requests[1].messages)).toContain('context window is nearly full');
+    // The wrap-up call keeps the tools, because the history holds tool calls, and says tool_choice none.
+    expect(script.requests[1].tools).toHaveLength(1);
+    expect(script.requests[1].tool_choice).toBe('none');
+    expect(JSON.stringify(script.requests[1].messages)).toContain('The run must end now');
     expect(done.messages[1].usage).toMatchObject({ inputTokens: 1940, outputTokens: 20, contextTokens: 990, contextWindow: 1000, calls: 2 });
   });
 

@@ -128,6 +128,12 @@ export interface ModelRoutesConfig {
 /** The wall-clock limit of one run when AGENT_RUN_TIMEOUT_MS is not set. */
 export const DEFAULT_RUN_TIMEOUT_MS = 15 * 60_000;
 
+/** The wall-clock limit of one webhook diagnosis when AGENT_DIAGNOSIS_TIMEOUT_MS is not set. Diagnoses run one after another, so it is shorter than a chat turn. */
+export const DEFAULT_DIAGNOSIS_TIMEOUT_MS = 8 * 60_000;
+
+/** The most model calls in one run when AGENT_MAX_MODEL_CALLS is not set. */
+export const DEFAULT_MAX_MODEL_CALLS = 60;
+
 /** A time limit as words: `15 minutes`, or `3 seconds` for a short limit. */
 export function formatLimit(ms: number): string {
   if (ms >= 60_000) {
@@ -145,6 +151,13 @@ export interface DiagnosisConfig {
    * AGENT_TOOL_BUDGET of older releases is accepted and ignored.
    */
   runTimeoutMs: number;
+  /** The wall-clock limit of one diagnosis that the webhook, a rerun or a resume starts (AGENT_DIAGNOSIS_TIMEOUT_MS, default 8 minutes). */
+  diagnosisTimeoutMs: number;
+  /**
+   * A soft cap on the model calls of one run (AGENT_MAX_MODEL_CALLS, default 60). Tool calls have no cap, but each round is a model call
+   * that costs tokens. The last call of a run that reaches the cap must submit or answer.
+   */
+  maxModelCalls: number;
   /** Alert severities that start a diagnosis from the webhook. */
   severities: string[];
   /** Upper bound on webhook-started diagnoses per hour (protects the model quota). */
@@ -364,6 +377,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     models: loadModelRoutes(env),
     diagnosis: {
       runTimeoutMs: int(env.AGENT_RUN_TIMEOUT_MS, DEFAULT_RUN_TIMEOUT_MS),
+      diagnosisTimeoutMs: int(env.AGENT_DIAGNOSIS_TIMEOUT_MS, DEFAULT_DIAGNOSIS_TIMEOUT_MS),
+      maxModelCalls: Math.max(2, int(env.AGENT_MAX_MODEL_CALLS, DEFAULT_MAX_MODEL_CALLS)),
       severities: list(env.AGENT_DIAGNOSE_SEVERITIES, ['warning', 'critical']).map(s => s.toLowerCase()),
       maxPerHour: int(env.AGENT_MAX_DIAGNOSES_PER_HOUR, 6),
       maxConcurrentReruns: int(env.AGENT_MAX_CONCURRENT_RERUNS, 2),

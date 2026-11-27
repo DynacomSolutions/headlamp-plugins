@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { mask, maskText } from '../mask.js';
 import { chatDiagnosisIds, DEFAULT_TITLE, type Chat, type ChatMessage, type ChatStep, type ChatStore, type ChatUsage } from '../chats.js';
-import { DEFAULT_RUN_TIMEOUT_MS, formatLimit } from '../config.js';
+import { DEFAULT_MAX_MODEL_CALLS, DEFAULT_RUN_TIMEOUT_MS, formatLimit } from '../config.js';
 import type { DiagnosisStore } from '../store.js';
 import { ModelCatalogue, UnknownIdentityError, UnknownModelError } from './catalogue.js';
 import type { ToolHost } from './engine.js';
 import { trimHistory } from './history.js';
+import { closeToolCalls, finalCallMs, reserveMs } from './limits.js';
 import type { Message, ToolSpec } from './model.js';
 import type { Diagnosis } from './report.js';
 import { readSkill } from './skill.js';
@@ -26,6 +27,8 @@ export class ChatError extends Error {
 
 /** Share of the context window after which the next call is the last one: the model must answer. */
 const CONTEXT_FULL = 0.9;
+/** The error of a turn that the pod stopped. */
+export const RESTART_NOTE = 'The agent restarted while this turn ran. Send the message again.';
 const STEP_OUTPUT_CHARS = 4000;
 const STEP_ARGS_CHARS = 1500;
 const TITLE_CHARS = 60;
@@ -59,6 +62,8 @@ export interface ChatDeps {
   catalogue: ModelCatalogue;
   /** Wall-clock limit of one turn in milliseconds. Default 15 minutes. There is no cap on tool calls. */
   timeoutMs?: number;
+  /** A soft cap on the model calls of one turn (default 60). The call that reaches it has no tools. */
+  maxModelCalls?: number;
   /** Turns that may run at once across chats. */
   maxTurns: number;
   /** Called when an answer is done, with the push subscription of the page that asked (if it named one). Must not throw. */
@@ -311,8 +316,12 @@ export class ChatService {
     this.stop(id, 'cancelled');
   }
 
-  /** Wait for turns started by requests that the listener accepted. */
+  /**
+   * The pod stops. A turn can run for 15 minutes, and a pod does not wait so long: every running turn ends now with a note that the agent
+   * restarted, so the person sees why and can send the message again. A diagnosis keeps its lease and another pod takes it over.
+   */
   async drain(): Promise<void> {
+    for (const id of [...this.turns.keys()]) this.stop(id, 'failed', RESTART_NOTE);
     await Promise.all(this.running);
   }
 
@@ -352,6 +361,7 @@ export class ChatService {
   private async run(chat: Chat, reply: ChatMessage, controller: AbortController, subscription?: string): Promise<void> {
     const { store, tools: host } = this.deps;
     const limit = this.deps.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS;
+    const maxCalls = Math.max(2, this.deps.maxModelCalls ?? DEFAULT_MAX_MODEL_CALLS);
     const started = Date.now();
     const userSignal = controller.signal;
     // The turn ends at the time limit too. A model call and a retry in flight stop with it.
@@ -367,6 +377,8 @@ export class ChatService {
       // A pinned chat uses its model as it is. Otherwise the default order applies, with a fallback on a usage failure.
       const client = await guard(this.deps.catalogue.open(this.pinned(chat) ? chat.model : undefined));
       reply.model = client.name;
+      const reserve = reserveMs(limit, client.callTimeoutMs);
+      const callMs = client.callTimeoutMs;
       const specs = await guard(host.list());
       const names = new Set(specs.map(s => s.name));
       const toolSpecs: ToolSpec[] = specs.map(s => withReason(s));
@@ -396,19 +408,13 @@ export class ChatService {
           durationMs: Date.now() - started,
         };
       };
-      // A turn ends when the model answers with no tool call, when the context is full (the last call has no tools), when a person
-      // stops it, or at the time limit. A tool call is never refused for its count.
-      for (;;) {
-        if (signal.aborted) throw new Error('cancelled');
-        const completion = await guard(
-          client.complete({
-            system,
-            messages: trimHistory([...past, ...turn]),
-            tools: wrapUp ? [] : toolSpecs,
-            session: chat.id,
-            signal,
-          }),
-        );
+      // A turn ends when the model answers with no tool call, when a person stops it, or at the time limit. A tool call is never refused for
+      // its count. The turn wraps up in the same way when the context is nearly full, when the time left is the time of two calls, and at the
+      // soft cap on model calls: the last call has `tool_choice: none`, so the model answers in text and a tool call that it still sends is ignored.
+      const WRAP_UP =
+        'The run must end now: the context window, the time or the number of model calls is nearly used. Answer now with what you have. Do not call a tool.';
+      let pending: Array<{ id: string; name: string; content: string; isError: boolean }> = [];
+      const account = (completion: { usage: { input: number; output: number } }) => {
         // The default order can move to the next model, so the record names the one that answered.
         reply.model = client.name;
         if (!this.pinned(chat)) chat.model = client.name;
@@ -417,64 +423,109 @@ export class ChatService {
         usage.outputTokens += completion.usage.output;
         usage.contextTokens = completion.usage.input;
         publishUsage();
-        const text = completion.text.trim();
-        turn.push({ role: 'assistant', text: completion.text, toolCalls: completion.toolCalls });
-        if (completion.toolCalls.length === 0) {
-          if (text) final = text;
-          answered = true;
-          save();
-          break;
-        }
-        // Text next to tool calls is the model thinking aloud: it shows as progress, not as the answer.
-        if (text) {
-          thoughts.push(text);
-          reply.thinking = maskText(thoughts.join('\n\n'));
-        }
-        const results: Array<{ id: string; name: string; content: string; isError: boolean }> = [];
-        for (const call of completion.toolCalls) {
-          const { reason, ...args } = (call.args ?? {}) as Record<string, unknown>;
-          const begun = Date.now();
-          const step: ChatStep = {
-            id: `s${++n}`,
-            tool: call.name,
-            reason: maskText(typeof reason === 'string' && reason ? reason : '(no reason given)'),
-            status: 'running',
-            startedAt: new Date(begun).toISOString(),
-            args: shortArgs(args),
-          };
-          reply.steps.push(step);
-          save();
-          const finish = (ok: boolean, text: string, content: string): void => {
-            step.ok = ok;
-            step.summary = maskText(text);
-            step.output = clip(content, STEP_OUTPUT_CHARS);
-            step.status = 'done';
-            step.endedAt = new Date().toISOString();
-            step.durationMs = Date.now() - begun;
-            results.push({ id: call.id, name: call.name, content, isError: !ok });
+      };
+      try {
+        for (;;) {
+          if (signal.aborted) throw new Error('cancelled');
+          const completion = await guard(
+            client.complete({
+              system,
+              messages: trimHistory([...past, ...turn]),
+              tools: toolSpecs,
+              noTools: wrapUp,
+              session: chat.id,
+              signal,
+            }),
+          );
+          account(completion);
+          const text = completion.text.trim();
+          if (wrapUp) {
+            // The wrap-up call ends the turn. Its tool calls are dropped, also from the saved history, which has no results for them.
+            turn.push({ role: 'assistant', text: completion.text, toolCalls: [] });
+            if (text) final = text;
+            answered = !!text;
             save();
-          };
-          if (!names.has(call.name)) {
-            finish(false, `There is no tool named ${call.name}.`, `There is no tool named ${call.name}.`);
-          } else {
-            try {
-              const out = await guard(host.call(call.name, args));
-              finish(out.ok, out.summary, clip(maskText(JSON.stringify(mask(out.data)))));
-            } catch (error) {
-              if (signal.aborted) throw error;
-              const message = maskText(error instanceof Error ? error.message : String(error));
-              finish(false, message, JSON.stringify({ error: message }));
+            break;
+          }
+          turn.push({ role: 'assistant', text: completion.text, toolCalls: completion.toolCalls });
+          if (completion.toolCalls.length === 0) {
+            if (text) final = text;
+            answered = true;
+            save();
+            break;
+          }
+          // Text next to tool calls is the model thinking aloud: it shows as progress, not as the answer.
+          if (text) {
+            thoughts.push(text);
+            reply.thinking = maskText(thoughts.join('\n\n'));
+          }
+          const results: Array<{ id: string; name: string; content: string; isError: boolean }> = [];
+          pending = results;
+          for (const call of completion.toolCalls) {
+            const { reason, ...args } = (call.args ?? {}) as Record<string, unknown>;
+            const begun = Date.now();
+            const step: ChatStep = {
+              id: `s${++n}`,
+              tool: call.name,
+              reason: maskText(typeof reason === 'string' && reason ? reason : '(no reason given)'),
+              status: 'running',
+              startedAt: new Date(begun).toISOString(),
+              args: shortArgs(args),
+            };
+            reply.steps.push(step);
+            save();
+            const finish = (ok: boolean, text: string, content: string): void => {
+              step.ok = ok;
+              step.summary = maskText(text);
+              step.output = clip(content, STEP_OUTPUT_CHARS);
+              step.status = 'done';
+              step.endedAt = new Date().toISOString();
+              step.durationMs = Date.now() - begun;
+              results.push({ id: call.id, name: call.name, content, isError: !ok });
+              save();
+            };
+            if (!names.has(call.name)) {
+              finish(false, `There is no tool named ${call.name}.`, `There is no tool named ${call.name}.`);
+            } else {
+              try {
+                const out = await guard(host.call(call.name, args));
+                finish(out.ok, out.summary, clip(maskText(JSON.stringify(mask(out.data)))));
+              } catch (error) {
+                if (signal.aborted) throw error;
+                const message = maskText(error instanceof Error ? error.message : String(error));
+                finish(false, message, JSON.stringify({ error: message }));
+              }
             }
           }
+          turn.push({ role: 'tool', results });
+          pending = [];
+          const window = this.catalogue.contextWindow(client.name);
+          const full = !!window && usage.contextTokens >= window * CONTEXT_FULL;
+          const late = Date.now() - started >= limit - reserve;
+          if (full || late || usage.calls >= maxCalls - 1) {
+            wrapUp = true;
+            turn.push({ role: 'user', text: WRAP_UP });
+          }
+          save();
         }
-        turn.push({ role: 'tool', results });
-        // A full context ends the turn: the next call has no tools, so the model answers with what it has.
-        const window = this.catalogue.contextWindow(client.name);
-        if (window && usage.contextTokens >= window * CONTEXT_FULL) {
-          wrapUp = true;
-          turn.push({ role: 'user', text: 'The context window is nearly full. Answer now with what you have. Do not call a tool.' });
-        }
-        save();
+      } catch (error) {
+        // The time limit ended the turn. One last call, with its own short limit, so the work of the turn becomes an answer.
+        if (userSignal.aborted || !signal.aborted || answered) throw error;
+        closeToolCalls(turn, pending);
+        if (turn[turn.length - 1]?.role !== 'user') turn.push({ role: 'user', text: WRAP_UP });
+        const last = await client.complete({
+          system,
+          messages: trimHistory([...past, ...turn]),
+          tools: toolSpecs,
+          noTools: true,
+          session: chat.id,
+          signal: AbortSignal.any([userSignal, AbortSignal.timeout(finalCallMs(callMs))]),
+        });
+        account(last);
+        turn.push({ role: 'assistant', text: last.text, toolCalls: [] });
+        if (!last.text.trim()) throw error;
+        final = last.text.trim();
+        answered = true;
       }
       if (userSignal.aborted) return;
       reply.text = maskText(final || thoughts.join('\n\n'));

@@ -92,7 +92,8 @@ describe('diagnosis engine', () => {
   });
 
   it('fails at the time limit when the model never submits', async () => {
-    const never = { name: 'x', complete: async (req: CompleteRequest) => { await new Promise((_, reject) => req.signal?.addEventListener('abort', () => reject(new Error('cancelled')))); return undefined as never; } } as unknown as ModelClient;
+    // The last call has its own short limit (the call limit of the model), so it ends too.
+    const never = { name: 'x', callTimeoutMs: 60, complete: async (req: CompleteRequest) => { await new Promise((_, reject) => req.signal?.addEventListener('abort', () => reject(new Error('cancelled')))); return undefined as never; } } as unknown as ModelClient;
     const d = await diagnose({ alert, tools: host([]), model: never, timeoutMs: 80, source: 'api' });
     expect(d.status).toBe('failed');
     expect(d.error).toBe('The diagnosis took longer than 0 seconds.'.replace('0 seconds', '1 second'));
@@ -116,6 +117,62 @@ describe('diagnosis engine', () => {
     const d = await diagnose({ alert, tools: host([]), model: mute, source: 'api' });
     expect(d.status).toBe('failed');
     expect(d.error).toBe('The model did not submit a diagnosis');
+  });
+
+  it('makes one last forced submit call at the time limit, so the work is not lost', async () => {
+    const requests: CompleteRequest[] = [];
+    let n = 0;
+    // Evidence is slow, so the limit passes while the run is still in its tool calls. The first model call hangs until aborted.
+    const lastChance = {
+      name: 'x',
+      callTimeoutMs: 500,
+      complete: async (req: CompleteRequest) => {
+        requests.push(req);
+        if (++n === 1) {
+          await new Promise((_, reject) => req.signal?.addEventListener('abort', () => reject(new Error('cancelled'))));
+        }
+        return { text: '', stop: 'tool_use', usage: { input: 0, output: 0 }, toolCalls: [{ id: 'z', name: 'submit_diagnosis', args: { summary: 's', likelyCause: 'c', confidence: 'low', signals: [], fixes: [{ title: 't', detail: 'd', recommended: true }], verify: 'v' } }] };
+      },
+    } as unknown as ModelClient;
+    const d = await diagnose({ alert, tools: host([]), model: lastChance, timeoutMs: 120, source: 'api' });
+    expect(d.status).toBe('done');
+    expect(d.result?.summary).toBe('s');
+    expect(requests).toHaveLength(2);
+    expect(requests[1].forceTool).toBe('submit_diagnosis');
+    expect(requests[1].tools.map(t => t.name)).toEqual(['submit_diagnosis']);
+  });
+
+  it('stops a tool call at the time limit and still answers every call in the history before the last call', async () => {
+    const requests: CompleteRequest[] = [];
+    let n = 0;
+    const slow: ToolHost = { ...host([]), call: async name => { if (name === 'query_metrics_range') await new Promise(r => setTimeout(r, 5000)); return { ok: true, summary: 'ok', data: {} }; } };
+    const m = {
+      name: 'x',
+      callTimeoutMs: 500,
+      complete: async (req: CompleteRequest) => {
+        requests.push(req);
+        if (++n === 1) return { text: '', stop: 'tool_use', usage: { input: 0, output: 0 }, toolCalls: [{ id: 'a', name: 'query_metrics_range', args: { reason: 'r', query: 'x' } }] };
+        return { text: '', stop: 'tool_use', usage: { input: 0, output: 0 }, toolCalls: [{ id: 'z', name: 'submit_diagnosis', args: { summary: 's', likelyCause: 'c', confidence: 'low', signals: [], fixes: [{ title: 't', detail: 'd', recommended: true }], verify: 'v' } }] };
+      },
+    } as unknown as ModelClient;
+    const started = Date.now();
+    const d = await diagnose({ alert, tools: slow, model: m, timeoutMs: 400, source: 'api' });
+    // The slow tool did not hold the run for its 5 seconds.
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(d.status).toBe('done');
+    const last = requests.at(-1)!;
+    const tool = last.messages.find(x => x.role === 'tool') as Extract<(typeof last.messages)[number], { role: 'tool' }>;
+    expect(tool.results[0].id).toBe('a');
+    expect(tool.results[0].content).toContain('cancelled');
+  });
+
+  it('forces the submit at the soft cap on model calls', async () => {
+    const requests: CompleteRequest[] = [];
+    const d = await diagnose({ alert, tools: host([]), model: model(requests), maxModelCalls: 4, timeoutMs: 60_000, source: 'api' });
+    expect(d.status).toBe('done');
+    expect(requests).toHaveLength(4);
+    expect(requests.slice(0, 3).every(r => !r.forceTool)).toBe(true);
+    expect(requests[3].forceTool).toBe('submit_diagnosis');
   });
 
   it('keeps the full data of the DNS plan in its evidence item, masked, and no other tool data', async () => {

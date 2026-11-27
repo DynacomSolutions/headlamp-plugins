@@ -181,9 +181,15 @@ It is the engine's system prompt, the MCP prompt and the MCP skill. The engine
    are numbered `t1`, `t2`, … The oldest tool results are cut from the history
    when it gets long.
 3. **Answer**: the model calls `submit_diagnosis` when the evidence is enough.
-   After 80% of the run time limit (`AGENT_RUN_TIMEOUT_MS`, 15 minutes by
-   default) the only tool left is `submit_diagnosis`, and at the limit the run
-   fails. A diagnosis shows its tool call count only. The answer holds the likely
+   When the time left is the time of two model calls (the call limit of the
+   route, at most half of the run limit), or when the next call is the last one
+   allowed by `AGENT_MAX_MODEL_CALLS`, the only tool left is `submit_diagnosis`.
+   At the run time limit the run makes one last forced `submit_diagnosis` call
+   with its own short limit (at most 60 seconds), so the work is not lost. If that
+   call does not submit, the run fails. A tool call in flight stops at the limit.
+   A diagnosis shows its tool call count only. A diagnosis that the webhook, a rerun
+   or a resume starts has its own limit, `AGENT_DIAGNOSIS_TIMEOUT_MS` (8 minutes),
+   because diagnoses run one after another. The answer holds the likely
    cause, a summary, a confidence level, signals that cite fact ids, up to five
    fixes and how to confirm the fix.
 4. **Checks the model cannot skip**: signals that cite unknown ids are dropped,
@@ -479,9 +485,17 @@ The Incidents plugin has a chat page. An operator talks to the agent about the
 cluster and about incidents. The agent uses the same read-only tools, masking and
 model routes as a diagnosis. There is no submit tool: a turn ends when the model
 answers without calling a tool. A turn has no cap on tool calls. It ends when the
-model answers, when the context window is 90% full (the last call has no tools, so
-the model answers with what it has), when a person stops it, or at the run time
-limit `AGENT_RUN_TIMEOUT_MS`. The whole history goes to the model on every turn. When it gets long, the oldest
+model answers, when a person stops it, or at the run time limit `AGENT_RUN_TIMEOUT_MS`.
+The turn wraps up in the same way when the context window is 90% full, when the
+time left is the time of two model calls, and at the soft cap `AGENT_MAX_MODEL_CALLS`
+(60). The last call keeps the tool list, because the history holds tool calls and
+results, and sends `tool_choice: none` (Anthropic `{type:"none"}`, OpenAI and
+Responses `"none"`). When an endpoint refuses that, the call repeats once with the
+rule in the system prompt. A tool call that the model still sends is ignored. At the run
+time limit the turn makes one last call of this kind with its own short limit, so
+the work becomes an answer. When the pod stops, a running turn ends at once with
+the note that the agent restarted, and the person sends the message again.
+The whole history goes to the model on every turn. When it gets long, the oldest
 tool results are cut first. A chat can start from a diagnosis, and then the alert,
 the result and the evidence summaries are part of the system prompt.
 
@@ -850,7 +864,9 @@ turns launching off with a reason. It does not stop the service.
 | `DATABASE_URL` | memory only | PostgreSQL URI of the diagnosis history (`sslmode=require` encrypts without verifying the certificate). Diagnoses are never deleted |
 | `DATA_DIR` | memory only | Where chats and launches are kept, one file each in `chats/` and `launches/`. Old diagnosis files here are imported into the database at start |
 | `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` and the write routes (`POST` on diagnoses, chats and launches). A request without an `Origin` header is always allowed |
-| `AGENT_RUN_TIMEOUT_MS` | `900000` | Wall-clock limit of one diagnosis or one chat turn, in milliseconds. There is no cap on tool calls. `AGENT_TOOL_BUDGET` of older releases is read and ignored |
+| `AGENT_RUN_TIMEOUT_MS` | `900000` | Wall-clock limit of one chat turn, in milliseconds. There is no cap on tool calls. `AGENT_TOOL_BUDGET` of older releases is read and ignored |
+| `AGENT_DIAGNOSIS_TIMEOUT_MS` | `480000` | Wall-clock limit of one diagnosis that the webhook, a rerun or a resume starts. Diagnoses run one after another, so it is shorter than a chat turn |
+| `AGENT_MAX_MODEL_CALLS` | `60` | Soft cap on the model calls of one run (at least 2). The call that reaches it must submit (diagnosis) or answer without tools (chat) |
 | `AGENT_MAX_CHAT_TURNS` | `3` | Chat turns that may run at once across all chats. More get a 429 |
 | `T3_URL` | – | Base URL of the T3 server. Launching agents is off without it |
 | `T3_TOKEN_FILE` | – | Path of a mounted file with the T3 bearer token (plain text, or the JSON of `t3 auth session issue --json`). Read on each use, so a rotated token needs no restart. Needs the scopes `orchestration:read` and `orchestration:operate` |

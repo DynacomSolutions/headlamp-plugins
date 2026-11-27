@@ -284,7 +284,9 @@ export class Runner {
           alert,
           tools: this.runtime.toolHost(),
           model: client,
-          timeoutMs: this.config.diagnosis.runTimeoutMs,
+          // Diagnoses run one after another, so a webhook diagnosis has a shorter limit than a chat turn.
+          timeoutMs: this.config.diagnosis.diagnosisTimeoutMs,
+          maxModelCalls: this.config.diagnosis.maxModelCalls,
           source,
           host: 'cluster',
           id: queued.id,
@@ -433,6 +435,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     tools: runtime.toolHost(),
     catalogue: runner.catalogue,
     timeoutMs: config.diagnosis.runTimeoutMs,
+    maxModelCalls: config.diagnosis.maxModelCalls,
     maxTurns: config.maxChatTurns,
     onAnswer: e => void push.notifyChatAnswer(e.subscription, e.chatId, e.text),
   });
@@ -498,7 +501,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           mcp: '/mcp',
           tools: runtime.registry.tools.size,
           providers: runtime.registry.providers.map(p => p.name),
-          diagnosis: { model: config.models.defaultModel || null, defaultOrder: runner.catalogue.defaultOrder, models: (await runner.catalogue.list({ waitMs: 2000 })).length, configured: runner.configured, runTimeoutMs: config.diagnosis.runTimeoutMs },
+          diagnosis: { model: config.models.defaultModel || null, defaultOrder: runner.catalogue.defaultOrder, models: (await runner.catalogue.list({ waitMs: 2000 })).length, configured: runner.configured, runTimeoutMs: config.diagnosis.runTimeoutMs, diagnosisTimeoutMs: config.diagnosis.diagnosisTimeoutMs, maxModelCalls: config.diagnosis.maxModelCalls },
         });
       }
       // Alertmanager v2 API, the shape vmalert's notifier posts.
