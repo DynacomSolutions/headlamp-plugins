@@ -298,3 +298,15 @@ describe('storage notification URLs', () => {
     expect(chatUrl()).toBe('/c/test/incidents-chat');
   });
 });
+
+describe('narrow screens', () => {
+  it('wraps the context chips and the quick investigations, so no chip is cut off', async () => {
+    renderAt(chatUrl(CHAT, { drive: DRIVE }));
+    await screen.findByText('What is using /data?');
+    for (const selector of ['[data-storage-context]', '[data-quick-investigations]']) {
+      const row = document.querySelector(selector) as HTMLElement;
+      expect(getComputedStyle(row).flexWrap).toBe('wrap');
+      expect(getComputedStyle(row).overflowX).not.toBe('auto');
+    }
+  });
+});

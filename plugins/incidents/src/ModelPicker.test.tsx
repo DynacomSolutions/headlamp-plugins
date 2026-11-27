@@ -168,3 +168,34 @@ describe('ModelPicker', () => {
     });
   });
 });
+
+describe('ModelPicker with the identities of the real chart', () => {
+  const many = [
+    ...['Pool', ...'ABCDEFGHI'.split('').map(l => `Account ${l}`)].map((identity, i) => ({
+      id: `claude-${i}/opus`,
+      route: `claude-${i}`,
+      model: 'opus',
+      name: 'Claude Opus',
+      provider: 'claude',
+      identity,
+    })),
+    { id: 'grok/g', route: 'grok', model: 'g', name: 'Grok', provider: 'grok', identity: 'Pool' },
+  ] as any;
+
+  it('has one rail entry per identity, names the open list as text, and keeps the open entry in the rail', () => {
+    setup({ models: many, value: 'claude-9/opus' });
+    openPicker(/Claude Opus/);
+    const rail = document.querySelector('[data-picker-rail]') as HTMLElement;
+    expect(rail.querySelectorAll('[role=tab]')).toHaveLength(12);
+    // The name of the open list is text, so a phone does not need the tooltip.
+    expect(document.querySelector('[data-picker-heading]')!.textContent).toBe('Claude · Account I');
+    // The rail scrolls on its own, so ten identities do not push the picker off the screen.
+    expect(getComputedStyle(rail).overflowY).toBe('auto');
+  });
+  it('moves through the identities of one provider with the arrow keys', () => {
+    setup({ models: many, value: 'claude-0/opus' });
+    openPicker(/Claude Opus/);
+    fireEvent.keyDown(search(), { key: 'ArrowRight' });
+    expect(document.querySelector('[data-picker-heading]')!.textContent).toBe('Claude · Account A');
+  });
+});

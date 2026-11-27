@@ -136,6 +136,7 @@ export function ModelPicker(props: ModelPickerProps) {
   const [query, setQuery] = React.useState('');
   const [cursor, setCursor] = React.useState(0);
   const listRef = React.useRef<HTMLDivElement | null>(null);
+  const railRef = React.useRef<HTMLDivElement | null>(null);
   // Focus the search box when the popover content mounts (stable callback, so it runs once).
   const focusOnMount = React.useCallback((el: HTMLInputElement | null) => el?.focus(), []);
 
@@ -172,6 +173,25 @@ export function ModelPicker(props: ModelPickerProps) {
   React.useEffect(() => {
     if (anchor) scrollToHighlight('nearest');
   }, [anchor, current, active, query]);
+  // A rail with many identities scrolls: keep the open entry in view, also after an arrow key.
+  const setRail = React.useCallback((el: HTMLDivElement | null) => {
+    railRef.current = el;
+  }, []);
+  React.useEffect(() => {
+    if (!anchor) return;
+    const rail = railRef.current;
+    const el = rail
+      ? (Array.from(rail.querySelectorAll('[data-picker-rail-item]')).find(
+          node => node.getAttribute('data-picker-rail-item') === active
+        ) as HTMLElement | undefined)
+      : undefined;
+    if (!rail || !el) return;
+    // Scroll the rail itself, so the page behind the popover does not move.
+    const top = el.offsetTop - 4;
+    const bottom = el.offsetTop + el.offsetHeight + 4;
+    if (top < rail.scrollTop) rail.scrollTop = top;
+    else if (bottom > rail.scrollTop + rail.clientHeight) rail.scrollTop = bottom - rail.clientHeight;
+  }, [anchor, active]);
 
   const open = (el: HTMLElement) => {
     // Open on the selected model's identity, else on favourites when there are any.
@@ -282,6 +302,7 @@ export function ModelPicker(props: ModelPickerProps) {
           }}
         >
           <Box
+            ref={setRail}
             role="tablist"
             aria-orientation="vertical"
             aria-label="Providers and identities"
@@ -294,9 +315,12 @@ export function ModelPicker(props: ModelPickerProps) {
               flexDirection: 'column',
               gap: 0.5,
               p: 0.5,
+              // The rail scrolls when a provider has many identities. A thin scrollbar shows that it does.
               overflowY: 'auto',
-              scrollbarWidth: 'none',
-              '&::-webkit-scrollbar': { display: 'none' },
+              scrollbarWidth: 'thin',
+              scrollbarColor: `${theme.palette.divider} transparent`,
+              '&::-webkit-scrollbar': { width: 4 },
+              '&::-webkit-scrollbar-thumb': { backgroundColor: theme.palette.divider, borderRadius: 2 },
               backgroundColor: theme.palette.action.hover,
             })}
           >

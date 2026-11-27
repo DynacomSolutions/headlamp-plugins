@@ -389,14 +389,8 @@ export function StorageChatView({
           <Typography component="h1" variant="subtitle2" fontWeight={600} noWrap>
             Storage investigation
           </Typography>
-          {/* The storage context is a row of chips, not a form. It scrolls sideways on a phone. */}
-          <Stack
-            direction="row"
-            gap={0.75}
-            alignItems="center"
-            data-storage-context
-            sx={{ overflowX: 'auto', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' }, pb: 0.25 }}
-          >
+          {/* The storage context is a row of chips, not a form. On a narrow screen it wraps, so no chip is cut off. */}
+          <Stack direction="row" gap={0.75} alignItems="center" flexWrap="wrap" data-storage-context>
             <Chip
               clickable
               size="small"
@@ -411,14 +405,14 @@ export function StorageChatView({
                   <Icon icon="mdi:chevron-down" width={16} height={16} />
                 </Box>
               }
-              sx={{ flexShrink: 0, color: 'text.primary' }}
+              sx={{ color: 'text.primary' }}
             />
             {drive && (
               <Chip
                 size="small"
                 variant="outlined"
                 label={`${size(drive.availableBytes)} free`}
-                sx={{ flexShrink: 0, color: 'text.secondary' }}
+                sx={{ color: 'text.secondary' }}
               />
             )}
             <Chip
@@ -465,14 +459,8 @@ export function StorageChatView({
       footer={
         <>
           {error && <StorageAlert severity="error">{error}</StorageAlert>}
-          {/* The quick investigations: one row that scrolls sideways, so a phone keeps its height. */}
-          <Stack
-            direction="row"
-            gap={1}
-            alignItems="center"
-            data-quick-investigations
-            sx={{ overflowX: 'auto', scrollbarWidth: 'none', '&::-webkit-scrollbar': { display: 'none' } }}
-          >
+          {/* The quick investigations wrap onto a second line on a narrow screen, so no chip is cut off. */}
+          <Stack direction="row" gap={1} alignItems="center" flexWrap="wrap" data-quick-investigations>
             {QUICK_INVESTIGATIONS.map(text => (
               <Button
                 key={text}
