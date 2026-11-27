@@ -447,7 +447,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     tools: runtime.toolHost(),
     store,
     metrics,
-    tokens: tokensFromFile(config.acp.tokensFile),
+    tokens: tokensFromFile(config.acp.tokensFile, message => log('warn', message, { endpoint: 'acp' })),
     onPublished: d => void push.notifyDiagnosis(d),
     log,
   });

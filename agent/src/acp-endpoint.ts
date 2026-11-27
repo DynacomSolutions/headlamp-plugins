@@ -9,7 +9,7 @@ import type { Diagnosis } from './agent/report.js';
 import { checkBearer, SCOPES, type TokenEntry } from './auth/scopes.js';
 import type { Config } from './config.js';
 import type { Metrics } from './metrics.js';
-import { publishSchema, storePublished } from './publish.js';
+import { fitForPublish, publishSchema, storePublished } from './publish.js';
 import type { DiagnosisStore } from './store.js';
 
 /** The path of the endpoint. */
@@ -18,6 +18,8 @@ export const ACP_PATH = '/acp';
 /** One ACP message is one text frame. A frame of more than this many bytes closes the socket (code 1009). */
 const MAX_FRAME_BYTES = 1024 * 1024;
 const PING_MS = 30_000;
+/** How long a closing socket may stay open after the drain limit, before it is cut. */
+const DRAIN_CLOSE_MS = 2_000;
 const SOCKET_OPEN = 1;
 type AnyMessage = Stream extends { readable: ReadableStream<infer M> } ? M : never;
 
@@ -37,9 +39,17 @@ export interface AcpEndpointDeps {
 
 interface Connection {
   socket: WebSocket;
-  /** Prompts in flight. */
-  busy: number;
+  /** The ids of the prompt requests that have no answer written yet. */
+  prompts: Set<string | number>;
   dispose(): void;
+}
+
+/** What the endpoint needs to see on a stream: the prompt requests that come in and the answers that go out. */
+interface StreamHooks {
+  onProtocolError(): void;
+  onRequest(message: { id?: unknown; method?: unknown }): void;
+  /** An answer (a result or an error) was written to the socket. */
+  onAnswered(id: string | number): void;
 }
 
 /** Rejects the upgrade with a plain HTTP answer. The socket never becomes a WebSocket. */
@@ -60,7 +70,8 @@ function reject(socket: Duplex, status: number, reason: string, headers: Record<
 }
 
 /** An ACP stream over a server-side WebSocket: one JSON-RPC message per text frame. */
-function webSocketStream(socket: WebSocket, onProtocolError: () => void): Stream {
+function webSocketStream(socket: WebSocket, hooks: StreamHooks): Stream {
+  const { onProtocolError } = hooks;
   const send = (message: unknown): Promise<void> =>
     new Promise<void>((resolve, reject) => {
       // A late update after the socket closed is dropped: the run was aborted with the socket.
@@ -89,6 +100,7 @@ function webSocketStream(socket: WebSocket, onProtocolError: () => void): Stream
           void send({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request: send one message per frame' } }).catch(() => undefined);
           return;
         }
+        hooks.onRequest(message as { id?: unknown; method?: unknown });
         controller.enqueue(message as AnyMessage);
       });
       socket.on('close', () => {
@@ -111,7 +123,12 @@ function webSocketStream(socket: WebSocket, onProtocolError: () => void): Stream
     },
   });
   const writable = new WritableStream<AnyMessage>({
-    write: message => send(message),
+    write: async message => {
+      await send(message);
+      const m = message as { id?: unknown; method?: unknown };
+      // An answer has an id and no method. Only then is the request done: a late notification is not an answer.
+      if (m.method === undefined && (typeof m.id === 'string' || typeof m.id === 'number')) hooks.onAnswered(m.id);
+    },
     close() {
       socket.close(1000);
     },
@@ -182,10 +199,9 @@ export class AcpEndpoint {
 
   private accept(socket: WebSocket, client: string): void {
     const { metrics, log, config } = this.deps;
-    const held: Array<() => void> = [];
     const conn: Connection = {
       socket,
-      busy: 0,
+      prompts: new Set(),
       dispose: () => undefined,
     };
     const { app, dispose } = createAcpApp({
@@ -195,7 +211,8 @@ export class AcpEndpoint {
       tools: this.deps.tools,
       publish: async d => {
         const { a2ui: _a2ui, finishedAt: _f, resolvedAt: _r, ...rest } = d;
-        const parsed = publishSchema.parse({ diagnosis: { ...rest, source: 'acp', status: d.status === 'done' ? 'done' : 'failed' } });
+        // A long run can pass a limit of the schema (60 evidence items, 2000 characters). Cut first, so the diagnosis is not lost.
+        const parsed = publishSchema.parse({ diagnosis: fitForPublish({ ...rest, client, source: 'acp', status: d.status === 'done' ? 'done' : 'failed' }) });
         const saved = await storePublished(this.deps.store, parsed.diagnosis);
         if (saved.status === 'done') this.deps.onPublished?.(saved);
         return saved.id;
@@ -216,23 +233,25 @@ export class AcpEndpoint {
             this.sessions--;
             this.gauges();
           };
-          held.push(release);
           return release;
         },
-        promptStarted: () => {
-          conn.busy++;
+        promptStarted: sessionId => {
+          // A prompt that starts during a drain would hold the drain open.
+          if (this.draining) {
+            metrics.inc('headlamp_agent_acp_errors_total', { kind: 'draining' });
+            throw new RequestError(-32000, 'Agent is draining');
+          }
+          log('info', 'acp prompt started', { client, sessionId });
         },
-        prompt: (outcome: PromptOutcome) => {
-          conn.busy--;
+        // The socket closes after the answer is written (see onAnswered), so the client gets its stopReason.
+        prompt: (outcome: PromptOutcome, sessionId) => {
           metrics.inc('headlamp_agent_acp_prompts_total', { result: outcome });
-          if (this.draining && conn.busy === 0) socket.close(1001, 'Agent is draining');
+          log('info', 'acp prompt ended', { client, sessionId, outcome });
         },
       },
     });
-    conn.dispose = () => {
-      dispose();
-      for (const release of held) release();
-    };
+    // A run that is still ending frees its session place when it ends (see createAcpApp).
+    conn.dispose = dispose;
     this.connections.add(conn);
     this.gauges();
     log('info', 'acp connection opened', { client, open: this.connections.size });
@@ -250,8 +269,18 @@ export class AcpEndpoint {
     ping.unref();
 
     const connection = app.connect(
-      webSocketStream(socket, () => {
-        metrics.inc('headlamp_agent_acp_errors_total', { kind: 'protocol' });
+      webSocketStream(socket, {
+        onProtocolError: () => {
+          metrics.inc('headlamp_agent_acp_errors_total', { kind: 'protocol' });
+        },
+        onRequest: message => {
+          if (message.method === 'session/prompt' && (typeof message.id === 'string' || typeof message.id === 'number')) conn.prompts.add(message.id);
+        },
+        onAnswered: id => {
+          if (!conn.prompts.delete(id)) return;
+          // The drain closes the socket after the last answer is written, so the client keeps its stopReason.
+          if (this.draining && conn.prompts.size === 0) socket.close(1001, 'Agent is draining');
+        },
       }),
     );
     const finish = () => {
@@ -271,17 +300,32 @@ export class AcpEndpoint {
   }
 
   /**
-   * Stops new connections and sessions. A connection with no prompt in flight closes at once (code 1001).
-   * A prompt in flight finishes, then its connection closes. The returned promise resolves when every connection is closed.
+   * Stops new connections, sessions and prompts. A connection with no prompt in flight closes at once (code 1001).
+   * A prompt in flight finishes, its answer is written, then its connection closes.
+   * After `acp.drainTimeoutMs` the runs that remain are aborted and their sockets close, so a drain cannot be held open.
+   * The returned promise resolves when every connection is closed.
    */
   async close(): Promise<void> {
     this.draining = true;
     const done: Array<Promise<void>> = [];
     for (const conn of this.connections) {
       done.push(new Promise<void>(resolve => conn.socket.once('close', () => resolve())));
-      if (conn.busy === 0) conn.socket.close(1001, 'Agent is draining');
+      if (conn.prompts.size === 0) conn.socket.close(1001, 'Agent is draining');
     }
-    await Promise.all(done);
+    const timer = setTimeout(() => {
+      for (const conn of this.connections) {
+        this.deps.log('warn', 'acp drain timed out: runs aborted', { prompts: conn.prompts.size });
+        conn.dispose();
+        conn.socket.close(1001, 'Agent is draining');
+        // A client that does not answer the close frame is cut after a short wait.
+        setTimeout(() => conn.socket.terminate(), DRAIN_CLOSE_MS).unref();
+      }
+    }, this.deps.config.acp.drainTimeoutMs);
+    try {
+      await Promise.all(done);
+    } finally {
+      clearTimeout(timer);
+    }
     this.wss.close();
   }
 }

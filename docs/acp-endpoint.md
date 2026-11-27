@@ -58,6 +58,8 @@ The tokens live in a Kubernetes Secret. The Secret is mounted as a file and
 - An entry may have `"sha256": "<64 hex characters>"` in place of `token`.
 - The agent reads the file again when it changes. A Secret update needs no restart.
 - With no file, or an empty or broken file, every request fails with `401`.
+- The agent logs a warning for each entry it drops, with the entry name (or its
+  position) and the cause. It never logs a token. A dropped entry gives no access.
 
 The token check is in `agent/src/auth/scopes.ts` (`checkBearer`, `tokensFromFile`,
 `SCOPES`). The MCP endpoint can use the same module.
@@ -78,6 +80,10 @@ Each WebSocket is one ACP connection.
    resource block.
 5. The `session/prompt` request ends with `stopReason`: `end_turn` or `cancelled`.
 
+A session runs one prompt at a time. A `session/prompt` that comes while the
+session still has a run fails with JSON-RPC error `-32000`. Send the next prompt
+after the answer, or after `session/cancel`. Use another session for parallel work.
+
 The tools of a session come from the registry in the agent process. There is no
 network hop to the agent's own `/mcp` endpoint.
 
@@ -90,9 +96,18 @@ nothing.
 ### Close
 
 When the socket closes for any reason, the agent aborts every run of that
-connection and frees its session places. When the agent drains (a rollout), it
-lets a prompt in flight finish, then closes the socket with code `1001`. A
-connection with no prompt in flight closes at once.
+connection. A session place is free again when its run has ended.
+
+When the agent drains (a rollout):
+
+- A connection with no prompt in flight closes at once with code `1001`.
+- A prompt in flight finishes. The agent writes its answer (with `stopReason`)
+  and then closes the socket with code `1001`.
+- A `session/prompt` or `session/new` that comes during the drain fails with
+  JSON-RPC error `-32000` (`Agent is draining`).
+- The drain waits at most `AGENT_ACP_DRAIN_TIMEOUT_MS` (default 20 seconds).
+  Then the agent aborts the runs that remain and closes their sockets. Keep this
+  value under the pod grace period.
 
 The agent pings each socket every 30 seconds. A client that does not answer is
 closed.
@@ -103,7 +118,9 @@ When a run ends, the agent stores the diagnosis in its diagnosis store, as the
 stdio agent does through `POST /api/diagnoses`. Headlamp (Incidents tab) shows
 it with the `published` mark and the source `acp`. A push notification goes out
 for a finished diagnosis. The agent tells the client the diagnosis id in the
-last message chunk.
+last message chunk. The diagnosis records the name of the token (`client`), never
+the token. A long run is cut to the limits of the publish schema (at most 60
+evidence items, the evidence that the result cites first), so it is not lost.
 
 ## Limits
 
@@ -113,7 +130,8 @@ open at once. It applies in two places:
 - an upgrade past the limit of open connections gets `503`;
 - a `session/new` past the limit of open sessions fails with JSON-RPC error `-32000`.
 
-Closing a socket frees its places. A value of `0` turns the endpoint off.
+Closing a socket frees its places, when its runs have ended. A value of `0`
+turns the endpoint off.
 
 ## Metrics
 
@@ -124,7 +142,7 @@ Closing a socket frees its places. A value of `0` turns the endpoint off.
 | `headlamp_agent_acp_sessions` | gauge | Open ACP sessions |
 | `headlamp_agent_acp_connections` | gauge | Open WebSocket connections |
 | `headlamp_agent_acp_prompts_total{result}` | counter | Prompts that ended: `ok`, `cancelled`, `failed` (a failed diagnosis) or `error` |
-| `headlamp_agent_acp_errors_total{kind}` | counter | `limit`, `protocol` (a bad frame or a socket error) or `upgrade` (a bad upgrade request) |
+| `headlamp_agent_acp_errors_total{kind}` | counter | `limit`, `draining` (a prompt refused during a drain), `protocol` (a bad frame or a socket error) or `upgrade` (a bad upgrade request) |
 | `headlamp_agent_acp_auth_failures_total{reason}` | counter | `unconfigured`, `missing`, `invalid`, `scope` or `origin` |
 
 ## Settings
@@ -132,6 +150,7 @@ Closing a socket frees its places. A value of `0` turns the endpoint off.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `AGENT_ACP_MAX_SESSIONS` | `4` | Open ACP sessions. `0` turns the endpoint off |
+| `AGENT_ACP_DRAIN_TIMEOUT_MS` | `20000` | How long a drain waits for prompts in flight before it aborts them |
 | `AGENT_API_TOKENS_FILE` | empty | JSON token file from the Secret. Empty means every request fails with `401` |
 | `ALLOWED_ORIGINS` | empty | Browser origins that may open the socket. A client with no `Origin` header is always allowed |
 

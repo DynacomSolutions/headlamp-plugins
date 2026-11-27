@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
-import { agent, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
+import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError } from '@agentclientprotocol/sdk';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { loadConfig, modelConfigured, type Config } from './config.js';
 import { fingerprint } from './alerts.js';
@@ -30,6 +30,8 @@ interface Session {
   modelPinned?: boolean;
   /** Frees the session's place under the session limit. */
   release?: () => void;
+  /** True once the connection is gone. A run that is still ending frees the place when it ends. */
+  disposed?: boolean;
 }
 
 /** How long session/new waits for the gateway model lists. */
@@ -188,10 +190,10 @@ export type PromptOutcome = 'ok' | 'cancelled' | 'failed' | 'error';
 export interface AcpHooks {
   /** Called at session/new. Throws a RequestError at the session limit. Returns the function that frees the place. */
   acquireSession?(): () => void;
-  /** A prompt starts. */
-  promptStarted?(): void;
-  /** The prompt that started ends. Called once per `promptStarted`. */
-  prompt?(outcome: PromptOutcome): void;
+  /** A prompt starts. Throws a RequestError to refuse it (the prompt then has no `prompt` call). */
+  promptStarted?(sessionId: string): void;
+  /** The prompt that started ends. Called once per `promptStarted` that did not throw. */
+  prompt?(outcome: PromptOutcome, sessionId: string): void;
 }
 
 export interface AcpDeps {
@@ -214,6 +216,7 @@ export interface AcpDeps {
 export function createAcpApp(deps: AcpDeps) {
   const { config, catalogue, log } = deps;
   const sessions = new Map<string, Session>();
+  let disposed = false;
   const defaultUrl = deps.defaultMcpUrl ?? '';
   const publishDiagnosis = deps.publish ?? ((d: Diagnosis, session: { mcpUrl: string; mcpHeaders: Record<string, string> }) => publish(session.mcpUrl, session.mcpHeaders, d));
 
@@ -241,6 +244,11 @@ export function createAcpApp(deps: AcpDeps) {
         release?.();
         throw error;
       }
+      // The connection can close while the model lists load: nobody owns the place then.
+      if (disposed) {
+        release?.();
+        throw new RequestError(-32000, 'The connection is closed');
+      }
       sessions.set(sessionId, { mcpUrl: url, mcpHeaders: headers, model: current, release });
       return configOptions.length ? { sessionId, configOptions } : { sessionId };
     })
@@ -256,26 +264,52 @@ export function createAcpApp(deps: AcpDeps) {
       sessions.get(params.sessionId)?.abort?.abort();
     })
     .onRequest('session/prompt', async ({ params, client, signal }) => {
-      deps.hooks?.promptStarted?.();
+      // A hook may refuse the prompt (the agent drains). Then no run starts and `prompt` is not called.
+      deps.hooks?.promptStarted?.(params.sessionId);
       let outcome: PromptOutcome = 'error';
+      let session: Session | undefined;
+      let abort: AbortController | undefined;
+      const onAbort = () => abort?.abort();
       try {
-        const session = sessions.get(params.sessionId);
+        session = sessions.get(params.sessionId);
         if (!session) throw new Error('Unknown session');
-        const out = await runPrompt(session, params, client, signal);
+        // One prompt per session. The controller is set before any await, so two prompts cannot both pass.
+        if (session.abort) throw new RequestError(-32000, 'A prompt is already running in this session');
+        abort = new AbortController();
+        session.abort = abort;
+        // The request signal ends when the client cancels the request or the connection closes.
+        signal.addEventListener('abort', onAbort, { once: true });
+        if (signal.aborted) abort.abort();
+        const owner = session;
+        const out = await runPrompt(params, client, abort.signal, () => abort!.signal.aborted || sessions.get(params.sessionId) !== owner, owner);
         outcome = out.outcome;
         return { stopReason: out.stopReason };
       } finally {
-        deps.hooks?.prompt?.(outcome);
+        signal.removeEventListener('abort', onAbort);
+        // The place of a closed connection is freed when its run ends, not before.
+        if (session && abort && session.abort === abort) {
+          session.abort = undefined;
+          if (session.disposed) {
+            session.release?.();
+            session.release = undefined;
+          }
+        }
+        deps.hooks?.prompt?.(outcome, params.sessionId);
       }
     });
 
   async function runPrompt(
-    session: Session,
     params: { sessionId: string; prompt: any[] },
     client: { notify(method: 'session/update', params: unknown): Promise<void> | void },
     signal: AbortSignal,
+    stopped: () => boolean,
+    session: Session,
   ): Promise<{ stopReason: 'end_turn' | 'cancelled'; outcome: PromptOutcome }> {
-    const update = (u: any) => client.notify('session/update', { sessionId: params.sessionId, update: u });
+    const cancelled = { stopReason: 'cancelled', outcome: 'cancelled' } as const;
+    // A notification after the connection closed fails. It is dropped: the run is aborted with the connection, and
+    // the engine does not wait for a listener, so a rejection here would reach nobody and stop the process.
+    const update = (u: any): Promise<void> =>
+      new Promise<void>(resolve => resolve(client.notify('session/update', { sessionId: params.sessionId, update: u }))).catch(() => undefined);
     const say = (text: string) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
     const text = params.prompt
       .map((b: any) => (b.type === 'text' ? b.text : b.type === 'resource' && 'text' in b.resource ? b.resource.text : ''))
@@ -293,14 +327,14 @@ export function createAcpApp(deps: AcpDeps) {
       // Without a pick the default order applies, with a fallback on a usage failure.
       modelClient = await catalogue.open(session.modelPinned ? session.model : undefined);
     } catch (error) {
+      if (stopped()) return cancelled;
       await say(error instanceof Error ? error.message : String(error));
       return { stopReason: 'end_turn', outcome: 'failed' };
     }
-    const abort = new AbortController();
-    session.abort = abort;
-    signal.addEventListener('abort', () => abort.abort());
+    if (stopped()) return cancelled;
     const mcp = deps.tools ? { host: deps.tools, close: async () => {} } : await mcpTools(session.mcpUrl, session.mcpHeaders);
     try {
+      if (stopped()) return cancelled;
       let alert = alertFromPrompt(text);
       if (!alert) {
         alert = await pickFiringAlert(mcp.host);
@@ -318,7 +352,7 @@ export function createAcpApp(deps: AcpDeps) {
         maxModelCalls: config.diagnosis.maxModelCalls,
         source: 'acp',
         host: process.env.HEADLAMP_AGENT_HOST_NAME ?? 'acp',
-        signal: abort.signal,
+        signal,
         onEvent: async event => {
           if (event.type === 'tool_start') {
             await update({
@@ -346,7 +380,7 @@ export function createAcpApp(deps: AcpDeps) {
           }
         },
       });
-      if (abort.signal.aborted) return { stopReason: 'cancelled', outcome: 'cancelled' };
+      if (stopped()) return cancelled;
       await say(diagnosisMarkdown(result));
       await update({
         sessionUpdate: 'agent_message_chunk',
@@ -364,17 +398,22 @@ export function createAcpApp(deps: AcpDeps) {
       }
       return { stopReason: 'end_turn', outcome: result.status === 'done' ? 'ok' : 'failed' };
     } finally {
-      session.abort = undefined;
       await mcp.close().catch(() => undefined);
     }
   }
 
   /** Aborts every run of this connection and frees its session places. Safe to call more than once. */
   function dispose(): void {
+    disposed = true;
     for (const session of sessions.values()) {
-      session.abort?.abort();
-      session.release?.();
-      session.release = undefined;
+      session.disposed = true;
+      if (session.abort) {
+        // The run ends soon and frees the place then.
+        session.abort.abort();
+      } else {
+        session.release?.();
+        session.release = undefined;
+      }
     }
     sessions.clear();
   }

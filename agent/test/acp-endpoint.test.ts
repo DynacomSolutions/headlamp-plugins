@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { loadConfig } from '../src/config.js';
 import { MemoryDiagnosisStore } from '../src/store.js';
-import { SCOPES, bearerToken, checkBearer, parseTokens } from '../src/auth/scopes.js';
+import { SCOPES, bearerToken, checkBearer, parseTokens, tokensFromFile } from '../src/auth/scopes.js';
 
 vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
@@ -14,18 +14,33 @@ const engine = vi.hoisted(() => ({
   hold: undefined as Promise<void> | undefined,
   started: 0,
   aborted: 0,
+  /** Events that the run emitted after its abort. */
+  late: 0,
+  /** When set, the run emits events after the abort, as the real engine does for its last ones. */
+  afterAbort: false,
+  /** How many evidence items the finished diagnosis has. */
+  evidenceCount: 1,
   toolNames: [] as string[],
 }));
 
 vi.mock('../src/agent/engine.js', () => ({
-  diagnose: vi.fn(async (opts: { id?: string; alert: any; source: string; host: string; tools: { list(): Promise<Array<{ name: string }>> }; signal?: AbortSignal; onEvent?: (e: unknown) => Promise<void> }) => {
+  diagnose: vi.fn(async (opts: { id?: string; alert: any; source: string; host: string; tools: { list(): Promise<Array<{ name: string }>> }; signal?: AbortSignal; onEvent?: (e: unknown) => Promise<void> | void }) => {
     engine.started++;
     engine.toolNames = (await opts.tools.list()).map(t => t.name);
-    await opts.onEvent?.({ type: 'tool_start', id: 't1', tool: 'cluster_overview', reason: 'First look', args: {}, pack: false });
-    await opts.onEvent?.({ type: 'tool_end', id: 't1', tool: 'cluster_overview', ok: true, summary: 'All nodes ready' });
+    // The real engine does not wait for its listener: a rejected promise from it reaches nobody.
+    void opts.onEvent?.({ type: 'tool_start', id: 't1', tool: 'cluster_overview', reason: 'First look', args: {}, pack: false });
+    void opts.onEvent?.({ type: 'tool_end', id: 't1', tool: 'cluster_overview', ok: true, summary: 'All nodes ready' });
     if (engine.hold) {
       await Promise.race([engine.hold, new Promise<void>(resolve => opts.signal?.addEventListener('abort', () => resolve(), { once: true }))]);
-      if (opts.signal?.aborted) engine.aborted++;
+      if (opts.signal?.aborted) {
+        engine.aborted++;
+        if (engine.afterAbort) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+          void opts.onEvent?.({ type: 'thought', text: 'A late thought' });
+          void opts.onEvent?.({ type: 'tool_end', id: 't1', tool: 'cluster_overview', ok: true, summary: 'Late' });
+          engine.late++;
+        }
+      }
     }
     const base = {
       id: '11111111-1111-4111-8111-111111111111',
@@ -33,7 +48,7 @@ vi.mock('../src/agent/engine.js', () => ({
       source: opts.source,
       host: opts.host,
       alert: opts.alert,
-      evidence: [{ id: 't1', tool: 'cluster_overview', reason: 'First look', summary: 'All nodes ready', ok: true }],
+      evidence: Array.from({ length: engine.evidenceCount }, (_, i) => ({ id: `t${i + 1}`, tool: 'cluster_overview', reason: 'First look', summary: 'All nodes ready', ok: true })),
       toolCalls: 1,
       model: 'one/a',
       a2ui: [],
@@ -62,12 +77,12 @@ const sockets: WebSocket[] = [];
 async function start(maxSessions = 4, tokens: unknown = [
   { name: 'example-client', token: GOOD, scopes: [SCOPES.investigate] },
   { name: 'viewer', token: READ_ONLY, scopes: ['incidents:read'] },
-]) {
+], drainTimeoutMs = 20_000) {
   const file = join(dir, 'tokens.json');
   writeFileSync(file, JSON.stringify(tokens));
   const config = { ...loadConfig({} as NodeJS.ProcessEnv), port: 0, host: '127.0.0.1', kubeApi: 'http://127.0.0.1:1', kubeTokenFile: '/nonexistent', dataDir: dir };
   config.models = { routes: [route('one', ['a', 'b'])], defaultModel: 'one/a', skipped: [] };
-  config.acp = { maxSessions, tokensFile: file };
+  config.acp = { maxSessions, tokensFile: file, drainTimeoutMs };
   server = await startServer(config, 'test', { store });
 }
 
@@ -77,6 +92,9 @@ beforeEach(() => {
   engine.hold = undefined;
   engine.started = 0;
   engine.aborted = 0;
+  engine.late = 0;
+  engine.afterAbort = false;
+  engine.evidenceCount = 1;
   engine.toolNames = [];
 });
 afterEach(async () => {
@@ -149,6 +167,12 @@ const metric = (name: string) => fetch(`http://127.0.0.1:${server.port}/metrics`
 
 describe('ACP over WebSocket', () => {
   it('runs initialize, session/new and a prompt, streams the updates and publishes the diagnosis', async () => {
+    const logged: string[] = [];
+    const write = process.stdout.write.bind(process.stdout);
+    const spy = vi.spyOn(process.stdout, 'write').mockImplementation(((chunk: any, ...rest: any[]) => {
+      logged.push(String(chunk));
+      return write(chunk, ...rest);
+    }) as typeof process.stdout.write);
     await start();
     const rpc = await connect();
     const { initialised, sessionId } = await init(rpc);
@@ -175,6 +199,13 @@ describe('ACP over WebSocket', () => {
     expect(stored?.source).toBe('acp');
     expect(stored?.status).toBe('done');
     expect(stored?.alert.name).toBe('NodeNotReady');
+    // The name of the token is on the diagnosis and in the prompt logs. The token is in neither.
+    expect(stored?.client).toBe('example-client');
+    spy.mockRestore();
+    const promptLogs = logged.filter(l => l.includes('acp prompt'));
+    expect(promptLogs.length).toBe(2);
+    for (const line of promptLogs) expect(line).toContain('"client":"example-client"');
+    expect(logged.join('')).not.toContain(GOOD);
     expect(stored?.result?.likelyCause).toBe('A switch port flapped');
     // The tools came from the in-process registry: no MCP URL was given.
     expect(engine.toolNames).toContain('cluster_overview');
@@ -296,6 +327,144 @@ describe('ACP over WebSocket', () => {
     await expect(connect()).rejects.toMatchObject({ status: 404 });
   });
 
+  it('survives a late update after the client closed the socket', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    try {
+      await start(1);
+      engine.hold = new Promise<void>(() => undefined);
+      engine.afterAbort = true;
+      const rpc = await connect();
+      const { sessionId } = await init(rpc);
+      void rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] });
+      await until(() => engine.started === 1);
+      rpc.socket.terminate();
+      await until(() => engine.late === 1);
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect(rejections).toEqual([]);
+      // The place is free after the run ended, and the endpoint still serves.
+      await until(async () => (await metric('headlamp_agent_acp_sessions')).includes('headlamp_agent_acp_sessions 0'));
+      expect((await init(await connect())).sessionId).toBeTruthy();
+    } finally {
+      process.off('unhandledRejection', onRejection);
+    }
+  });
+
+  it('refuses a second prompt while one runs in the session, and takes a new one when it ends', async () => {
+    await start();
+    let release!: () => void;
+    engine.hold = new Promise<void>(resolve => (release = resolve));
+    const rpc = await connect();
+    const { sessionId } = await init(rpc);
+    const first = rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] });
+    await until(() => engine.started === 1);
+    const second = await rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w2' }] });
+    expect(second.error.message).toContain('already running');
+    // The refused prompt did not take the slot of the first one, nor start a run.
+    expect(engine.started).toBe(1);
+    release();
+    expect((await first).result.stopReason).toBe('end_turn');
+    engine.hold = undefined;
+    const third = await rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w3' }] });
+    expect(third.result.stopReason).toBe('end_turn');
+    expect(engine.started).toBe(2);
+  });
+
+  it('keeps the session place until its run has ended after the socket closed', async () => {
+    await start(1);
+    engine.hold = new Promise<void>(() => undefined);
+    engine.afterAbort = true;
+    const rpc = await connect();
+    const { sessionId } = await init(rpc);
+    void rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] });
+    await until(() => engine.started === 1);
+    rpc.socket.terminate();
+    await until(() => engine.aborted === 1);
+    // The run is still ending (it emits its late events for 50 ms), so the place is not free yet.
+    expect(await metric('headlamp_agent_acp_sessions')).toContain('headlamp_agent_acp_sessions 1');
+    await until(() => engine.late === 1);
+    await until(async () => (await metric('headlamp_agent_acp_sessions')).includes('headlamp_agent_acp_sessions 0'));
+  });
+
+  it('lets a prompt in flight finish and writes its answer before it closes the socket on a drain', async () => {
+    await start();
+    let release!: () => void;
+    engine.hold = new Promise<void>(resolve => (release = resolve));
+    const rpc = await connect();
+    const { sessionId } = await init(rpc);
+    const order: string[] = [];
+    rpc.socket.on('message', data => {
+      if (JSON.parse(data.toString()).result?.stopReason) order.push('answer');
+    });
+    void rpc.closed.then(() => order.push('close'));
+    const prompt = rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] });
+    await until(() => engine.started === 1);
+    const closing = server.close();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(rpc.socket.readyState).toBe(WebSocket.OPEN);
+    release();
+    expect((await prompt).result.stopReason).toBe('end_turn');
+    expect(await rpc.closed).toBe(1001);
+    await closing;
+    expect(order).toEqual(['answer', 'close']);
+    // The finished run was published.
+    expect((await store.get('11111111-1111-4111-8111-111111111111'))?.status).toBe('done');
+  });
+
+  it('refuses a prompt that comes during a drain', async () => {
+    await start();
+    let release!: () => void;
+    engine.hold = new Promise<void>(resolve => (release = resolve));
+    const rpc = await connect();
+    const { sessionId } = await init(rpc);
+    const other = (await rpc.call('session/new', { cwd: '/', mcpServers: [] })).result.sessionId as string;
+    const prompt = rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] });
+    await until(() => engine.started === 1);
+    const closing = server.close();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    const refused = await rpc.call('session/prompt', { sessionId: other, prompt: [{ type: 'text', text: 'NodeNotReady node=w2' }] });
+    expect(refused.error.message).toContain('draining');
+    expect(engine.started).toBe(1);
+    // The refused prompt does not close the socket before the first one has its answer.
+    expect(rpc.socket.readyState).toBe(WebSocket.OPEN);
+    release();
+    expect((await prompt).result.stopReason).toBe('end_turn');
+    expect(await rpc.closed).toBe(1001);
+    await closing;
+  });
+
+  it('aborts the runs that remain when the drain limit passes', async () => {
+    await start(4, undefined, 100);
+    engine.hold = new Promise<void>(() => undefined);
+    const rpc = await connect();
+    const { sessionId } = await init(rpc);
+    void rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] });
+    await until(() => engine.started === 1);
+    const started = Date.now();
+    await server.close();
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(engine.aborted).toBe(1);
+    expect(await rpc.closed).toBe(1001);
+  });
+
+  it('keeps a long run: evidence past the limit of the schema is cut, not lost', async () => {
+    await start();
+    engine.evidenceCount = 61;
+    const rpc = await connect();
+    const { sessionId } = await init(rpc);
+    const answer = await rpc.call('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] });
+    expect(answer.result.stopReason).toBe('end_turn');
+    const text = rpc.updates.filter(u => u.update.sessionUpdate === 'agent_message_chunk' && u.update.content.type === 'text').map(u => u.update.content.text).join('');
+    expect(text).toContain('Published to Headlamp');
+    const stored = await store.get('11111111-1111-4111-8111-111111111111');
+    expect(stored?.status).toBe('done');
+    expect(stored?.result?.likelyCause).toBe('A switch port flapped');
+    expect(stored?.evidence.length).toBe(60);
+    // The item that the result cites stays.
+    expect(stored?.evidence.some(e => e.id === 't1')).toBe(true);
+  });
+
   it('closes an idle connection with code 1001 when the agent drains', async () => {
     await start();
     const rpc = await connect();
@@ -307,6 +476,36 @@ describe('ACP over WebSocket', () => {
 });
 
 describe('scoped tokens', () => {
+  it('warns about each dropped entry by name and never shows a token', () => {
+    const secret = 'secret-value-that-must-not-be-logged';
+    const warnings: string[] = [];
+    const entries = parseTokens(
+      [{ name: 'good', token: GOOD, scopes: [SCOPES.investigate] }, { name: 'short', token: 'abc', scopes: ['x'] }, { name: 'noscope', token: secret, scopes: [] }, { token: secret, scopes: ['x'] }, 'junk'],
+      message => warnings.push(message),
+    );
+    expect(entries.map(e => e.name)).toEqual(['good']);
+    expect(warnings.length).toBe(4);
+    expect(warnings.some(w => w.includes('"short"'))).toBe(true);
+    expect(warnings.some(w => w.includes('"noscope"'))).toBe(true);
+    expect(warnings.some(w => w.includes('#4'))).toBe(true);
+    expect(warnings.join('\n')).not.toContain(secret);
+    expect(warnings.join('\n')).not.toContain('abc');
+    // A bad entry still denies access.
+    expect(checkBearer(entries, `Bearer ${secret}`, 'x')).toMatchObject({ ok: false, status: 401 });
+  });
+
+  it('warns once about a token file that cannot be read, and refuses every request', () => {
+    const file = join(dir, 'broken.json');
+    writeFileSync(file, '{not json');
+    const warnings: string[] = [];
+    const read = tokensFromFile(file, message => warnings.push(message));
+    expect(read()).toEqual([]);
+    expect(read()).toEqual([]);
+    expect(warnings.length).toBe(1);
+    expect(tokensFromFile(join(dir, 'missing.json'), message => warnings.push(message))()).toEqual([]);
+    expect(warnings.length).toBe(2);
+  });
+
   it('reads a bearer header, a plain token and a SHA-256 entry', () => {
     expect(bearerToken('Bearer abc')).toBe('abc');
     expect(bearerToken('bearer   abc')).toBe('abc');
