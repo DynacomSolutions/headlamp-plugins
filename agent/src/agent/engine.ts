@@ -192,6 +192,8 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
       for (;;) {
         if (opts.signal?.aborted) throw new Error('cancelled');
         if (runSignal.aborted) throw new Error('cancelled');
+        // A model that sends invalid diagnoses to the end of its calls will not recover: stop, do not wait for the time limit.
+        if (calls >= maxCalls + 1) throw new Error('The model gave no valid diagnosis');
         // The model may only submit when the time that is left is the time of two calls, or when the next call is the last one allowed.
         const late = elapsed() >= limit - reserve || calls >= maxCalls - 1;
         const completion = await guard(
@@ -220,6 +222,8 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
         pending = results;
         let submitted = false;
         for (const call of completion.toolCalls) {
+          // The limit or a stop came in this round: the rest of the round does not run. The catch below answers the open calls.
+          if (opts.signal?.aborted || runSignal.aborted) throw new Error('cancelled');
           if (call.name === SUBMIT) {
             if (!takeSubmit(call)) {
               const parsed = resultSchema.safeParse(call.args);

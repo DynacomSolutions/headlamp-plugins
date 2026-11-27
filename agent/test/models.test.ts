@@ -419,6 +419,47 @@ describe('model client', () => {
     });
   });
 
+  describe('a saved trace with an empty assistant message', () => {
+    // An old trace, or a reply of only dropped tool calls, can hold an assistant message with no text and no tool call.
+    // Every provider refuses it (`content: []`, `content: null`), so no converter sends it.
+    const messages: any[] = [
+      { role: 'user', text: 'first' },
+      { role: 'assistant', text: '', toolCalls: [] },
+      { role: 'user', text: 'second' },
+    ];
+
+    it('anthropic: leaves it out, so no message has empty content', async () => {
+      const calls = capture(() => json({ content: [{ type: 'text', text: 'ok' }], usage: {} }));
+      await new ModelClient(route('e1', { style: 'anthropic' }), 'm').complete({ ...req, messages });
+      expect(calls[0].body.messages.every((m: any) => m.content.length > 0)).toBe(true);
+      expect(calls[0].body.messages.filter((m: any) => m.role === 'assistant')).toHaveLength(0);
+    });
+
+    it('openai: leaves it out, so no assistant message has null content and no tool calls', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'ok' } }] }));
+      await new ModelClient(route('e2'), 'm').complete({ ...req, messages });
+      expect(calls[0].body.messages.filter((m: any) => m.role === 'assistant')).toHaveLength(0);
+    });
+
+    it('responses: sends no item for it', async () => {
+      const calls = capture(() => new Response(sse([{ type: 'response.completed', response: { output: [] } }])));
+      await new ModelClient(route('e3', { style: 'responses' }), 'm').complete({ ...req, messages });
+      expect(calls[0].body.input.filter((i: any) => i.role === 'assistant')).toHaveLength(0);
+      expect(calls[0].body.input).toHaveLength(2);
+    });
+
+    it('keeps an assistant message that has only tool calls', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'ok' } }] }));
+      const withCalls: any[] = [
+        { role: 'user', text: 'go' },
+        { role: 'assistant', text: '', toolCalls: [{ id: 'c1', name: 'q', args: {} }] },
+        { role: 'tool', results: [{ id: 'c1', name: 'q', content: '{}', isError: false }] },
+      ];
+      await new ModelClient(route('e4'), 'm').complete({ ...req, messages: withCalls });
+      expect(calls[0].body.messages.filter((m: any) => m.role === 'assistant')).toHaveLength(1);
+    });
+  });
+
   describe('no tool in the last call (noTools)', () => {
     // The history holds tool calls and results, so the tool list must stay in the request: an endpoint refuses a history with tool blocks and no tools.
     const hasToolBlocks = (body: any) => JSON.stringify(body).match(/tool_use|tool_calls|function_call/) !== null;

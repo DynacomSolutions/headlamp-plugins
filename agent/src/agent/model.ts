@@ -258,7 +258,8 @@ export class ModelClient implements ChatModel {
         const content: any[] = [];
         if (m.text) content.push({ type: 'text', text: m.text });
         for (const c of m.toolCalls) content.push({ type: 'tool_use', id: c.id, name: c.name, input: c.args ?? {} });
-        messages.push({ role: 'assistant', content });
+        // An assistant turn with no text and no tool call is invalid (`content: []` is a 400): it is left out of the request.
+        if (content.length) messages.push({ role: 'assistant', content });
       } else {
         messages.push({ role: 'user', content: m.results.map(r => ({ type: 'tool_result', tool_use_id: r.id, content: r.content, is_error: r.isError })) });
       }
@@ -288,6 +289,8 @@ export class ModelClient implements ChatModel {
     for (const m of req.messages) {
       if (m.role === 'user') messages.push({ role: 'user', content: m.text });
       else if (m.role === 'assistant') {
+        // An assistant message with no text and no tool call is invalid: it is left out of the request.
+        if (!m.text && m.toolCalls.length === 0) continue;
         const msg: any = { role: 'assistant', content: m.text || null };
         if (m.toolCalls.length) msg.tool_calls = m.toolCalls.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args ?? {}) } }));
         messages.push(msg);

@@ -441,7 +441,8 @@ export class ChatService {
           const text = completion.text.trim();
           if (wrapUp) {
             // The wrap-up call ends the turn. Its tool calls are dropped, also from the saved history, which has no results for them.
-            turn.push({ role: 'assistant', text: completion.text, toolCalls: [] });
+            // An assistant message with no text and no tool call is invalid for every provider, so an empty reply is not saved.
+            if (text) turn.push({ role: 'assistant', text: completion.text, toolCalls: [] });
             if (text) final = text;
             answered = !!text;
             save();
@@ -512,6 +513,17 @@ export class ChatService {
         // The time limit ended the turn. One last call, with its own short limit, so the work of the turn becomes an answer.
         if (userSignal.aborted || !signal.aborted || answered) throw error;
         closeToolCalls(turn, pending);
+        // The call that the limit cut off has no result: its step ends as failed, so it does not stay running.
+        for (const s of reply.steps) {
+          if (s.status === 'running') {
+            s.status = 'done';
+            s.ok = false;
+            s.summary = 'time limit';
+            s.endedAt = new Date().toISOString();
+            if (s.startedAt) s.durationMs = Date.now() - Date.parse(s.startedAt);
+          }
+        }
+        save();
         if (turn[turn.length - 1]?.role !== 'user') turn.push({ role: 'user', text: WRAP_UP });
         const last = await client.complete({
           system,
@@ -522,8 +534,8 @@ export class ChatService {
           signal: AbortSignal.any([userSignal, AbortSignal.timeout(finalCallMs(callMs))]),
         });
         account(last);
-        turn.push({ role: 'assistant', text: last.text, toolCalls: [] });
         if (!last.text.trim()) throw error;
+        turn.push({ role: 'assistant', text: last.text, toolCalls: [] });
         final = last.text.trim();
         answered = true;
       }

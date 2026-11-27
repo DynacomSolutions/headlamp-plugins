@@ -303,6 +303,32 @@ describe('chat service', () => {
     const toolMessages = script.requests.at(-1).messages.filter((x: any) => x.role === 'tool');
     expect(toolMessages).toHaveLength(2);
     expect(JSON.stringify(toolMessages)).toContain('time limit');
+    // The call that the limit cut off does not stay running.
+    const steps = (chats.get(id) as any).messages[1].steps;
+    expect(steps[0]).toMatchObject({ status: 'done', ok: false, summary: 'time limit' });
+    expect(steps[0].endedAt).toBeTruthy();
+    expect(steps.some((s: any) => s.status === 'running')).toBe(false);
+  });
+
+  it('does not save an empty assistant message when the wrap-up call answers with tool calls only, and the next turn sends a valid history', async () => {
+    const { chats, store } = service([], { maxModelCalls: 2 });
+    script.queue.push(async () => ({ text: 'Checking the pod.', calls: [{ name: 'get_resource', args: { reason: 'r' } }] }));
+    script.queue.push(async () => ({ calls: [{ name: 'get_resource', args: { reason: 'again' } }] }));
+    const { id } = await chats.create({});
+    await chats.send(id, 'hello');
+    await until(() => !(chats.get(id) as any).running);
+    // The wrap-up gave no text: the turn ends with what the model said before.
+    expect((chats.get(id) as any).messages[1]).toMatchObject({ status: 'done', text: 'Checking the pod.' });
+    const trace = store.get(id)!.messages[1].trace as any[];
+    expect(trace.some(m => m.role === 'assistant' && !m.text && !(m.toolCalls ?? []).length)).toBe(false);
+    // The next turn: no assistant message in the request has an empty content and no tool calls.
+    script.requests = [];
+    await chats.send(id, 'and now?');
+    await until(() => !(chats.get(id) as any).running);
+    expect((chats.get(id) as any).messages[3]).toMatchObject({ status: 'done' });
+    const assistants = script.requests[0].messages.filter((m: any) => m.role === 'assistant');
+    expect(assistants.length).toBeGreaterThan(0);
+    expect(assistants.every((m: any) => m.content || m.tool_calls?.length)).toBe(true);
   });
 
   it('fails with a clear error when the model keeps calling tools in the wrap-up call too', async () => {

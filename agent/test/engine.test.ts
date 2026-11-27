@@ -166,6 +166,57 @@ describe('diagnosis engine', () => {
     expect(tool.results[0].content).toContain('cancelled');
   });
 
+  it('stops a run whose model keeps sending invalid diagnoses, without waiting for the time limit', async () => {
+    const requests: CompleteRequest[] = [];
+    const bad = {
+      name: 'x',
+      complete: async (req: CompleteRequest) => {
+        requests.push(req);
+        return { text: '', stop: 'tool_use', usage: { input: 0, output: 0 }, toolCalls: [{ id: `b${requests.length}`, name: 'submit_diagnosis', args: { summary: 'only a summary' } }] };
+      },
+    } as unknown as ModelClient;
+    const started = Date.now();
+    const d = await diagnose({ alert, tools: host([]), model: bad, maxModelCalls: 3, timeoutMs: 60_000, source: 'api' });
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(d.status).toBe('failed');
+    expect(d.error).toContain('no valid diagnosis');
+    // Two free calls, then the forced calls: the run stops at maxModelCalls + 1 calls.
+    expect(requests).toHaveLength(4);
+  });
+
+  it('skips the rest of a tool round at the time limit: no extra cancelled evidence and no extra tool call count', async () => {
+    const requests: CompleteRequest[] = [];
+    const base = host([]);
+    const slow: ToolHost = {
+      list: async () => [...(await base.list()), { name: 'slow_tool', description: 'slow', parameters: { type: 'object', properties: {} } }],
+      call: async (name, args) => {
+        if (name === 'slow_tool') await new Promise(r => setTimeout(r, 5000));
+        return base.call(name, args);
+      },
+    };
+    let n = 0;
+    const m = {
+      name: 'x',
+      callTimeoutMs: 500,
+      complete: async (req: CompleteRequest) => {
+        requests.push(req);
+        if (++n === 1) {
+          return { text: '', stop: 'tool_use', usage: { input: 0, output: 0 }, toolCalls: ['a', 'b', 'c'].map(id => ({ id, name: 'slow_tool', args: { reason: 'r' } })) };
+        }
+        return { text: '', stop: 'tool_use', usage: { input: 0, output: 0 }, toolCalls: [{ id: 'z', name: 'submit_diagnosis', args: { summary: 's', likelyCause: 'c', confidence: 'low', signals: [], fixes: [{ title: 't', detail: 'd', recommended: true }], verify: 'v' } }] };
+      },
+    } as unknown as ModelClient;
+    const d = await diagnose({ alert, tools: slow, model: m, timeoutMs: 400, source: 'api' });
+    expect(d.status).toBe('done');
+    // Only the call that the limit cut off is recorded. The two calls behind it never ran.
+    expect(d.evidence.filter(e => e.tool === 'slow_tool')).toHaveLength(1);
+    expect(d.toolCalls).toBe(1);
+    // The history still answers all three calls before the last call.
+    const last = requests.at(-1)!;
+    const tool = last.messages.find(x => x.role === 'tool') as Extract<(typeof last.messages)[number], { role: 'tool' }>;
+    expect(tool.results.map(r => r.id)).toEqual(['a', 'b', 'c']);
+  });
+
   it('forces the submit at the soft cap on model calls', async () => {
     const requests: CompleteRequest[] = [];
     const d = await diagnose({ alert, tools: host([]), model: model(requests), maxModelCalls: 4, timeoutMs: 60_000, source: 'api' });
