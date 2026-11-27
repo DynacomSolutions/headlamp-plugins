@@ -1,5 +1,5 @@
 import type { Diagnosis } from '../agent/report.js';
-import { eventLabels, incidentState, investigationStatus } from './model.js';
+import { eventLabels, incidentState, investigationStatus, noRun } from './model.js';
 import { incidentUri, investigationUri, timelineUri, type EventKind, type IncidentState, type NewEvent, type TimelineEntry, type TimelineKind } from './types.js';
 
 const MAX_TIMELINE = 500;
@@ -45,7 +45,8 @@ export function finalise(current: Diagnosis | undefined, next: Diagnosis, now: D
     state.timeline.push(full);
     return full;
   };
-  const raise = (kind: EventKind, uri: string, actor: string | null) => events.push({ kind, uri, incidentId: next.id, labels: eventLabels(next.alert.labels), actor, state: nextState() });
+  const stateBefore = current ? incidentState(current) : undefined;
+  const raise = (kind: EventKind, uri: string, actor: string | null) => events.push({ kind, uri, incidentId: next.id, labels: eventLabels(next.alert.labels), fullLabels: next.alert.labels, actor, state: nextState(), ...(stateBefore ? { stateBefore } : {}) });
 
   // The entries that a person or a client wrote have seq 0. They are numbered after the firing entry.
   const pending = state.timeline.filter(e => e.seq === 0);
@@ -62,7 +63,7 @@ export function finalise(current: Diagnosis | undefined, next: Diagnosis, now: D
 
   const before = current ? investigationStatus(current) : 'none';
   const after = investigationStatus(next);
-  if (after !== before && after !== 'none') {
+  if (after !== before && !noRun(after)) {
     const [entryKind, eventKind] = STATUS_ENTRY[after];
     add({ at: after === 'done' || after === 'failed' ? (next.finishedAt ?? at) : at, kind: entryKind, actor: 'agent', text: after === 'failed' ? (next.error ?? null) : null, data: { model: next.model } });
     raise(eventKind, investigationUri(next.id), 'agent');

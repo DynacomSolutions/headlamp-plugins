@@ -1,7 +1,8 @@
 import { ProtocolError, ResourceTemplate, type McpServer, type UriTemplate } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { IncidentError, type IncidentService } from '../incidents/service.js';
-import { parseUri, scopeForUri, SCOPES, type ParsedUri, type Scope } from '../incidents/model.js';
+import { noRun, parseUri, scopeForUri, SCOPES, type ParsedUri, type Scope } from '../incidents/model.js';
+import type { InvestigationStatus } from '../incidents/types.js';
 import { EVENTS_URI, EVENT_KINDS } from '../incidents/types.js';
 import type { AutomaticInvestigationsView } from '../incidents/settings.js';
 import { publicEvent, RETENTION_MS, type EventLog } from '../incidents/events.js';
@@ -158,7 +159,7 @@ function tools(d: ContractDeps): ToolSpec[] {
     spec({
       name: 'get_investigation_status',
       title: 'Get the status of an investigation',
-      description: 'The status of the investigation of an incident. Status none means no run exists.',
+      description: 'The status of the investigation of an incident. Status none or skipped means no run exists.',
       scope: 'agent:investigate',
       input: z.object({ incidentId: S.incidentId }).strict(),
       output: z.object({ investigation: S.investigation }),
@@ -178,7 +179,7 @@ function tools(d: ContractDeps): ToolSpec[] {
       idempotent: true,
       async run(a) {
         const r = await svc.investigation(a.incidentId);
-        if (r.investigation.status === 'none') throw new IncidentError('not_found', 'This incident has no investigation.');
+        if (noRun(r.investigation.status as InvestigationStatus)) throw new IncidentError('not_found', 'This incident has no investigation.');
         if (r.investigation.status === 'queued' || r.investigation.status === 'running') throw new IncidentError('not_ready', 'The investigation has not finished.');
         return { summary: r.result?.summary ?? `Investigation ${r.investigation.status}.`, data: r };
       },
@@ -309,8 +310,10 @@ export async function readContractResource(d: ContractDeps, parsed: ParsedUri, w
     case 'events': {
       const head = await d.events.head();
       if (parsed.after === undefined) return { logId: head.logId, events: [], nextAfter: head.latest ?? '0', hasMore: false, latest: head.latest, oldestRetained: head.oldestRetained, reset: false, retentionHours: RETENTION_MS / 3600_000 };
-      const page = await d.events.readAfter(BigInt(parsed.after), parsed.limit ?? 100, { kinds: parsed.kinds, labels: parsed.labels, scopes: who.scopes });
-      return { ...page, events: page.events.map(publicEvent), reset: page.reset || (parsed.logId !== undefined && parsed.logId.toLowerCase() !== head.logId.toLowerCase()) };
+      const other = parsed.logId !== undefined && parsed.logId.toLowerCase() !== head.logId.toLowerCase();
+      // A cursor from another log is a reset. The page then starts at the oldest retained event, as in every reset (contract section 8.3).
+      const page = await d.events.readAfter(other ? 0n : BigInt(parsed.after), parsed.limit ?? 100, { kinds: parsed.kinds, labels: parsed.labels, ...(parsed.never ? { never: true as const } : {}), scopes: who.scopes });
+      return { ...page, events: page.events.map(publicEvent), reset: page.reset || other };
     }
   }
 }
@@ -342,6 +345,7 @@ const TEMPLATES: Array<{ name: string; text: string; types: ParsedUri['type'][];
 
 /** Registers the tools and resources of the contract that the caller may use. Others are registered and disabled, so they do not show in lists. */
 export function registerContract(server: McpServer, d: ContractDeps, who: Principal): void {
+  shapeToolErrors(server, d);
   for (const t of tools(d)) {
     const registered = server.registerTool(
       t.name,
@@ -398,6 +402,21 @@ export function registerContract(server: McpServer, d: ContractDeps, who: Princi
     );
     if (denied(who, sample, scope)) registered.disable();
   }
+}
+
+/**
+ * The SDK checks the tool input before the handler runs. A wrong input then gets plain text and no error object.
+ * The contract wants the `Error` shape with `invalid_argument` (section 5), so the server gives the SDK this error builder.
+ */
+function shapeToolErrors(server: McpServer, d: ContractDeps): void {
+  (server as unknown as { createToolError(message: string): unknown }).createToolError = (message: string) => {
+    const invalid = message.startsWith('Input validation error');
+    const code = invalid ? 'invalid_argument' : 'internal';
+    const tool = /for tool ([\w.-]+)/.exec(message)?.[1];
+    if (tool) d.metrics.toolError(tool, code);
+    const body = { code, message: invalid ? message : 'The tool failed.' };
+    return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(body) }], _meta: { 'headlamp-agent/error': body } };
+  };
 }
 
 /** True when the caller may not read the resource. The event log needs a token, any scope (contract section 6.1). */

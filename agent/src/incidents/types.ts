@@ -64,8 +64,12 @@ export interface EventRecord {
   incidentId: string | null;
   labels: Record<string, string>;
   actor: string | null;
-  /** The state of the incident at the time of the event. Kept for filtered subscriptions, never sent to clients. */
+  /** The state of the incident after the event. Kept for filtered subscriptions, never sent to clients. */
   state?: 'open' | 'acknowledged' | 'resolved';
+  /** The state of the incident before the event. Absent for the event that opens it. Never sent to clients. */
+  stateBefore?: 'open' | 'acknowledged' | 'resolved';
+  /** All labels of the incident. `labels` holds only 32 of them. Filters match these. Never sent to clients. */
+  fullLabels?: Record<string, string>;
 }
 
 export interface NewEvent {
@@ -75,9 +79,11 @@ export interface NewEvent {
   labels?: Record<string, string>;
   actor?: string | null;
   state?: 'open' | 'acknowledged' | 'resolved';
+  stateBefore?: 'open' | 'acknowledged' | 'resolved';
+  fullLabels?: Record<string, string>;
 }
 
-export type InvestigationStatus = 'none' | 'queued' | 'running' | 'done' | 'failed';
+export type InvestigationStatus = 'none' | 'skipped' | 'queued' | 'running' | 'done' | 'failed';
 
 export const INCIDENTS_URI = 'headlamp://incidents';
 export const EVENTS_URI = 'headlamp://events';

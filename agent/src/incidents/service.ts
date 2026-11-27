@@ -237,11 +237,12 @@ export class IncidentService {
     }
     const w = await this.write(id, 'start_investigation', actor, input.requestId, argsKey, (cur, state, at) => {
       state.manualRun = true;
-      return { ...cur, incident: state, rerunAt: cur.status === 'failed' ? cur.rerunAt : at };
+      return { ...cur, incident: state, rerunAt: cur.status === 'failed' || cur.status === 'skipped' ? cur.rerunAt : at };
     });
     if (w.replayed) return { investigation: toInvestigation(w.record), started: false, replayed: true };
     const fresh = w.record;
-    const started = fresh.status === 'failed' ? await runner.rerun(id, model) : await runner.enqueue(fresh.alert, fresh.source, id, model);
+    // A skipped incident never started, so it takes the re-run path like a failed one (it runs whatever the setting is).
+    const started = fresh.status === 'failed' || fresh.status === 'skipped' ? await runner.rerun(id, model) : await runner.enqueue(fresh.alert, fresh.source, id, model);
     return { investigation: toInvestigation((await this.deps.store.get(id)) ?? started), started: true, replayed: false };
   }
 }

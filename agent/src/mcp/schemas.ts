@@ -7,7 +7,7 @@ const labels = z.record(z.string(), z.string());
 const open = (known: string[]) => z.string().describe(`Open enumeration. Known values: ${known.join(', ')}. A client must accept other values.`);
 
 export const investigationSummary = z.object({
-  status: open(['none', 'queued', 'running', 'done', 'failed']),
+  status: open(['none', 'skipped', 'queued', 'running', 'done', 'failed']),
   attempt: z.number().int(),
   model: maybe(str),
   startedAt: maybe(str),

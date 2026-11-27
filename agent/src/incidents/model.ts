@@ -48,11 +48,14 @@ export interface Investigation extends InvestigationSummary {
   previousAttempts: Array<{ at: string; model: string; error: string }>;
 }
 
-/** The investigation status of a record. A status this contract does not know means no investigation exists. */
+/** The investigation status of a record. A status this contract does not know means no investigation exists. `skipped` is known (contract section 3.2). */
 export function investigationStatus(d: Pick<Diagnosis, 'status'>): InvestigationStatus {
   const s = d.status as string;
-  return s === 'queued' || s === 'running' || s === 'done' || s === 'failed' ? s : 'none';
+  return s === 'queued' || s === 'running' || s === 'done' || s === 'failed' || s === 'skipped' ? s : 'none';
 }
+
+/** True for the two statuses that mean no run exists: `none` and `skipped` behave alike (contract section 3.2). */
+export const noRun = (s: InvestigationStatus): s is 'none' | 'skipped' => s === 'none' || s === 'skipped';
 
 export function incidentState(d: Rec): IncidentStateName {
   if (d.resolvedAt) return 'resolved';
@@ -65,7 +68,7 @@ function severityOf(value: string): Incident['severity'] {
 
 export function investigationSummary(d: Rec): InvestigationSummary {
   const status = investigationStatus(d);
-  const none = status === 'none';
+  const none = noRun(status);
   return {
     status,
     attempt: none ? 0 : (d.previousAttempts?.length ?? 0) + 1,
@@ -117,10 +120,11 @@ export function toIncident(d: Rec): Incident {
   };
 }
 
-/** At most 32 labels, each value cut to 256 characters: what an event carries. */
+/** At most 32 labels, the 32 smallest keys in byte order (UTF-8), each value cut to 256 characters: what an event carries (contract section 3.6). */
 export function eventLabels(labels: Record<string, string>): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(labels).slice(0, 32)) out[k] = String(v).slice(0, 256);
+  const keys = Object.keys(labels).sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b))).slice(0, 32);
+  for (const k of keys) out[k] = String(labels[k]).slice(0, 256);
   return out;
 }
 
@@ -130,9 +134,12 @@ export interface IncidentFilter {
   severity?: string[];
   labels?: Record<string, string>;
   test?: boolean;
+  /** Two `label` parameters with the same key and different values: nothing matches (contract section 6.2). */
+  never?: true;
 }
 
 export function matchesFilter(i: Pick<Incident, 'state' | 'severity' | 'labels' | 'test'>, f: IncidentFilter): boolean {
+  if (f.never) return false;
   const state = f.state ?? 'active';
   if (state === 'active' ? i.state === 'resolved' : i.state !== state) return false;
   if (f.severity?.length && !f.severity.includes(i.severity)) return false;
@@ -146,7 +153,7 @@ export type ParsedUri =
   | { type: 'incident'; id: string }
   | { type: 'timeline'; id: string }
   | { type: 'investigation'; id: string }
-  | { type: 'events'; kinds: string[]; labels: Record<string, string>; after?: string; limit?: number; logId?: string }
+  | { type: 'events'; kinds: string[]; labels: Record<string, string>; never?: true; after?: string; limit?: number; logId?: string }
   | { type: 'settings' }
   | { type: 'storage'; kind: string; node?: string }
   | { type: 'contract' };
@@ -154,14 +161,18 @@ export type ParsedUri =
 const STORAGE_KINDS = ['volumes', 'disks', 'smart', 'capacity'];
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 
-function labelPairs(values: string[]): Record<string, string> | undefined {
-  const out: Record<string, string> = {};
+function labelPairs(values: string[]): { labels: Record<string, string>; never: boolean } | undefined {
+  const labels: Record<string, string> = {};
+  let never = false;
   for (const v of values) {
     const at = v.indexOf('=');
     if (at < 1) return undefined;
-    out[v.slice(0, at)] = v.slice(at + 1);
+    const key = v.slice(0, at);
+    const value = v.slice(at + 1);
+    if (Object.hasOwn(labels, key) && labels[key] !== value) never = true;
+    labels[key] = value;
   }
-  return out;
+  return { labels, never };
 }
 
 /** Reads a `headlamp://` URI. Returns undefined for any URI this contract does not define. */
@@ -194,9 +205,10 @@ export function parseUri(uri: string): ParsedUri | undefined {
       }
       const severity = q.getAll('severity');
       if (severity.length) filter.severity = severity;
-      const labels = labelPairs(q.getAll('label'));
-      if (!labels) return undefined;
-      if (Object.keys(labels).length) filter.labels = labels;
+      const pairs = labelPairs(q.getAll('label'));
+      if (!pairs) return undefined;
+      if (Object.keys(pairs.labels).length) filter.labels = pairs.labels;
+      if (pairs.never) filter.never = true;
       const test = q.get('test');
       if (test !== null) {
         if (test !== 'true' && test !== 'false') return undefined;
@@ -209,8 +221,8 @@ export function parseUri(uri: string): ParsedUri | undefined {
     return undefined;
   }
   if (head === 'events' && parts.length === 1) {
-    const labels = labelPairs(q.getAll('label'));
-    if (!labels) return undefined;
+    const pairs = labelPairs(q.getAll('label'));
+    if (!pairs) return undefined;
     const after = q.get('after') ?? undefined;
     if (after !== undefined && !/^\d{1,18}$/.test(after)) return undefined;
     const limitText = q.get('limit');
@@ -218,10 +230,13 @@ export function parseUri(uri: string): ParsedUri | undefined {
     if (limit !== undefined && !(Number.isInteger(limit) && limit >= 1 && limit <= 500)) return undefined;
     const logId = q.get('logId') ?? undefined;
     if (logId !== undefined && !/^[0-9a-f-]{36}$/i.test(logId)) return undefined;
-    return { type: 'events', kinds: q.getAll('kind'), labels, after, limit, logId };
+    return { type: 'events', kinds: q.getAll('kind'), labels: pairs.labels, ...(pairs.never ? { never: true as const } : {}), after, limit, logId };
   }
   return undefined;
 }
+
+/** The labels that filters match: all labels of the incident when the event holds them, else the labels of the event. */
+export const fullLabels = (e: Pick<EventRecord, 'labels' | 'fullLabels'>): Record<string, string> => e.fullLabels ?? e.labels;
 
 export function kindMatches(kinds: string[], kind: string): boolean {
   return kinds.length === 0 || kinds.some(k => (k.endsWith('.') ? kind.startsWith(k) : kind === k));
@@ -230,14 +245,18 @@ export function kindMatches(kinds: string[], kind: string): boolean {
 const INCIDENT_KIND = /^(incident|investigation)\./;
 
 /** True when this event updates the resource that `parsed` names (contract section 7.2). */
-export function eventMatches(event: EventRecord & { state?: IncidentStateName }, parsed: ParsedUri): boolean {
+export function eventMatches(event: EventRecord, parsed: ParsedUri): boolean {
   switch (parsed.type) {
     case 'events':
-      return kindMatches(parsed.kinds, event.kind) && Object.entries(parsed.labels).every(([k, v]) => event.labels[k] === v);
+      return !parsed.never && kindMatches(parsed.kinds, event.kind) && Object.entries(parsed.labels).every(([k, v]) => fullLabels(event)[k] === v);
     case 'incidents': {
       if (!INCIDENT_KIND.test(event.kind) || !event.incidentId) return false;
-      const severity = severityOf(event.labels.severity ?? '');
-      return matchesFilter({ state: event.state ?? 'open', severity, labels: event.labels, test: event.labels.test === 'true' }, parsed.filter);
+      // The filter sees the full labels that the server stores, not the 32 that the event carries (contract section 7.2).
+      const labels = fullLabels(event);
+      const view = { severity: severityOf(labels.severity ?? ''), labels, test: labels.test === 'true' };
+      // An incident enters, changes inside or leaves the collection: it matches before or after the event.
+      const after = matchesFilter({ ...view, state: event.state ?? 'open' }, parsed.filter);
+      return after || (event.stateBefore !== undefined && matchesFilter({ ...view, state: event.stateBefore }, parsed.filter));
     }
     case 'incident':
     case 'timeline':
@@ -247,7 +266,8 @@ export function eventMatches(event: EventRecord & { state?: IncidentStateName },
     case 'settings':
       return event.kind === 'settings.changed';
     case 'storage':
-      return event.kind === 'storage.updated' && event.uri === `headlamp://storage/${parsed.kind}`;
+      // A node URI gets the events of its node only (contract section 7.2).
+      return event.kind === 'storage.updated' && event.uri === `headlamp://storage/${parsed.kind}` && (parsed.node === undefined || event.labels.node === parsed.node);
     case 'contract':
       return false;
   }

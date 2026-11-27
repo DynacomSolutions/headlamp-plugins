@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Db } from '../store.js';
 import type { EventRecord, NewEvent } from './types.js';
-import { canSee, kindMatches } from './model.js';
+import { canSee, fullLabels, kindMatches } from './model.js';
 
 /** Events are kept 7 days and at most 100 000 (contract section 8.2). */
 export const RETENTION_MS = 7 * 24 * 3600_000;
@@ -10,6 +10,8 @@ export const MAX_EVENTS = 100_000;
 export interface EventFilter {
   kinds?: string[];
   labels?: Record<string, string>;
+  /** Two `label` parameters with the same key and different values: nothing matches. */
+  never?: true;
   /** Only events whose primary URI needs one of these scopes (contract section 8.7). */
   scopes?: ReadonlySet<string>;
 }
@@ -35,19 +37,35 @@ export type EventListener = (event: EventRecord) => void;
 type Tx = { query: Db['query'] };
 
 /** Removes the internal fields before an event goes to a client. */
-export function publicEvent({ state: _state, ...e }: EventRecord): Omit<EventRecord, 'state'> {
+export function publicEvent({ state: _state, stateBefore: _before, fullLabels: _labels, ...e }: EventRecord): Omit<EventRecord, 'state' | 'stateBefore' | 'fullLabels'> {
   return e;
 }
 
-/** Contract section 8.3: a cursor is a reset when events were removed after it, or when it is ahead of the log. */
+/**
+ * Contract section 8.3: a cursor is a reset when events were removed after it, or when it is ahead of the log.
+ * `latest` is the highest id the log ever stored, so a quiet log does not reset a stored cursor (section 8.3, rule 2).
+ */
 export function isReset(after: bigint, latest: string | null, floor: bigint): boolean {
   return (after !== 0n && after < floor) || after > BigInt(latest ?? '0');
 }
 
+/** The highest id ever stored: the newest retained id, or the high-water mark when retention removed every event. */
+export function highest(newest: bigint | null, floor: bigint): string | null {
+  const top = newest !== null && newest > floor ? newest : floor;
+  return top > 0n ? String(top) : null;
+}
+
 export function passes(e: EventRecord, f: EventFilter): boolean {
+  if (f.never) return false;
   if (f.scopes && !canSee(f.scopes, e.kind)) return false;
   if (f.kinds?.length && !kindMatches(f.kinds, e.kind)) return false;
-  return Object.entries(f.labels ?? {}).every(([k, v]) => e.labels[k] === v);
+  const labels = fullLabels(e);
+  return Object.entries(f.labels ?? {}).every(([k, v]) => labels[k] === v);
+}
+
+/** Where a page starts. A reset page starts at the oldest retained event, in every case (contract section 8.3). */
+export function pageStart(after: bigint, reset: boolean, oldest: string | null): bigint {
+  return reset && oldest !== null ? BigInt(oldest) - 1n : after;
 }
 
 /**
@@ -101,7 +119,7 @@ export class MemoryEventLog extends EventLog {
 
   async append(events: NewEvent[]): Promise<EventRecord[]> {
     const at = new Date(this.now()).toISOString();
-    const records = events.map(e => ({ id: String(this.next++), at, kind: e.kind, uri: e.uri, incidentId: e.incidentId ?? null, labels: e.labels ?? {}, actor: e.actor ?? null, state: e.state }));
+    const records = events.map(e => ({ id: String(this.next++), at, kind: e.kind, uri: e.uri, incidentId: e.incidentId ?? null, labels: e.labels ?? {}, actor: e.actor ?? null, state: e.state, stateBefore: e.stateBefore, fullLabels: e.fullLabels }));
     this.rows.push(...records);
     return records;
   }
@@ -112,19 +130,22 @@ export class MemoryEventLog extends EventLog {
   }
 
   async head(): Promise<EventHead> {
-    return { logId: this.logId, latest: this.rows.at(-1)?.id ?? null, oldestRetained: this.rows[0]?.id ?? null };
+    const newest = this.rows.at(-1);
+    return { logId: this.logId, latest: highest(newest ? BigInt(newest.id) : null, this.floor), oldestRetained: this.rows[0]?.id ?? null };
   }
 
   async readAfter(after: bigint, limit: number, filter: EventFilter = {}): Promise<EventPage> {
     const head = await this.head();
-    const rows = this.rows.filter(r => BigInt(r.id) > after);
+    const reset = isReset(after, head.latest, this.floor);
+    const start = pageStart(after, reset, head.oldestRetained);
+    const rows = this.rows.filter(r => BigInt(r.id) > start);
     const page = rows.slice(0, limit);
     return {
       events: page.filter(e => passes(e, filter)),
-      nextAfter: page.length ? page[page.length - 1]!.id : String(after),
+      nextAfter: page.length ? page[page.length - 1]!.id : reset ? (head.latest ?? '0') : String(after),
       hasMore: rows.length > page.length,
       ...head,
-      reset: isReset(after, head.latest, this.floor),
+      reset,
     };
   }
 
@@ -158,6 +179,8 @@ export const EVENT_SCHEMA = [
     actor text,
     state text
   )`,
+  'ALTER TABLE mcp_events ADD COLUMN IF NOT EXISTS state_before text',
+  'ALTER TABLE mcp_events ADD COLUMN IF NOT EXISTS full_labels jsonb',
   'CREATE INDEX IF NOT EXISTS mcp_events_at_idx ON mcp_events (at)',
   'CREATE TABLE IF NOT EXISTS mcp_event_floor (one boolean PRIMARY KEY DEFAULT true CHECK (one), floor bigint NOT NULL DEFAULT 0)',
   'ALTER TABLE mcp_event_floor ADD COLUMN IF NOT EXISTS log_id uuid NOT NULL DEFAULT gen_random_uuid()',
@@ -165,7 +188,7 @@ export const EVENT_SCHEMA = [
 ];
 
 /** Held by every transaction that writes events, so event ids commit in order (contract section 8.1). */
-const EVENT_LOCK = 7_483_920_116;
+const EVENT_LOCK = 7_483_920_117;
 export const NOTIFY_CHANNEL = 'headlamp_mcp_events';
 
 interface Row {
@@ -177,9 +200,24 @@ interface Row {
   labels: Record<string, string>;
   actor: string | null;
   state: string | null;
+  state_before: string | null;
+  full_labels: Record<string, string> | null;
 }
 
-const toRecord = (r: Row): EventRecord => ({ id: String(r.id), at: new Date(r.at).toISOString(), kind: r.kind, uri: r.uri, incidentId: r.incident_id, labels: r.labels ?? {}, actor: r.actor, state: (r.state ?? undefined) as EventRecord['state'] });
+const COLUMNS = 'id::text AS id, at, kind, uri, incident_id, labels, actor, state, state_before, full_labels';
+
+const toRecord = (r: Row): EventRecord => ({
+  id: String(r.id),
+  at: new Date(r.at).toISOString(),
+  kind: r.kind,
+  uri: r.uri,
+  incidentId: r.incident_id,
+  labels: r.labels ?? {},
+  actor: r.actor,
+  state: (r.state ?? undefined) as EventRecord['state'],
+  stateBefore: (r.state_before ?? undefined) as EventRecord['stateBefore'],
+  fullLabels: r.full_labels ?? undefined,
+});
 
 /** The log in PostgreSQL. A pod hears of events that another pod wrote through LISTEN/NOTIFY. */
 export class PgEventLog extends EventLog {
@@ -217,8 +255,8 @@ export class PgEventLog extends EventLog {
       for (const e of events) {
         const r = await t.query(
           // `at` is the database clock at the insert, after the lock: it grows with the id, so removal by age removes a prefix (contract section 8.1).
-          'INSERT INTO mcp_events (at, kind, uri, incident_id, labels, actor, state) VALUES (clock_timestamp(), $1, $2, $3, $4::jsonb, $5, $6) RETURNING id, at, kind, uri, incident_id, labels, actor, state',
-          [e.kind, e.uri, e.incidentId ?? null, JSON.stringify(e.labels ?? {}), e.actor ?? null, e.state ?? null],
+          `INSERT INTO mcp_events (at, kind, uri, incident_id, labels, actor, state, state_before, full_labels) VALUES (clock_timestamp(), $1, $2, $3, $4::jsonb, $5, $6, $7, $8::jsonb) RETURNING ${COLUMNS}`,
+          [e.kind, e.uri, e.incidentId ?? null, JSON.stringify(e.labels ?? {}), e.actor ?? null, e.state ?? null, e.stateBefore ?? null, e.fullLabels ? JSON.stringify(e.fullLabels) : null],
         );
         out.push(toRecord(r.rows[0] as Row));
       }
@@ -264,28 +302,39 @@ export class PgEventLog extends EventLog {
   }
 
   async head(): Promise<EventHead> {
-    const r = await this.db.query('SELECT min(id)::text AS oldest, max(id)::text AS latest FROM mcp_events');
-    const log = await this.db.query('SELECT log_id::text AS id FROM mcp_event_floor');
-    return { logId: (log.rows[0]?.id as string | undefined) ?? '00000000-0000-0000-0000-000000000000', latest: (r.rows[0]?.latest as string | null) ?? null, oldestRetained: (r.rows[0]?.oldest as string | null) ?? null };
+    return (await this.headAndFloor()).head;
+  }
+
+  /** The head and the high-water mark of removed ids. `latest` is the highest id ever stored (contract section 8.3). */
+  private async headAndFloor(): Promise<{ head: EventHead; floor: bigint }> {
+    const r = await this.db.query('SELECT min(id)::text AS oldest, max(id)::text AS newest FROM mcp_events');
+    const log = await this.db.query('SELECT log_id::text AS id, floor::text AS floor FROM mcp_event_floor');
+    const floor = BigInt((log.rows[0]?.floor as string | undefined) ?? '0');
+    const newest = r.rows[0]?.newest as string | null | undefined;
+    return {
+      floor,
+      head: { logId: (log.rows[0]?.id as string | undefined) ?? '00000000-0000-0000-0000-000000000000', latest: highest(newest ? BigInt(newest) : null, floor), oldestRetained: (r.rows[0]?.oldest as string | null) ?? null },
+    };
   }
 
   async readAfter(after: bigint, limit: number, filter: EventFilter = {}): Promise<EventPage> {
-    const head = await this.head();
-    const floor = BigInt(((await this.db.query('SELECT floor::text AS f FROM mcp_event_floor')).rows[0]?.f as string | undefined) ?? '0');
-    const r = await this.db.query('SELECT id::text AS id, at, kind, uri, incident_id, labels, actor, state FROM mcp_events WHERE id > $1 ORDER BY id ASC LIMIT $2', [String(after), limit + 1]);
+    const { head, floor } = await this.headAndFloor();
+    const reset = isReset(after, head.latest, floor);
+    const start = pageStart(after, reset, head.oldestRetained);
+    const r = await this.db.query(`SELECT ${COLUMNS} FROM mcp_events WHERE id > $1 ORDER BY id ASC LIMIT $2`, [String(start), limit + 1]);
     const rows = (r.rows as Row[]).map(toRecord);
     const page = rows.slice(0, limit);
     return {
       events: page.filter(e => passes(e, filter)),
-      nextAfter: page.length ? page[page.length - 1]!.id : String(after),
+      nextAfter: page.length ? page[page.length - 1]!.id : reset ? (head.latest ?? '0') : String(after),
       hasMore: rows.length > page.length,
       ...head,
-      reset: isReset(after, head.latest, floor),
+      reset,
     };
   }
 
   async readFrom(from: bigint, limit: number): Promise<EventRecord[]> {
-    const r = await this.db.query('SELECT id::text AS id, at, kind, uri, incident_id, labels, actor, state FROM mcp_events WHERE id >= $1 ORDER BY id ASC LIMIT $2', [String(from), limit]);
+    const r = await this.db.query(`SELECT ${COLUMNS} FROM mcp_events WHERE id >= $1 ORDER BY id ASC LIMIT $2`, [String(from), limit]);
     return (r.rows as Row[]).map(toRecord);
   }
 
