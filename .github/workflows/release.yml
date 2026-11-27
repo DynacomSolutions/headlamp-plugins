@@ -67,7 +67,6 @@ jobs:
           case "${{ matrix.plugin }}" in
             alerting|incidents)
               grep -qx "${{ matrix.plugin }}/sw.js" <<< "$listing"
-              grep -qx "${{ matrix.plugin }}/badge.png" <<< "$listing"
               ;;
           esac
       - name: Private identifiers in the release archive

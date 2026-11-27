@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { inflateSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
 import {
   channelFromResource,
@@ -198,59 +197,12 @@ describe('service worker', () => {
     expect(shown[0][1].tag.startsWith('alert-')).toBe(true);
     expect(shown[0][1].data.tag).toBe('alert');
   });
-  it('sets the same monochrome badge on every notification', async () => {
+  it('sets no badge, so Android shows the app icon', async () => {
     const { handlers, shown } = load();
-    for (const tag of ['a', 'b']) {
-      const e = pushEvent({ title: 'Down', tag });
-      handlers.push(e);
-      await Promise.all(e.waits);
-    }
-    expect(shown.map(s => s[1].badge)).toEqual([
-      'https://dash.example.com/plugins/alerting/badge.png',
-      'https://dash.example.com/plugins/alerting/badge.png',
-    ]);
-  });
-  it('ships a 96 px badge that is white on transparent', () => {
-    // Android keeps only the alpha channel: a coloured or opaque badge shows as a plain square.
-    const png = readFileSync('../../shared/push/badge.png');
-    expect([png.readUInt32BE(16), png.readUInt32BE(20), png[24], png[25]]).toEqual([96, 96, 8, 6]);
-    const chunks: Buffer[] = [];
-    for (let at = 8; at < png.length; ) {
-      const length = png.readUInt32BE(at);
-      if (png.toString('ascii', at + 4, at + 8) === 'IDAT') chunks.push(png.subarray(at + 8, at + 8 + length));
-      at += 12 + length;
-    }
-    const raw = inflateSync(Buffer.concat(chunks));
-    const stride = 96 * 4;
-    const out = Buffer.alloc(stride * 96);
-    for (let row = 0; row < 96; row++) {
-      const filter = raw[row * (stride + 1)];
-      for (let col = 0; col < stride; col++) {
-        const v = raw[row * (stride + 1) + 1 + col];
-        const a = col >= 4 ? out[row * stride + col - 4] : 0;
-        const b = row > 0 ? out[(row - 1) * stride + col] : 0;
-        const c = row > 0 && col >= 4 ? out[(row - 1) * stride + col - 4] : 0;
-        const p = a + b - c;
-        const paeth =
-          Math.abs(p - a) <= Math.abs(p - b) && Math.abs(p - a) <= Math.abs(p - c)
-            ? a
-            : Math.abs(p - b) <= Math.abs(p - c)
-            ? b
-            : c;
-        out[row * stride + col] = (v + [0, a, b, (a + b) >> 1, paeth][filter]) & 0xff;
-      }
-    }
-    let visible = 0;
-    let transparent = 0;
-    for (let i = 0; i < out.length; i += 4) {
-      if (out[i + 3] === 0) transparent++;
-      else if (out[i + 3] === 255) {
-        visible++;
-        expect([out[i], out[i + 1], out[i + 2]]).toEqual([255, 255, 255]);
-      }
-    }
-    expect(visible).toBeGreaterThan(96 * 96 * 0.3);
-    expect(transparent).toBeGreaterThan(96 * 96 * 0.3);
+    const e = pushEvent({ title: 'Down' });
+    handlers.push(e);
+    await Promise.all(e.waits);
+    expect(shown[0][1].badge).toBeUndefined();
   });
   it('does not require interaction for recoveries', async () => {
     const { handlers, shown } = load();
