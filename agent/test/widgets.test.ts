@@ -212,6 +212,14 @@ describe('panel mappings', () => {
     expect(m!.stats[0]).toMatchObject({ label: 'Open', value: '1' });
   });
 
+  it('incidents: a skipped incident has the agent state skipped and a readable detail', async () => {
+    const m = await buildPanel(
+      'incidents',
+      deps({ list_diagnoses: { diagnoses: [{ id: '1', alert: 'Quiet', severity: 'warning', status: 'skipped', likelyCause: '', resolved: false, labels: {} }] } }),
+    );
+    expect(m!.rows[0]).toMatchObject({ value: 'skipped', detail: 'Not investigated', meta: { agent: 'skipped', state: 'skipped' } });
+  });
+
   it('incidents: an open incident with a finished diagnosis shows open, not done', async () => {
     const m = await buildPanel(
       'incidents',

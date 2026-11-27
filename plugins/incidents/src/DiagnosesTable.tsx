@@ -22,6 +22,11 @@ const STATUS_COLOUR: Record<Status, 'default' | 'info' | 'success' | 'error'> = 
   skipped: 'default',
 };
 
+/** The words of a status chip. A skipped incident reads as the filter and the summary say it. */
+function statusLabel(status: Status): string {
+  return status === 'skipped' ? 'Not investigated' : status;
+}
+
 function shortTime(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
@@ -229,7 +234,7 @@ function Row({
             <Chip
               size="small"
               variant="outlined"
-              label={d.status}
+              label={statusLabel(d.status)}
               color={STATUS_COLOUR[d.status]}
             />
             {d.resolved && (
@@ -268,7 +273,7 @@ function Row({
             <Chip
               size="small"
               variant="outlined"
-              label={d.status}
+              label={statusLabel(d.status)}
               color={STATUS_COLOUR[d.status]}
             />
             {/* A narrow place has no room for the resolved column: the word sits under the status. */}

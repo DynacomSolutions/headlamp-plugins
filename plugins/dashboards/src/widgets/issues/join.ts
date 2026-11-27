@@ -16,8 +16,11 @@
 import type { PanelModel, PanelRow, PanelStatus, Stat } from '../panels/model';
 
 export type IssueState = 'firing' | 'pending' | 'open' | 'resolved';
-/** What the agent does about a group: it works on it, it diagnosed it, the diagnosis failed, or nothing. */
-export type AgentState = 'working' | 'diagnosed' | 'failed' | 'none';
+/**
+ * What the agent does about a group: it works on it, it diagnosed it, the diagnosis failed, no investigation
+ * started because the setting "Automatic investigations" is off (`skipped`), or nothing.
+ */
+export type AgentState = 'working' | 'diagnosed' | 'failed' | 'skipped' | 'none';
 
 export interface IssueGroup {
   key: string;
@@ -56,7 +59,7 @@ export interface IssuesPanels {
 const RANK: Record<PanelStatus, number> = { crit: 3, warn: 2, unknown: 1, ok: 0 };
 const worse = (a: PanelStatus, b: PanelStatus): PanelStatus => (RANK[b] > RANK[a] ? b : a);
 const STATE_RANK: Record<IssueState, number> = { firing: 0, pending: 1, open: 2, resolved: 3 };
-const AGENT_RANK: Record<AgentState, number> = { working: 3, diagnosed: 2, failed: 1, none: 0 };
+const AGENT_RANK: Record<AgentState, number> = { working: 4, diagnosed: 3, failed: 2, skipped: 1, none: 0 };
 
 interface AlertRec {
   name: string;
@@ -89,7 +92,7 @@ const time = (v: string | undefined): number => {
 };
 
 const asAgent = (v: string | undefined): AgentState | undefined =>
-  v === 'working' || v === 'diagnosed' || v === 'failed' ? v : v === '' ? 'none' : undefined;
+  v === 'working' || v === 'diagnosed' || v === 'failed' || v === 'skipped' ? v : v === '' ? 'none' : undefined;
 
 /** The incident id from a link such as `/c/{cluster}/incidents/abc`. */
 const idFromLink = (link: string | undefined): string => {
@@ -120,6 +123,8 @@ function incidentOf(row: PanelRow, order: number): IncidentRec {
       ? 'working'
       : row.value === 'failed'
       ? 'failed'
+      : row.value === 'skipped'
+      ? 'skipped'
       : row.value === 'open' || row.value === 'resolved'
       ? row.detail !== '' && row.detail !== row.value
         ? 'diagnosed'
