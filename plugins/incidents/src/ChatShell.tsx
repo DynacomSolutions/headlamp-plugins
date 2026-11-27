@@ -273,7 +273,17 @@ export function ChatShell(props: {
         <Box
           ref={scroll.ref}
           onScroll={scroll.onScroll}
-          sx={{ flex: 1, overflow: 'auto', px: 2, py: 3 }}
+          data-chat-thread
+          sx={{
+            flex: 1,
+            overflow: 'auto',
+            px: 2,
+            py: 3,
+            // The thread fades at its edges, so a card that scrolls under the header or the composer is not cut hard.
+            maskImage: 'linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 20px), transparent 100%)',
+            WebkitMaskImage:
+              'linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 20px), transparent 100%)',
+          }}
         >
           <Box
             sx={{

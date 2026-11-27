@@ -60,6 +60,24 @@ export function DeliveryEvidence({ delivery }: { delivery?: NoticeDelivery }) {
   );
 }
 
+/** The push status of a notice on one small line, for under a message in the chat. */
+export function DeliveryLine({ delivery }: { delivery?: NoticeDelivery }) {
+  if (!delivery) return null;
+  const receipt =
+    typeof delivery.clientReceived !== 'number'
+      ? 'device receipt unverified'
+      : `${delivery.clientReceived} device receipts`;
+  const sent =
+    delivery.targetedRecipients > 0
+      ? `${deliveryLabels[delivery.status]} (${delivery.providerAccepted} of ${delivery.targetedRecipients})`
+      : deliveryLabels[delivery.status];
+  return (
+    <Typography variant="caption" color="text.secondary" data-delivery-line>
+      {sent} · {receipt}
+    </Typography>
+  );
+}
+
 function Coverage({ coverage }: { coverage?: NotificationCoverage }) {
   if (coverage?.status === 'disabled') {
     return <StorageAlert severity="info">Storage push is disabled for this deployment.</StorageAlert>;

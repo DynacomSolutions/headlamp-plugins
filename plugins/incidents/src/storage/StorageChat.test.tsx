@@ -71,6 +71,7 @@ const incident = {
       kind: 'question',
       questionId: QUESTION,
       action: { driveId: DRIVE, kind: 'question', id: QUESTION, chatId: CHAT },
+      delivery: { status: 'accepted', targetedRecipients: 1, providerAccepted: 1, failed: 0, pending: 0, clientReceived: null },
     },
     {
       id: 'n2',
@@ -180,6 +181,43 @@ describe('the storage investigation in the Chat tab', () => {
     expect(screen.getByText('Dry run results')).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: /\/data\/cache/ })).toBeTruthy();
     expect(screen.getByRole('button', { name: /Dry run all eligible items/ })).toBeTruthy();
+  });
+
+  it('uses the one composer: the model picker, the context meter and the same message box', async () => {
+    renderAt(chatUrl(CHAT, { drive: DRIVE }));
+    await screen.findByText('What is using /data?');
+    expect(screen.getAllByLabelText('Message')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Choose model|Grok|Model|a\/b/ })).toBeTruthy();
+    expect(screen.queryByText('Storage evidence')).toBeNull();
+    expect(screen.queryByLabelText('Drive context')).toBeNull();
+  });
+
+  it('shows the storage context as a row of chips with a drive menu', async () => {
+    renderAt(chatUrl(CHAT, { drive: DRIVE }));
+    const chip = await screen.findByRole('button', { name: 'Drive context: worker-1 \u00b7 /data' });
+    expect(screen.getByRole('link', { name: 'Open drive' })).toBeTruthy();
+    fireEvent.click(chip);
+    const menu = await screen.findByRole('menu', { name: 'Drive context' });
+    expect(within(menu).getByRole('menuitem', { name: 'All drives' })).toBeTruthy();
+    expect(within(menu).getByRole('menuitem', { name: 'worker-1 \u00b7 /var' })).toBeTruthy();
+  });
+
+  it('flows the plan as a card without upper-case buttons, side bars or the push delivery lines', async () => {
+    renderAt(chatUrl(CHAT, { drive: DRIVE, finding: FINDING }));
+    const card = (await screen.findByText('Cleanup plan')).closest('[data-chat-card]') as HTMLElement;
+    expect(card.getAttribute('data-highlighted')).toBe('true');
+    const dry = within(card).getByRole('button', { name: /Dry run all eligible items/ });
+    expect(getComputedStyle(dry).textTransform).toBe('none');
+    expect(card.textContent).not.toContain('Push provider');
+    expect(card.textContent).not.toContain('Device receipt unverified');
+    expect(document.querySelector('[data-storage-context]')).toBeTruthy();
+  });
+
+  it('shows the push status as one small line under the message that holds the question', async () => {
+    renderAt(chatUrl(CHAT, { drive: DRIVE }));
+    await screen.findByText('The cache uses 5 GiB.');
+    const line = document.querySelector('[data-delivery-line]');
+    expect(line?.textContent).toBe('Push provider accepted the send (1 of 1) \u00b7 device receipt unverified');
   });
 
   it('sends a message with the drive context to the storage agent', async () => {

@@ -11,6 +11,7 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { cleanErrorText } from '../chat-model';
+import { chatButtonSx } from '../ChatParts';
 import { useNow } from '../LaunchPages';
 import { Settings } from '../model';
 import { size, time } from './Capacity';
@@ -31,11 +32,14 @@ export function CleanupPlan({
   settings,
   canApply,
   refresh,
+  titled = true,
 }: {
   detail: DriveDetail;
   settings: Settings;
   canApply: boolean;
   refresh: () => void;
+  /** False when the card around it already carries the title. */
+  titled?: boolean;
 }) {
   const [issued, setIssued] = React.useState<Plan>();
   const [busy, setBusy] = React.useState(false);
@@ -68,9 +72,11 @@ export function CleanupPlan({
   };
   return (
     <Stack spacing={1.5}>
-      <Typography component="h2" variant="h6">
-        Cleanup plan
-      </Typography>
+      {titled && (
+        <Typography component="h2" variant="h6">
+          Cleanup plan
+        </Typography>
+      )}
       {approvalBlock && (
         <StorageAlert severity={scanAvailable ? 'info' : 'warning'}>{approvalBlock}</StorageAlert>
       )}
@@ -286,8 +292,15 @@ function PlanReview({
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setConfirm(undefined)}>Cancel</Button>
-          <Button onClick={approve} disabled={expired || !canApply || !confirmReady} color="error">
+          <Button onClick={() => setConfirm(undefined)} sx={chatButtonSx}>
+            Cancel
+          </Button>
+          <Button
+            onClick={approve}
+            disabled={expired || !canApply || !confirmReady}
+            color="error"
+            sx={chatButtonSx}
+          >
             Approve and queue
           </Button>
         </DialogActions>
@@ -324,13 +337,15 @@ const interventionReasons: Record<string, string> = {
   'safety-proof-changed': 'A safety check changed during cleanup.',
 };
 
-export function Receipts({ detail }: { detail: DriveDetail }) {
+export function Receipts({ detail, titled = true }: { detail: DriveDetail; titled?: boolean }) {
   const paused = pausedCleanupPlans(detail.receipts);
   return (
     <Stack spacing={1}>
-      <Typography component="h2" variant="h6">
-        Cleanup receipts
-      </Typography>
+      {titled && (
+        <Typography component="h2" variant="h6">
+          Cleanup receipts
+        </Typography>
+      )}
       {detail.receipts.length === 0 && (
         <Typography color="text.secondary">No cleanup receipts yet.</Typography>
       )}

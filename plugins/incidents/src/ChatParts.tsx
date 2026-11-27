@@ -48,6 +48,10 @@ const keyframes = {
     to: { opacity: 1, transform: 'translateY(0)' },
   },
   '@keyframes incChatFade': { from: { opacity: 0 }, to: { opacity: 1 } },
+  '@keyframes incChatSettle': {
+    from: { backgroundColor: 'color-mix(in srgb, var(--inc-tint) 300%, transparent)' },
+    to: { backgroundColor: 'var(--inc-tint)' },
+  },
   '@keyframes incChatShimmer': {
     from: { backgroundPosition: '200% 0' },
     to: { backgroundPosition: '-200% 0' },
@@ -477,6 +481,110 @@ export function ToolList({
             </Box>
           ))}
         </Box>
+      </Reveal>
+    </Box>
+  );
+}
+
+/* ---------- Cards of the conversation ---------- */
+
+/** One button style for the whole chat: sentence case, a pill. MUI upper-cases a button by default. */
+export const chatButtonSx = {
+  textTransform: 'none',
+  borderRadius: 999,
+  fontWeight: 500,
+  letterSpacing: 0,
+} as const;
+
+/**
+ * A card that flows in the conversation, in the style of a tool card: a header row with an icon, a title and a short
+ * status, a chevron, and a body that opens and closes on its height. A highlighted card is the item that a link named:
+ * it gets a faint tint that settles after a moment, never a border or a side bar. Buttons inside it have the chat button style.
+ */
+export function CardSection({
+  icon,
+  title,
+  meta,
+  defaultOpen = true,
+  highlighted,
+  children,
+  cardRef,
+}: {
+  icon: string;
+  title: React.ReactNode;
+  meta?: React.ReactNode;
+  defaultOpen?: boolean;
+  highlighted?: boolean;
+  children: React.ReactNode;
+  cardRef?: React.Ref<HTMLDivElement>;
+}) {
+  const [open, setOpen] = React.useState(defaultOpen || !!highlighted);
+  const id = React.useId();
+  return (
+    <Box
+      ref={cardRef}
+      data-chat-card
+      data-highlighted={highlighted ? 'true' : undefined}
+      sx={theme => ({
+        ...keyframes,
+        border: `1px solid ${theme.palette.divider}`,
+        borderRadius: 2,
+        overflow: 'hidden',
+        minWidth: 0,
+        overflowWrap: 'anywhere',
+        '--inc-tint': alpha(theme.palette.primary.main, 0.08),
+        backgroundColor: highlighted ? 'var(--inc-tint)' : theme.palette.background.paper,
+        transition: `background-color 160ms ${EASE}`,
+        // A linked card draws the eye once: its tint starts stronger and settles.
+        animation: highlighted
+          ? `incChatIn 220ms ${EASE} both, incChatSettle 1800ms ${EASE} 220ms both`
+          : `incChatIn 220ms ${EASE} both`,
+        '& .MuiButton-root': chatButtonSx,
+        [reducedMotion]: { animation: 'none', transition: 'none' },
+      })}
+    >
+      <ButtonBase
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        aria-controls={id}
+        sx={theme => ({
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-start',
+          gap: 1,
+          px: 1.5,
+          py: 1,
+          textAlign: 'left',
+          '&:hover, &:focus-visible': { backgroundColor: theme.palette.action.hover },
+        })}
+      >
+        <Box component="span" sx={{ display: 'flex', color: 'text.secondary' }}>
+          <Icon icon={icon} width={18} height={18} />
+        </Box>
+        <Typography component="h2" variant="subtitle2" fontWeight={600} sx={{ flex: 1, minWidth: 0 }}>
+          {title}
+        </Typography>
+        {meta && (
+          <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+            {meta}
+          </Typography>
+        )}
+        <Box
+          component="span"
+          sx={{
+            display: 'flex',
+            color: 'text.secondary',
+            transition: `transform ${OPEN_MS}ms ${EASE}`,
+            transform: open ? 'rotate(90deg)' : 'none',
+            [reducedMotion]: { transition: 'none' },
+          }}
+        >
+          <Icon icon="mdi:chevron-right" width={16} height={16} />
+        </Box>
+      </ButtonBase>
+      <Reveal open={open} id={id}>
+        <Box sx={{ px: 1.5, pb: 1.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>{children}</Box>
       </Reveal>
     </Box>
   );

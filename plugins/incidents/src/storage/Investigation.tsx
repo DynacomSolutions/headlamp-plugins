@@ -259,7 +259,15 @@ export function QuestionCard({
   );
 }
 
-export function ChildResults({ detail, itemId }: { detail: DriveDetail; itemId?: string }) {
+export function ChildResults({
+  detail,
+  itemId,
+  titled = true,
+}: {
+  detail: DriveDetail;
+  itemId?: string;
+  titled?: boolean;
+}) {
   const evidence = itemId
     ? detail.evidence.filter(entry => entry.itemIds.includes(itemId))
     : detail.evidence;
@@ -269,9 +277,11 @@ export function ChildResults({ detail, itemId }: { detail: DriveDetail; itemId?:
     : detail.children;
   return (
     <Stack spacing={1.5}>
-      <Typography component="h2" variant="h6">
-        Investigation results
-      </Typography>
+      {titled && (
+        <Typography component="h2" variant="h6">
+          Investigation results
+        </Typography>
+      )}
       {children.length === 0 && <Typography color="text.secondary">No results yet.</Typography>}
       {children.map(child => (
         <Box
