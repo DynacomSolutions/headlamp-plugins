@@ -19,6 +19,8 @@ const IDLE_MS = 30 * 60_000;
 const MARKS = 1000;
 const SESSION_VERSIONS = ['2025-06-18', '2025-11-25'];
 const STANDALONE = '_GET_stream';
+/** The stream id of a replay that a newer GET replaced: the SDK closes its response and maps nothing. */
+const SUPERSEDED = '_GET_superseded';
 const EVENT_ID = /^(\d{1,18})\.(\d{1,6})$/;
 const MARK_ID = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -58,7 +60,11 @@ interface Session {
   replaying: boolean;
   held: EventRecord[];
   /** The newest GET request of the session: set when its response closes. */
-  get?: { closed: boolean };
+  get?: GetState;
+}
+
+interface GetState {
+  closed: boolean;
 }
 
 type Message = { id: string; message: JSONRPCMessage };
@@ -80,6 +86,8 @@ export class McpEndpoint {
   /** Sessions that `initialize` is building. They count against the limits at once, so parallel requests cannot go over. */
   private readonly pending = new Map<string, number>();
   private readonly als = new AsyncLocalStorage<Principal>();
+  /** The GET request that a replay serves, so a replay knows its own request when a newer GET came in between. */
+  private readonly gets = new AsyncLocalStorage<GetState>();
   private stateless: ReturnType<typeof toNodeHandler> | undefined;
   private sweeper: NodeJS.Timeout | undefined;
   private unlisten: (() => void) | undefined;
@@ -155,7 +163,7 @@ export class McpEndpoint {
     const sessionId = req.headers['mcp-session-id'];
     if (typeof sessionId === 'string') return this.inSession(req, res, who, sessionId);
     // No push stream without a session: a server that offers none answers 405 (contract section 1.2).
-    if (req.method === 'GET') return d.send(res, 405, { error: { code: 'session_required', message: 'The push stream needs a session: send initialize first.' } }, { allow: 'POST, DELETE' });
+    if (req.method === 'GET') return d.send(res, 405, { error: { code: 'session_required', message: 'The push stream needs a session: send initialize first.' } }, { allow: 'POST' });
 
     let body: unknown;
     if (req.method === 'POST') {
@@ -233,21 +241,26 @@ export class McpEndpoint {
         return this.d.send(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: error instanceof Error ? error.message : 'Parse error' } });
       }
     }
+    let get: GetState | undefined;
     if (req.method === 'GET') {
       // A new stream replaces the old one: the old connection can look alive for a while after a network break (contract section 1.1, rule 4).
       session.transport.closeStandaloneSSEStream();
-      const get = { closed: false };
-      session.get = get;
+      const own: GetState = { closed: false };
+      get = own;
+      session.get = own;
+      // The older replay (if any) no longer owns these. The new replay holds events again from its own start.
+      session.replaying = false;
+      session.held = [];
       session.streams++;
       let counted = true;
       res.on('close', () => {
-        get.closed = true;
+        own.closed = true;
         if (counted) session.streams--;
         counted = false;
         session.lastSeen = Date.now();
       });
     }
-    await this.als.run(who, () => session.transport.handleRequest(req, res, body));
+    await this.als.run(who, () => this.gets.run(get as GetState, () => session.transport.handleRequest(req, res, body)));
   }
 
   /** Subscribe and unsubscribe handlers, and the capabilities of a stateful session. */
@@ -300,18 +313,24 @@ export class McpEndpoint {
       // Every id this server can resume is on the one standalone stream. A malformed id is refused, an unknown one gets a reset.
       getStreamIdForEventId: async id => (EVENT_ID.test(id) || MARK_ID.test(id) ? STANDALONE : undefined),
       replayEventsAfter: async (lastEventId, { send }) => {
+        // Each replay serves its own GET. Only the newest GET of the session owns `replaying` and `held` (contract section 1.1, rule 4).
+        const get = this.gets.getStore();
+        if (!get || session.get !== get) return SUPERSEDED;
         session.replaying = true;
         // The highest event id that the client has or reads by itself (a reset frame says: read from `latest`).
         const covered = { value: 0n };
         try {
-          await this.replay(session, lastEventId, send, covered);
-          await this.flush(session, covered, send);
+          await this.replay(session, get, lastEventId, send, covered);
+          await this.flush(session, get, covered, send);
         } finally {
-          // Any exit: the replay no longer holds events. A client that left reads the log when it comes back.
-          session.replaying = false;
-          session.held = [];
+          // Any exit of the newest replay: it no longer holds events. A client that left reads the log when it comes back.
+          if (session.get === get) {
+            session.replaying = false;
+            session.held = [];
+          }
         }
-        return STANDALONE;
+        // An older replay must not replace the stream of the newer GET: the SDK closes the response of this id and maps nothing.
+        return session.get === get ? STANDALONE : SUPERSEDED;
       },
     };
   }
@@ -327,20 +346,21 @@ export class McpEndpoint {
    * Sends the live events that came while the replay ran, whatever way the replay ended (contract section 8.4).
    * No await sits between the last check of `held` and the end of the replay, so no event falls between.
    */
-  private async flush(session: Session, covered: { value: bigint }, send: (id: string, message: JSONRPCMessage) => Promise<void>): Promise<void> {
-    while (session.held.length) {
+  private async flush(session: Session, get: GetState, covered: { value: bigint }, send: (id: string, message: JSONRPCMessage) => Promise<void>): Promise<void> {
+    // An older replay leaves `held` to the newer one.
+    while (session.get === get && session.held.length) {
       const e = session.held.shift()!;
       if (BigInt(e.id) <= covered.value) continue;
       for (const n of this.notificationsFor(session, e)) {
-        if (session.get?.closed) return;
+        if (get.closed || session.get !== get) return;
         await send(n.id, n.message);
       }
     }
-    session.replaying = false;
+    if (session.get === get) session.replaying = false;
   }
 
-  private async replay(session: Session, lastEventId: string, send: (id: string, message: JSONRPCMessage) => Promise<void>, covered: { value: bigint }): Promise<void> {
-    const get = session.get;
+  private async replay(session: Session, get: GetState, lastEventId: string, send: (id: string, message: JSONRPCMessage) => Promise<void>, covered: { value: bigint }): Promise<void> {
+    const gone = () => get.closed || session.get !== get;
     const head = await this.d.events.head();
     const reset = async (after: bigint) => {
       const at = new Date().toISOString();
@@ -368,7 +388,7 @@ export class McpEndpoint {
     // True when the replay must stop: the client left, or a notification beyond the cap follows (then a reset tells the client to re-read).
     const emit = async (list: Message[]): Promise<boolean> => {
       for (const n of list) {
-        if (get?.closed) return true;
+        if (gone()) return true;
         if (sent >= MAX_REPLAY) {
           covered.value = latest;
           await reset(latest);
@@ -386,7 +406,7 @@ export class McpEndpoint {
     }
     let first = true;
     for (;;) {
-      if (get?.closed) return;
+      if (gone()) return;
       const page = await this.d.events.readAfter(cursor, 500);
       if (first && page.reset) {
         if (cursor > latest) covered.value = latest;
