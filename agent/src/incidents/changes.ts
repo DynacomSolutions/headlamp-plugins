@@ -23,7 +23,9 @@ export function keepIncident(current: Diagnosis | undefined, next: Diagnosis): D
   if (!current?.incident) return next;
   if (!next.incident) return { ...next, incident: current.incident };
   // A writer that started from an older copy must not drop entries that were added meanwhile.
-  if (next.incident.timeline.length < current.incident.timeline.length) return { ...next, incident: current.incident };
+  // Compare the newest entry number, not the length: at the cap of MAX_TIMELINE the length stops growing (an older copy would win).
+  const last = (t: TimelineEntry[]) => t.reduce((n, e) => Math.max(n, e.seq), 0);
+  if (last(next.incident.timeline) < last(current.incident.timeline)) return { ...next, incident: current.incident };
   return next;
 }
 

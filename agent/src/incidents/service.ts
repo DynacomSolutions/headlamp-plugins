@@ -6,7 +6,7 @@ import type { DiagnosisStore } from '../store.js';
 import { matchesFilter, toIncident, toInvestigation, type Incident, type IncidentFilter, type Investigation, type Rec } from './model.js';
 import type { IncidentState, TimelineEntry } from './types.js';
 
-export type ErrorCode = 'invalid_argument' | 'not_found' | 'conflict' | 'not_ready' | 'cursor_expired' | 'session_required' | 'rate_limited' | 'unavailable' | 'internal' | 'forbidden';
+export type ErrorCode = 'invalid_argument' | 'not_found' | 'conflict' | 'request_conflict' | 'not_ready' | 'cursor_expired' | 'session_required' | 'rate_limited' | 'unavailable' | 'internal' | 'forbidden';
 
 /** An error with a contract code. The MCP layer turns it into a tool result or a JSON-RPC error. */
 export class IncidentError extends Error {
@@ -157,7 +157,7 @@ export class IncidentService {
       },
       { force: true },
     );
-    if (conflict) throw new IncidentError('conflict', 'This requestId was used with other arguments.');
+    if (conflict) throw new IncidentError('request_conflict', 'This requestId was used with other arguments.');
     return { record: changed ? ((await this.deps.store.get(id)) ?? first) : first, changed, replayed };
   }
 
@@ -200,8 +200,7 @@ export class IncidentService {
   }
 
   async escalate(id: string, actor: string, input: { reason: string; requestId?: string }): Promise<{ incident: Incident; replayed: boolean }> {
-    const existing = await this.record(id);
-    if (existing.resolvedAt) throw new IncidentError('conflict', 'The incident is resolved.');
+    // The write checks the requestId first, so a retry of a finished escalation returns the first result also after a resolve.
     const r = await this.write(id, 'escalate_incident', actor, input.requestId, input.reason, (d, state, at) => {
       if (d.resolvedAt) return undefined;
       state.escalatedAt = at;

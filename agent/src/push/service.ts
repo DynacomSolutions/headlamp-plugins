@@ -242,7 +242,7 @@ export class PushService {
       let sent = 0;
       for (const r of await this.deps.store.list()) {
         if (!r.settings.diagnosis) continue;
-        if (await this.send(r, { kind: 'diagnosis', title, body: brief(reason), tag: `escalation-${d.id}`, url: r.urls.incident.replace('{id}', encodeURIComponent(d.id)) })) sent++;
+        if (await this.send(r, { kind: 'diagnosis', title, body: brief(maskText(reason)), tag: `escalation-${d.id}`, url: r.urls.incident.replace('{id}', encodeURIComponent(d.id)) })) sent++;
       }
       return sent;
     } catch (error) {
