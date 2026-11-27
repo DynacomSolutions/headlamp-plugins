@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { CHAT, MODELS } from './chat.fixture';
+import { CHAT, MODELS, MODELS_TWO_IDENTITIES } from './chat.fixture';
 import {
   cleanErrorText,
+  contextShare,
   FAVOURITES,
-  groupByProvider,
+  formatCost,
+  formatDuration,
+  formatTokens,
+  identityInitials,
+  instancesOf,
   parseChat,
   parseChats,
   parseModels,
@@ -17,7 +22,9 @@ describe('parsing', () => {
   it('parses models and fills route and model from the id', () => {
     const list = parseModels({ default: 'a/b', models: [{ id: 'a/b' }, { nope: 1 }] });
     expect(list.default).toBe('a/b');
-    expect(list.models).toEqual([{ id: 'a/b', route: 'a', model: 'b', name: 'b' }]);
+    expect(list.models).toEqual([{ id: 'a/b', route: 'a', model: 'b', name: 'b', provider: 'a', identity: 'Pool' }]);
+    const rich = parseModels({ models: [{ id: 'x/y', provider: 'claude', identity: 'Account A', contextWindow: 1000 }] }).models[0];
+    expect(rich).toMatchObject({ route: 'x', provider: 'claude', identity: 'Account A', contextWindow: 1000, identityListed: true });
     expect(parseModels(null)).toEqual({ default: '', models: [] });
   });
   it('sorts chats newest first', () => {
@@ -50,16 +57,23 @@ describe('picker helpers', () => {
     expect(providerIcon('claude')).toBe('simple-icons:anthropic');
     expect(providerIcon('kimi')).toBe('mdi:robot-outline');
   });
-  it('groups by provider in first-seen order', () => {
-    expect(groupByProvider(MODELS).map(g => g.route)).toEqual(['claude', 'codex', 'kimi']);
+  it('lists one instance per identity, in first-seen order, with a badge only when a provider has several', () => {
+    expect(instancesOf(MODELS).map(i => i.route)).toEqual(['claude', 'codex', 'kimi']);
+    expect(instancesOf(MODELS).some(i => i.showBadge)).toBe(false);
+    const two = instancesOf(MODELS_TWO_IDENTITIES);
+    expect(two.map(i => i.route)).toEqual(['claude', 'codex', 'kimi', 'claude-pinned']);
+    expect(two.find(i => i.route === 'claude')).toMatchObject({ showBadge: true, badge: 'PO', label: 'Claude \u00b7 Pool' });
+    expect(two.find(i => i.route === 'claude-pinned')).toMatchObject({ showBadge: true, badge: 'AA', label: 'Claude \u00b7 Account A' });
+    expect(two.find(i => i.route === 'codex')?.showBadge).toBe(false);
+    expect(identityInitials('Pool')).toBe('PO');
   });
-  it('lists a provider, favourites, or grouped search results', () => {
-    expect(pickerRows(MODELS, 'claude', '', [])[0].models).toHaveLength(2);
+  it('lists an identity, favourites, or search results across every identity', () => {
+    expect(pickerRows(MODELS, 'claude', '', [])).toHaveLength(2);
     expect(pickerRows(MODELS, FAVOURITES, '', [])).toEqual([]);
-    expect(pickerRows(MODELS, FAVOURITES, '', ['kimi/k2'])[0].models[0].id).toBe('kimi/k2');
+    expect(pickerRows(MODELS, FAVOURITES, '', ['kimi/k2'])[0].id).toBe('kimi/k2');
     const found = pickerRows(MODELS, 'claude', 'gpt', []);
-    expect(found).toHaveLength(1);
-    expect(found[0].group).toBe('Codex');
+    expect(found.map(m => m.id)).toEqual(['codex/gpt-5']);
+    expect(pickerRows(MODELS_TWO_IDENTITIES, 'claude', 'account a opus', []).map(m => m.id)).toEqual(['claude-pinned/opus']);
   });
   it('formats relative time', () => {
     const now = Date.parse('2026-11-19T12:00:00Z');
@@ -81,5 +95,25 @@ describe('cleanErrorText', () => {
   it('leaves clean text alone and never returns an empty string', () => {
     expect(cleanErrorText(new Error('Network down'))).toBe('Network down');
     expect(cleanErrorText(new Error('- '))).toBe('Something went wrong.');
+  });
+});
+
+describe('usage formats', () => {
+  it('formats tokens, cost and duration', () => {
+    expect(formatTokens(950)).toBe('950');
+    expect(formatTokens(1234)).toBe('1.2k');
+    expect(formatTokens(12345)).toBe('12k');
+    expect(formatTokens(2_500_000)).toBe('2.5M');
+    expect(formatCost(0.0042)).toBe('$0.0042');
+    expect(formatCost(0.0123)).toBe('$0.012');
+    expect(formatCost(1.2849)).toBe('$1.28');
+    expect(formatDuration(840)).toBe('840 ms');
+    expect(formatDuration(12_000)).toBe('12 s');
+    expect(formatDuration(125_000)).toBe('2 min 5 s');
+  });
+  it('gives the context share only when the window is known', () => {
+    expect(contextShare(50, 200)).toBe(0.25);
+    expect(contextShare(500, 200)).toBe(1);
+    expect(contextShare(50)).toBeUndefined();
   });
 });

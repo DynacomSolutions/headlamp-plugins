@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { MODELS } from './chat.fixture';
+import { MODELS, MODELS_TWO_IDENTITIES } from './chat.fixture';
 import { ModelPicker } from './ModelPicker';
 
 function setup(over: Partial<React.ComponentProps<typeof ModelPicker>> = {}) {
@@ -83,14 +83,14 @@ describe('ModelPicker', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add Claude Opus to favourites' }));
     expect(props.onToggleFavourite).toHaveBeenCalledWith('claude/opus');
   });
-  it('searches across providers and groups by provider', () => {
+  it('searches across providers and identities, in one list with the same row shape', () => {
     setup();
     openPicker();
     fireEvent.change(search(), { target: { value: 'k' } });
-    // Kimi K2 matches by name and Claude by id? only models containing "k"
     const list = screen.getByRole('listbox');
     expect(within(list).getByText('Kimi K2')).toBeTruthy();
-    expect(within(list).getByText('Kimi')).toBeTruthy();
+    // The provider is named for screen readers on every row, not in a group heading.
+    expect(within(list).getByRole('option', { name: /Kimi K2, Kimi/ })).toBeTruthy();
     fireEvent.change(search(), { target: { value: 'zzz' } });
     expect(screen.getByText('No models found')).toBeTruthy();
   });
@@ -117,9 +117,39 @@ describe('ModelPicker', () => {
     expect(props.onChange).toHaveBeenCalledWith('claude/opus');
   });
   it('shows the provider empty state', () => {
-    setup({ models: [{ id: 'x/y', route: 'x', model: 'y', name: 'Y' }], value: '' });
+    setup({ models: [{ id: 'x/y', route: 'x', model: 'y', name: 'Y', provider: 'x', identity: 'Pool' }], value: '' });
     openPicker(/Choose model/);
     expect(screen.queryByText('No models are available for this provider.')).toBeNull();
     expect(screen.getAllByRole('option')).toHaveLength(1);
+  });
+
+  describe('identities', () => {
+    it('shows no identity badge when each provider has one identity', () => {
+      setup();
+      openPicker();
+      expect(screen.getByRole('tab', { name: 'Codex' })).toBeTruthy();
+      expect(document.querySelectorAll('[data-picker-rail] [aria-hidden="true"]:not([data-picker-indicator])').length).toBeLessThan(5);
+      expect(screen.queryByRole('tab', { name: /Claude · / })).toBeNull();
+    });
+    it('lists one rail entry per identity and names the identity when a provider has several', () => {
+      setup({ models: MODELS_TWO_IDENTITIES });
+      openPicker();
+      const names = screen.getAllByRole('tab').map(t => t.getAttribute('aria-label'));
+      expect(names).toEqual(['Favourites', 'Claude · Pool', 'Codex', 'Kimi', 'Claude · Account A']);
+      // The badge carries the initials of the identity.
+      expect(screen.getByRole('tab', { name: 'Claude · Account A' }).textContent).toBe('AA');
+    });
+    it('opens the list of the other identity and selects its model', () => {
+      const props = setup({ models: MODELS_TWO_IDENTITIES });
+      openPicker();
+      fireEvent.click(screen.getByRole('tab', { name: 'Claude · Account A' }));
+      expect(optionNames().join('|')).toContain('Claude Opus');
+      fireEvent.click(screen.getByRole('option', { name: /Claude Opus, Claude · Account A/ }));
+      expect(props.onChange).toHaveBeenCalledWith('claude-pinned/opus');
+    });
+    it('names the identity on the trigger when the provider has several', () => {
+      setup({ models: MODELS_TWO_IDENTITIES, value: 'claude-pinned/opus' });
+      expect(screen.getByRole('button', { name: 'Claude Opus, Account A' })).toBeTruthy();
+    });
   });
 });
