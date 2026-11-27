@@ -39,8 +39,10 @@ export interface AcpEndpointDeps {
 
 interface Connection {
   socket: WebSocket;
-  /** The ids of the prompt requests that have no answer written yet. */
-  prompts: Set<string | number>;
+  /** How many prompt requests have no answer written yet, by request id. A reused id counts once per request. */
+  prompts: Map<string | number, number>;
+  /** The total of `prompts`. */
+  pending: number;
   dispose(): void;
 }
 
@@ -201,7 +203,8 @@ export class AcpEndpoint {
     const { metrics, log, config } = this.deps;
     const conn: Connection = {
       socket,
-      prompts: new Set(),
+      prompts: new Map(),
+      pending: 0,
       dispose: () => undefined,
     };
     const { app, dispose } = createAcpApp({
@@ -275,12 +278,19 @@ export class AcpEndpoint {
           metrics.inc('headlamp_agent_acp_errors_total', { kind: 'protocol' });
         },
         onRequest: message => {
-          if (message.method === 'session/prompt' && (typeof message.id === 'string' || typeof message.id === 'number')) conn.prompts.add(message.id);
+          if (message.method === 'session/prompt' && (typeof message.id === 'string' || typeof message.id === 'number')) {
+            conn.prompts.set(message.id, (conn.prompts.get(message.id) ?? 0) + 1);
+            conn.pending++;
+          }
         },
         onAnswered: id => {
-          if (!conn.prompts.delete(id)) return;
+          const count = conn.prompts.get(id);
+          if (!count) return;
+          if (count === 1) conn.prompts.delete(id);
+          else conn.prompts.set(id, count - 1);
+          conn.pending--;
           // The drain closes the socket after the last answer is written, so the client keeps its stopReason.
-          if (this.draining && conn.prompts.size === 0) socket.close(1001, 'Agent is draining');
+          if (this.draining && conn.pending === 0) socket.close(1001, 'Agent is draining');
         },
       }),
     );
@@ -311,11 +321,11 @@ export class AcpEndpoint {
     const done: Array<Promise<void>> = [];
     for (const conn of this.connections) {
       done.push(new Promise<void>(resolve => conn.socket.once('close', () => resolve())));
-      if (conn.prompts.size === 0) conn.socket.close(1001, 'Agent is draining');
+      if (conn.pending === 0) conn.socket.close(1001, 'Agent is draining');
     }
     const timer = setTimeout(() => {
       for (const conn of this.connections) {
-        this.deps.log('warn', 'acp drain timed out: runs aborted', { prompts: conn.prompts.size });
+        this.deps.log('warn', 'acp drain timed out: runs aborted', { prompts: conn.pending });
         conn.dispose();
         conn.socket.close(1001, 'Agent is draining');
         // A client that does not answer the close frame is cut after a short wait.

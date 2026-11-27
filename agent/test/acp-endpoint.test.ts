@@ -434,6 +434,36 @@ describe('ACP over WebSocket', () => {
     await closing;
   });
 
+  it('keeps the socket open for a prompt in flight when a second request reuses its id', async () => {
+    await start();
+    let release!: () => void;
+    engine.hold = new Promise<void>(resolve => (release = resolve));
+    const rpc = await connect();
+    const { sessionId } = await init(rpc);
+    const other = (await rpc.call('session/new', { cwd: '/', mcpServers: [] })).result.sessionId as string;
+    const answers: any[] = [];
+    rpc.socket.on('message', data => {
+      const m = JSON.parse(data.toString());
+      if (m.id === 900) answers.push(m);
+    });
+    const send = (session: string) => rpc.socket.send(JSON.stringify({ jsonrpc: '2.0', id: 900, method: 'session/prompt', params: { sessionId: session, prompt: [{ type: 'text', text: 'NodeNotReady node=w1' }] } }));
+    send(sessionId);
+    await until(() => engine.started === 1);
+    const closing = server.close();
+    await new Promise(resolve => setTimeout(resolve, 50));
+    // The same id again: the drain refuses it. Its error answer must not close the socket.
+    send(other);
+    await until(() => answers.length === 1);
+    expect(answers[0].error.message).toContain('draining');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(rpc.socket.readyState).toBe(WebSocket.OPEN);
+    release();
+    await until(() => answers.length === 2);
+    expect(answers[1].result.stopReason).toBe('end_turn');
+    expect(await rpc.closed).toBe(1001);
+    await closing;
+  });
+
   it('aborts the runs that remain when the drain limit passes', async () => {
     await start(4, undefined, 100);
     engine.hold = new Promise<void>(() => undefined);
