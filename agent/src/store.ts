@@ -37,6 +37,22 @@ export interface UpdateOptions {
   exclusive?: boolean;
 }
 
+/** One agent setting as stored: its JSON value and who changed it last. */
+export interface StoredSetting {
+  value: unknown;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+/** One change of a setting. The store keeps every one of them. */
+export interface SettingAudit {
+  key: string;
+  at: string;
+  by: string;
+  old: unknown;
+  new: unknown;
+}
+
 export function summarize({ a2ui: _a2ui, evidence, ...d }: Diagnosis): DiagnosisSummary {
   return { ...d, evidenceCount: evidence.length };
 }
@@ -99,6 +115,16 @@ export abstract class DiagnosisStore {
    * False when another process holds it with a live lease. One pod then runs the reconcile loop, the others skip.
    */
   abstract acquireLease(name: string, ttlMs: number): Promise<boolean>;
+  /** A setting that all pods share, or undefined when nobody set it. Read from the store each time, so a change shows on every pod. */
+  abstract getSetting(key: string): Promise<StoredSetting | undefined>;
+  /**
+   * Write a setting and its audit entry in one step. `fallback` is the value that counted before the first write.
+   * The audit entry records the old value, the new value, who changed it and when. Nothing is written when the value does not change.
+   * Returns the entry, or undefined when the value was the same.
+   */
+  abstract setSetting(key: string, value: unknown, by: string, fallback: unknown): Promise<SettingAudit | undefined>;
+  /** The changes of a setting, newest first. */
+  abstract settingAudit(key: string, limit: number): Promise<SettingAudit[]>;
   /** Fingerprints of firing alerts that have an unresolved diagnosis: ids to mark as resolved. */
   protected abstract unresolvedIds(fingerprint: string): Promise<string[]>;
   /**
@@ -238,7 +264,7 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
   }
 
   async countStartedSince(sinceMs: number): Promise<number> {
-    return this.sorted().filter(d => d.source === 'webhook' && Date.parse(d.createdAt) >= sinceMs).length;
+    return this.sorted().filter(d => d.source === 'webhook' && d.status !== 'skipped' && Date.parse(d.createdAt) >= sinceMs).length;
   }
 
   async countOpenReruns(): Promise<number> {
@@ -260,6 +286,27 @@ export class MemoryDiagnosisStore extends DiagnosisStore {
   }
 
   private readonly leases = new Map<string, { owner: string; until: number }>();
+  private readonly settings = new Map<string, StoredSetting>();
+  private readonly audit: SettingAudit[] = [];
+
+  async getSetting(key: string): Promise<StoredSetting | undefined> {
+    return this.settings.get(key);
+  }
+
+  async setSetting(key: string, value: unknown, by: string, fallback: unknown): Promise<SettingAudit | undefined> {
+    // No await between the read and the write, so this is atomic in one process.
+    const old = this.settings.get(key)?.value ?? fallback;
+    if (JSON.stringify(old) === JSON.stringify(value)) return undefined;
+    const at = new Date(this.now()).toISOString();
+    this.settings.set(key, { value, updatedAt: at, updatedBy: by });
+    const entry = { key, at, by, old, new: value };
+    this.audit.push(entry);
+    return entry;
+  }
+
+  async settingAudit(key: string, limit: number): Promise<SettingAudit[]> {
+    return this.audit.filter(e => e.key === key).reverse().slice(0, limit);
+  }
 
   async acquireLease(name: string, ttlMs: number): Promise<boolean> {
     const held = this.leases.get(name);
@@ -323,11 +370,28 @@ const SCHEMA = [
     owner text NOT NULL,
     until timestamptz NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS agent_settings (
+    key text PRIMARY KEY,
+    value jsonb NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by text NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS agent_settings_audit (
+    id bigserial PRIMARY KEY,
+    key text NOT NULL,
+    at timestamptz NOT NULL,
+    by text NOT NULL,
+    old_value jsonb,
+    new_value jsonb
+  )`,
+  'CREATE INDEX IF NOT EXISTS agent_settings_audit_key_idx ON agent_settings_audit (key, id DESC)',
   ...PUSH_SCHEMA,
 ];
 
 /** Any 64-bit number. Two pods that start together take this advisory lock, so only one creates the schema. */
 const SCHEMA_LOCK = 7_483_920_115;
+/** Another 64-bit number, for the lock that orders changes of settings. */
+const SETTINGS_LOCK = 7_483_920_116;
 const SUMMARY_SQL = "(data - 'a2ui' - 'evidence') || jsonb_build_object('evidenceCount', jsonb_array_length(COALESCE(data->'evidence', '[]'::jsonb)))";
 
 /** The later of two ISO times. A missing or invalid one loses. */
@@ -446,7 +510,8 @@ export class PgDiagnosisStore extends DiagnosisStore {
   }
 
   async countStartedSince(sinceMs: number): Promise<number> {
-    const r = await this.db.query("SELECT count(*)::int AS n FROM diagnoses WHERE source = 'webhook' AND created_at >= $1", [new Date(sinceMs)]);
+    // A skipped incident started no diagnosis, so it does not count against the hourly limit.
+    const r = await this.db.query("SELECT count(*)::int AS n FROM diagnoses WHERE source = 'webhook' AND status <> 'skipped' AND created_at >= $1", [new Date(sinceMs)]);
     return r.rows[0].n as number;
   }
 
@@ -481,6 +546,35 @@ export class PgDiagnosisStore extends DiagnosisStore {
       [name, this.owner, new Date(now + ttlMs), new Date(now)],
     );
     return (r.rowCount ?? r.rows.length) > 0;
+  }
+
+  async getSetting(key: string): Promise<StoredSetting | undefined> {
+    const r = await this.db.query('SELECT value, updated_at, updated_by FROM agent_settings WHERE key = $1', [key]);
+    const row = r.rows[0];
+    return row ? { value: row.value, updatedAt: new Date(row.updated_at).toISOString(), updatedBy: row.updated_by as string } : undefined;
+  }
+
+  async setSetting(key: string, value: unknown, by: string, fallback: unknown): Promise<SettingAudit | undefined> {
+    return this.db.transaction(async tx => {
+      // One lock for all settings: two pods that change a setting at once do it one after the other, and the audit keeps both.
+      await tx.query('SELECT pg_advisory_xact_lock($1)', [SETTINGS_LOCK]);
+      const row = await tx.query('SELECT value FROM agent_settings WHERE key = $1', [key]);
+      const old = row.rows[0] ? row.rows[0].value : fallback;
+      if (JSON.stringify(old) === JSON.stringify(value)) return undefined;
+      const at = new Date(this.now());
+      await tx.query(
+        `INSERT INTO agent_settings (key, value, updated_at, updated_by) VALUES ($1, $2::jsonb, $3, $4)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, updated_by = EXCLUDED.updated_by`,
+        [key, JSON.stringify(value), at, by],
+      );
+      await tx.query('INSERT INTO agent_settings_audit (key, at, by, old_value, new_value) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb)', [key, at, by, JSON.stringify(old), JSON.stringify(value)]);
+      return { key, at: at.toISOString(), by, old, new: value };
+    });
+  }
+
+  async settingAudit(key: string, limit: number): Promise<SettingAudit[]> {
+    const r = await this.db.query('SELECT at, by, old_value, new_value FROM agent_settings_audit WHERE key = $1 ORDER BY id DESC LIMIT $2', [key, limit]);
+    return r.rows.map(row => ({ key, at: new Date(row.at).toISOString(), by: row.by as string, old: row.old_value, new: row.new_value }));
   }
 
   protected async unresolvedIds(fingerprint: string): Promise<string[]> {

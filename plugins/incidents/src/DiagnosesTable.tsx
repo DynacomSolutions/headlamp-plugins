@@ -19,6 +19,7 @@ const STATUS_COLOUR: Record<Status, 'default' | 'info' | 'success' | 'error'> = 
   running: 'info',
   done: 'success',
   failed: 'error',
+  skipped: 'default',
 };
 
 function shortTime(iso: string): string {
@@ -124,9 +125,10 @@ function Row({
   const chosen = !!selection && selection.ids.includes(d.id);
   const name = d.alertName || d.id;
   const rerunButton =
-    onRerun && d.status === 'failed' ? (
+    onRerun && (d.status === 'failed' || d.status === 'skipped') ? (
       <RerunButton
         key={d.status}
+        label={d.status === 'skipped' ? 'Investigate' : undefined}
         touch={touch}
         alertName={d.alertName || d.id}
         compact={compact}

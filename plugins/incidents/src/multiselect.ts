@@ -96,7 +96,7 @@ export const DEFAULT_LIST_QUERY: ListQuery = {
   sel: [],
 };
 
-const STATUSES: Status[] = ['queued', 'running', 'done', 'failed'];
+const STATUSES: Status[] = ['queued', 'running', 'done', 'failed', 'skipped'];
 const SEVERITIES = ['critical', 'warning', 'other'] as const;
 
 export function parseListQuery(search: string): ListQuery {

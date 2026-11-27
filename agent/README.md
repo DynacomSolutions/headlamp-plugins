@@ -200,6 +200,41 @@ It is the engine's system prompt, the MCP prompt and the MCP skill. The engine
 The diagnosis is kept as JSON with an A2UI surface (the cause, the evidence,
 the fixes, an evidence-trail tab bound to the data model, and the alert).
 
+### Automatic investigations (on or off)
+
+One switch for the whole agent: **Automatic investigations**. It is on by default. It lives in the
+shared store (`agent_settings`), so it survives a restart and holds for every replica. Each pod reads
+the store at each check, so a change shows on all pods at once.
+
+- **Off** means the agent never starts an investigation by itself. Three paths check the switch:
+  the alert webhook (`/api/v2/alerts`), the takeover scan that resumes diagnoses after a restart
+  (`path="resume"`), and a diagnosis that still waits in the queue when the switch turns off
+  (`path="queued"`). A diagnosis that is already running finishes.
+- The incident still opens, still sends the push notification and still shows in the list and the
+  incident event stream. Its status is `skipped`. It has `skipped: {reason, at}` with the marker
+  "Automatic investigation skipped: setting off". A skipped incident does not use the hourly limit.
+  A repeat of the alert joins it while the switch is off. Once the switch is on, a repeat starts the
+  investigation as usual. Skipped incidents do not start by themselves when the switch turns on again.
+- **Manual starts work when it is off**: `POST /api/diagnoses {"alert"}`, a chat, and
+  `POST /api/diagnoses/<id>/rerun`. A re-run is manual by definition. It also accepts a `skipped`
+  incident and clears the marker. A diagnosis that a person started (`source` not `webhook`, or
+  `rerunAt` set) resumes after a restart whatever the switch says.
+- Storage scans start no model diagnosis, so the switch has no storage path.
+- **API**: `GET /api/settings/automatic-investigations` answers
+  `{enabled, updatedAt?, updatedBy?, changes: [{kind, at, by, old, new}]}` (the last 10 changes).
+  `PUT` (or `POST`, because the service proxy maps POST to the same right as the other writes) with
+  `{"enabled": true|false}` changes it. A write has the same protection as the other writes (allowed
+  origin, JSON body). `by` is the `X-Remote-User` header, else `operator`. A write of the same value
+  changes nothing and adds no audit entry.
+- **Audit**: every change writes one row to `agent_settings_audit` (key, time, who, old, new) in the
+  same transaction as the change, and one `setting changed` line to the log.
+- **Metrics**: `headlamp_agent_automatic_investigations_enabled` (1 on, 0 off, read from the store at each
+  scrape) and `headlamp_agent_automatic_investigations_skipped_total{path}`.
+- **For MCP**: `src/settings.ts` exports `getAutomaticInvestigations(store)` and the class
+  `AutomaticInvestigations` (`get`, `set`, `audit`, `onChange`). Its `onChange` listener gets
+  `{kind: "settings.automatic_investigations.changed", at, by, old, new}` after each change made on that
+  pod. The agent has no incident event source yet, so the MCP worker wires this event in when it adds one.
+
 ### Where diagnoses start
 
 - **vmalert**: `-notifier.url=http://headlamp-agent.<namespace>.svc`. vmalert
@@ -227,8 +262,9 @@ the fixes, an evidence-trail tab bound to the data model, and the alert).
 - **Metrics**: `GET /metrics` (Prometheus text). `headlamp_agent_diagnoses_open{severity}`,
   `headlamp_agent_reconcile_runs_total{result}`, `headlamp_agent_reconcile_resolved_total`,
   `headlamp_agent_reconcile_folded_total`, `headlamp_agent_alert_repeats_merged_total`,
-  `headlamp_agent_resolve_notifications_total`, `headlamp_agent_reconcile_vmalert_alerts`
-  and `headlamp_agent_reconcile_last_success_timestamp_seconds`.
+  `headlamp_agent_resolve_notifications_total`, `headlamp_agent_reconcile_vmalert_alerts`,
+  `headlamp_agent_reconcile_last_success_timestamp_seconds`,
+  `headlamp_agent_automatic_investigations_enabled` and `headlamp_agent_automatic_investigations_skipped_total{path}`.
 - **API**: `POST /api/diagnoses {"alert": {...}}`.
 - **ACP**: `headlamp-agent acp` runs the engine in the host and takes its tools
   from the MCP server. It streams each tool call, the thinking and the report
@@ -247,8 +283,8 @@ current default model, not the model that failed. The record goes back to `queue
 clears and `attempts` starts at 1. The failed attempt moves to `previousAttempts`
 (`at`, `model`, `error`; the last 10 stay). `rerunAt` holds the time of the re-run. It works for
 resolved alerts too: the run uses the alert as it was, and a restart scan does not fail it
-because the alert is resolved. Answers: `202 {id, status, model}`; `404` unknown id; `409` when
-the status is not `failed`; `400` for an unknown model or body; `429` when
+because the alert is resolved. A `skipped` incident (see Automatic investigations) runs the same way. Answers: `202 {id, status, model}`; `404` unknown id; `409` when
+the status is not `failed` or `skipped`; `400` for an unknown model or body; `429` when
 `AGENT_MAX_CONCURRENT_RERUNS` re-runs are already queued or running; `503` without a model or while the pod stops. It has the same write protection as
 `POST /api/diagnoses`. A re-run by hand does not count against `AGENT_MAX_DIAGNOSES_PER_HOUR`,
 so it never takes a slot from the automatic diagnoses of new alerts. One diagnosis runs again once at

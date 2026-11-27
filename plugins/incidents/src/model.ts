@@ -42,7 +42,8 @@ export function backendUrl(s: Settings, path: string): string {
   }`;
 }
 
-export type Status = 'queued' | 'running' | 'done' | 'failed';
+/** `skipped`: the incident opened and no investigation started, because the setting "Automatic investigations" is off. */
+export type Status = 'queued' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface DiagnosisSummary {
   id: string;
@@ -76,7 +77,7 @@ export interface DiagnosisDetail {
   planFactIds: string[];
 }
 
-const STATUSES: Status[] = ['queued', 'running', 'done', 'failed'];
+const STATUSES: Status[] = ['queued', 'running', 'done', 'failed', 'skipped'];
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const rec = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
@@ -97,7 +98,7 @@ export function parseList(json: unknown): DiagnosisSummary[] {
         source: str(d.source),
         alertName: str(alert.name),
         severity: str(alert.severity),
-        likelyCause: str(result.likelyCause) || str(d.error),
+        likelyCause: str(result.likelyCause) || str(d.error) || str(rec(d.skipped).reason),
         confidence: str(result.confidence),
         resolved: !!d.resolvedAt,
         fires: typeof d.fires === 'number' && d.fires > 1 ? Math.floor(d.fires) : 1,
@@ -207,7 +208,7 @@ export function summariseDiagnoses(list: DiagnosisSummary[]): IncidentSummaryCou
     total: list.length,
     bySeverity: { critical: 0, warning: 0, other: 0 },
     lower: [],
-    byStatus: { queued: 0, running: 0, done: 0, failed: 0 },
+    byStatus: { queued: 0, running: 0, done: 0, failed: 0, skipped: 0 },
     resolved: 0,
   };
   const lower = new Map<string, number>();
@@ -223,4 +224,22 @@ export function summariseDiagnoses(list: DiagnosisSummary[]): IncidentSummaryCou
     .map(([name, n]) => ({ name, n }))
     .sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
   return counts;
+}
+
+/** The setting "Automatic investigations" as the agent reports it. `updatedAt` and `updatedBy` are absent until the first change. */
+export interface AutomaticInvestigations {
+  enabled: boolean;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+/** The setting from an agent reply, or null when the reply has no switch (an older agent). */
+export function parseAutomaticInvestigations(json: unknown): AutomaticInvestigations | null {
+  const d = rec(json);
+  if (typeof d.enabled !== 'boolean') return null;
+  return {
+    enabled: d.enabled,
+    updatedAt: str(d.updatedAt) || undefined,
+    updatedBy: str(d.updatedBy) || undefined,
+  };
 }

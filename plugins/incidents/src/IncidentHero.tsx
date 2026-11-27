@@ -76,7 +76,8 @@ export function IncidentHero({ counts }: { counts: IncidentSummaryCounts }): JSX
       </Box>
       <Box sx={{ px: 0.75, pb: 1, color: 'text.secondary', fontSize: 13 }}>
         {counts.total} {counts.total === 1 ? 'incident' : 'incidents'}. {s.queued} queued,{' '}
-        {s.running} running, {s.done} done, {s.failed} failed.
+        {s.running} running, {s.done} done, {s.failed} failed
+        {s.skipped > 0 ? `, ${s.skipped} not investigated` : ''}.
       </Box>
     </Box>
   );

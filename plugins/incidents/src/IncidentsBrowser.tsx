@@ -53,6 +53,7 @@ const STATUS_OPTIONS = [
   { value: 'running', label: 'Running' },
   { value: 'done', label: 'Analysed' },
   { value: 'failed', label: 'Analysis failed' },
+  { value: 'skipped', label: 'Not investigated' },
 ];
 const SEVERITY_OPTIONS = [
   { value: 'all', label: 'All severities' },

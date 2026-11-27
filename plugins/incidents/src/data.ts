@@ -2,11 +2,13 @@ import { ApiProxy, ConfigStore } from '@kinvolk/headlamp-plugin/lib';
 import React from 'react';
 import { cleanErrorText } from './chat-model';
 import {
+  AutomaticInvestigations,
   backendUrl,
   CONFIG_KEY,
   DiagnosisDetail,
   DiagnosisSummary,
   isActive,
+  parseAutomaticInvestigations,
   parseDetail,
   parseList,
   parseTotal,
@@ -167,4 +169,45 @@ export async function rerunDiagnosis(s: Settings, id: string): Promise<void> {
   } catch (e) {
     throw new Error(rerunErrorText(e));
   }
+}
+
+const AUTOMATIC_PATH = '/api/settings/automatic-investigations';
+
+/** The setting on the agent. An agent without the setting makes an error, so the page does not show a false state. */
+export async function fetchAutomaticInvestigations(s: Settings): Promise<AutomaticInvestigations> {
+  const state = parseAutomaticInvestigations(await ApiProxy.request(backendUrl(s, AUTOMATIC_PATH)));
+  if (!state) throw new Error('The agent does not report this setting. Update the agent.');
+  return state;
+}
+
+/**
+ * Sets the switch for all pods and all users. The agent accepts PUT and POST. The plugin sends POST,
+ * which the service proxy maps to the same right as the other writes of the plugin.
+ */
+export async function saveAutomaticInvestigations(
+  s: Settings,
+  enabled: boolean
+): Promise<AutomaticInvestigations> {
+  try {
+    const state = parseAutomaticInvestigations(
+      await ApiProxy.request(backendUrl(s, AUTOMATIC_PATH), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      })
+    );
+    if (!state) throw new Error('The agent did not return the setting.');
+    return state;
+  } catch (e) {
+    throw new Error(rerunErrorText(e));
+  }
+}
+
+/** The switch, read again every 30 s so a change by another person shows. */
+export function useAutomaticInvestigations(s: Settings): Polled<AutomaticInvestigations> {
+  return usePolled(
+    backendUrl(s, AUTOMATIC_PATH),
+    () => fetchAutomaticInvestigations(s),
+    () => 30000
+  );
 }

@@ -248,6 +248,7 @@ export const incidentListWidget: WidgetDefinition<IncidentListConfig> = {
         { value: 'running', label: 'Running' },
         { value: 'done', label: 'Done' },
         { value: 'failed', label: 'Failed' },
+        { value: 'skipped', label: 'Not investigated' },
       ],
     },
     {

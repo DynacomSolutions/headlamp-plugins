@@ -8,7 +8,7 @@ import { ChatError, ChatService, MODEL_PICK_HEADER } from './agent/chat.js';
 import { ChatStore } from './chats.js';
 import { diagnose } from './agent/engine.js';
 import { ModelCatalogue, UnknownModelError } from './agent/catalogue.js';
-import { alertSchema, renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis } from './agent/report.js';
+import { alertSchema, renderDiagnosis, resultSchema, sanitizeResult, SKIPPED_REASON, type Alert, type Diagnosis } from './agent/report.js';
 import { mask, maskText } from './mask.js';
 import { mcpHandler } from './mcp.js';
 import { Runtime, serviceGet } from './runtime.js';
@@ -21,6 +21,7 @@ import { PushError, PushService } from './push/service.js';
 import { Metrics } from './metrics.js';
 import { storageHttp } from './storage/http.js';
 import { Reconciler, readVmalert } from './reconcile.js';
+import { AutomaticInvestigations } from './settings.js';
 
 const MAX_BODY = 1024 * 1024;
 
@@ -75,6 +76,21 @@ export class RerunError extends Error {
   }
 }
 
+/** The paths that start an investigation by themselves. The metric counts a skip by path. */
+export type AutomaticPath = 'webhook' | 'resume' | 'queued';
+
+export interface RunnerOptions {
+  /** True when the setting "Automatic investigations" is on. Read each time. Default: always on. */
+  automatic?: () => Promise<boolean>;
+  /** Called once when an incident opened, or an open one changed, to `skipped`. Must not throw. */
+  onSkipped?: (d: Diagnosis, path: AutomaticPath) => void;
+}
+
+/** A diagnosis that no person asked for: the alert webhook made it and no one ran it again by hand. */
+export function isAutomatic(d: Pick<Diagnosis, 'source' | 'rerunAt'>): boolean {
+  return d.source === 'webhook' && d.rerunAt === undefined;
+}
+
 /** Runs diagnoses one at a time, in arrival order, so a burst of alerts cannot overload the model quota. */
 export class Runner {
   private chain: Promise<void> = Promise.resolve();
@@ -95,7 +111,43 @@ export class Runner {
     readonly catalogue: ModelCatalogue = new ModelCatalogue(config.models),
     /** Called once when a diagnosis that this process ran has reached `done`. Must not throw. */
     private readonly onDone: (d: Diagnosis) => void = () => {},
+    private readonly options: RunnerOptions = {},
   ) {}
+
+  private automatic(): Promise<boolean> {
+    return this.options.automatic ? this.options.automatic() : Promise.resolve(true);
+  }
+
+  /** The record of an incident whose automatic investigation did not start. The incident stays open and a person can run it. */
+  private skippedRecord(d: Diagnosis): Diagnosis {
+    const skipped = { ...d, status: 'skipped' as const, error: undefined, finishedAt: undefined, result: undefined, owner: this.store.owner, leaseUntil: undefined, skipped: { reason: SKIPPED_REASON, at: new Date(this.store.now()).toISOString() } };
+    return { ...skipped, a2ui: renderDiagnosis(skipped) };
+  }
+
+  /**
+   * Open an incident with no investigation, because the setting is off. It has the same id as an investigation of this alert would have.
+   * Returns the stored record, or the existing one when this alert has a record already.
+   */
+  async openSkipped(alert: Alert, source: Diagnosis['source']): Promise<Diagnosis> {
+    const id = diagnosisIdFor(alert.fingerprint, alert.startsAt);
+    const base: Diagnosis = { id, createdAt: new Date(this.store.now()).toISOString(), status: 'queued', source, host: 'cluster', alert: mask(alert), evidence: [], toolCalls: 0, model: '', a2ui: [] };
+    const record = this.skippedRecord(base);
+    if (!(await this.store.putNew(record))) return (await this.store.get(id)) ?? record;
+    this.options.onSkipped?.(record, 'webhook');
+    return record;
+  }
+
+  /** Turn an automatic record that is queued or running here into a skipped incident. False when it is not that any more. */
+  private async skipStored(id: string, path: AutomaticPath): Promise<boolean> {
+    let stored: Diagnosis | undefined;
+    const ok = await this.store.update(id, d => {
+      if (!d || (d.status !== 'queued' && d.status !== 'running') || !isAutomatic(d)) return undefined;
+      stored = this.skippedRecord(d);
+      return stored;
+    }, { force: true });
+    if (ok && stored) this.options.onSkipped?.(stored, path);
+    return ok;
+  }
 
   get configured(): boolean {
     return modelConfigured(this.config.models);
@@ -121,13 +173,21 @@ export class Runner {
     if (this.draining) return;
     try {
       const stale = (await this.store.stale()).filter(d => !this.held.has(d.id));
+      // Read once for the whole scan. A person can still run a skipped incident by hand.
+      const automatic = stale.length > 0 ? await this.automatic() : true;
       for (const listed of stale) {
         if (this.draining) break;
         try {
           let taken: Diagnosis | undefined;
+          let skippedNow: Diagnosis | undefined;
           // Decided on the record as stored now: the other pod may have renewed the lease meanwhile.
           await this.store.update(listed.id, d => {
             if (!d || (d.status !== 'queued' && d.status !== 'running') || !this.store.expired(d)) return undefined;
+            // The setting is off: an automatic diagnosis does not start again. The incident stays open as skipped.
+            if (!automatic && isAutomatic(d)) {
+              skippedNow = this.skippedRecord(d);
+              return skippedNow;
+            }
             const attempts = d.attempts ?? 1;
             const fail = (error: string): Diagnosis => {
               const failed = { ...d, status: 'failed' as const, error, owner: this.store.owner, leaseUntil: undefined };
@@ -142,6 +202,9 @@ export class Runner {
           if (taken) {
             await this.resume(taken);
             log('info', 'diagnosis taken over', { id: listed.id, alert: listed.alert.name });
+          } else if (skippedNow) {
+            this.options.onSkipped?.(skippedNow, 'resume');
+            log('info', 'automatic investigation skipped: setting off', { id: listed.id, alert: listed.alert.name, path: 'resume' });
           }
         } catch (error) {
           log('error', 'takeover failed', { id: listed.id, error: String(error) });
@@ -207,7 +270,8 @@ export class Runner {
    * Run a failed diagnosis again under its own id. `model` is a model id (`<route>/<model>`) the caller has checked.
    * Without `model` the run uses the default order.
    * The failed attempt moves to `previousAttempts`, the error clears and the attempts count starts again.
-   * Throws `RerunError` when no record has this id or when it is not failed.
+   * A skipped incident (the setting was off) runs the same way. This is a manual start, so it runs whatever the setting is.
+   * Throws `RerunError` when no record has this id or when it is not failed or skipped.
    */
   async rerun(id: string, model?: string): Promise<Diagnosis> {
     const current = await this.store.get(id);
@@ -215,14 +279,14 @@ export class Runner {
     let moved: Diagnosis | undefined;
     // Decided on the record as stored now: two requests for one id start it once.
     const ok = await this.store.update(id, d => {
-      if (!d || d.status !== 'failed') return undefined;
-      const previous = [...(d.previousAttempts ?? []), { at: d.finishedAt ?? d.createdAt, model: d.model, error: d.error ?? '' }].slice(-MAX_PREVIOUS);
-      moved = { ...d, status: 'queued', error: undefined, finishedAt: undefined, model: model ?? this.catalogue.currentDefault(), modelPinned: model !== undefined, attempts: 1, previousAttempts: previous, rerunAt: new Date().toISOString(), owner: this.store.owner, leaseUntil: this.store.lease() };
+      if (!d || (d.status !== 'failed' && d.status !== 'skipped')) return undefined;
+      const previous = d.status === 'failed' ? [...(d.previousAttempts ?? []), { at: d.finishedAt ?? d.createdAt, model: d.model, error: d.error ?? '' }].slice(-MAX_PREVIOUS) : d.previousAttempts;
+      moved = { ...d, status: 'queued', error: undefined, skipped: undefined, finishedAt: undefined, model: model ?? this.catalogue.currentDefault(), modelPinned: model !== undefined, attempts: 1, previousAttempts: previous, rerunAt: new Date().toISOString(), owner: this.store.owner, leaseUntil: this.store.lease() };
       return moved;
     });
     if (!ok || !moved) {
       const now = await this.store.get(id);
-      throw new RerunError(now ? 409 : 404, now ? `Only a failed diagnosis can run again. This one is ${now.status}.` : 'Diagnosis not found');
+      throw new RerunError(now ? 409 : 404, now ? `Only a failed or skipped diagnosis can run again. This one is ${now.status}.` : 'Diagnosis not found');
     }
     return this.enqueue(moved.alert, moved.source, id, model);
   }
@@ -275,6 +339,11 @@ export class Runner {
         if (this.draining) return;
         const fresh = await this.store.get(queued.id);
         if (!fresh || fresh.owner !== this.store.owner || this.store.expired(fresh)) return;
+        // The setting turned off while this one waited in the queue: it does not start.
+        if (isAutomatic(fresh) && !(await this.automatic())) {
+          if (await this.skipStored(queued.id, 'queued')) log('info', 'automatic investigation skipped: setting off', { id: queued.id, alert: alert.name, path: 'queued' });
+          return;
+        }
         this.running = queued.id;
         const abort = new AbortController();
         // Progress writes run one after another, so an older step never overwrites a newer one.
@@ -382,6 +451,7 @@ const launchSchema = z
   })
   .strict();
 const decisionSchema = z.object({ by: z.string().max(80).optional() }).strict();
+const automaticInvestigationsSchema = z.object({ enabled: z.boolean(), by: z.string().max(80).optional() }).strict();
 const launchMessageSchema = z.object({ text: z.string().min(1).max(8000) }).strict();
 
 /**
@@ -427,8 +497,16 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     now: deps.now,
     log: (level, message, extra) => log(level, message, extra),
   });
+  const metrics = new Metrics();
+  const automatic = new AutomaticInvestigations(store, log);
   // A push is best effort and never holds up the diagnosis or the answer.
-  const runner = new Runner(runtime, store, config, undefined, d => void push.notifyDiagnosis(d));
+  const runner = new Runner(runtime, store, config, undefined, d => void push.notifyDiagnosis(d), {
+    automatic: () => automatic.enabled(),
+    onSkipped: (d, path) => {
+      metrics.inc('headlamp_agent_automatic_investigations_skipped_total', { path });
+      void push.notifyIncident(d);
+    },
+  });
   const chats = new ChatService({
     store: new ChatStore(config.dataDir),
     diagnoses: store,
@@ -453,7 +531,6 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   let ready = false;
   let draining = false;
   let rerunTurn: Promise<void> = Promise.resolve();
-  const metrics = new Metrics();
   runner.catalogue.attachMetrics(metrics);
   const storage = await storageHttp({
     config, metrics, push, readBody, send, env: deps.storageEnv, now: deps.now,
@@ -487,6 +564,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       if (path === '/metrics' && req.method === 'GET') {
         await storage.metrics();
         runner.catalogue.refreshMetrics();
+        metrics.set('headlamp_agent_automatic_investigations_enabled', {}, (await automatic.enabled()) ? 1 : 0);
         metrics.clear('headlamp_agent_diagnoses_open');
         const counts = new Map<string, number>([['critical', 0], ['warning', 0], ['info', 0]]);
         for (const d of await store.openSummaries()) counts.set(d.alert.severity || 'none', (counts.get(d.alert.severity || 'none') ?? 0) + 1);
@@ -517,8 +595,17 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           if ((await store.findByFingerprint(alert.fingerprint, alert.startsAt)) || (await store.get(diagnosisIdFor(alert.fingerprint, alert.startsAt)))) continue;
           // The same alert fired again (vmalert restarted, or the alert flapped): it joins the open diagnosis. A failed one does not take it in, so a new run can retry.
           const open = await store.findOpenByFingerprint(alert.fingerprint);
-          if (open && open.status !== 'failed') {
+          // A skipped incident takes the repeat while the setting is off. Once it is on, the repeat starts the investigation.
+          const switchedOn = await automatic.enabled();
+          if (open && open.status !== 'failed' && (open.status !== 'skipped' || !switchedOn)) {
             if (await store.attachFire(open.id, alert.startsAt)) metrics.inc('headlamp_agent_alert_repeats_merged_total');
+            continue;
+          }
+          if (!switchedOn) {
+            // The incident opens and notifies. Only the investigation does not start.
+            if (!gate.eligible(alert).ok) continue;
+            const d = await runner.openSkipped(alert, 'webhook');
+            log('info', 'automatic investigation skipped: setting off', { id: d.id, alert: alert.name, path: 'webhook' });
             continue;
           }
           const verdict = await gate.wants(alert);
@@ -601,7 +688,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
         const known = await store.get(id);
         if (!known) throw new HttpError(404, 'Diagnosis not found');
-        if (known.status !== 'failed') throw new HttpError(409, `Only a failed diagnosis can run again. This one is ${known.status}.`);
+        if (known.status !== 'failed' && known.status !== 'skipped') throw new HttpError(409, `Only a failed or skipped diagnosis can run again. This one is ${known.status}.`);
         if (!runner.configured) throw new HttpError(503, 'No model is configured for in-cluster diagnosis');
         if (runner.stopping) throw new HttpError(503, 'The agent is restarting. Try again in a moment.');
         // The current default model, unless the body names a valid one. The failed model is not reused.
@@ -686,6 +773,18 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         await store.put(d);
         if (d.status === 'done') void push.notifyDiagnosis(d);
         return send(res, 201, { id: d.id });
+      }
+      if (path === '/api/settings/automatic-investigations') {
+        if (req.method === 'GET') return send(res, 200, { ...(await automatic.get()), changes: await automatic.audit(10) });
+        // PUT is the contract. POST does the same, because the service proxy maps POST to the `create` right that the other writes use.
+        if (req.method === 'PUT' || req.method === 'POST') {
+          guardWrite(req, config);
+          const body = await chatBody(req, automaticInvestigationsSchema);
+          const { state, changed } = await automatic.set(body.enabled, operator(req, body.by));
+          return send(res, 200, { ...state, changed, changes: await automatic.audit(10) });
+        }
+        res.setHeader('allow', 'GET, PUT, POST');
+        return send(res, 405, { error: 'method not allowed' });
       }
       if (path === '/api/push' || path.startsWith('/api/push/')) {
         const parts = path.split('/').slice(3).map(decodeURIComponent);
