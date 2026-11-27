@@ -170,8 +170,7 @@ layout change. The Incidents pages are unchanged.
 The sidebar entry **Notifications** (`/incidents/notifications`) turns push notifications on for
 this device. It is a subscription of its own, with its own service worker (`sw.js`, served at
 `/plugins/incidents/sw.js`) and its own key from the agent. It does not change the Alerting plugin.
-Every notification has the same badge, the Headlamp logo in white on transparent (`badge.png`, from
-`shared/push`). Without it Android shows a plain square in the status bar.
+Notifications set no badge, so Android shows the app icon in the status bar, because a badge showed as a plain square on an installed web app.
 
 - **Diagnosis ready** sends the alert name, its severity and the likely cause. A tap opens the
   incident. A filter limits it to Critical, Warning and Other (default: Critical and Warning).

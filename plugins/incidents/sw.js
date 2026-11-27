@@ -28,8 +28,6 @@ self.addEventListener('push', event => {
     body: typeof data.body === 'string' ? data.body : '',
     tag: typeof data.tag === 'string' && data.tag ? data.tag : 'incident',
     renotify: true,
-    // White logo on transparent. Without it Android shows a plain square in the status bar.
-    badge: new URL('badge.png', self.location.href).href,
     data: { url: typeof data.url === 'string' && data.url ? data.url : '/' },
   };
   event.waitUntil(
