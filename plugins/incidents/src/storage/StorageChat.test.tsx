@@ -183,13 +183,18 @@ describe('the storage investigation in the Chat tab', () => {
     expect(screen.getByRole('button', { name: /Dry run all eligible items/ })).toBeTruthy();
   });
 
-  it('uses the one composer: the model picker, the context meter and the same message box', async () => {
+  it('uses the one composer, with no model picker and no context meter, because the storage engine calls no model', async () => {
     renderAt(chatUrl(CHAT, { drive: DRIVE }));
     await screen.findByText('What is using /data?');
     expect(screen.getAllByLabelText('Message')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /Choose model|Grok|Model|a\/b/ })).toBeTruthy();
-    expect(screen.queryByText('Storage evidence')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
+    // The model and the context belong to a chat with an agent: this chat has neither.
+    expect(screen.queryByRole('button', { name: /Choose model|Grok|Model|a\/b/ })).toBeNull();
+    expect(document.querySelector('[data-context-meter]')).toBeNull();
+    expect(document.querySelector('[data-evidence-note]')!.textContent).toBe('Answers come from scan evidence');
     expect(screen.queryByLabelText('Drive context')).toBeNull();
+    // It makes no request for the model list.
+    expect(calls.some(c => c.url.includes('/api/models'))).toBe(false);
   });
 
   it('shows the storage context as a row of chips with a drive menu', async () => {

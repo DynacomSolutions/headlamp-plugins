@@ -19,7 +19,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import React from 'react';
-import { ChatMarkdown } from './chat-markdown';
+import { ChatMarkdown, useCopy } from './chat-markdown';
 import {
   ChatMessage,
   contextShare,
@@ -692,16 +692,8 @@ export function UsageLine({
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = React.useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // No clipboard access: nothing to confirm.
-    }
-  };
+  const [copied, copyText] = useCopy();
+  const copy = () => copyText(text);
   return (
     <Tooltip title={copied ? 'Copied' : 'Copy the answer'}>
       <IconButton size="small" aria-label="Copy the answer" onClick={copy} sx={{ color: 'text.secondary', mr: 0.25 }}>

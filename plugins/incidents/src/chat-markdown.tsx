@@ -18,17 +18,27 @@ import { safeUrl } from './a2ui/Renderer';
  * Raw HTML is not enabled (no rehype-raw), so HTML in an answer shows as text.
  */
 
-function CodeBlock({ code }: { code: string }) {
+/** Copies text to the clipboard. `copied` is true for a moment after it. The timer stops when the component leaves. */
+export function useCopy(): [boolean, (text: string) => Promise<void>] {
   const [copied, setCopied] = React.useState(false);
-  const copy = async () => {
+  const timer = React.useRef<ReturnType<typeof setTimeout>>();
+  React.useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = async (text: string) => {
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(text);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
     } catch {
       // Clipboard not available: leave the button unchanged.
     }
   };
+  return [copied, copy];
+}
+
+function CodeBlock({ code }: { code: string }) {
+  const [copied, copyText] = useCopy();
+  const copy = () => copyText(code);
   return (
     <Box
       sx={theme => ({

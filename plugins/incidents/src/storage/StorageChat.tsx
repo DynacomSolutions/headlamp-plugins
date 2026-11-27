@@ -19,13 +19,12 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, useHistory, useLocation } from 'react-router-dom';
 import { A2uiRenderer } from '../a2ui';
-import { useChats, useFavourites, useModels } from '../chat-data';
+import { useChats } from '../chat-data';
 import { ChatSummary, cleanErrorText } from '../chat-model';
-import { CardSection, chatButtonSx, Composer, ContextMeter, MessageView } from '../ChatParts';
+import { CardSection, chatButtonSx, Composer, MessageView } from '../ChatParts';
 import { ChatShell, useStickToBottom } from '../ChatShell';
 import { useSettings } from '../data';
 import { Settings } from '../model';
-import { ModelPicker } from '../ModelPicker';
 import { chatUrl, storageDriveUrl, storageUrl } from '../routes';
 import { size } from './Capacity';
 import { CleanupPlan, Receipts } from './CleanupPlan';
@@ -355,20 +354,12 @@ export function StorageChatView({
     chat.refresh();
     refreshIncident();
   });
-  // The same model and identity picker, favourites and context meter as every chat.
-  const models = useModels(settings);
-  const [favourites, toggleFavourite] = useFavourites();
-  const [picked, setPicked] = React.useState<string | null>(null);
-  const model = picked ?? models.data?.default ?? '';
-  const modelOption = models.data?.models.find(m => m.id === model);
-  const pickedOption = picked ? models.data?.models.find(m => m.id === picked) : undefined;
+  // The storage engine reads scan evidence and calls no model, so this chat has no model picker and no context meter.
   const send = (text: string) =>
     run(() =>
       postStorage(settings, `${chatPath(chatId)}/messages`, {
         text,
         ...(drive ? { driveId: drive.id } : {}),
-        ...(picked ? { model: picked } : {}),
-        ...(pickedOption?.identityListed ? { identity: pickedOption.route } : {}),
       })
     );
   const messages = chat.data?.messages ?? [];
@@ -485,16 +476,16 @@ export function StorageChatView({
             disabled={!chat.data || busy}
             onSend={send}
             picker={
-              <ModelPicker
-                models={models.data?.models ?? []}
-                value={model}
-                onChange={setPicked}
-                favourites={favourites}
-                onToggleFavourite={toggleFavourite}
-                disabled={busy}
-              />
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                data-evidence-note
+                sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, px: 1, py: 0.5 }}
+              >
+                <Icon icon="mdi:information-outline" width={14} height={14} />
+                Answers come from scan evidence
+              </Typography>
             }
-            meter={<ContextMeter used={0} window={modelOption?.contextWindow} />}
             placeholder="Ask what is using space or what changed"
           />
         </>

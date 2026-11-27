@@ -4,6 +4,7 @@ import {
   Composer,
   ContextMeter,
   latestContext,
+  MessageView,
   Reasoning,
   StreamedAnswer,
   ToolCard,
@@ -203,5 +204,23 @@ describe('Composer', () => {
     render(<Composer {...props} running={false} meter={<span>meter</span>} />);
     expect(screen.getByText('picker')).toBeTruthy();
     expect(screen.getByText('meter')).toBeTruthy();
+  });
+});
+
+describe('the copy button', () => {
+  it('stops its timer when it leaves, so it never sets state after unmount', async () => {
+    vi.useFakeTimers();
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { unmount } = render(
+      <MessageView m={{ id: 'm', role: 'assistant', text: 'An answer.', createdAt: new Date().toISOString(), status: 'done', steps: [] } as any} />
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Copy the answer' }));
+    });
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    spy.mockRestore();
   });
 });
