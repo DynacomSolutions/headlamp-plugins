@@ -12,6 +12,17 @@ import { registerContract, type ContractDeps } from './mcp/contract.js';
 export const SERVER_NAME = 'headlamp-agent';
 export const DIAGNOSIS_URI = 'a2ui://headlamp-agent/diagnoses/{id}';
 
+/**
+ * The scope that an existing registry tool needs (contract sections 4.2 and 5.6). Tools that read incident, agent-launch or
+ * storage data do not belong to `registry:read`, so an anonymous caller does not get them.
+ */
+export function registryToolScope(tool: string, provider: string): 'registry:read' | 'incidents:read' | 'agent:investigate' | 'storage:read' {
+  if (provider === 'diagnoses') return 'incidents:read';
+  if (provider === 'launches') return 'agent:investigate';
+  if (tool.startsWith('disk_health')) return 'storage:read';
+  return 'registry:read';
+}
+
 const INSTRUCTIONS = `Read-only view of a Kubernetes cluster and everything its Headlamp plugins see: resources, events, pod logs, metrics (PromQL), vmalert alerts and rules, SMART disk health, disk performance and capacity, node temperatures, uptime probes, component updates, sites and the alerting backend's target state. Nothing here can change the cluster, and secrets are masked.
 Incident tools (list_incidents, get_incident, acknowledge_incident and the rest) and the headlamp:// resources follow the contract in docs/mcp-contract.md. With a bearer token and a session, subscribe to headlamp://incidents or headlamp://events to get notifications without polling.
 Start an investigation with cluster_overview or list_alerts. To diagnose an alert, use the diagnose_incident prompt or the incident-diagnosis skill, and check list_diagnoses first: the cluster's own agent may already have diagnosed it.
@@ -40,7 +51,7 @@ export async function mcpBuilder(runtime: Runtime, store: DiagnosisStore, versio
           inputSchema: tool.input,
           outputSchema: tool.output,
           annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-          _meta: { ui, 'headlamp-agent/provider': provider.name },
+          _meta: { ui, 'headlamp-agent/provider': provider.name, 'headlamp-agent/scope': registryToolScope(tool.name, provider.name) },
         },
         async (args: unknown) => {
           contract.metrics.toolCall(tool.name, who.client);
@@ -58,7 +69,7 @@ export async function mcpBuilder(runtime: Runtime, store: DiagnosisStore, versio
           };
         },
       );
-      if (!who.scopes.has('registry:read')) registered.disable();
+      if (!who.scopes.has(registryToolScope(tool.name, provider.name))) registered.disable();
     }
 
     server.registerResource(
@@ -71,9 +82,10 @@ export async function mcpBuilder(runtime: Runtime, store: DiagnosisStore, versio
     const diagnosisSurface = server.registerResource(
       'diagnosis-surface',
       new ResourceTemplate(DIAGNOSIS_URI, {
-        list: async () => ({
+        // The SDK calls this also for a disabled template: no callback for a caller without `incidents:read`.
+        list: who.scopes.has('incidents:read') ? async () => ({
           resources: (await store.page({ limit: 50 })).diagnoses.map(d => ({ uri: DIAGNOSIS_URI.replace('{id}', d.id), name: `${d.alert.name} ${d.createdAt}`, mimeType: A2UI_MIME })),
-        }),
+        }) : undefined,
       }),
       { title: 'Diagnosis as an A2UI surface', description: 'A self-contained A2UI v1.0 surface for one diagnosis.', mimeType: A2UI_MIME },
       async (uri, variables) => {
