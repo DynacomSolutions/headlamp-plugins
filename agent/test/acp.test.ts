@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { alertFromPrompt, userText } from '../src/acp.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { alertFromPrompt, publish, userText } from '../src/acp.js';
+import type { Diagnosis } from '../src/agent/report.js';
 
 const T3 = `<t3_code_instructions>
 ## T3 Code interaction mode: Default
@@ -45,5 +46,23 @@ describe('ACP prompt parsing', () => {
     const json = JSON.stringify([{ labels: { alertname: 'X', severity: 'critical', pod: 'p' }, startsAt: '2026-11-18T00:00:00Z' }]);
     expect(alertFromPrompt(`${T3}\n${json}`)?.labels.pod).toBe('p');
     expect(alertFromPrompt(`${T3}\ndiagnose`)).toBeUndefined();
+  });
+});
+
+describe('ACP stdio publish', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('cuts a long run to the limits of the publish schema before it posts', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: 'abc' }), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const evidence = Array.from({ length: 80 }, (_, i) => ({ id: `t${i}`, tool: 'x', reason: 'r', summary: 'y'.repeat(5000), ok: true }));
+    const d = { id: '11111111-1111-4111-8111-111111111111', createdAt: '2026-11-28T00:00:00.000Z', status: 'done', source: 'acp', alert: { name: 'A', severity: 'warning', labels: {}, annotations: {}, startsAt: '', fingerprint: '' }, evidence, toolCalls: 2000, model: 'm'.repeat(300), a2ui: [] } as unknown as Diagnosis;
+    expect(await publish('http://127.0.0.1:1/mcp', {}, d)).toBe('abc');
+    const call = fetchMock.mock.calls[0] as unknown as [string, { body: string }];
+    const body = JSON.parse(call[1].body).diagnosis;
+    expect(body.evidence).toHaveLength(60);
+    expect(body.evidence[0].summary.length).toBeLessThanOrEqual(2000);
+    expect(body.toolCalls).toBe(1000);
+    expect(body.model.length).toBeLessThanOrEqual(120);
   });
 });

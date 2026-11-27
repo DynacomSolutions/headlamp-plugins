@@ -42,6 +42,11 @@ const META: Record<string, Meta> = {
   headlamp_agent_acp_connections_active: { type: 'gauge', help: 'Open ACP WebSocket connections of this pod.' },
   headlamp_agent_mcp_event_log_events: { type: 'gauge', help: 'Rows in the MCP event log.' },
   headlamp_agent_reconcile_last_success_timestamp_seconds: { type: 'gauge', help: 'Unix time of the last successful reconcile run of this pod.' },
+  headlamp_agent_acp_sessions: { type: 'gauge', help: 'ACP sessions that are open now on the /acp endpoint.' },
+  headlamp_agent_acp_connections: { type: 'gauge', help: 'WebSocket connections that are open now on the /acp endpoint.' },
+  headlamp_agent_acp_prompts_total: { type: 'counter', help: 'ACP prompts that ended, by result: ok, cancelled, failed (a failed diagnosis) or error.' },
+  headlamp_agent_acp_errors_total: { type: 'counter', help: 'ACP endpoint errors by kind: limit (a place was refused), protocol (a bad frame or socket error) or upgrade (a bad upgrade request).' },
+  headlamp_agent_acp_auth_failures_total: { type: 'counter', help: 'ACP upgrades that failed authentication, by reason: unconfigured, missing, invalid, scope or origin.' },
 };
 
 const escape = (v: string): string => v.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
@@ -63,6 +68,11 @@ export class Metrics {
     for (const result of ['success', 'error']) this.inc('headlamp_agent_storage_reconcile_total', { result }, 0);
     for (const result of ['complete', 'incomplete', 'timeout', 'error']) this.inc('headlamp_agent_storage_scan_total', { result }, 0);
     for (const result of ['ok', 'error', 'skipped']) this.inc('headlamp_agent_reconcile_runs_total', { result }, 0);
+    for (const result of ['ok', 'cancelled', 'failed', 'error']) this.inc('headlamp_agent_acp_prompts_total', { result }, 0);
+    for (const kind of ['limit', 'protocol', 'upgrade']) this.inc('headlamp_agent_acp_errors_total', { kind }, 0);
+    for (const reason of ['unconfigured', 'missing', 'invalid', 'scope', 'origin']) this.inc('headlamp_agent_acp_auth_failures_total', { reason }, 0);
+    this.set('headlamp_agent_acp_sessions', {}, 0);
+    this.set('headlamp_agent_acp_connections', {}, 0);
   }
 
   inc(name: string, labels: Labels = {}, by = 1): void {

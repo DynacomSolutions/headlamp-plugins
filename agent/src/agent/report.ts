@@ -69,6 +69,8 @@ export interface Diagnosis {
   status: 'queued' | 'running' | 'done' | 'failed';
   source: 'webhook' | 'acp' | 'api' | 'cli';
   host?: string;
+  /** The name of the access token that started an ACP run. A label for audit, never the token. */
+  client?: string;
   alert: Alert;
   resolvedAt?: string;
   /** Why the diagnosis was resolved when no resolve notification did it: a fold into a newer one, or an alert that vmalert no longer has. */

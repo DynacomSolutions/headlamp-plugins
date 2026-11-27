@@ -32,7 +32,8 @@ export interface DiagnoseOptions {
   source: Diagnosis['source'];
   host?: string;
   id?: string;
-  onEvent?: (event: EngineEvent) => void;
+  /** Called for every event and not awaited. An error or a rejected promise from it is dropped, so a listener cannot stop the run. */
+  onEvent?: (event: EngineEvent) => void | Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -121,7 +122,15 @@ export async function diagnose(opts: DiagnoseOptions): Promise<Diagnosis> {
     model: opts.model.name,
     a2ui: [],
   };
-  const emit = (event: EngineEvent) => opts.onEvent?.(event);
+  const emit = (event: EngineEvent) => {
+    try {
+      const out = opts.onEvent?.(event);
+      // A listener that is async may reject later (for example a notify after its socket closed). Nobody awaits it.
+      if (out && typeof out.then === 'function') out.then(undefined, () => undefined);
+    } catch {
+      /* a listener never stops the run */
+    }
+  };
   const progress = () => {
     diagnosis.a2ui = renderDiagnosis(diagnosis);
     emit({ type: 'progress', diagnosis });

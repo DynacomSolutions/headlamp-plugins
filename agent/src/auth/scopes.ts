@@ -44,23 +44,31 @@ export type AuthResult =
 
 const sha256 = (value: string): Buffer => createHash('sha256').update(value).digest();
 
-/** Parses the Secret file. Entries that are not valid are dropped, so a bad entry never opens access. */
-export function parseTokens(raw: unknown): TokenEntry[] {
+/**
+ * Parses the Secret file. Entries that are not valid are dropped, so a bad entry never opens access.
+ * `warn` gets one message for each dropped entry. A message names the entry and the cause. It never holds a token value.
+ */
+export function parseTokens(raw: unknown, warn: (message: string) => void = () => undefined): TokenEntry[] {
   const list = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { tokens?: unknown }).tokens) ? (raw as { tokens: unknown[] }).tokens : [];
   const out: TokenEntry[] = [];
-  for (const item of list) {
-    if (!item || typeof item !== 'object') continue;
+  if (!list.length && raw !== undefined) warn('the token file holds no entries (expected a JSON array, or an object with a "tokens" array)');
+  list.forEach((item, index) => {
+    const label = item && typeof item === 'object' && typeof (item as { name?: unknown }).name === 'string' && (item as { name: string }).name ? `"${(item as { name: string }).name}"` : `#${index + 1}`;
+    const drop = (why: string) => warn(`token entry ${label} ignored: ${why}`);
+    if (!item || typeof item !== 'object') return drop('it is not an object');
     const { name, token, sha256: hash, scopes } = item as Record<string, unknown>;
+    if (typeof name !== 'string' || !name) return drop('it has no name');
     // `anonymous` is the name of callers without a token: no token entry may use it (contract section 4.3).
-    if (typeof name !== 'string' || !name || name.toLowerCase() === 'anonymous' || !Array.isArray(scopes)) continue;
+    if (name.toLowerCase() === 'anonymous') return drop('its name is reserved');
+    if (!Array.isArray(scopes)) return drop('it has no scopes list');
     const scopeNames = scopes.filter((s): s is string => typeof s === 'string' && s.length > 0);
-    if (!scopeNames.length) continue;
+    if (!scopeNames.length) return drop('it has no scope');
     let digest: Buffer | undefined;
     if (typeof token === 'string' && token.length >= 16) digest = sha256(token);
     else if (typeof hash === 'string' && /^[0-9a-f]{64}$/i.test(hash)) digest = Buffer.from(hash, 'hex');
-    if (!digest) continue;
+    if (!digest) return drop('it has no token of at least 16 characters and no valid sha256');
     out.push({ name, digest, scopes: new Set(scopeNames) });
-  }
+  });
   return out;
 }
 
@@ -98,21 +106,29 @@ export function lookupBearer(entries: readonly TokenEntry[], header: string | st
   return found;
 }
 
-/** A reader for a token file that parses again only when the file changes. A missing or broken file gives no tokens. */
-export function tokensFromFile(path: string): () => TokenEntry[] {
+/**
+ * A reader for a token file that parses again only when the file changes. A missing or broken file gives no tokens.
+ * `warn` hears about a file that cannot be read and about each entry that is dropped, once for each change of the file.
+ */
+export function tokensFromFile(path: string, warn: (message: string) => void = () => undefined): () => TokenEntry[] {
   let mtime = -1;
   let cached: TokenEntry[] = [];
+  let failed = false;
   return () => {
     if (!path) return [];
     try {
       const stat = statSync(path);
       if (stat.mtimeMs !== mtime) {
-        cached = parseTokens(JSON.parse(readFileSync(path, 'utf8')));
+        cached = parseTokens(JSON.parse(readFileSync(path, 'utf8')), warn);
         mtime = stat.mtimeMs;
+        failed = false;
       }
-    } catch {
-      cached = [];
+    } catch (error) {
+      // The cause names the problem (a missing file, bad JSON), not the content. A broken file warns once, not for each request.
+      if (!failed) warn(`the token file cannot be used, so every request is refused: ${(error as NodeJS.ErrnoException)?.code ?? (error instanceof Error ? error.name : 'error')}`);
+      failed = true;
       mtime = -1;
+      cached = [];
     }
     return cached;
   };
