@@ -4,49 +4,28 @@ import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import LinearProgress from '@mui/material/LinearProgress';
 import Link from '@mui/material/Link';
-import MenuItem from '@mui/material/MenuItem';
 import Paper from '@mui/material/Paper';
 import Stack from '@mui/material/Stack';
-import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Link as RouterLink, useHistory, useLocation, useParams } from 'react-router-dom';
-import { A2uiRenderer } from '../a2ui';
-import { cleanErrorText } from '../chat-model';
-import { Composer, MessageView } from '../ChatPage';
+import { Link as RouterLink, Redirect, useLocation, useParams } from 'react-router-dom';
 import { useSettings } from '../data';
 import { Settings } from '../model';
-import { storageChatUrl, storageDriveUrl, storageUrl } from '../routes';
+import { chatUrl, storageDriveUrl, storageUrl } from '../routes';
 import { Capacity, CapacityHistory, size, time } from './Capacity';
-import { CleanupPlan, Receipts } from './CleanupPlan';
+import { ChildResults,driveLabel, ItemActions, ItemList, useLabel } from './Investigation';
 import {
-  ChildResults,
-  DriveInvestigation,
-  driveLabel,
-  ItemActions,
-  ItemList,
-  QuestionCard,
-  Questions,
-  useLabel,
-  useStorageAction,
-} from './Investigation';
-import {
-  chatPath,
   Drive,
   DriveDetail,
   Item,
-  loadStorageTranscriptBefore,
   mergeVerification,
   NodeScan,
-  postStorage,
-  StorageChatMessage,
   StorageIncident,
-  useStorageChat,
   useStorageDrive,
   useStorageIncident,
 } from './storage-data';
 import { StorageAlert } from './StorageAlert';
-import { DeliveryEvidence, noticeUrl, StorageNotices } from './StorageNotices';
+import { StorageNotices } from './StorageNotices';
 
 const panel = { p: { xs: 2, md: 2.5 }, minWidth: 0, overflowWrap: 'anywhere' } as const;
 const driveStatus = {
@@ -160,6 +139,7 @@ function Overview({
   const drives = [...incident.drives].sort(
     (a, b) => driveStatus[a.status].order - driveStatus[b.status].order
   );
+  const chatId = incident.incident?.chatId;
   return (
     <Stack spacing={2}>
       <StorageNotices incident={incident} readsCurrent={readsCurrent} />
@@ -195,9 +175,16 @@ function Overview({
                 <DriveStatus drive={drive} />
               </Stack>
               <Capacity value={drive} />
-              <Typography variant="caption" color="text.secondary">
-                Last scan {time(drive.scannedAt)}
-              </Typography>
+              <Stack direction="row" justifyContent="space-between" gap={1} flexWrap="wrap">
+                <Typography variant="caption" color="text.secondary">
+                  Last scan {time(drive.scannedAt)}
+                </Typography>
+                {chatId && (
+                  <Link component={RouterLink} to={chatUrl(chatId, { drive: drive.id })} variant="caption">
+                    Investigate in chat
+                  </Link>
+                )}
+              </Stack>
             </Stack>
           </Paper>
         ))}
@@ -211,11 +198,13 @@ function ItemDetail({
   itemId,
   settings,
   refresh,
+  chatId,
 }: {
   detail: DriveDetail;
   itemId: string;
   settings: Settings;
   refresh: () => void;
+  chatId?: string;
 }) {
   const item = detail.items.find(item => item.id === itemId);
   if (!item) return <StorageAlert severity="info">This item is absent from the latest inventory.</StorageAlert>;
@@ -270,13 +259,16 @@ function ItemDetail({
           </Box>
         )}
       </Paper>
-      <Paper variant="outlined" sx={panel}>
-        <Questions
-          questions={detail.questions.filter(q => q.itemId === itemId)}
-          settings={settings}
-          refresh={refresh}
-        />
-      </Paper>
+      {chatId && (
+        <Paper variant="outlined" sx={panel}>
+          <Typography variant="body2">
+            Questions and cleanup approval for this drive are in the investigation chat.{' '}
+            <Link component={RouterLink} to={chatUrl(chatId, { drive: detail.drive.id })}>
+              Open the chat
+            </Link>
+          </Typography>
+        </Paper>
+      )}
       <Paper variant="outlined" sx={panel}>
         <ChildResults detail={detail} itemId={itemId} />
       </Paper>
@@ -317,20 +309,14 @@ function ConsumerGroups({ items, driveId }: { items: Item[]; driveId: string }) 
 function DriveView({
   id,
   itemId,
-  action,
-  actionId,
   settings,
   incident,
-  readsCurrent,
   refreshIncident,
 }: {
   id: string;
   itemId?: string;
-  action?: 'question' | 'cleanup';
-  actionId?: string;
   settings: Settings;
   incident: StorageIncident;
-  readsCurrent: boolean;
   refreshIncident: () => void;
 }) {
   const { data, error, loading, refresh } = useStorageDrive(settings, id);
@@ -338,16 +324,8 @@ function DriveView({
     refresh();
     refreshIncident();
   };
-  const canApply =
-    readsCurrent && !error && incident.applyEnabled === true && data?.drive.applyEnabled === true;
-  const notice = incident.notices.find(
-    notice =>
-      notice.action?.kind === action &&
-      notice.action?.driveId === id &&
-      notice.action?.id === actionId
-  );
-  const question =
-    action === 'question' && data?.questions.find(question => question.id === actionId);
+  const chatId = incident.incident?.chatId;
+  const open = incident.notices.filter(notice => notice.driveId === id);
 
   return (
     <Stack spacing={2}>
@@ -368,7 +346,7 @@ function DriveView({
                 alignItems="center"
                 flexWrap="wrap"
               >
-                {itemId || action ? (
+                {itemId ? (
                   <Link component={RouterLink} to={storageDriveUrl(id)} fontWeight={600}>
                     {driveLabel(data.drive)}
                   </Link>
@@ -385,96 +363,53 @@ function DriveView({
               </Typography>
             </Stack>
           </Paper>
-          {action ? (
-            <Paper variant="outlined" sx={panel}>
-              <Stack spacing={2}>
-                <Typography component="h2" variant="h6">
-                  {action === 'question' ? 'Storage question' : 'Cleanup finding'}
-                </Typography>
-                {notice && <DeliveryEvidence delivery={notice.delivery} />}
-                {action === 'question' &&
-                  (question ? (
-                    <QuestionCard
-                      key={question.id}
-                      question={question}
-                      settings={settings}
-                      refresh={refreshAll}
-                    />
-                  ) : (
-                    <StorageAlert severity="info">This question is unavailable for this drive.</StorageAlert>
-                  ))}
-                {action === 'cleanup' &&
-                  (notice ? (
-                    <>
-                      <CleanupPlan
-                        detail={data}
-                        canApply={canApply}
-                        settings={settings}
-                        refresh={refreshAll}
-                      />
-                      <Receipts detail={data} />
-                    </>
-                  ) : (
-                    <StorageAlert severity="info">This cleanup finding is no longer open.</StorageAlert>
-                  ))}
-              </Stack>
-            </Paper>
-          ) : itemId ? (
+          {itemId ? (
             <ItemDetail
               key={itemId}
               detail={data}
               itemId={itemId}
               settings={settings}
               refresh={refreshAll}
+              chatId={chatId}
             />
           ) : (
             <>
+              {chatId && (
+                <Paper variant="outlined" sx={panel}>
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    gap={1.5}
+                    justifyContent="space-between"
+                    alignItems={{ sm: 'center' }}
+                  >
+                    <Stack spacing={0.25}>
+                      <Typography component="h2" variant="h6">
+                        Investigate in chat
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {data.questions.filter(q => !q.answer).length} unanswered{' '}
+                        {data.questions.filter(q => !q.answer).length === 1 ? 'question' : 'questions'}
+                        {' · '}
+                        {data.items.filter(item => item.eligible).length} eligible for cleanup
+                        {open.length > 0 && ` · ${open.length} open ${open.length === 1 ? 'notice' : 'notices'}`}
+                      </Typography>
+                    </Stack>
+                    <Button
+                      component={RouterLink}
+                      to={chatUrl(chatId, { drive: id })}
+                      variant="contained"
+                    >
+                      Open the investigation chat
+                    </Button>
+                  </Stack>
+                </Paper>
+              )}
               <Paper variant="outlined" sx={panel}>
                 <CapacityHistory snapshots={data.history} />
               </Paper>
-              <Box
-                sx={{
-                  display: 'grid',
-                  gap: 2,
-                  alignItems: 'start',
-                  gridTemplateColumns: {
-                    xs: 'minmax(0, 1fr)',
-                    lg: 'minmax(0, 3fr) minmax(0, 2fr)',
-                  },
-                }}
-              >
-                <Stack spacing={2} minWidth={0}>
-                  <Paper variant="outlined" sx={panel}>
-                    <DriveInvestigation detail={data} settings={settings} refresh={refreshAll} />
-                  </Paper>
-                  <Paper variant="outlined" sx={panel}>
-                    <ConsumerGroups items={data.items} driveId={id} />
-                  </Paper>
-                  <Paper variant="outlined" sx={panel}>
-                    <ChildResults detail={data} />
-                  </Paper>
-                </Stack>
-                <Stack spacing={2} minWidth={0}>
-                  <Paper variant="outlined" sx={panel}>
-                    <Questions
-                      questions={data.questions}
-                      settings={settings}
-                      refresh={refreshAll}
-                    />
-                  </Paper>
-                  <Paper variant="outlined" sx={panel}>
-                    <CleanupPlan
-                      detail={data}
-                      canApply={canApply}
-                      settings={settings}
-                      refresh={refreshAll}
-                    />
-                  </Paper>
-                  <Paper variant="outlined" sx={panel}>
-                    <Receipts detail={data} />
-                  </Paper>
-                </Stack>
-              </Box>
+              <Paper variant="outlined" sx={panel}>
+                <ConsumerGroups items={data.items} driveId={id} />
+              </Paper>
             </>
           )}
         </>
@@ -483,244 +418,53 @@ function DriveView({
   );
 }
 
-function mergeMessages(earlier: StorageChatMessage[], later: StorageChatMessage[]) {
-  const byId = new Map(earlier.map(message => [message.id, message]));
-  later.forEach(message => byId.set(message.id, message));
-  return [...byId.values()];
-}
-
-function StorageTranscript({
-  chatId,
-  settings,
-  tail,
-  hasEarlier,
-  notices,
-}: {
-  chatId: string;
-  settings: Settings;
-  tail: StorageChatMessage[];
-  hasEarlier: boolean;
-  notices: StorageIncident['notices'];
-}) {
-  const [history, setHistory] = React.useState<{
-    messages: StorageChatMessage[];
-    hasMore: boolean;
-  }>();
-  const [previousTail, setPreviousTail] = React.useState(tail);
-  const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string>();
-  if (previousTail !== tail) {
-    setPreviousTail(tail);
-    if (history && previousTail[0]?.id !== tail[0]?.id) {
-      setHistory({ ...history, messages: mergeMessages(history.messages, previousTail) });
-    }
-  }
-
-  const messages = history ? mergeMessages(history.messages, tail) : tail;
-  const before = messages[0]?.id;
-  const canLoadEarlier = !!before && (history?.hasMore ?? hasEarlier);
-  const loadEarlier = async () => {
-    if (!canLoadEarlier || busy) return;
-    setBusy(true);
-    setError(undefined);
-    setHistory(current => current ?? { messages, hasMore: true });
-    try {
-      const page = await loadStorageTranscriptBefore(settings, chatId, before);
-      setHistory(current => ({
-        ...page,
-        messages: mergeMessages(page.messages, current?.messages ?? messages),
-      }));
-    } catch (error) {
-      setError(cleanErrorText(error));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <>
-      {(canLoadEarlier || history) && (
-        <Box>
-          <Button aria-disabled={busy || !canLoadEarlier} onClick={loadEarlier}>
-            Load earlier messages
-          </Button>
-          <Typography component="span" variant="body2" color="text.secondary" role="status">
-            {busy
-              ? 'Loading earlier messages…'
-              : history && !canLoadEarlier
-              ? 'Start of transcript'
-              : ''}
-          </Typography>
-        </Box>
-      )}
-      {error && <StorageAlert severity="error">{error}</StorageAlert>}
-      {messages.length === 0 && (
-        <Typography color="text.secondary">
-          Ask about capacity, active consumers or cleanup eligibility.
-        </Typography>
-      )}
-      {messages.map(message => (
-        <Stack key={message.id} spacing={1}>
-          <MessageView m={message} />
-          {message.a2ui && <A2uiRenderer messages={message.a2ui} />}
-          {notices
-            .filter(notice => notice.questionId && message.questionIds.includes(notice.questionId))
-            .map(
-              notice =>
-                notice.action && (
-                  <Link key={notice.id} component={RouterLink} to={noticeUrl(notice.action)}>
-                    Open question from this message
-                  </Link>
-                )
-            )}
-        </Stack>
-      ))}
-    </>
-  );
-}
-
-function StorageChat({
-  chatId,
-  settings,
-  incident,
-  refreshIncident,
-  readsCurrent,
-}: {
-  chatId: string;
-  settings: Settings;
-  incident: StorageIncident;
-  refreshIncident: () => void;
-  readsCurrent: boolean;
-}) {
-  const location = useLocation();
-  const history = useHistory();
-  const requestedDrive = new URLSearchParams(location.search).get('drive');
-  const drive = incident.drives.find(drive => drive.id === requestedDrive);
-  const chat = useStorageChat(settings, chatId);
-  const detail = useStorageDrive(settings, drive?.id);
-  const { busy, error, run } = useStorageAction(() => {
-    chat.refresh();
-    detail.refresh();
-    refreshIncident();
-  });
-  const send = (text: string) =>
-    run(() =>
-      postStorage(settings, `${chatPath(chatId)}/messages`, {
-        text,
-        ...(drive ? { driveId: drive.id } : {}),
-      })
+/**
+ * A notification of an earlier release links to a drive question or finding. Those items now live in the one chat,
+ * so the old link opens the chat on the same item. The old link keeps working.
+ */
+function ActionRedirect({ action }: { action: 'question' | 'cleanup' }) {
+  const { driveId, actionId } = useParams<{ driveId?: string; actionId?: string }>();
+  const settings = useSettings();
+  const incident = useStorageIncident(settings);
+  const chatId = incident.data?.incident?.chatId;
+  if (chatId && driveId && actionId) {
+    return (
+      <Redirect
+        to={chatUrl(chatId, { drive: driveId, [action === 'question' ? 'question' : 'finding']: actionId })}
+      />
     );
-  return (
-    <Stack spacing={2}>
-      <StorageNotices incident={incident} readsCurrent={readsCurrent} />
-      <Paper variant="outlined" sx={panel}>
-        <Stack spacing={2}>
-          <Stack direction="row" gap={2} alignItems="center" flexWrap="wrap">
-            <Typography component="h2" variant="h6">
-              Storage incident chat
-            </Typography>
-            <TextField
-              select
-              label="Drive context"
-              size="small"
-              value={drive?.id ?? 'all'}
-              onChange={event =>
-                history.replace(
-                  storageChatUrl(
-                    chatId,
-                    event.target.value === 'all' ? undefined : event.target.value
-                  )
-                )
-              }
-              sx={{ minWidth: 180 }}
-            >
-              <MenuItem value="all">All drives</MenuItem>
-              {incident.drives.map(drive => (
-                <MenuItem key={drive.id} value={drive.id}>
-                  {driveLabel(drive)}
-                </MenuItem>
-              ))}
-            </TextField>
-            {drive && (
-              <Link component={RouterLink} to={storageDriveUrl(drive.id)}>
-                Open drive
-              </Link>
-            )}
-          </Stack>
-          {chat.loading && <LinearProgress aria-label="Loading storage chat" />}
-          {chat.error && (
-            <StorageAlert severity="error" action={<Button onClick={chat.refresh}>Retry</Button>}>
-              {chat.error}
-            </StorageAlert>
-          )}
-          {chat.data && (
-            <StorageTranscript
-              chatId={chatId}
-              settings={settings}
-              tail={chat.data.messages}
-              hasEarlier={chat.data.hasEarlier}
-              notices={incident.notices}
-            />
-          )}
-          {busy && (
-            <Typography variant="body2" role="status">
-              Investigating…
-            </Typography>
-          )}
-          {error && <StorageAlert severity="error">{error}</StorageAlert>}
-          <Composer
-            running={busy}
-            disabled={!chat.data}
-            onSend={send}
-            picker={
-              <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                Storage evidence
-              </Typography>
-            }
-            placeholder="Ask what is using space or what changed"
-          />
-        </Stack>
-      </Paper>
-      {detail.error && <StorageAlert severity="error">{detail.error}</StorageAlert>}
-      {detail.data && (
-        <Paper variant="outlined" sx={panel}>
-          <ChildResults detail={detail.data} />
-        </Paper>
-      )}
-    </Stack>
+  }
+  if (!incident.loading && incident.data && !chatId) {
+    return <StorageAlert severity="info">Storage incidents are disabled.</StorageAlert>;
+  }
+  return incident.error ? (
+    <StorageAlert severity="error">{incident.error}</StorageAlert>
+  ) : (
+    <LinearProgress aria-label="Opening the storage chat" />
   );
+}
+
+/** The storage chat of an earlier release opened at `/incidents/storage/chat/<id>`. The chat is in the Chat tab now. */
+export function StorageChatRedirect() {
+  const { chatId } = useParams<{ chatId?: string }>();
+  const drive = new URLSearchParams(useLocation().search).get('drive') ?? undefined;
+  return <Redirect to={chatUrl(chatId, drive ? { drive } : {})} />;
 }
 
 export function StorageQuestionPage() {
-  return <StoragePage action="question" />;
+  return <ActionRedirect action="question" />;
 }
 
 export function StorageFindingPage() {
-  return <StoragePage action="cleanup" />;
+  return <ActionRedirect action="cleanup" />;
 }
 
 export function StorageIncidentPage() {
-  return <StoragePage />;
-}
-
-function StoragePage({ action }: { action?: 'question' | 'cleanup' }) {
-  const { driveId, itemId, chatId, actionId } = useParams<{
-    driveId?: string;
-    itemId?: string;
-    chatId?: string;
-    actionId?: string;
-  }>();
+  const { driveId, itemId } = useParams<{ driveId?: string; itemId?: string }>();
   const settings = useSettings();
   const incident = useStorageIncident(settings);
-  const parent = incident.data?.incident;
-  const linkedNotice = incident.data?.notices.find(
-    notice =>
-      notice.action?.kind === action &&
-      notice.action.driveId === driveId &&
-      notice.action.id === actionId
-  );
-  const chatTarget = linkedNotice?.action.chatId ?? parent?.chatId;
-  const isOverview = !driveId && !chatId;
+  const chatId = incident.data?.incident?.chatId;
+  const isOverview = !driveId;
 
   return (
     <SectionBox
@@ -735,10 +479,10 @@ function StoragePage({ action }: { action?: 'question' | 'cleanup' }) {
               Storage incident
             </Link>
           )}
-          {chatTarget && !chatId && (
+          {chatId && (
             <Button
               component={RouterLink}
-              to={storageChatUrl(chatTarget, driveId)}
+              to={chatUrl(chatId, driveId ? { drive: driveId } : {})}
               variant="outlined"
               size="small"
             >
@@ -766,26 +510,10 @@ function StoragePage({ action }: { action?: 'question' | 'cleanup' }) {
                 key={driveId}
                 id={driveId}
                 itemId={itemId}
-                action={action}
-                actionId={actionId}
-                settings={settings}
-                incident={incident.data}
-                readsCurrent={!incident.error}
-                refreshIncident={incident.refresh}
-              />
-            )}
-            {chatId && chatId === parent?.chatId && (
-              <StorageChat
-                key={chatId}
-                chatId={chatId}
                 settings={settings}
                 incident={incident.data}
                 refreshIncident={incident.refresh}
-                readsCurrent={!incident.error}
               />
-            )}
-            {chatId && chatId !== parent?.chatId && (
-              <StorageAlert severity="error">Storage chat is unavailable.</StorageAlert>
             )}
           </>
         )}

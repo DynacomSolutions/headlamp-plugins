@@ -4,7 +4,7 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import { notificationsUrl, storageFindingUrl, storageQuestionUrl } from '../routes';
+import { chatUrl, notificationsUrl } from '../routes';
 import { driveLabel } from './Investigation';
 import {
   NoticeAction,
@@ -14,10 +14,12 @@ import {
 } from './storage-data';
 import { StorageAlert } from './StorageAlert';
 
+/** An open question or finding opens in the one chat, on its drive, with the item in focus. */
 export function noticeUrl(action: NoticeAction) {
-  return action.kind === 'question'
-    ? storageQuestionUrl(action.driveId, action.id)
-    : storageFindingUrl(action.driveId, action.id);
+  return chatUrl(action.chatId, {
+    drive: action.driveId,
+    ...(action.kind === 'question' ? { question: action.id } : { finding: action.id }),
+  });
 }
 
 const deliveryLabels = {
