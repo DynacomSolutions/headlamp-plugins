@@ -14,6 +14,15 @@ is read-only.
   query strings (`?status=failed&severity=critical&q=disk&resolved=1&sel=<id>,<id>`). A change replaces the
   history entry, so Back leaves the page and the URL alone shows the same view.
   The table scrolls inside the page. Its header, the filters and the selection bar stay fixed.
+  A card at the top holds the setting **Automatic investigations** (a switch, on by default). It is
+  stored on the agent, so it holds for everyone. It shows what the setting does, who changed it last
+  and when ("by alice" when the name came from the Headlamp session, "(claimed)" when it did not, "via
+  Headlamp" when no name is known), and an error with a retry when the agent cannot answer. Off means the agent starts no
+  investigation by itself. Incidents still open and notify, with the status `skipped` ("Not
+  investigated") and an **Investigate** button that starts one by hand (the same rerun route).
+  The plugin writes with `POST /api/settings/automatic-investigations`. Before it writes, it asks the
+  cluster who the user is (`SelfSubjectReview`) and sends the name. The switch stays enabled and keeps
+  keyboard focus while it saves, and a status line announces the result.
   A failed row has a "Run again" button. It calls
   `POST /api/diagnoses/<id>/rerun` on the agent, stays disabled while the request runs
   and shows an error under the button. The same button is in the `incidents.list`
@@ -117,7 +126,7 @@ layout change. The Incidents pages are unchanged.
 
 | Type | Config | What it shows |
 | --- | --- | --- |
-| `incidents.list` | `{ status: 'all' \| 'queued' \| 'running' \| 'done' \| 'failed', severity: 'all' \| 'critical' \| 'warning' \| 'other', openOnly: boolean }` | A summary (counts by severity and status) that stays at the top. The list below it scrolls on its own, so the last card can always be reached. |
+| `incidents.list` | `{ status: 'all' \| 'queued' \| 'running' \| 'done' \| 'failed' \| 'skipped', severity: 'all' \| 'critical' \| 'warning' \| 'other', openOnly: boolean }` | A summary (counts by severity and status) that stays at the top. The list below it scrolls on its own, so the last card can always be reached. |
 | `incidents.chat` | `{}` | The incident agent chat, with the same model picker and backend as the chat page. The message list scrolls and the input stays at the bottom. |
 
 - The list widget reads every diagnosis page by page (`limit` and `offset`, with the `total` that the agent

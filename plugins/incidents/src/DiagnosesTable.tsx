@@ -19,7 +19,13 @@ const STATUS_COLOUR: Record<Status, 'default' | 'info' | 'success' | 'error'> = 
   running: 'info',
   done: 'success',
   failed: 'error',
+  skipped: 'default',
 };
+
+/** The words of a status chip. A skipped incident reads as the filter and the summary say it. */
+function statusLabel(status: Status): string {
+  return status === 'skipped' ? 'Not investigated' : status;
+}
 
 function shortTime(iso: string): string {
   const d = new Date(iso);
@@ -124,9 +130,10 @@ function Row({
   const chosen = !!selection && selection.ids.includes(d.id);
   const name = d.alertName || d.id;
   const rerunButton =
-    onRerun && d.status === 'failed' ? (
+    onRerun && (d.status === 'failed' || d.status === 'skipped') ? (
       <RerunButton
         key={d.status}
+        label={d.status === 'skipped' ? 'Investigate' : undefined}
         touch={touch}
         alertName={d.alertName || d.id}
         compact={compact}
@@ -227,7 +234,7 @@ function Row({
             <Chip
               size="small"
               variant="outlined"
-              label={d.status}
+              label={statusLabel(d.status)}
               color={STATUS_COLOUR[d.status]}
             />
             {d.resolved && (
@@ -266,7 +273,7 @@ function Row({
             <Chip
               size="small"
               variant="outlined"
-              label={d.status}
+              label={statusLabel(d.status)}
               color={STATUS_COLOUR[d.status]}
             />
             {/* A narrow place has no room for the resolved column: the word sits under the status. */}

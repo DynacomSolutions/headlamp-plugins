@@ -118,8 +118,9 @@ describe('incident groups', () => {
   });
   it('counts the status mix and writes it with the failed ones first', () => {
     const down = groupByAlert(many).find(g => g.name === 'KubeDeploymentDown')!;
-    expect(down.byStatus).toEqual({ queued: 0, running: 0, done: 2, failed: 1 });
+    expect(down.byStatus).toEqual({ queued: 0, running: 0, done: 2, failed: 1, skipped: 0 });
     expect(statusMixText(down.byStatus)).toBe('1 failed, 2 analysed');
+    expect(statusMixText({ ...down.byStatus, skipped: 3 })).toBe('1 failed, 3 not investigated, 2 analysed');
   });
   it('puts an alert with no name in a group of its own, never in a shared bucket', () => {
     const groups = groupByAlert([{ ...d('1', 'info'), alertName: '' }]);

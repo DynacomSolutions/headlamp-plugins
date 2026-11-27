@@ -48,6 +48,25 @@ describe('DiagnosesTable', () => {
       expect(screen.getByRole('columnheader', { name: h })).toBeTruthy();
   });
 
+  it('words a skipped incident as Not investigated in the status chip, wide and narrow', () => {
+    const skipped = { ...d('3', false), status: 'skipped' as const };
+    const { unmount } = render(
+      <MemoryRouter>
+        <DiagnosesTable rows={[skipped]} />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('Not investigated')).toBeTruthy();
+    expect(screen.queryByText('skipped')).toBeNull();
+    unmount();
+    render(
+      <MemoryRouter>
+        <DiagnosesTable rows={[skipped]} narrow compact />
+      </MemoryRouter>
+    );
+    expect(screen.getByText('Not investigated')).toBeTruthy();
+    expect(screen.queryByText('skipped')).toBeNull();
+  });
+
   it('stacks to three columns in a narrow place and keeps every fact', () => {
     render(
       <MemoryRouter>

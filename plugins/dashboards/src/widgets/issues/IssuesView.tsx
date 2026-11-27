@@ -29,6 +29,7 @@ export const AGENT_WORD: Record<Exclude<AgentState, 'none'>, string> = {
   working: 'Agent working',
   diagnosed: 'Diagnosed',
   failed: 'Failed',
+  skipped: 'Not investigated',
 };
 
 /** The two tile rows share their column widths. The third tile gets more room for "Resolved today". */
@@ -48,6 +49,9 @@ function AgentMark(props: { agent: Exclude<AgentState, 'none'>; colour: string }
       {agent === 'working' && <circle cx="6" cy="6" r="4.5" fill={colour} />}
       {agent === 'diagnosed' && (
         <path d="M2 6.5 L5 9.5 L10 2.5" fill="none" stroke={colour} strokeWidth="1.8" />
+      )}
+      {agent === 'skipped' && (
+        <circle cx="6" cy="6" r="4" fill="none" stroke={colour} strokeWidth="1.4" />
       )}
       {agent === 'failed' && (
         <path

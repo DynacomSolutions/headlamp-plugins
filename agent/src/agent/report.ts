@@ -61,11 +61,15 @@ export interface PreviousAttempt {
   error: string;
 }
 
+/** The visible marker of an incident that opened without an automatic investigation. */
+export const SKIPPED_REASON = 'Automatic investigation skipped: setting off';
+
 export interface Diagnosis {
   id: string;
   createdAt: string;
   finishedAt?: string;
-  status: 'queued' | 'running' | 'done' | 'failed';
+  /** `skipped`: the incident opened and notified, and no investigation started because the setting "Automatic investigations" is off. A person can start one. */
+  status: 'queued' | 'running' | 'done' | 'failed' | 'skipped';
   source: 'webhook' | 'acp' | 'api' | 'cli';
   host?: string;
   /** The name of the access token that started an ACP run. A label for audit, never the token. */
@@ -101,6 +105,10 @@ export interface Diagnosis {
   rerunAt?: string;
   /** The failed attempts that re-runs replaced, oldest first. */
   previousAttempts?: PreviousAttempt[];
+  /** Set while `status` is `skipped`: why no investigation started and when. A manual run clears it. */
+  skipped?: { reason: string; at: string };
+  /** Set when a person ran a skipped incident. It never started by itself, so it never used a slot of the hourly limit of automatic ones. */
+  wasSkipped?: true;
 }
 
 /** Commands a fix may show: reads and checks only. Anything else is dropped from the fix, its text stays. */
@@ -139,6 +147,7 @@ export function sanitizeResult(result: DiagnosisResult, knownIds: Set<string>): 
 
 function severityIcon(severity: string, status: Diagnosis['status']): IconName {
   if (status === 'failed') return 'error';
+  if (status === 'skipped') return 'info';
   if (status !== 'done') return 'refresh';
   if (severity === 'critical') return 'error';
   if (severity === 'warning') return 'warning';
@@ -154,7 +163,7 @@ function md(text: string): string {
 export function renderDiagnosis(d: Diagnosis): A2uiMessage[] {
   const b = new SurfaceBuilder();
   const r = d.result;
-  const headline = r ? r.likelyCause : d.status === 'failed' ? `Diagnosis failed: ${d.error ?? 'unknown error'}` : 'Diagnosis in progress';
+  const headline = r ? r.likelyCause : d.status === 'failed' ? `Diagnosis failed: ${d.error ?? 'unknown error'}` : d.status === 'skipped' ? (d.skipped?.reason ?? SKIPPED_REASON) : 'Diagnosis in progress';
   const header = b.row([b.icon(severityIcon(d.alert.severity, d.status)), b.text(`## ${md(d.alert.name)}`)], undefined, 'start', 'center');
   const meta = [
     d.alert.severity || 'no severity',
@@ -212,7 +221,7 @@ export function renderDiagnosis(d: Diagnosis): A2uiMessage[] {
 /** Plain Markdown for text-only hosts (ACP message chunks, Claude Code). */
 export function diagnosisMarkdown(d: Diagnosis): string {
   const r = d.result;
-  if (!r) return d.status === 'failed' ? `Diagnosis failed: ${d.error ?? 'unknown error'}` : 'Diagnosis in progress.';
+  if (!r) return d.status === 'failed' ? `Diagnosis failed: ${d.error ?? 'unknown error'}` : d.status === 'skipped' ? `${d.skipped?.reason ?? SKIPPED_REASON}.` : 'Diagnosis in progress.';
   const lines = [
     `## ${d.alert.name}: ${r.likelyCause}`,
     `${d.alert.severity || 'no severity'} · ${r.confidence} confidence · ${d.toolCalls} ${d.toolCalls === 1 ? 'tool call' : 'tool calls'}`,

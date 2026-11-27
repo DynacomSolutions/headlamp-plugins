@@ -63,6 +63,7 @@ beforeEach(() => {
       expect(params.headers['Content-Type']).toBe('application/json');
       return rerunReply();
     }
+    if (url.endsWith('/api/settings/automatic-investigations')) return { enabled: true };
     if (url.includes('/api/diagnoses?')) return { total: rows.length, diagnoses: rows };
     const id = decodeURIComponent(url.split('/api/diagnoses/')[1] ?? '');
     return rows.find(r => r.id === id) ?? {};
@@ -182,5 +183,29 @@ describe('rerunErrorText', () => {
     );
     expect(rerunErrorText(new Error('Bad Gateway'))).toBe('Bad Gateway');
     expect(rerunErrorText('')).toBe('Something went wrong.');
+  });
+});
+
+describe('Investigate a skipped incident', () => {
+  it('shows an Investigate button on a skipped row and posts to the rerun route', async () => {
+    rows = [
+      {
+        ...row('3', 'NodeNotReady', 'skipped'),
+        result: undefined as never,
+        skipped: { reason: 'Automatic investigation skipped: setting off', at: 'x' },
+      } as never,
+    ];
+    rerunReply = async () => {
+      rows = rows.map(r => ({ ...r, status: 'queued' }));
+      return { id: '3', status: 'queued', model: 'codex/gpt-6.2-sol' };
+    };
+    view(<Route path="/list" component={IncidentsPage} />);
+    const button = await screen.findByRole('button', { name: 'Investigate: NodeNotReady' });
+    expect(screen.queryByRole('button', { name: /Run again/ })).toBeNull();
+    expect(screen.getAllByText('Automatic investigation skipped: setting off').length).toBeGreaterThan(0);
+    fireEvent.click(button);
+    await waitFor(() => expect(rerunCalls()).toHaveLength(1));
+    expect(rerunCalls()[0].url).toMatch(/\/api\/diagnoses\/3\/rerun$/);
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Investigate/ })).toBeNull());
   });
 });

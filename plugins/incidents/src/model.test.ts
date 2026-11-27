@@ -135,7 +135,7 @@ describe('widget filters and summary', () => {
         { name: 'info', n: 1 },
         { name: 'unrated', n: 1 },
       ],
-      byStatus: { queued: 1, running: 1, done: 1, failed: 1 },
+      byStatus: { queued: 1, running: 1, done: 1, failed: 1, skipped: 0 },
       resolved: 1,
     });
   });

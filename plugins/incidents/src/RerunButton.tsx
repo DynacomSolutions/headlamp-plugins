@@ -18,12 +18,15 @@ export function RerunButton({
   touch,
   alertName,
   compact,
+  label = 'Run again',
 }: {
   onRerun: () => Promise<void>;
   touch?: boolean;
   alertName?: string;
   /** A narrow place: the error text wraps in a smaller width. */
   compact?: boolean;
+  /** The button text. A skipped incident says `Investigate`. */
+  label?: string;
 }) {
   const [phase, setPhase] = React.useState<Phase>('idle');
   const [error, setError] = React.useState<string | null>(null);
@@ -51,11 +54,11 @@ export function RerunButton({
         variant="outlined"
         disabled={phase !== 'idle'}
         onClick={click}
-        aria-label={alertName ? `Run again: ${alertName}` : 'Run again'}
+        aria-label={alertName ? `${label}: ${alertName}` : label}
         startIcon={phase === 'busy' ? <CircularProgress size={14} aria-hidden /> : undefined}
         sx={{ whiteSpace: 'nowrap' }}
       >
-        {phase === 'busy' ? 'Starting...' : phase === 'sent' ? 'Queued' : 'Run again'}
+        {phase === 'busy' ? 'Starting...' : phase === 'sent' ? 'Queued' : label}
       </Button>
       {error && (
         <Typography
