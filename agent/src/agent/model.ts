@@ -59,6 +59,12 @@ export interface CompleteRequest {
   session: string;
   /** Aborts the call: the request in flight and the retries stop. */
   signal?: AbortSignal;
+  /**
+   * The model must answer in text in this call. The tool list stays in the request, because the history holds tool calls and
+   * tool results, and an endpoint refuses such a history when the request has no tools. The request says `tool_choice: none`.
+   * A tool call that the model still returns is for the caller to ignore.
+   */
+  noTools?: boolean;
 }
 
 /** The header with which the AIS gateway names why it built an error answer itself. */
@@ -98,14 +104,34 @@ export function parseRetryAfter(value: string | null | undefined, now = Date.now
 
 /** (route, model) pairs whose endpoint refused a forced tool_choice. Later calls skip the forced form. */
 const noForcedChoice = new Set<string>();
+/** (route, model) pairs whose endpoint refused `tool_choice: none`. Later calls name the rule in the prompt. */
+const noNoneChoice = new Set<string>();
+
+/** Waits `ms`, and ends at once with a `cancelled` error when the signal aborts. */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(new Error('cancelled'));
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error('cancelled'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 /** A request after the forced-tool decision: `mustCall` is set when the tool is named in the prompt instead. */
-type Req = CompleteRequest & { mustCall?: string };
+type Req = CompleteRequest & { mustCall?: string; /** Send `tool_choice: none`. */ choiceNone?: boolean; /** Name the rule in the prompt instead, as the endpoint refused `tool_choice: none`. */ mustNotCall?: boolean };
 
 /** What a run needs from a model: the full id of the model that answers, and one completion call. */
 export interface ChatModel {
   /** The full id, `<route>/<model>`. With ordered default models it is the one that answered last. */
   readonly name: string;
+  /** The time limit of one call in milliseconds, when the client knows it. A run keeps this much time for its last call. */
+  readonly callTimeoutMs?: number;
   complete(req: CompleteRequest): Promise<Completion>;
 }
 
@@ -126,6 +152,10 @@ export class ModelClient implements ChatModel {
     return `${this.route.id}/${this.model}`;
   }
 
+  get callTimeoutMs(): number {
+    return this.route.timeoutMs;
+  }
+
   /**
    * With `forceTool` only that tool is sent, with the style's forced `tool_choice`. When the endpoint
    * answers 400 about `tool_choice`, the call is repeated once without it, with a line in the system
@@ -133,6 +163,18 @@ export class ModelClient implements ChatModel {
    */
   async complete(req: CompleteRequest): Promise<Completion> {
     const key = `${this.route.id}/${this.model}`;
+    if (req.noTools) {
+      if (noNoneChoice.has(key)) return this.dispatch(req, false, 'prompt');
+      try {
+        return await this.dispatch(req, false, 'none');
+      } catch (error) {
+        if (error instanceof ModelHttpError && error.status === 400 && /tool_choice/i.test(error.body)) {
+          noNoneChoice.add(key);
+          return this.dispatch(req, false, 'prompt');
+        }
+        throw error;
+      }
+    }
     if (!req.forceTool) return this.dispatch(req, false);
     if (noForcedChoice.has(key)) return this.dispatch(req, false);
     try {
@@ -146,25 +188,32 @@ export class ModelClient implements ChatModel {
     }
   }
 
-  private dispatch(req: CompleteRequest, force: boolean): Promise<Completion> {
+  private dispatch(req: CompleteRequest, force: boolean, noTools?: 'none' | 'prompt'): Promise<Completion> {
     const tools = req.forceTool ? req.tools.filter(t => t.name === req.forceTool) : req.tools;
-    const r = { ...req, tools, forceTool: force ? req.forceTool : undefined, mustCall: !force ? req.forceTool : undefined };
+    const r: Req = {
+      ...req,
+      tools,
+      forceTool: force ? req.forceTool : undefined,
+      mustCall: !force ? req.forceTool : undefined,
+      // `tool_choice` is only valid with tools in the request.
+      choiceNone: noTools === 'none' && tools.length > 0,
+      mustNotCall: noTools === 'prompt' || (noTools === 'none' && tools.length === 0),
+    };
     if (this.route.style === 'anthropic') return this.anthropic(r);
     if (this.route.style === 'responses') return this.responses(r);
     return this.openai(r);
   }
 
   /** Anthropic style: a prefix goes out as its own first block, as the upstream rejects it inside one string. */
-  private systemBlocks(text: string, mustCall?: string): string | Array<{ type: 'text'; text: string }> {
+  private systemBlocks(req: Req): string | Array<{ type: 'text'; text: string }> {
     const prefix = this.route.systemPrefix;
-    if (!prefix) return this.system(text, mustCall);
-    const rest = mustCall ? `${text}\n\nYou must call the ${mustCall} tool now.` : text;
-    return [{ type: 'text', text: prefix }, { type: 'text', text: rest }];
+    if (!prefix) return this.system(req);
+    return [{ type: 'text', text: prefix }, { type: 'text', text: withRule(req.system, req) }];
   }
 
-  private system(text: string, mustCall?: string): string {
-    const base = this.route.systemPrefix ? `${this.route.systemPrefix}\n\n${text}` : text;
-    return mustCall ? `${base}\n\nYou must call the ${mustCall} tool now.` : base;
+  private system(req: Req): string {
+    const text = withRule(req.system, req);
+    return this.route.systemPrefix ? `${this.route.systemPrefix}\n\n${text}` : text;
   }
 
   /** POST with retries on 429, 5xx and network errors. Returns the raw body text. */
@@ -187,11 +236,11 @@ export class ModelClient implements ChatModel {
         lastError = new ModelHttpError(res.status, text, parseRetryAfter(res.headers.get('retry-after')), answered);
         if (!retryable) break;
         const wait = Math.min(Number(res.headers.get('retry-after') ?? 0) * 1000 || 2000 * (attempt + 1), 20_000);
-        await new Promise(r => setTimeout(r, wait));
+        await sleep(wait, abort);
       } catch (error) {
         if (abort?.aborted) throw new Error('cancelled');
         lastError = error;
-        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        await sleep(1500 * (attempt + 1), abort);
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
@@ -217,11 +266,12 @@ export class ModelClient implements ChatModel {
     const body: any = {
       model: this.model,
       max_tokens: this.route.maxTokens,
-      system: this.systemBlocks(req.system, req.mustCall),
+      system: this.systemBlocks(req),
       messages,
       tools: req.tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters })),
     };
     if (req.forceTool) body.tool_choice = { type: 'tool', name: req.forceTool };
+    else if (req.choiceNone) body.tool_choice = { type: 'none' };
     const headers = routeHeaders(this.route, req.session);
     const res = await this.post(`${this.route.baseUrl}/v1/messages`, headers, body, req.signal);
     const blocks: any[] = Array.isArray(res.content) ? res.content : [];
@@ -234,7 +284,7 @@ export class ModelClient implements ChatModel {
   }
 
   private async openai(req: Req): Promise<Completion> {
-    const messages: any[] = [{ role: 'system', content: this.system(req.system, req.mustCall) }];
+    const messages: any[] = [{ role: 'system', content: this.system(req) }];
     for (const m of req.messages) {
       if (m.role === 'user') messages.push({ role: 'user', content: m.text });
       else if (m.role === 'assistant') {
@@ -252,6 +302,7 @@ export class ModelClient implements ChatModel {
       tools: req.tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } })),
     };
     if (req.forceTool) body.tool_choice = { type: 'function', function: { name: req.forceTool } };
+    else if (req.choiceNone) body.tool_choice = 'none';
     const headers = routeHeaders(this.route, req.session);
     const res = await this.post(`${this.route.baseUrl}/chat/completions`, headers, body, req.signal);
     const choice = res.choices?.[0] ?? {};
@@ -287,16 +338,24 @@ export class ModelClient implements ChatModel {
     // No max-token field: the backend behind this style does not accept one.
     const body: any = {
       model: this.model,
-      instructions: this.system(req.system, req.mustCall),
+      instructions: this.system(req),
       input,
       tools: req.tools.map(t => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters })),
       store: false,
       stream: true,
     };
     if (req.forceTool) body.tool_choice = { type: 'function', name: req.forceTool };
+    else if (req.choiceNone) body.tool_choice = 'none';
     const text = await this.postText(`${this.route.baseUrl}/responses`, routeHeaders(this.route, req.session), body, req.signal);
     return parseResponses(text);
   }
+}
+
+/** The system prompt with the call rule of this request: a tool that must be called, or no tool at all. */
+function withRule(text: string, req: Req): string {
+  if (req.mustCall) return `${text}\n\nYou must call the ${req.mustCall} tool now.`;
+  if (req.mustNotCall) return `${text}\n\nDo not call a tool now. Answer in text with what you have.`;
+  return text;
 }
 
 /**

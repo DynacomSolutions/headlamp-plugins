@@ -318,7 +318,9 @@ export class ModelCatalogue {
   withIdentity(model: string | undefined, identity: string | undefined): string | undefined {
     if (identity === undefined || identity === '') return model;
     if (!this.config.routes.some(r => r.id === identity)) throw new UnknownIdentityError(identity, this.config.routes.map(r => r.id));
-    if (model === undefined || model === '') throw new UnknownIdentityError(identity, [], 'An identity needs a model.');
+    // An empty model clears the pick, so an identity that comes with it does not matter.
+    if (model === '') return model;
+    if (model === undefined) throw new UnknownIdentityError(identity, [], 'An identity needs a model.');
     const prefix = this.qualified(model)?.route.id;
     if (prefix === undefined) return `${identity}/${model}`;
     if (prefix !== identity) throw new UnknownIdentityError(identity, [], `The model "${model}" belongs to the identity "${prefix}", not "${identity}".`);

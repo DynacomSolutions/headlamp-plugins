@@ -418,6 +418,71 @@ describe('model client', () => {
       expect(rs[1].body.instructions).toContain('You must call the q tool now.');
     });
   });
+
+  describe('no tool in the last call (noTools)', () => {
+    // The history holds tool calls and results, so the tool list must stay in the request: an endpoint refuses a history with tool blocks and no tools.
+    const hasToolBlocks = (body: any) => JSON.stringify(body).match(/tool_use|tool_calls|function_call/) !== null;
+
+    it('anthropic: keeps the tools and says tool_choice none', async () => {
+      const calls = capture(() => json({ content: [{ type: 'text', text: 'done' }], usage: {} }));
+      const out = await new ModelClient(route('n1', { style: 'anthropic' }), 'm').complete({ ...req, noTools: true });
+      expect(out.text).toBe('done');
+      expect(hasToolBlocks(calls[0].body.messages)).toBe(true);
+      expect(calls[0].body.tools.map((t: any) => t.name)).toEqual(['q']);
+      expect(calls[0].body.tool_choice).toEqual({ type: 'none' });
+    });
+
+    it('openai: keeps the tools and says tool_choice none', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'done' } }] }));
+      await new ModelClient(route('n2'), 'm').complete({ ...req, noTools: true });
+      expect(hasToolBlocks(calls[0].body.messages)).toBe(true);
+      expect(calls[0].body.tools).toHaveLength(1);
+      expect(calls[0].body.tool_choice).toBe('none');
+    });
+
+    it('responses: keeps the tools and says tool_choice none', async () => {
+      const calls = capture(() => new Response(sse([{ type: 'response.completed', response: { output: [] } }])));
+      await new ModelClient(route('n3', { style: 'responses' }), 'm').complete({ ...req, noTools: true });
+      expect(hasToolBlocks(calls[0].body.input)).toBe(true);
+      expect(calls[0].body.tools).toHaveLength(1);
+      expect(calls[0].body.tool_choice).toBe('none');
+    });
+
+    it('sends no tool_choice when the request has no tools at all, and names the rule in the prompt', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'done' } }] }));
+      await new ModelClient(route('n4'), 'm').complete({ ...req, tools: [], messages: [{ role: 'user', text: 'go' }], noTools: true });
+      expect(calls[0].body).not.toHaveProperty('tool_choice');
+      expect(calls[0].body.messages[0].content).toContain('Do not call a tool now.');
+    });
+
+    it('retries once with the rule in the prompt when the endpoint refuses tool_choice none, keeps the tools, and remembers the pair', async () => {
+      let n = 0;
+      const calls = capture(() => (n++ === 0 ? new Response('{"error":{"message":"tool_choice none is not supported"}}', { status: 400 }) : json({ choices: [{ message: { content: 'done' } }] })));
+      const client = new ModelClient(route('n5'), 'm');
+      await client.complete({ ...req, noTools: true });
+      expect(calls).toHaveLength(2);
+      expect(calls[0].body.tool_choice).toBe('none');
+      expect(calls[1].body).not.toHaveProperty('tool_choice');
+      expect(calls[1].body.tools).toHaveLength(1);
+      expect(calls[1].body.messages[0].content).toContain('Do not call a tool now.');
+      await client.complete({ ...req, noTools: true });
+      expect(calls).toHaveLength(3);
+      expect(calls[2].body).not.toHaveProperty('tool_choice');
+    });
+  });
+
+  describe('abort', () => {
+    it('stops a retry wait when the signal aborts, at once', async () => {
+      capture(() => new Response('busy', { status: 503 }));
+      const controller = new AbortController();
+      const started = Date.now();
+      const call = new ModelClient(route('a1'), 'm').complete({ ...req, signal: controller.signal });
+      setTimeout(() => controller.abort(), 50);
+      await expect(call).rejects.toThrow('cancelled');
+      // The first wait is 2 seconds: an abort at 50 ms must not wait for it.
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+  });
 });
 
 describe('identities of a provider', () => {
@@ -479,5 +544,16 @@ describe('run time limit', () => {
     expect(cfg.diagnosis).not.toHaveProperty('toolBudget');
     expect(cfg.diagnosis.runTimeoutMs).toBe(15 * 60_000);
     expect(loadConfig({ AGENT_RUN_TIMEOUT_MS: '120000' } as NodeJS.ProcessEnv).diagnosis.runTimeoutMs).toBe(120000);
+  });
+
+  it('gives a diagnosis a shorter limit than a chat turn, and a soft cap on model calls, both from the environment', () => {
+    const cfg = loadConfig({} as NodeJS.ProcessEnv);
+    expect(cfg.diagnosis.diagnosisTimeoutMs).toBe(8 * 60_000);
+    expect(cfg.diagnosis.maxModelCalls).toBe(60);
+    const set = loadConfig({ AGENT_DIAGNOSIS_TIMEOUT_MS: '90000', AGENT_MAX_MODEL_CALLS: '12' } as NodeJS.ProcessEnv);
+    expect(set.diagnosis.diagnosisTimeoutMs).toBe(90000);
+    expect(set.diagnosis.maxModelCalls).toBe(12);
+    // A cap below two would end every run on its first call.
+    expect(loadConfig({ AGENT_MAX_MODEL_CALLS: '1' } as NodeJS.ProcessEnv).diagnosis.maxModelCalls).toBe(2);
   });
 });
