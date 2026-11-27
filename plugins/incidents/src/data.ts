@@ -181,19 +181,40 @@ export async function fetchAutomaticInvestigations(s: Settings): Promise<Automat
 }
 
 /**
+ * The name of the signed-in user, asked from the Kubernetes API with a SelfSubjectReview through the same
+ * Headlamp request helper as the other kube calls. Undefined when the cluster does not answer or has no such API.
+ * The plugin then sends no name, and the page shows "via Headlamp" rather than a name that nobody checked.
+ */
+export async function fetchCurrentUser(): Promise<string | undefined> {
+  try {
+    const review = await ApiProxy.request('/apis/authentication.k8s.io/v1/selfsubjectreviews', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiVersion: 'authentication.k8s.io/v1', kind: 'SelfSubjectReview' }),
+    });
+    const name = (review as { status?: { userInfo?: { username?: unknown } } } | null)?.status?.userInfo?.username;
+    return typeof name === 'string' && name !== '' ? name.slice(0, 80) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Sets the switch for all pods and all users. The agent accepts PUT and POST. The plugin sends POST,
- * which the service proxy maps to the same right as the other writes of the plugin.
+ * which the service proxy maps to the same right as the other writes of the plugin. The body names the user
+ * when the cluster told us who it is.
  */
 export async function saveAutomaticInvestigations(
   s: Settings,
   enabled: boolean
 ): Promise<AutomaticInvestigations> {
+  const by = await fetchCurrentUser();
   try {
     const state = parseAutomaticInvestigations(
       await ApiProxy.request(backendUrl(s, AUTOMATIC_PATH), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify(by ? { enabled, by } : { enabled }),
       })
     );
     if (!state) throw new Error('The agent did not return the setting.');

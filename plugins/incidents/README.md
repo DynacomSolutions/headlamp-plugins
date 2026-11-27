@@ -16,10 +16,13 @@ is read-only.
   The table scrolls inside the page. Its header, the filters and the selection bar stay fixed.
   A card at the top holds the setting **Automatic investigations** (a switch, on by default). It is
   stored on the agent, so it holds for everyone. It shows what the setting does, who changed it last
-  and when, and an error with a retry when the agent cannot answer. Off means the agent starts no
+  and when ("by alice" when the name came from the Headlamp session, "(claimed)" when it did not, "via
+  Headlamp" when no name is known), and an error with a retry when the agent cannot answer. Off means the agent starts no
   investigation by itself. Incidents still open and notify, with the status `skipped` ("Not
   investigated") and an **Investigate** button that starts one by hand (the same rerun route).
-  The plugin writes with `POST /api/settings/automatic-investigations`.
+  The plugin writes with `POST /api/settings/automatic-investigations`. Before it writes, it asks the
+  cluster who the user is (`SelfSubjectReview`) and sends the name. The switch stays enabled and keeps
+  keyboard focus while it saves, and a status line announces the result.
   A failed row has a "Run again" button. It calls
   `POST /api/diagnoses/<id>/rerun` on the agent, stays disabled while the request runs
   and shows an error under the button. The same button is in the `incidents.list`

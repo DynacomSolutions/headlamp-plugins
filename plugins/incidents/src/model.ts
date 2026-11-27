@@ -230,7 +230,10 @@ export function summariseDiagnoses(list: DiagnosisSummary[]): IncidentSummaryCou
 export interface AutomaticInvestigations {
   enabled: boolean;
   updatedAt?: string;
+  /** The name that came with the last change. Empty when the caller gave none. */
   updatedBy?: string;
+  /** `proxy`: the change came through Headlamp. `direct`: it did not, so the name is only a claim. */
+  updatedVia?: 'proxy' | 'direct';
 }
 
 /** The setting from an agent reply, or null when the reply has no switch (an older agent). */
@@ -241,5 +244,6 @@ export function parseAutomaticInvestigations(json: unknown): AutomaticInvestigat
     enabled: d.enabled,
     updatedAt: str(d.updatedAt) || undefined,
     updatedBy: str(d.updatedBy) || undefined,
+    updatedVia: d.updatedVia === 'proxy' || d.updatedVia === 'direct' ? d.updatedVia : undefined,
   };
 }
