@@ -2,7 +2,7 @@ import type { Runtime } from '../runtime.js';
 
 /** Reads that the extra and storage tools of the contract share. They reuse the registry tools and the kube client. */
 
-interface KubeLike {
+export interface KubeLike {
   metadata?: { name?: string; namespace?: string; labels?: Record<string, string> };
   spec?: Record<string, any>;
   status?: Record<string, any>;
@@ -47,23 +47,26 @@ export async function listWorkloads(rt: Runtime, input: { namespace?: string; ki
   return { workloads };
 }
 
+/** One PersistentVolume as the contract shows it (`StorageVolume`, section 5.3). The PV watch compares these. */
+export function volumeOf(v: KubeLike) {
+  const ref = v.spec?.claimRef as { namespace?: string; name?: string } | undefined;
+  const affinity = JSON.stringify(v.spec?.nodeAffinity ?? {});
+  const node = /"values":\["([^"]+)"\]/.exec(affinity)?.[1] ?? null;
+  return {
+    name: v.metadata?.name ?? '',
+    claim: ref?.name ? `${ref.namespace ?? ''}/${ref.name}` : null,
+    storageClass: (v.spec?.storageClassName as string | undefined) ?? null,
+    capacityBytes: bytes(v.spec?.capacity?.storage),
+    phase: String(v.status?.phase ?? ''),
+    node,
+    claimNamespace: ref?.namespace,
+  };
+}
+
 export async function listVolumes(rt: Runtime, input: { namespace?: string; node?: string }) {
   const items = (await rt.kube.listAll('persistentvolumes')) as KubeLike[];
   const volumes = items
-    .map(v => {
-      const ref = v.spec?.claimRef as { namespace?: string; name?: string } | undefined;
-      const affinity = JSON.stringify(v.spec?.nodeAffinity ?? {});
-      const node = /"values":\["([^"]+)"\]/.exec(affinity)?.[1] ?? null;
-      return {
-        name: v.metadata?.name ?? '',
-        claim: ref?.name ? `${ref.namespace ?? ''}/${ref.name}` : null,
-        storageClass: (v.spec?.storageClassName as string | undefined) ?? null,
-        capacityBytes: bytes(v.spec?.capacity?.storage),
-        phase: String(v.status?.phase ?? ''),
-        node,
-        claimNamespace: ref?.namespace,
-      };
-    })
+    .map(volumeOf)
     .filter(v => (!input.namespace || v.claimNamespace === input.namespace) && (!input.node || v.node === input.node))
     .map(({ claimNamespace: _ns, ...v }) => v);
   return { volumes };

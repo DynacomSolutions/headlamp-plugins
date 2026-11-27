@@ -1,5 +1,6 @@
 import type { EventLog } from '../incidents/events.js';
-import { storageUri } from '../incidents/types.js';
+import { storageUri, type NewEvent } from '../incidents/types.js';
+import { volumeOf, type KubeLike } from './extras.js';
 
 /** The part of the Kubernetes client that the watch needs. */
 export interface WatchClient {
@@ -7,9 +8,17 @@ export interface WatchClient {
   getJson<T = unknown>(path: string): Promise<T>;
 }
 
-interface PvObject {
-  metadata?: { name?: string; resourceVersion?: string };
-  status?: { phase?: string };
+type PvObject = KubeLike & { metadata?: { resourceVersion?: string } };
+/** What the watch keeps of one volume: its `StorageVolume` fields as one string, and its node. */
+interface Seen {
+  fields: string;
+  node: string | null;
+}
+
+/** The part of a volume that the contract shows (`StorageVolume`, section 5.3). The namespace of the claim is part of `claim`. */
+function seenOf(pv: PvObject): Seen {
+  const { claimNamespace: _ns, ...v } = volumeOf(pv);
+  return { fields: JSON.stringify(v), node: v.node };
 }
 
 const PATH = '/api/v1/persistentvolumes';
@@ -17,11 +26,12 @@ const WATCH_SECONDS = 300;
 
 /**
  * The event source of `storage.updated` (contract section 7.1): a Kubernetes watch on PersistentVolumes.
- * A volume that appears, disappears or changes its phase raises one event for `headlamp://storage/volumes`.
+ * A volume that appears, disappears or changes any field of `StorageVolume` raises an event for `headlamp://storage/volumes`.
+ * The event labels hold `node` and `volume`, so a node URI gets only its own events. A change of node raises one event for each node.
  * The watch is a stream that the API server pushes, not a poll. After a break it lists again and compares, so no change is lost.
  */
 export class PvWatch {
-  private phases = new Map<string, string>();
+  private volumes = new Map<string, Seen>();
   private stopped = false;
   private abort: AbortController | undefined;
   private task: Promise<void> | undefined;
@@ -45,32 +55,62 @@ export class PvWatch {
     await this.task?.catch(() => {});
   }
 
-  private async raise(): Promise<void> {
-    const stored = await this.events.append([{ kind: 'storage.updated', uri: storageUri('volumes'), incidentId: null, labels: {} }]);
-    await this.events.committed(stored);
+  private async raise(changes: Array<{ volume: string; node: string | null }>): Promise<void> {
+    if (!changes.length) return;
+    const events: NewEvent[] = changes.map(c => ({ kind: 'storage.updated', uri: storageUri('volumes'), incidentId: null, labels: { volume: c.volume, ...(c.node ? { node: c.node } : {}) } }));
+    await this.events.committed(await this.events.append(events));
   }
 
-  /** Compares one volume with what the watch knew. Returns true when it is a change. */
-  private seen(name: string, phase: string | undefined, deleted: boolean): boolean {
-    const before = this.phases.get(name);
-    if (deleted) return this.phases.delete(name);
-    const now = phase ?? '';
-    this.phases.set(name, now);
-    return before !== now;
+  /** The nodes whose volume list changes when `before` becomes `after`. Empty when nothing changed. */
+  private static changed(volume: string, before: Seen | undefined, after: Seen | undefined): Array<{ volume: string; node: string | null }> {
+    if (before?.fields === after?.fields) return [];
+    const nodes = new Set([before?.node ?? null, after?.node ?? null]);
+    return [...nodes].map(node => ({ volume, node }));
+  }
+
+  /** Compares one volume with what the watch knew. Returns the events to raise. */
+  private seen(pv: PvObject, deleted: boolean): Array<{ volume: string; node: string | null }> {
+    const name = pv.metadata!.name!;
+    const before = this.volumes.get(name);
+    if (deleted) {
+      this.volumes.delete(name);
+      return PvWatch.changed(name, before, undefined);
+    }
+    const now = seenOf(pv);
+    this.volumes.set(name, now);
+    return PvWatch.changed(name, before, now);
+  }
+
+  /** Reads all volumes, page by page with `continue`, so more than 500 volumes give no false change. */
+  private async listAll(): Promise<{ resourceVersion?: string; items: PvObject[] }> {
+    const items: PvObject[] = [];
+    let resourceVersion: string | undefined;
+    let next: string | undefined;
+    do {
+      const page = await this.kube.getJson<{ metadata?: { resourceVersion?: string; continue?: string }; items?: PvObject[] }>(`${PATH}?limit=500${next ? `&continue=${encodeURIComponent(next)}` : ''}`);
+      items.push(...(page.items ?? []));
+      resourceVersion ??= page.metadata?.resourceVersion;
+      next = page.metadata?.continue || undefined;
+    } while (next);
+    return { resourceVersion, items };
   }
 
   private async run(): Promise<void> {
     let first = true;
     while (!this.stopped) {
       try {
-        const list = await this.kube.getJson<{ metadata?: { resourceVersion?: string }; items?: PvObject[] }>(`${PATH}?limit=500`);
-        const next = new Map<string, string>();
-        for (const pv of list.items ?? []) if (pv.metadata?.name) next.set(pv.metadata.name, pv.status?.phase ?? '');
-        const changed = !first && (next.size !== this.phases.size || [...next].some(([k, v]) => this.phases.get(k) !== v));
-        this.phases = next;
+        const list = await this.listAll();
+        const next = new Map<string, Seen>();
+        for (const pv of list.items) if (pv.metadata?.name) next.set(pv.metadata.name, seenOf(pv));
+        const changes: Array<{ volume: string; node: string | null }> = [];
+        if (!first) {
+          for (const [name, now] of next) changes.push(...PvWatch.changed(name, this.volumes.get(name), now));
+          for (const [name, was] of this.volumes) if (!next.has(name)) changes.push(...PvWatch.changed(name, was, undefined));
+        }
+        this.volumes = next;
         first = false;
-        if (changed) await this.raise();
-        await this.watch(list.metadata?.resourceVersion);
+        await this.raise(changes);
+        await this.watch(list.resourceVersion);
       } catch (error) {
         if (this.stopped) return;
         this.log('warn', 'persistent volume watch failed', { error: String(error) });
@@ -108,7 +148,7 @@ export class PvWatch {
         const e = JSON.parse(line) as { type?: string; object?: PvObject };
         if (e.type === 'ERROR') throw new Error('the watch ended with an error event');
         if (e.type === 'BOOKMARK' || !e.object?.metadata?.name) continue;
-        if (this.seen(e.object.metadata.name, e.object.status?.phase, e.type === 'DELETED')) await this.raise();
+        await this.raise(this.seen(e.object, e.type === 'DELETED'));
       }
     }
   }
