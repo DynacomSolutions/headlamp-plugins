@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Diagnosis } from '../src/agent/report.js';
 import type { EventRecord } from '../src/incidents/types.js';
+import { PgEventLog } from '../src/incidents/events.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
 
 // A real PostgreSQL (PGlite) starts here, so these tests get a long timeout.
@@ -82,8 +83,11 @@ describe('the event log in PostgreSQL', () => {
   it('removes old events, remembers the highest removed id and reports a reset', async () => {
     const store = await podStore(db, { now: () => clock });
     await store.putNew(record('a'));
+    // The event time is the database clock, so the test sets it to the fake clock.
+    await db.query('UPDATE mcp_events SET at = $1', [new Date(clock)]);
     clock += 8 * 24 * 3600_000;
     await store.putNew(record('b', { alert: { ...record('b').alert, fingerprint: 'f-b' } }));
+    await db.query('UPDATE mcp_events SET at = $1 WHERE id > 2', [new Date(clock)]);
     const removed = await store.events.prune();
     expect(removed).toBe(2);
     expect((await store.events.head()).oldestRetained).toBe('3');
@@ -92,5 +96,73 @@ describe('the event log in PostgreSQL', () => {
     expect((await store.events.readAfter(2n, 10)).reset).toBe(false);
     expect((await store.events.readAfter(0n, 10)).reset).toBe(false);
     await store.events.close();
+  });
+
+  describe('event id order, delivery and counting (contract section 8.1, security L2 and L7)', () => {
+    const settings = { kind: 'settings.changed' as const, uri: 'headlamp://settings/automatic-investigations' };
+    async function log() {
+      for (const sql of PgEventLog.schema()) await db.query(sql);
+      return new PgEventLog(db);
+    }
+
+    it('holds one advisory lock from the insert until the commit, so id order is commit order', async () => {
+      const events = await log();
+      const locks = async (q: { query: typeof db.query }) => ((await q.query("SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND granted")).rows[0] as { n: number }).n;
+      let during = -1;
+      await db.transaction(async tx => {
+        expect(await locks(tx)).toBe(0);
+        await events.append([settings], tx);
+        during = await locks(tx);
+      });
+      expect(during).toBe(1);
+      expect(await locks(db)).toBe(0); // released at the commit
+      // Ids grow with the commits of several writes, with no overtaking.
+      const ids: bigint[] = [];
+      for (let i = 0; i < 5; i++) ids.push(BigInt((await events.append([settings]))[0]!.id));
+      expect(ids).toEqual([...ids].sort((a, b) => (a < b ? -1 : 1)));
+      await events.close();
+    });
+
+    it('takes the time of an event from the database clock at the insert, and counts it only after the commit', async () => {
+      const events = await log();
+      const counted: string[] = [];
+      events.onRecorded = k => counted.push(k);
+      const before = Date.now();
+      await expect(
+        db.transaction(async tx => {
+          await events.append([settings], tx);
+          throw new Error('roll back');
+        }),
+      ).rejects.toThrow('roll back');
+      expect(counted).toEqual([]);
+      const stored = await events.append([settings]);
+      expect(counted).toEqual([]);
+      await events.committed(stored);
+      expect(counted).toEqual(['settings.changed']);
+      expect(Math.abs(Date.parse(stored[0]!.at) - before)).toBeLessThan(60_000);
+      const head = await events.head();
+      expect(head.logId).toMatch(/^[0-9a-f-]{36}$/);
+      expect((await events.readAfter(BigInt(head.latest!) + 5n, 10)).reset).toBe(true); // ahead of the log
+      await events.close();
+    });
+
+    it('tries a failed delivery again, so a database error loses no live event', async () => {
+      const events = await log();
+      await events.start();
+      const seen: string[] = [];
+      events.listen(e => seen.push(e.id));
+      const read = events.readFrom.bind(events);
+      let failures = 0;
+      events.readFrom = async (...args) => {
+        if (failures++ < 1) throw new Error('the database blinked');
+        return read(...args);
+      };
+      const stored = await events.append([settings]);
+      await events.committed(stored);
+      for (let i = 0; i < 400 && !seen.length; i++) await new Promise(r => setTimeout(r, 10));
+      expect(failures).toBeGreaterThanOrEqual(2); // the first read failed, a later one worked
+      expect(seen).toEqual([stored[0]!.id]);
+      await events.close();
+    });
   });
 });

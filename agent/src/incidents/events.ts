@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { Db } from '../store.js';
 import type { EventRecord, NewEvent } from './types.js';
-import { kindMatches } from './model.js';
+import { canSee, kindMatches } from './model.js';
 
 /** Events are kept 7 days and at most 100 000 (contract section 8.2). */
 export const RETENTION_MS = 7 * 24 * 3600_000;
@@ -9,9 +10,12 @@ export const MAX_EVENTS = 100_000;
 export interface EventFilter {
   kinds?: string[];
   labels?: Record<string, string>;
+  /** Only events whose primary URI needs one of these scopes (contract section 8.7). */
+  scopes?: ReadonlySet<string>;
 }
 
 export interface EventPage {
+  logId: string;
   events: EventRecord[];
   nextAfter: string;
   hasMore: boolean;
@@ -21,6 +25,7 @@ export interface EventPage {
 }
 
 export interface EventHead {
+  logId: string;
   latest: string | null;
   oldestRetained: string | null;
 }
@@ -34,7 +39,13 @@ export function publicEvent({ state: _state, ...e }: EventRecord): Omit<EventRec
   return e;
 }
 
-function passes(e: EventRecord, f: EventFilter): boolean {
+/** Contract section 8.3: a cursor is a reset when events were removed after it, or when it is ahead of the log. */
+export function isReset(after: bigint, latest: string | null, floor: bigint): boolean {
+  return (after !== 0n && after < floor) || after > BigInt(latest ?? '0');
+}
+
+export function passes(e: EventRecord, f: EventFilter): boolean {
+  if (f.scopes && !canSee(f.scopes, e.kind)) return false;
   if (f.kinds?.length && !kindMatches(f.kinds, e.kind)) return false;
   return Object.entries(f.labels ?? {}).every(([k, v]) => e.labels[k] === v);
 }
@@ -66,7 +77,7 @@ export abstract class EventLog {
 
   /** Stores events. Inside a transaction (`tx`) delivery waits for `committed`. */
   abstract append(events: NewEvent[], tx?: Tx): Promise<EventRecord[]>;
-  /** Tells the log that the transaction of `append` committed: now the events are delivered. */
+  /** Tells the log that the transaction of `append` committed: now the events are counted and delivered. */
   abstract committed(records: EventRecord[]): Promise<void>;
   abstract head(): Promise<EventHead>;
   abstract readAfter(after: bigint, limit: number, filter?: EventFilter): Promise<EventPage>;
@@ -82,6 +93,7 @@ export class MemoryEventLog extends EventLog {
   private readonly rows: EventRecord[] = [];
   private next = 1n;
   private floor = 0n; // the highest id ever removed
+  private readonly logId = randomUUID();
 
   constructor(private readonly now: () => number = Date.now) {
     super();
@@ -91,16 +103,16 @@ export class MemoryEventLog extends EventLog {
     const at = new Date(this.now()).toISOString();
     const records = events.map(e => ({ id: String(this.next++), at, kind: e.kind, uri: e.uri, incidentId: e.incidentId ?? null, labels: e.labels ?? {}, actor: e.actor ?? null, state: e.state }));
     this.rows.push(...records);
-    for (const r of records) this.onRecorded?.(r.kind);
     return records;
   }
 
   async committed(records: EventRecord[]): Promise<void> {
+    for (const r of records) this.onRecorded?.(r.kind);
     this.emit(records);
   }
 
   async head(): Promise<EventHead> {
-    return { latest: this.rows.at(-1)?.id ?? null, oldestRetained: this.rows[0]?.id ?? null };
+    return { logId: this.logId, latest: this.rows.at(-1)?.id ?? null, oldestRetained: this.rows[0]?.id ?? null };
   }
 
   async readAfter(after: bigint, limit: number, filter: EventFilter = {}): Promise<EventPage> {
@@ -112,7 +124,7 @@ export class MemoryEventLog extends EventLog {
       nextAfter: page.length ? page[page.length - 1]!.id : String(after),
       hasMore: rows.length > page.length,
       ...head,
-      reset: after !== 0n && after < this.floor,
+      reset: isReset(after, head.latest, this.floor),
     };
   }
 
@@ -148,6 +160,7 @@ export const EVENT_SCHEMA = [
   )`,
   'CREATE INDEX IF NOT EXISTS mcp_events_at_idx ON mcp_events (at)',
   'CREATE TABLE IF NOT EXISTS mcp_event_floor (one boolean PRIMARY KEY DEFAULT true CHECK (one), floor bigint NOT NULL DEFAULT 0)',
+  'ALTER TABLE mcp_event_floor ADD COLUMN IF NOT EXISTS log_id uuid NOT NULL DEFAULT gen_random_uuid()',
   'INSERT INTO mcp_event_floor (one, floor) VALUES (true, 0) ON CONFLICT DO NOTHING',
 ];
 
@@ -172,6 +185,9 @@ const toRecord = (r: Row): EventRecord => ({ id: String(r.id), at: new Date(r.at
 export class PgEventLog extends EventLog {
   private delivered = 0n;
   private delivering: Promise<void> = Promise.resolve();
+  private failures = 0;
+  private retry: NodeJS.Timeout | undefined;
+  private closed = false;
   private unlisten: (() => Promise<void>) | undefined;
 
   constructor(
@@ -200,19 +216,20 @@ export class PgEventLog extends EventLog {
       const out: EventRecord[] = [];
       for (const e of events) {
         const r = await t.query(
-          'INSERT INTO mcp_events (at, kind, uri, incident_id, labels, actor, state) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7) RETURNING id, at, kind, uri, incident_id, labels, actor, state',
-          [new Date(this.now()), e.kind, e.uri, e.incidentId ?? null, JSON.stringify(e.labels ?? {}), e.actor ?? null, e.state ?? null],
+          // `at` is the database clock at the insert, after the lock: it grows with the id, so removal by age removes a prefix (contract section 8.1).
+          'INSERT INTO mcp_events (at, kind, uri, incident_id, labels, actor, state) VALUES (clock_timestamp(), $1, $2, $3, $4::jsonb, $5, $6) RETURNING id, at, kind, uri, incident_id, labels, actor, state',
+          [e.kind, e.uri, e.incidentId ?? null, JSON.stringify(e.labels ?? {}), e.actor ?? null, e.state ?? null],
         );
         out.push(toRecord(r.rows[0] as Row));
       }
       await t.query('SELECT pg_notify($1, $2)', [NOTIFY_CHANNEL, out[out.length - 1]!.id]);
-      for (const r of out) this.onRecorded?.(r.kind);
       return out;
     };
     return tx ? run(tx) : this.db.transaction(run);
   }
 
-  async committed(_records: EventRecord[]): Promise<void> {
+  async committed(records: EventRecord[]): Promise<void> {
+    for (const r of records) this.onRecorded?.(r.kind);
     await this.deliver();
   }
 
@@ -228,13 +245,28 @@ export class PgEventLog extends EventLog {
           if (rows.length < 500) return;
         }
       })
-      .catch(() => {});
+      .then(() => {
+        this.failures = 0;
+      })
+      .catch(() => this.retryLater());
     return this.delivering;
+  }
+
+  /** A failed read is tried again with a back-off (1 s, then double, at most 30 s), so a database blip loses no live event. */
+  private retryLater(): void {
+    if (this.retry || this.closed) return;
+    const wait = Math.min(30_000, 1000 * 2 ** Math.min(this.failures++, 5));
+    this.retry = setTimeout(() => {
+      this.retry = undefined;
+      void this.deliver();
+    }, wait);
+    this.retry.unref();
   }
 
   async head(): Promise<EventHead> {
     const r = await this.db.query('SELECT min(id)::text AS oldest, max(id)::text AS latest FROM mcp_events');
-    return { latest: (r.rows[0]?.latest as string | null) ?? null, oldestRetained: (r.rows[0]?.oldest as string | null) ?? null };
+    const log = await this.db.query('SELECT log_id::text AS id FROM mcp_event_floor');
+    return { logId: (log.rows[0]?.id as string | undefined) ?? '00000000-0000-0000-0000-000000000000', latest: (r.rows[0]?.latest as string | null) ?? null, oldestRetained: (r.rows[0]?.oldest as string | null) ?? null };
   }
 
   async readAfter(after: bigint, limit: number, filter: EventFilter = {}): Promise<EventPage> {
@@ -248,7 +280,7 @@ export class PgEventLog extends EventLog {
       nextAfter: page.length ? page[page.length - 1]!.id : String(after),
       hasMore: rows.length > page.length,
       ...head,
-      reset: after !== 0n && after < floor,
+      reset: isReset(after, head.latest, floor),
     };
   }
 
@@ -263,7 +295,7 @@ export class PgEventLog extends EventLog {
       await tx.query('SELECT pg_advisory_xact_lock($1)', [EVENT_LOCK]);
       const r = await tx.query(
         `WITH doomed AS (
-           SELECT id FROM mcp_events WHERE at < $1
+           SELECT id FROM mcp_events WHERE id <= coalesce((SELECT max(id) FROM mcp_events WHERE at < $1), 0)
            UNION SELECT id FROM (SELECT id FROM mcp_events ORDER BY id DESC OFFSET $2) over_cap
          ), gone AS (DELETE FROM mcp_events WHERE id IN (SELECT id FROM doomed) RETURNING id)
          SELECT count(*)::int AS n, coalesce(max(id), 0)::text AS top FROM gone`,
@@ -280,6 +312,8 @@ export class PgEventLog extends EventLog {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
+    if (this.retry) clearTimeout(this.retry);
     await this.unlisten?.();
   }
 }
