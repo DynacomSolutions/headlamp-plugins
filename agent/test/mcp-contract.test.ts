@@ -115,7 +115,7 @@ describe('auth', () => {
     expect(transport.sessionId).toBeTruthy();
     const caps = client.getServerCapabilities() as any;
     expect(caps.resources).toMatchObject({ subscribe: true, listChanged: true });
-    expect(caps.experimental['dev.dynacom.headlamp'].contract).toBe('1.0.0');
+    expect(caps.experimental['headlamp-agent'].contract).toBe('1.0.0');
     await client.close();
   });
 
@@ -161,16 +161,16 @@ describe('subscribe, event, read', () => {
     await client.subscribeResource({ uri: 'headlamp://incidents?label=test%3Dtrue' });
     await fire({ test: 'false' });
     const test = await fire({ test: 'true', source: 'contract-test' });
-    await until(() => seen.some(s => s.method === 'notifications/resources/updated' && s.params._meta?.['dev.dynacom.headlamp/event']?.incidentId === test.id));
+    await until(() => seen.some(s => s.method === 'notifications/resources/updated' && s.params._meta?.['headlamp-agent/event']?.incidentId === test.id));
     const updated = seen.filter(s => s.method === 'notifications/resources/updated');
     // Only the test incident matched the filtered subscription.
     for (const u of updated) {
       expect(u.params.uri).toBe('headlamp://incidents?label=test%3Dtrue');
-      expect(u.params._meta['dev.dynacom.headlamp/event'].labels.test).toBe('true');
+      expect(u.params._meta['headlamp-agent/event'].labels.test).toBe('true');
       expect(JSON.stringify(u.params)).not.toContain('annotations');
     }
-    const created = updated.find(u => u.params._meta['dev.dynacom.headlamp/event'].kind === 'incident.created')!;
-    const meta = created.params._meta['dev.dynacom.headlamp/event'];
+    const created = updated.find(u => u.params._meta['headlamp-agent/event'].kind === 'incident.created')!;
+    const meta = created.params._meta['headlamp-agent/event'];
     expect(meta).toMatchObject({ kind: 'incident.created', incidentId: test.id });
     expect(meta.eventId).toMatch(/^\d+$/);
     // The list changed too.
@@ -180,7 +180,7 @@ describe('subscribe, event, read', () => {
     const incident = JSON.parse((read.contents[0] as any).text).incident;
     expect(incident).toMatchObject({ id: test.id, name: test.name, state: 'open', test: true });
     // Event ids grow.
-    const ids = updated.map(u => BigInt(u.params._meta['dev.dynacom.headlamp/event'].eventId));
+    const ids = updated.map(u => BigInt(u.params._meta['headlamp-agent/event'].eventId));
     expect(ids).toEqual([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
     await client.close();
   });
@@ -194,7 +194,7 @@ describe('subscribe, event, read', () => {
     expect(seen.filter(s => s.method === 'notifications/resources/updated')).toHaveLength(0);
     const svc = await client.callTool({ name: 'add_incident_note', arguments: { incidentId: a.id, text: 'hello' } });
     expect(svc.isError).toBeFalsy();
-    await until(() => seen.some(s => s.method === 'notifications/resources/updated' && s.params._meta['dev.dynacom.headlamp/event'].kind === 'incident.note_added'));
+    await until(() => seen.some(s => s.method === 'notifications/resources/updated' && s.params._meta['headlamp-agent/event'].kind === 'incident.note_added'));
     await client.unsubscribeResource({ uri: `headlamp://incidents/${a.id}` });
     const before = seen.length;
     await client.callTool({ name: 'add_incident_note', arguments: { incidentId: a.id, text: 'again' } });
@@ -446,11 +446,11 @@ describe('replay with Last-Event-ID', () => {
     const ids = second.frames.filter(f => f.id && /^\d+$/.test(f.id)).map(f => BigInt(f.id!));
     expect(ids[0]).toBe(BigInt(lastSeen)); // from the last id, inclusive: at least once.
     expect(ids).toEqual([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)));
-    const sources = second.frames.filter(f => f.data?.method === 'notifications/resources/updated').map(f => f.data.params._meta['dev.dynacom.headlamp/event'].labels.source);
+    const sources = second.frames.filter(f => f.data?.method === 'notifications/resources/updated').map(f => f.data.params._meta['headlamp-agent/event'].labels.source);
     expect(sources.every((s: string) => s === 'replay-test')).toBe(true);
     // Live events continue after the replay.
     const live = await fire({ test: 'true', source: 'replay-test' });
-    await until(() => second.frames.some(f => f.data?.params?._meta?.['dev.dynacom.headlamp/event']?.incidentId === live.id));
+    await until(() => second.frames.some(f => f.data?.params?._meta?.['headlamp-agent/event']?.incidentId === live.id));
     second.close();
     await rpc(first.sid, 'full', 'ping', {}, 9);
   });
@@ -465,7 +465,7 @@ describe('replay with Last-Event-ID', () => {
     clock -= 8 * 24 * 3600_000;
     await fire();
     const again = await open('full', '2', first.sid);
-    await until(() => again.frames.some(f => f.data?.params?._meta?.['dev.dynacom.headlamp/event']?.kind === 'reset'));
+    await until(() => again.frames.some(f => f.data?.params?._meta?.['headlamp-agent/event']?.kind === 'reset'));
     again.close();
   });
 });

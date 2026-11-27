@@ -188,7 +188,7 @@ export class McpEndpoint {
     const { mcp, who } = session;
     mcp.server.registerCapabilities({
       resources: { subscribe: true, listChanged: true },
-      experimental: { 'dev.dynacom.headlamp': { contract: CONTRACT_VERSION, eventLog: { uri: 'headlamp://events', retentionHours: 168 }, scopes: [...who.scopes] } },
+      experimental: { 'headlamp-agent': { contract: CONTRACT_VERSION, eventLog: { uri: 'headlamp://events', retentionHours: 168 }, scopes: [...who.scopes] } },
     } as never);
     mcp.server.setRequestHandler('resources/subscribe', async request => {
       const uri = request.params.uri;

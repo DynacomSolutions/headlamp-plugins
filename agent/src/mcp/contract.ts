@@ -12,7 +12,7 @@ import type { McpMetrics } from './metrics.js';
 import * as S from './schemas.js';
 
 export const CONTRACT_VERSION = '1.0.0';
-export const META_KEY = 'dev.dynacom.headlamp/event';
+export const META_KEY = 'headlamp-agent/event';
 
 export interface ContractDeps {
   runtime: Runtime;
@@ -353,7 +353,7 @@ export function registerContract(server: McpServer, d: ContractDeps, who: Princi
         inputSchema: t.input,
         outputSchema: t.output,
         annotations: { readOnlyHint: !t.write, destructiveHint: false, idempotentHint: t.idempotent ?? false, openWorldHint: false },
-        _meta: { 'dev.dynacom.headlamp/scope': t.scope },
+        _meta: { 'headlamp-agent/scope': t.scope },
       },
       async (args: unknown) => {
         d.metrics.toolCall(t.name, who.client);
