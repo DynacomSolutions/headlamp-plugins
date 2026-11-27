@@ -28,7 +28,7 @@ Adding a served protocol version is not a breaking change. Removing one is a bre
 1. The client sends `POST /mcp` with `initialize` and one protocol version. The server answers with the same version when it serves it. Otherwise it answers with another version that it serves, and the client MAY then end the connection.
 2. The server answers with the `Mcp-Session-Id` response header. The value is an opaque string of at most 128 visible ASCII characters.
 3. The client MUST send `Mcp-Session-Id` and `MCP-Protocol-Version` on every later request.
-4. The client opens the push stream with `GET /mcp`, header `Accept: text/event-stream` and `Mcp-Session-Id`. The server sends all notifications on this stream. At most one push stream is open per session. A new `GET` for the same session **replaces** the old stream: the server closes the old stream and serves the new one. A new `GET` never fails because an old stream still looks open. In a stateful session the server answers every `POST` with `application/json`. The only SSE stream of a session is the `GET` push stream. A client therefore never resumes a `POST` stream.
+4. The client opens the push stream with `GET /mcp`, header `Accept: text/event-stream` and `Mcp-Session-Id`. The server sends all notifications on this stream. At most one push stream is open per session. A new `GET` for the same session **replaces** the old stream: the server closes the old stream and serves the new one. A new `GET` never fails because an old stream still looks open. In a stateful session the server answers every `POST` that holds a request with `application/json`. A `POST` that holds only notifications or responses gets HTTP 202 with no body. The only SSE stream of a session is the `GET` push stream. A client therefore never resumes a `POST` stream. A stateful session gets no progress or logging notifications during a call.
 5. The client sends `DELETE /mcp` with `Mcp-Session-Id` to end the session.
 6. A session ends when it is deleted, or 30 minutes after its last request while no push stream is open. An open push stream keeps the session alive. The server sends an SSE comment line (`: keep-alive`) every 25 seconds.
 7. The server keeps at most 200 sessions, and at most 20 sessions for each client name. The client name is the `name` of the token entry (section 4.3). It is not the `clientInfo.name` that the client sends in `initialize`. When the total limit is reached, `initialize` fails with HTTP 503 and `Retry-After: 30`. When the limit for one client is reached, `initialize` fails with HTTP 429 and `Retry-After: 30`. Both answers carry the error code `rate_limited`. The server counts a session from the start of `initialize`, so parallel requests cannot go over a limit.
@@ -304,7 +304,7 @@ A request that carries a bearer header with an unknown token, or when no token f
 
 Every tool returns a text content block and, on success, `structuredContent` that matches its output schema. The existing registry tools also return an A2UI data update. Write tools set `readOnlyHint: false`. `destructiveHint` is `false` for all tools of this contract, because nothing deletes data. Input objects set `additionalProperties: false`. A client MUST NOT send unknown fields.
 
-**Tool errors.** A failed tool call returns `isError: true`, **no** `structuredContent`, a text block that holds the `Error` object as JSON, and the same object in `_meta["headlamp-agent/error"]`. Generic MCP clients validate `structuredContent` against the output schema. An error body would fail that check, so it is not sent. The server checks the tool input itself. A wrong input returns this error shape with `code: "invalid_argument"`. A client MUST also accept a result with `isError: true` that has no `_meta["headlamp-agent/error"]` (for example the plain text of a generic MCP library). The client MUST treat that result as `invalid_argument`.
+**Tool errors.** A failed tool call returns `isError: true`, **no** `structuredContent`, a text block that holds the `Error` object as JSON, and the same object in `_meta["headlamp-agent/error"]`. Generic MCP clients validate `structuredContent` against the output schema. An error body would fail that check, so it is not sent. The server checks the tool input itself. A wrong input returns this error shape with `code: "invalid_argument"`. A client MUST also accept a result with `isError: true` that has no `_meta["headlamp-agent/error"]` (for example the plain text of a generic MCP library). The client MUST treat an `isError` result without `_meta["headlamp-agent/error"]` as a failed call with an unknown cause (`internal`). A server of this contract sends the `Error` for its own failures.
 
 All write tools accept an optional `requestId` (string, 1 to 64 characters of `A-Za-z0-9._-`). The server remembers the result of a write for 24 hours, keyed by incident, client name, tool name and `requestId`. A repeated call with the same key returns the first result with `replayed: true` and writes nothing again. A repeated key with different arguments fails with `request_conflict`. The server checks the `requestId` before it checks the state of the incident, so a retry of a completed write returns the first result also after the incident resolved.
 
@@ -653,7 +653,7 @@ A subscriber filters in one of these ways:
 - `kind` and `label` filter the events. A `label` matches the full labels that the server stores, as in a subscription. The server also hides events whose primary URI needs a scope that the caller does not have (section 8.7). `nextAfter` still moves over events that a filter or a scope hides, so a client never reads the same range twice.
 - `reset` is `true` in each of these cases:
   1. `after` is greater than 0 and lower than the high-water mark of removed ids. Events are lost.
-  2. `after` is greater than `latest`. The log is newer or older than the client expects, for example after a database restore or a restart in memory mode. A log that has no events now but did store events before still has its `latest`, so a stored cursor does not cause a reset by itself.
+  2. `after` is greater than `latest`. The log is newer or older than the client expects, for example after a database restore or a restart in memory mode. A log that has no events now but did store events before still has its `latest`, so a stored cursor does not cause a reset by itself. A restore keeps the `logId`. A client can therefore miss the reset when the restored log passes its cursor before it reads.
   3. `logId` is given and differs from the `logId` of the log.
 
   In every case the page starts at `oldestRetained`, not after `after`. The client MUST re-read the collections it uses (section 8.5).
@@ -721,7 +721,7 @@ A tool failure returns `isError: true`, a text block with the `Error` as JSON, a
 | --- | --- | --- | --- |
 | `unauthenticated` | n/a | 401 | No token, or an invalid token. |
 | `forbidden` | `-32003` for `resources/subscribe`; see note | 403 for transport, 200 otherwise | The token lacks the scope. `requiredScope` names it (subscribe only). |
-| `invalid_argument` | `-32602` | 200 | An input does not match its schema. For tools the server answers with a tool result `isError: true` and the `Error` with this code. A client also treats an `isError` result without the `Error` as this code (section 5). |
+| `invalid_argument` | `-32602` | 200 | An input does not match its schema. For tools the server answers with a tool result `isError: true` and the `Error` with this code. A client treats an `isError` result without the `Error` as `internal` (section 5). |
 | `not_found` | `-32002` | 200 | The incident, investigation or resource does not exist. |
 | `not_subscribable` | `-32002` | 200 | The resource exists but has no event source. |
 | `conflict` | `-32000` | 200 | The state does not allow the action. |
@@ -770,7 +770,7 @@ The contract fixes only what clients see. The setting is stored on the server, c
 3. `GET /mcp` with `Accept: text/event-stream` and the session id.
 4. `resources/subscribe` for `headlamp://incidents?label=test%3Dtrue` (or a wider URI).
 4b. Read `headlamp://events?after=<cursor>&logId=<logId>` until `hasMore` is `false`. This closes the gap between step 2 and step 4: events in that gap are not pushed.
-5. On a notification, read `uri`, store `eventId`, and read the resource for content.
+5. On a notification, read `uri`, store `eventId`, except for a reset frame (use `_meta.latest`), and read the resource for content.
 6. After a break: reconnect `GET /mcp` with `Last-Event-ID`. On a `reset` frame, re-read the collections and take `latest` as the new cursor. On HTTP 404 start again from step 1 and read `headlamp://events?after=<cursor>` until `hasMore` is `false`.
 
 ## Appendix A. Operational notes (not part of the contract)
