@@ -9,6 +9,7 @@ import { ModelCatalogue } from './agent/catalogue.js';
 import type { ChatModel, ToolSpec } from './agent/model.js';
 import { A2UI_MIME } from './a2ui/index.js';
 import { alertSchema, diagnosisMarkdown, type Alert, type Diagnosis } from './agent/report.js';
+import { fitForPublish } from './publish.js';
 
 /**
  * The incident-diagnosis agent over the Agent Client Protocol (stdio,
@@ -133,14 +134,14 @@ async function pickFiringAlert(tools: ToolHost): Promise<Alert | undefined> {
   return { name: a.name, severity: a.severity, labels: a.labels, annotations: a.annotations, startsAt: a.activeAt, fingerprint: fingerprint(a.labels) };
 }
 
-async function publish(mcpUrl: string, headers: Record<string, string>, d: Diagnosis): Promise<string | undefined> {
+export async function publish(mcpUrl: string, headers: Record<string, string>, d: Diagnosis): Promise<string | undefined> {
   if (process.env.HEADLAMP_AGENT_PUBLISH === '0') return undefined;
   const base = process.env.HEADLAMP_AGENT_URL ?? mcpUrl.replace(/\/mcp\/?$/, '');
   const { a2ui: _a2ui, finishedAt: _f, resolvedAt: _r, ...rest } = d;
   const res = await fetch(`${base}/api/diagnoses`, {
     method: 'POST',
     headers: { ...headers, 'content-type': 'application/json' },
-    body: JSON.stringify({ diagnosis: { ...rest, source: 'acp', status: d.status === 'done' ? 'done' : 'failed' } }),
+    body: JSON.stringify({ diagnosis: fitForPublish({ ...rest, source: 'acp', status: d.status === 'done' ? 'done' : 'failed' }) }),
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`publishing failed: ${res.status} ${(await res.text()).slice(0, 200)}`);
