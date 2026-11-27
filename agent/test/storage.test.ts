@@ -476,6 +476,16 @@ describe('Storage incident normal entry points', () => {
       expect((await f.session(chat, { headers: { origin: 'https://other.example.com' } })).status).toBe(200);
     });
 
+    it('accepts the model and identity of the chat picker in a message, and still rejects other fields', async () => {
+      const f = await fixture(unsetGroups);
+      const chat = `${api}/incident/chat/${(await f.session(`${api}/incident`)).data.incident.chatId}`;
+      const message = `${chat}/messages`;
+      const sent = await f.session(message, { data: { text: 'inventory', model: 'claude/claude-opus-5-5', identity: 'claude-account-a' } });
+      expect(sent.status).toBe(200);
+      expect(sent.data.messages).toHaveLength(2);
+      expect((await f.session(message, { data: { text: 'inventory', unknown: 1 } })).status).toBe(400);
+    });
+
     it('gives no session trust on the main port, even from a trusted peer', async () => {
       const f = await fixture(unsetGroups);
       expect((await f.call(`${api}/incident`, { token: false })).status).toBe(401);
