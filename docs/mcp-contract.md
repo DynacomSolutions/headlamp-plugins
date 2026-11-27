@@ -43,7 +43,7 @@ The `initialize` result declares:
     "resources": { "subscribe": true, "listChanged": true },
     "prompts": { "listChanged": false },
     "experimental": {
-      "dev.dynacom.headlamp": {
+      "headlamp-agent": {
         "contract": "1.0.0",
         "eventLog": { "uri": "headlamp://events", "retentionHours": 168 },
         "scopes": ["registry:read", "incidents:read", "incidents:write", "incidents:resolve", "agent:investigate", "storage:read", "settings:read"]
@@ -55,7 +55,7 @@ The `initialize` result declares:
 
 In stateless mode `subscribe` and `listChanged` are `false`.
 
-A client that needs this contract MUST check `capabilities.experimental["dev.dynacom.headlamp"].contract`. The first number is the major version. This document has major version 1. Minor and patch numbers grow with additive changes.
+A client that needs this contract MUST check `capabilities.experimental["headlamp-agent"].contract`. The first number is the major version. This document has major version 1. Minor and patch numbers grow with additive changes.
 
 ## 2. Service discovery
 
@@ -469,7 +469,7 @@ Server to client, on the push stream. The shape follows MCP and adds one `_meta`
   "params": {
     "uri": "headlamp://incidents/6f1f0a52-0c1e-5a3e-8f0b-2f1c9a5d0e11",
     "_meta": {
-      "dev.dynacom.headlamp/event": {
+      "headlamp-agent/event": {
         "eventId": "48213",
         "kind": "incident.created",
         "incidentId": "6f1f0a52-0c1e-5a3e-8f0b-2f1c9a5d0e11",
@@ -497,7 +497,7 @@ Server to client, on the push stream, to every session that is not stateless. Th
   "method": "notifications/resources/list_changed",
   "params": {
     "_meta": {
-      "dev.dynacom.headlamp/event": {
+      "headlamp-agent/event": {
         "eventId": "48213",
         "kind": "incident.created",
         "incidentId": "6f1f0a52-0c1e-5a3e-8f0b-2f1c9a5d0e11",
@@ -519,7 +519,7 @@ A subscriber filters in one of these ways:
 
 1. Subscribe to `headlamp://incidents?label=test%3Dtrue` (only test incidents), or to `headlamp://incidents?test=false` (no test incidents).
 2. Subscribe to `headlamp://events?label=test%3Dtrue&label=source%3Dexample-client`. The session gets only matching events.
-3. Subscribe without a filter and filter on `_meta["dev.dynacom.headlamp/event"].labels` in the client.
+3. Subscribe without a filter and filter on `_meta["headlamp-agent/event"].labels` in the client.
 
 `list_incidents` takes `labels` and `test` with the same meaning.
 
@@ -572,7 +572,7 @@ A subscriber filters in one of these ways:
 
 When `Last-Event-ID` or `after` is older than the oldest retained event, the server cannot give the missing events. It then:
 
-1. On the push stream: sends `notifications/resources/list_changed` with `_meta["dev.dynacom.headlamp/event"].kind = "reset"`, `eventId` equal to the oldest retained id (so the stream ids still grow) and the extra key `latest` (the newest id), then replays from the oldest retained event, then goes live.
+1. On the push stream: sends `notifications/resources/list_changed` with `_meta["headlamp-agent/event"].kind = "reset"`, `eventId` equal to the oldest retained id (so the stream ids still grow) and the extra key `latest` (the newest id), then replays from the oldest retained event, then goes live.
 2. On the catch-up resource: sets `reset: true`.
 
 After a reset the client MUST read `headlamp://incidents` (or `list_incidents`) and every incident resource it follows, and use the `latest` id as its new cursor.
@@ -635,7 +635,7 @@ A tool failure returns `isError: true`, a text block with the message and `struc
 | `unavailable` | `-32000` | 200 | A dependency is down or not configured (model, metrics backend). |
 | `internal` | `-32603` | 200 | A server fault. The message is generic. |
 
-`resources/subscribe` without the scope fails with JSON-RPC error `-32003`, `data.code = "forbidden"` and `data.requiredScope`. A `tools/call` or `resources/read` without the scope fails as for a disabled item: JSON-RPC error `-32602` with the message `Tool <name> disabled` or `Resource <uri> disabled`. A caller learns the needed scope from `_meta["dev.dynacom.headlamp/scope"]` of the tool in a listing of a client that has the scope, or from this document.
+`resources/subscribe` without the scope fails with JSON-RPC error `-32003`, `data.code = "forbidden"` and `data.requiredScope`. A `tools/call` or `resources/read` without the scope fails as for a disabled item: JSON-RPC error `-32602` with the message `Tool <name> disabled` or `Resource <uri> disabled`. A caller learns the needed scope from `_meta["headlamp-agent/scope"]` of the tool in a listing of a client that has the scope, or from this document.
 
 ## 13. Setting "Automatic investigations"
 
@@ -659,7 +659,7 @@ The contract fixes only what clients see. The setting is stored on the server, c
 - A breaking change needs a new major version in a new file (`docs/mcp-contract-v2.md`) and a new endpoint path. The v1 endpoint stays for at least 90 days.
 - Clients MUST ignore unknown output fields, unknown event kinds and unknown `_meta` keys. A client that gets an unknown event kind reads the resource in `uri`.
 - Servers MUST accept an input only if it matches the schema of the contract version they declare.
-- The `capabilities.experimental["dev.dynacom.headlamp"].contract` value tells the client the version of the server.
+- The `capabilities.experimental["headlamp-agent"].contract` value tells the client the version of the server.
 - Every change to this file is a pull request that states the new version.
 
 ## 15. Quick client flow (informative)
