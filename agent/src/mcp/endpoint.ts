@@ -154,6 +154,8 @@ export class McpEndpoint {
     const who = auth.principal;
     const sessionId = req.headers['mcp-session-id'];
     if (typeof sessionId === 'string') return this.inSession(req, res, who, sessionId);
+    // No push stream without a session: a server that offers none answers 405 (contract section 1.2).
+    if (req.method === 'GET') return d.send(res, 405, { error: { code: 'session_required', message: 'The push stream needs a session: send initialize first.' } }, { allow: 'POST, DELETE' });
 
     let body: unknown;
     if (req.method === 'POST') {
@@ -188,6 +190,8 @@ export class McpEndpoint {
       session.transport = new NodeStreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         eventStore: this.eventStore(session),
+        // Every POST of a session gets a JSON answer. The only SSE stream is the GET push stream (contract section 1.1, rule 4).
+        enableJsonResponse: true,
         keepAliveMs: 25_000,
         onsessioninitialized: id => {
           session.id = id;
@@ -297,10 +301,15 @@ export class McpEndpoint {
       getStreamIdForEventId: async id => (EVENT_ID.test(id) || MARK_ID.test(id) ? STANDALONE : undefined),
       replayEventsAfter: async (lastEventId, { send }) => {
         session.replaying = true;
+        // The highest event id that the client has or reads by itself (a reset frame says: read from `latest`).
+        const covered = { value: 0n };
         try {
-          await this.replay(session, lastEventId, send);
+          await this.replay(session, lastEventId, send, covered);
+          await this.flush(session, covered, send);
         } finally {
+          // Any exit: the replay no longer holds events. A client that left reads the log when it comes back.
           session.replaying = false;
+          session.held = [];
         }
         return STANDALONE;
       },
@@ -314,12 +323,29 @@ export class McpEndpoint {
     return id;
   }
 
-  private async replay(session: Session, lastEventId: string, send: (id: string, message: JSONRPCMessage) => Promise<void>): Promise<void> {
+  /**
+   * Sends the live events that came while the replay ran, whatever way the replay ended (contract section 8.4).
+   * No await sits between the last check of `held` and the end of the replay, so no event falls between.
+   */
+  private async flush(session: Session, covered: { value: bigint }, send: (id: string, message: JSONRPCMessage) => Promise<void>): Promise<void> {
+    while (session.held.length) {
+      const e = session.held.shift()!;
+      if (BigInt(e.id) <= covered.value) continue;
+      for (const n of this.notificationsFor(session, e)) {
+        if (session.get?.closed) return;
+        await send(n.id, n.message);
+      }
+    }
+    session.replaying = false;
+  }
+
+  private async replay(session: Session, lastEventId: string, send: (id: string, message: JSONRPCMessage) => Promise<void>, covered: { value: bigint }): Promise<void> {
     const get = session.get;
     const head = await this.d.events.head();
     const reset = async (after: bigint) => {
       const at = new Date().toISOString();
-      const meta = { eventId: head.latest ?? '0', kind: 'reset', uri: 'headlamp://events', incidentId: null, at, labels: {}, latest: head.latest, logId: head.logId };
+      // `eventId` is "0": the reset frame never matches a real event in the de-duplication key. The cursor is `latest` (contract section 8.5).
+      const meta = { eventId: '0', kind: 'reset', uri: 'headlamp://events', incidentId: null, at, labels: {}, latest: head.latest, logId: head.logId };
       await send(this.mark(session, after), notification('notifications/resources/list_changed', { _meta: { [META_KEY]: meta } }));
     };
     const latest = BigInt(head.latest ?? '0');
@@ -333,15 +359,18 @@ export class McpEndpoint {
       cursor = session.marks.get(lastEventId)!;
     } else {
       // An id that the server does not know: the client cannot rely on events (contract section 8.5).
+      covered.value = latest;
       await reset(latest);
       return;
     }
+    covered.value = cursor;
     let sent = 0;
     // True when the replay must stop: the client left, or a notification beyond the cap follows (then a reset tells the client to re-read).
     const emit = async (list: Message[]): Promise<boolean> => {
       for (const n of list) {
         if (get?.closed) return true;
         if (sent >= MAX_REPLAY) {
+          covered.value = latest;
           await reset(latest);
           return true;
         }
@@ -360,6 +389,7 @@ export class McpEndpoint {
       if (get?.closed) return;
       const page = await this.d.events.readAfter(cursor, 500);
       if (first && page.reset) {
+        if (cursor > latest) covered.value = latest;
         await reset(cursor > latest ? latest : BigInt(head.oldestRetained ?? '1') - 1n);
         // Events ahead of the log cannot be replayed. A lost window can: from the oldest retained event.
         if (cursor > latest) return;
@@ -367,12 +397,8 @@ export class McpEndpoint {
       first = false;
       for (const e of page.events) if (await emit(this.notificationsFor(session, e))) return;
       cursor = BigInt(page.nextAfter);
+      covered.value = cursor;
       if (!page.hasMore) break;
-    }
-    // Live events that came while the replay ran, after the last replayed id. No await between the last check and the flag reset.
-    while (session.held.length) {
-      const e = session.held.shift()!;
-      if (BigInt(e.id) > cursor && (await emit(this.notificationsFor(session, e)))) return;
     }
   }
 
