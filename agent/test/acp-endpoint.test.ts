@@ -60,7 +60,7 @@ let server: Awaited<ReturnType<typeof startServer>>;
 const sockets: WebSocket[] = [];
 
 async function start(maxSessions = 4, tokens: unknown = [
-  { name: 'ergon', token: GOOD, scopes: [SCOPES.investigate] },
+  { name: 'example-client', token: GOOD, scopes: [SCOPES.investigate] },
   { name: 'viewer', token: READ_ONLY, scopes: ['incidents:read'] },
 ]) {
   const file = join(dir, 'tokens.json');

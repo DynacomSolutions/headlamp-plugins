@@ -7,7 +7,7 @@ import { readFileSync, statSync } from 'node:fs';
  *
  * The tokens live in a Kubernetes Secret that is mounted as a JSON file (AGENT_API_TOKENS_FILE):
  *
- *   [{ "name": "ergon", "token": "<secret>", "scopes": ["agent:investigate"] }]
+ *   [{ "name": "example-client", "token": "<secret>", "scopes": ["agent:investigate"] }]
  *
  * An entry may carry "sha256" (64 hex characters, the SHA-256 of the token) instead of "token".
  * The file is read again when it changes, so a Secret update needs no restart.
