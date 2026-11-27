@@ -11,6 +11,7 @@ import { ModelCatalogue, UnknownModelError } from './agent/catalogue.js';
 import { alertSchema, renderDiagnosis, resultSchema, sanitizeResult, type Alert, type Diagnosis } from './agent/report.js';
 import { mask, maskText } from './mask.js';
 import { mcpHandler } from './mcp.js';
+import { publishSchema, storePublished } from './publish.js';
 import { Runtime, serviceGet } from './runtime.js';
 import { PanelError, buildPanel, listPanels } from './widgets.js';
 import { DiagnosisStore, openDiagnosisStore, PgDiagnosisStore } from './store.js';
@@ -21,6 +22,8 @@ import { PushError, PushService } from './push/service.js';
 import { Metrics } from './metrics.js';
 import { storageHttp } from './storage/http.js';
 import { Reconciler, readVmalert } from './reconcile.js';
+import { ACP_PATH, AcpEndpoint } from './acp-endpoint.js';
+import { tokensFromFile } from './auth/scopes.js';
 
 const MAX_BODY = 1024 * 1024;
 
@@ -341,24 +344,6 @@ export class Runner {
   }
 }
 
-const publishSchema = z.object({
-  diagnosis: z.object({
-    id: z.string().uuid().optional(),
-    source: z.enum(['acp', 'api', 'cli']).default('api'),
-    host: z.string().max(80).optional(),
-    alert: alertSchema,
-    status: z.enum(['done', 'failed']),
-    result: resultSchema.optional(),
-    error: z.string().max(2000).optional(),
-    evidence: z.array(z.object({ id: z.string().max(16), tool: z.string().max(80), reason: z.string().max(400), summary: z.string().max(2000), ok: z.boolean(), data: z.unknown().refine(v => v === undefined || JSON.stringify(v).length <= 30_000, 'data is too large').optional() })).max(60).default([]),
-    toolCalls: z.number().int().min(0).max(1000).default(0),
-    // Records of older releases carry a tool budget. It is accepted and not kept.
-    toolBudget: z.number().int().min(0).max(1000).optional(),
-    model: z.string().max(120).default(''),
-    createdAt: z.string().optional(),
-  }),
-});
-
 const rerunSchema = z.object({ model: z.string().max(200).nullish() }).strict();
 const createChatSchema = z
   .object({ model: z.string().max(200).optional(), identity: z.string().max(60).optional(), diagnosisId: z.string().max(200).optional(), diagnosisIds: z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
@@ -455,6 +440,17 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
   let rerunTurn: Promise<void> = Promise.resolve();
   const metrics = new Metrics();
   runner.catalogue.attachMetrics(metrics);
+  // The incident agent over ACP on a WebSocket. It shares the registry, the store and the models with the rest of the service.
+  const acp = new AcpEndpoint({
+    config,
+    catalogue: runner.catalogue,
+    tools: runtime.toolHost(),
+    store,
+    metrics,
+    tokens: tokensFromFile(config.acp.tokensFile),
+    onPublished: d => void push.notifyDiagnosis(d),
+    log,
+  });
   const storage = await storageHttp({
     config, metrics, push, readBody, send, env: deps.storageEnv, now: deps.now,
     store: store instanceof PgDiagnosisStore ? store.storageIncidentStore() : undefined,
@@ -477,6 +473,10 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       if (draining) {
         res.setHeader('connection', 'close');
         return send(res, 503, { error: 'Agent is draining' });
+      }
+      if (path === ACP_PATH) {
+        res.setHeader('upgrade', 'websocket');
+        return send(res, 426, { error: 'Open /acp with a WebSocket upgrade and a bearer token' });
       }
       if (path === '/mcp') {
         const origin = req.headers.origin;
@@ -663,27 +663,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         // Publish a diagnosis an agent made elsewhere (the ACP agent in T3 Code, a CLI run).
         const parsed = publishSchema.safeParse(body);
         if (!parsed.success) throw new HttpError(400, z.prettifyError(parsed.error));
-        const p = parsed.data.diagnosis;
-        const known = new Set(p.evidence.map(e => e.id));
-        const d: Diagnosis = mask({
-          id: p.id ?? randomUUID(),
-          createdAt: p.createdAt ?? new Date().toISOString(),
-          finishedAt: new Date().toISOString(),
-          status: p.status,
-          source: p.source,
-          host: p.host,
-          alert: { ...p.alert, fingerprint: p.alert.fingerprint || fingerprint({ alertname: p.alert.name, ...p.alert.labels }) },
-          result: p.result ? sanitizeResult(p.result, known) : undefined,
-          error: p.error,
-          // An outside agent made this. Its full tool data is dropped: a launch brief never trusts it.
-          evidence: p.evidence.map(({ data: _data, ...e }) => e),
-          published: true,
-          toolCalls: p.toolCalls,
-          model: p.model,
-          a2ui: [],
-        });
-        d.a2ui = renderDiagnosis(d);
-        await store.put(d);
+        const d = await storePublished(store, parsed.data.diagnosis);
         if (d.status === 'done') void push.notifyDiagnosis(d);
         return send(res, 201, { id: d.id });
       }
@@ -805,10 +785,18 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     );
   };
   const server = createServer(onRequest);
+  server.on('upgrade', (req, socket, head) => {
+    const path = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/\/+$/, '') || '/';
+    if (path === ACP_PATH) return acp.upgrade(req, socket, head);
+    socket.on('error', () => undefined);
+    socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+  });
   // Session trust (see STORAGE_SESSION_PORT) lives only on this second listener, so the public route to the main port never reaches it.
   const sessionServer = storage.sessionPort === undefined ? undefined : createServer(onRequest);
 
   async function drain(): Promise<void> {
+    // An ACP prompt in flight finishes first. Upgraded sockets keep the listener open until they close.
+    const acpClosed = acp.close();
     const closing = [server, sessionServer].flatMap(listener => {
       if (!listener?.listening) return [];
       const closed = new Promise<void>((resolve, reject) =>
@@ -816,7 +804,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
       listener.closeIdleConnections();
       return [closed];
     });
-    await Promise.all(closing);
+    await Promise.all([...closing, acpClosed]);
     await Promise.allSettled(requests);
     await launches.shutdown();
     await reconciler.stop();

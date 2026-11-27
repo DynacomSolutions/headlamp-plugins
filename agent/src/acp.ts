@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Readable, Writable } from 'node:stream';
 import { agent, ndJsonStream, PROTOCOL_VERSION } from '@agentclientprotocol/sdk';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { loadConfig, modelConfigured } from './config.js';
+import { loadConfig, modelConfigured, type Config } from './config.js';
 import { fingerprint } from './alerts.js';
 import { diagnose, type ToolHost } from './agent/engine.js';
 import { ModelCatalogue } from './agent/catalogue.js';
@@ -28,6 +28,8 @@ interface Session {
   model: string;
   /** True once the user picked a model: it is used as it is, with no fallback. */
   modelPinned?: boolean;
+  /** Frees the session's place under the session limit. */
+  release?: () => void;
 }
 
 /** How long session/new waits for the gateway model lists. */
@@ -180,11 +182,40 @@ export async function pickModel(catalogue: ModelCatalogue, value: unknown): Prom
   return value;
 }
 
-export function startAcp(): void {
-  const config = loadConfig();
-  const catalogue = new ModelCatalogue(config.models);
+/** How a prompt ended, for the metrics: `failed` is a run that ended with a failed diagnosis, `error` a request that threw. */
+export type PromptOutcome = 'ok' | 'cancelled' | 'failed' | 'error';
+
+export interface AcpHooks {
+  /** Called at session/new. Throws a RequestError at the session limit. Returns the function that frees the place. */
+  acquireSession?(): () => void;
+  /** A prompt starts. */
+  promptStarted?(): void;
+  /** The prompt that started ends. Called once per `promptStarted`. */
+  prompt?(outcome: PromptOutcome): void;
+}
+
+export interface AcpDeps {
+  config: Config;
+  catalogue: ModelCatalogue;
+  log: (message: string) => void;
+  /** The MCP URL a session uses when it names none (HEADLAMP_AGENT_MCP_URL). Unused with `tools`. */
+  defaultMcpUrl?: string;
+  /** In-process tools. The session's own mcpServers are then ignored and no network call is made for a tool. */
+  tools?: ToolHost;
+  /** Publishes a finished diagnosis. The default posts it to the agent's HTTP API, as the stdio agent does. */
+  publish?: (diagnosis: Diagnosis, session: { mcpUrl: string; mcpHeaders: Record<string, string> }) => Promise<string | undefined>;
+  hooks?: AcpHooks;
+}
+
+/**
+ * The ACP agent: one implementation for stdio and for the WebSocket endpoint. Call it once per connection,
+ * so the sessions belong to the connection. `dispose` aborts every run of the connection and frees its session places.
+ */
+export function createAcpApp(deps: AcpDeps) {
+  const { config, catalogue, log } = deps;
   const sessions = new Map<string, Session>();
-  const defaultUrl = process.env.HEADLAMP_AGENT_MCP_URL ?? '';
+  const defaultUrl = deps.defaultMcpUrl ?? '';
+  const publishDiagnosis = deps.publish ?? ((d: Diagnosis, session: { mcpUrl: string; mcpHeaders: Record<string, string> }) => publish(session.mcpUrl, session.mcpHeaders, d));
 
   const app = agent()
     .onRequest('initialize', () => ({
@@ -197,14 +228,20 @@ export function startAcp(): void {
       const http = params.mcpServers.find((s: any) => 'url' in s && /headlamp|cluster|incident/i.test(s.name)) as any;
       const url = http?.url ?? defaultUrl;
       const headers = Object.fromEntries(((http?.headers ?? []) as Array<{ name: string; value: string }>).map(h => [h.name, h.value]));
+      const release = deps.hooks?.acquireSession?.();
       const sessionId = randomUUID();
       let current = '';
       let configOptions: any[] = [];
-      if (catalogue.configured) {
-        current = catalogue.defaultOrder.length > 1 ? catalogue.currentDefault() : await defaultModelId(catalogue);
-        configOptions = await modelConfigOptions(catalogue, current);
+      try {
+        if (catalogue.configured) {
+          current = catalogue.defaultOrder.length > 1 ? catalogue.currentDefault() : await defaultModelId(catalogue);
+          configOptions = await modelConfigOptions(catalogue, current);
+        }
+      } catch (error) {
+        release?.();
+        throw error;
       }
-      sessions.set(sessionId, { mcpUrl: url, mcpHeaders: headers, model: current });
+      sessions.set(sessionId, { mcpUrl: url, mcpHeaders: headers, model: current, release });
       return configOptions.length ? { sessionId, configOptions } : { sessionId };
     })
     .onRequest('session/set_config_option', async ({ params }) => {
@@ -219,102 +256,139 @@ export function startAcp(): void {
       sessions.get(params.sessionId)?.abort?.abort();
     })
     .onRequest('session/prompt', async ({ params, client, signal }) => {
-      const session = sessions.get(params.sessionId);
-      if (!session) throw new Error('Unknown session');
-      const update = (u: any) => client.notify('session/update', { sessionId: params.sessionId, update: u });
-      const say = (text: string) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
-      const text = params.prompt
-        .map((b: any) => (b.type === 'text' ? b.text : b.type === 'resource' && 'text' in b.resource ? b.resource.text : ''))
-        .join('\n');
-      if (!session.mcpUrl) {
-        await say('No MCP server is configured. Add the headlamp-agent MCP server to the session, or set HEADLAMP_AGENT_MCP_URL.');
-        return { stopReason: 'end_turn' };
-      }
-      if (!modelConfigured(config.models)) {
-        await say('No model is configured. Set AGENT_MODEL and AGENT_MODEL_ROUTES_FILE (or AGENT_MODEL_ROUTES) with AIS_GATEWAY_* variables. For one route, set AIS_GATEWAY_URL, AIS_GATEWAY_TOKEN and AGENT_MODEL_STYLE.');
-        return { stopReason: 'end_turn' };
-      }
-      let modelClient: ChatModel;
+      deps.hooks?.promptStarted?.();
+      let outcome: PromptOutcome = 'error';
       try {
-        // Without a pick the default order applies, with a fallback on a usage failure.
-        modelClient = await catalogue.open(session.modelPinned ? session.model : undefined);
-      } catch (error) {
-        await say(error instanceof Error ? error.message : String(error));
-        return { stopReason: 'end_turn' };
-      }
-      const abort = new AbortController();
-      session.abort = abort;
-      signal.addEventListener('abort', () => abort.abort());
-      const mcp = await mcpTools(session.mcpUrl, session.mcpHeaders);
-      try {
-        let alert = alertFromPrompt(text);
-        if (!alert) {
-          alert = await pickFiringAlert(mcp.host);
-          if (!alert) {
-            await say('No warning or critical alert is firing. Send an alert (JSON or `AlertName label=value ...`) or describe the symptom.');
-            return { stopReason: 'end_turn' };
-          }
-          await say(`Diagnosing the firing alert **${alert.name}** (${alert.severity}).\n\n`);
-        }
-        const result = await diagnose({
-          alert,
-          tools: mcp.host,
-          model: modelClient,
-          timeoutMs: config.diagnosis.runTimeoutMs,
-          maxModelCalls: config.diagnosis.maxModelCalls,
-          source: 'acp',
-          host: process.env.HEADLAMP_AGENT_HOST_NAME ?? 'acp',
-          signal: abort.signal,
-          onEvent: async event => {
-            if (event.type === 'tool_start') {
-              await update({
-                sessionUpdate: 'tool_call',
-                toolCallId: event.id,
-                title: `${event.id} ${event.tool}: ${event.reason}`,
-                kind: 'other',
-                status: 'in_progress',
-                rawInput: event.args,
-                content: [{ type: 'content', content: { type: 'text', text: `${event.tool} ${JSON.stringify(event.args)}` } }],
-                // Names the MCP server and tool, so hosts that read it (T3 Code) label the
-                // call headlamp-agent.<tool> instead of a generic "Tool".
-                _meta: { serverId: 'headlamp-agent', toolName: event.tool },
-              });
-            } else if (event.type === 'tool_end') {
-              await update({
-                sessionUpdate: 'tool_call_update',
-                toolCallId: event.id,
-                status: event.ok ? 'completed' : 'failed',
-                content: [{ type: 'content', content: { type: 'text', text: event.summary } }],
-                _meta: { serverId: 'headlamp-agent', toolName: event.tool },
-              });
-            } else if (event.type === 'thought') {
-              await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: event.text } });
-            }
-          },
-        });
-        if (abort.signal.aborted) return { stopReason: 'cancelled' };
-        await say(diagnosisMarkdown(result));
-        await update({
-          sessionUpdate: 'agent_message_chunk',
-          content: { type: 'resource', resource: { uri: `a2ui://headlamp-agent/diagnoses/${result.id}`, mimeType: A2UI_MIME, text: JSON.stringify(result.a2ui) } },
-        });
-        try {
-          const id = await publish(session.mcpUrl, session.mcpHeaders, result);
-          if (id) {
-            const link = process.env.HEADLAMP_INCIDENTS_URL ? ` ${process.env.HEADLAMP_INCIDENTS_URL.replace(/\/$/, '')}/${id}` : '';
-            await say(`\n\nPublished to Headlamp (Incidents) as ${id}.${link}`);
-          }
-        } catch (error) {
-          await say(`\n\nCould not publish to Headlamp: ${error instanceof Error ? error.message : String(error)}`);
-        }
-        return { stopReason: 'end_turn' };
+        const session = sessions.get(params.sessionId);
+        if (!session) throw new Error('Unknown session');
+        const out = await runPrompt(session, params, client, signal);
+        outcome = out.outcome;
+        return { stopReason: out.stopReason };
       } finally {
-        session.abort = undefined;
-        await mcp.close().catch(() => undefined);
+        deps.hooks?.prompt?.(outcome);
       }
     });
 
+  async function runPrompt(
+    session: Session,
+    params: { sessionId: string; prompt: any[] },
+    client: { notify(method: 'session/update', params: unknown): Promise<void> | void },
+    signal: AbortSignal,
+  ): Promise<{ stopReason: 'end_turn' | 'cancelled'; outcome: PromptOutcome }> {
+    const update = (u: any) => client.notify('session/update', { sessionId: params.sessionId, update: u });
+    const say = (text: string) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+    const text = params.prompt
+      .map((b: any) => (b.type === 'text' ? b.text : b.type === 'resource' && 'text' in b.resource ? b.resource.text : ''))
+      .join('\n');
+    if (!deps.tools && !session.mcpUrl) {
+      await say('No MCP server is configured. Add the headlamp-agent MCP server to the session, or set HEADLAMP_AGENT_MCP_URL.');
+      return { stopReason: 'end_turn', outcome: 'failed' };
+    }
+    if (!modelConfigured(config.models)) {
+      await say('No model is configured. Set AGENT_MODEL and AGENT_MODEL_ROUTES_FILE (or AGENT_MODEL_ROUTES) with AIS_GATEWAY_* variables. For one route, set AIS_GATEWAY_URL, AIS_GATEWAY_TOKEN and AGENT_MODEL_STYLE.');
+      return { stopReason: 'end_turn', outcome: 'failed' };
+    }
+    let modelClient: ChatModel;
+    try {
+      // Without a pick the default order applies, with a fallback on a usage failure.
+      modelClient = await catalogue.open(session.modelPinned ? session.model : undefined);
+    } catch (error) {
+      await say(error instanceof Error ? error.message : String(error));
+      return { stopReason: 'end_turn', outcome: 'failed' };
+    }
+    const abort = new AbortController();
+    session.abort = abort;
+    signal.addEventListener('abort', () => abort.abort());
+    const mcp = deps.tools ? { host: deps.tools, close: async () => {} } : await mcpTools(session.mcpUrl, session.mcpHeaders);
+    try {
+      let alert = alertFromPrompt(text);
+      if (!alert) {
+        alert = await pickFiringAlert(mcp.host);
+        if (!alert) {
+          await say('No warning or critical alert is firing. Send an alert (JSON or `AlertName label=value ...`) or describe the symptom.');
+          return { stopReason: 'end_turn', outcome: 'ok' };
+        }
+        await say(`Diagnosing the firing alert **${alert.name}** (${alert.severity}).\n\n`);
+      }
+      const result = await diagnose({
+        alert,
+        tools: mcp.host,
+        model: modelClient,
+        timeoutMs: config.diagnosis.runTimeoutMs,
+        maxModelCalls: config.diagnosis.maxModelCalls,
+        source: 'acp',
+        host: process.env.HEADLAMP_AGENT_HOST_NAME ?? 'acp',
+        signal: abort.signal,
+        onEvent: async event => {
+          if (event.type === 'tool_start') {
+            await update({
+              sessionUpdate: 'tool_call',
+              toolCallId: event.id,
+              title: `${event.id} ${event.tool}: ${event.reason}`,
+              kind: 'other',
+              status: 'in_progress',
+              rawInput: event.args,
+              content: [{ type: 'content', content: { type: 'text', text: `${event.tool} ${JSON.stringify(event.args)}` } }],
+              // Names the MCP server and tool, so hosts that read it (T3 Code) label the
+              // call headlamp-agent.<tool> instead of a generic "Tool".
+              _meta: { serverId: 'headlamp-agent', toolName: event.tool },
+            });
+          } else if (event.type === 'tool_end') {
+            await update({
+              sessionUpdate: 'tool_call_update',
+              toolCallId: event.id,
+              status: event.ok ? 'completed' : 'failed',
+              content: [{ type: 'content', content: { type: 'text', text: event.summary } }],
+              _meta: { serverId: 'headlamp-agent', toolName: event.tool },
+            });
+          } else if (event.type === 'thought') {
+            await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: event.text } });
+          }
+        },
+      });
+      if (abort.signal.aborted) return { stopReason: 'cancelled', outcome: 'cancelled' };
+      await say(diagnosisMarkdown(result));
+      await update({
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'resource', resource: { uri: `a2ui://headlamp-agent/diagnoses/${result.id}`, mimeType: A2UI_MIME, text: JSON.stringify(result.a2ui) } },
+      });
+      try {
+        const id = await publishDiagnosis(result, { mcpUrl: session.mcpUrl, mcpHeaders: session.mcpHeaders });
+        if (id) {
+          const link = process.env.HEADLAMP_INCIDENTS_URL ? ` ${process.env.HEADLAMP_INCIDENTS_URL.replace(/\/$/, '')}/${id}` : '';
+          await say(`\n\nPublished to Headlamp (Incidents) as ${id}.${link}`);
+        }
+      } catch (error) {
+        log(`publishing failed: ${error instanceof Error ? error.message : String(error)}`);
+        await say(`\n\nCould not publish to Headlamp: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return { stopReason: 'end_turn', outcome: result.status === 'done' ? 'ok' : 'failed' };
+    } finally {
+      session.abort = undefined;
+      await mcp.close().catch(() => undefined);
+    }
+  }
+
+  /** Aborts every run of this connection and frees its session places. Safe to call more than once. */
+  function dispose(): void {
+    for (const session of sessions.values()) {
+      session.abort?.abort();
+      session.release?.();
+      session.release = undefined;
+    }
+    sessions.clear();
+  }
+
+  return { app, dispose };
+}
+
+/** `headlamp-agent acp`: the agent on stdio, with its tools from the MCP server over the network. */
+export function startAcp(): void {
+  const config = loadConfig();
+  const catalogue = new ModelCatalogue(config.models);
+  const defaultMcpUrl = process.env.HEADLAMP_AGENT_MCP_URL ?? '';
+  const { app } = createAcpApp({ config, catalogue, log, defaultMcpUrl });
   const stream = ndJsonStream(Writable.toWeb(process.stdout) as WritableStream<Uint8Array>, Readable.toWeb(process.stdin) as ReadableStream<Uint8Array>);
   app.connect(stream);
-  log(`ready (MCP ${defaultUrl || 'from session'}, model ${config.models.defaultModel || 'unset'}, routes ${config.models.routes.map(r => r.id).join(',') || 'none'})`);
+  log(`ready (MCP ${defaultMcpUrl || 'from session'}, model ${config.models.defaultModel || 'unset'}, routes ${config.models.routes.map(r => r.id).join(',') || 'none'})`);
 }
