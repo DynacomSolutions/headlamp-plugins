@@ -33,7 +33,7 @@ Adding a served protocol version is not a breaking change. Removing one is a bre
 6. A session ends when it is deleted, or 30 minutes after its last request while no push stream is open. An open push stream keeps the session alive. The server sends an SSE comment line (`: keep-alive`) every 25 seconds.
 7. The server keeps at most 200 sessions, and at most 20 sessions for each client name. When the total limit is reached, `initialize` fails with HTTP 503 and `Retry-After: 30`. When the limit for one client is reached, `initialize` fails with HTTP 429 and `Retry-After: 30`. Both answers carry the error code `rate_limited`. The server counts a session from the start of `initialize`, so parallel requests cannot go over a limit.
 8. A request with an unknown or ended `Mcp-Session-Id` fails with HTTP 404. The client MUST then start a new session, subscribe again and catch up with the event log (section 8.3). Sessions live in the memory of one pod. A rollout or a restart ends all sessions.
-9. A session ends when its token no longer exists in the token file, or when the token has fewer scopes than at the start of the session. The server closes the push stream, and the next request fails with HTTP 404. The server checks this when the token file changes.
+9. A session ends when its token no longer exists in the token file, or when the token has fewer scopes than at the start of the session. The server closes the push stream. The next request fails with HTTP 401 when the token is gone, and with HTTP 404 when the token has fewer scopes. The server checks this before it delivers each event, and at least once a minute.
 
 ### 1.2 Stateless fallback
 
@@ -475,7 +475,7 @@ URI scheme: `headlamp://`. All resource contents have `mimeType: application/jso
 | URI | Content | Scope | Subscribe |
 | --- | --- | --- | --- |
 | `headlamp://incidents` | `{ "incidents": [Incident], "total": integer }` (active incidents, newest first, at most 200) | `incidents:read` | Yes |
-| `headlamp://events` | Event log head: `{ "logId": uuid, "latest": eventId or null, "oldestRetained": eventId or null, "retentionHours": 168 }` | any valid token | Yes (all events that the caller may see) |
+| `headlamp://events` | Event log head: the object of section 8.3 with `events` empty, `nextAfter` equal to `latest` (or `"0"`), `hasMore` and `reset` false, plus `retentionHours` (168) | any valid token | Yes (all events that the caller may see) |
 | `headlamp://settings/automatic-investigations` | Output of `get_automatic_investigations` | `settings:read` | Yes |
 | `headlamp://storage/volumes` | Output of `list_storage_volumes` | `storage:read` | Yes |
 | `headlamp://storage/disks` | Output of `list_storage_disks` | `storage:read` | No |
@@ -519,7 +519,7 @@ Query parameters: `state` is one of `open`, `acknowledged`, `resolved`, `active`
 | `investigation.done` | A run finishes with a result | `headlamp://investigations/{id}` | `agent:investigate` |
 | `investigation.failed` | A run fails | `headlamp://investigations/{id}` | `agent:investigate` |
 | `settings.changed` | "Automatic investigations" changes | `headlamp://settings/automatic-investigations` | `settings:read` |
-| `storage.updated` | A PersistentVolume changes its phase (a Kubernetes watch, not a poll) | `headlamp://storage/volumes` | `storage:read` |
+| `storage.updated` | A PersistentVolume appears, disappears or changes its phase (a Kubernetes watch, not a poll) | `headlamp://storage/volumes` | `storage:read` |
 | `reset` | Push frame only, never stored (section 8.5) | `headlamp://events` | any valid token |
 
 The agent raises each event from the code path that changes the state: the alert ingest, the diagnosis store update, the write tools, the settings change and the PersistentVolume watch. No timer polls for changes. Capacity and SMART data come from metrics queries and have no event source, so they have no subscription. `incident.created` and `incident.resolved` also change the list of active incidents.
@@ -679,7 +679,7 @@ A subscriber filters in one of these ways:
 - The positions `<n>` follow the subscriptions of the session at the time of the replay. A client that changes its subscriptions during a break MUST read the resources it cares about after the change.
 - A stream that opens can start with a **priming event**: an SSE event with an id and empty data (MCP `2025-11-25`). Priming events and reset frames get ids of the form `p<k>`, where `k` grows in the session. A `Last-Event-ID` of this form resumes after the position that the server remembers for it. The server remembers at least the last 1000 such ids of a session. An id that it does not know (never issued, or forgotten) gets a `reset` frame (section 8.5) and then live notifications, with no replay.
 - Replay runs from the durable log, so it also works after a push stream was closed for a long time, if the session is still alive (section 1.1, rule 6) and the id is inside the window.
-- A replay sends at most **5,000 notifications**. When more would follow, the server sends a `reset` frame and goes live. Replay stops when the client closes the stream. The server does not buffer a whole replay before it starts the response.
+- A replay sends at most **5,000 notifications**. When more would follow, the server sends a `reset` frame and goes live. Replay stops when the client closes the stream. The server holds a replay in memory until the response starts, so the cap also bounds this memory.
 - Live notifications that arrive while a replay runs are not lost. The server delivers them after the replayed ones, in id order, without a repeated id.
 - Without `Last-Event-ID` the server sends only new events. It does not replay.
 - A session that ended (HTTP 404) cannot resume. The client starts a new session, subscribes again and reads the catch-up resource with its last seen id.
