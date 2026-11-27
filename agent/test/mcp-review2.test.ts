@@ -246,7 +246,7 @@ describe('POST answers are JSON (N3), GET without a session is 405 (S11)', () =>
   it('answers a GET without Mcp-Session-Id with HTTP 405', async () => {
     const res = await fetch(`${base}/mcp`, { headers: { ...bearer('full'), accept: 'text/event-stream' } });
     expect(res.status).toBe(405);
-    expect(res.headers.get('allow')).toMatch(/POST/);
+    expect(res.headers.get('allow')).toBe('POST');
   });
 });
 
@@ -315,6 +315,97 @@ describe('live events are not lost when a replay ends early (S12)', () => {
     expect(live.frames.some(f => meta(f)?.kind === 'reset')).toBe(true);
     spy.mockRestore();
     live.close();
+  });
+});
+
+describe('two overlapping resume GETs lose no live event (B1)', () => {
+  it('delivers an event that commits while the newer replay runs, and keeps the newer stream', async () => {
+    const s = await session('full', ['headlamp://incidents?label=source%3Drace']);
+    await fire({ source: 'race' });
+    await sleep(200);
+    const latest = (await store.events.head()).latest!;
+    const original = store.events.readAfter.bind(store.events);
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>(r => (releaseA = r));
+    const gateB = new Promise<void>(r => (releaseB = r));
+    const spy = vi
+      .spyOn(store.events, 'readAfter')
+      .mockImplementationOnce(async (...a: Parameters<typeof original>) => {
+        const p = await original(...a);
+        await gateA;
+        return p;
+      })
+      .mockImplementationOnce(async (...a: Parameters<typeof original>) => {
+        const p = await original(...a);
+        await gateB;
+        return p;
+      });
+    const headers = { ...bearer(s.who), accept: 'text/event-stream', 'mcp-session-id': s.sid, 'mcp-protocol-version': '2025-11-25', 'last-event-id': `${latest}.99` };
+    const ctlA = new AbortController();
+    const pendingA = fetch(`${base}/mcp`, { headers, signal: ctlA.signal }).catch(() => undefined);
+    await sleep(150);
+    const pendingB = stream(s, `${latest}.99`); // the client resumes again before A answers
+    await sleep(150);
+    const x = await fire({ source: 'race' }); // commits after both page reads
+    await sleep(200);
+    ctlA.abort(); // the client gives up on A before its headers came
+    await sleep(100);
+    releaseA();
+    await pendingA;
+    await sleep(100);
+    releaseB();
+    const b = await pendingB;
+    expect(b.status).toBe(200);
+    const later = await fire({ source: 'race' });
+    await until(() => b.frames.some(f => meta(f)?.incidentId === later.id));
+    expect(b.frames.some(f => meta(f)?.incidentId === x.id)).toBe(true);
+    spy.mockRestore();
+    b.close();
+  });
+
+  it('does not let an older replay that ends later replace the newer stream', async () => {
+    const s = await session('full', ['headlamp://incidents?label=source%3Dsupersede']);
+    await fire({ source: 'supersede' });
+    await sleep(200);
+    const latest = (await store.events.head()).latest!;
+    const original = store.events.readAfter.bind(store.events);
+    let releaseA!: () => void;
+    const gateA = new Promise<void>(r => (releaseA = r));
+    const spy = vi.spyOn(store.events, 'readAfter').mockImplementationOnce(async (...a: Parameters<typeof original>) => {
+      const p = await original(...a);
+      await gateA;
+      return p;
+    });
+    const a = stream(s, `${latest}.99`); // the older replay waits
+    await sleep(150);
+    const b = await stream(s, `${latest}.99`); // the newer replay ends first
+    expect(b.status).toBe(200);
+    releaseA(); // the older replay ends, and its client still reads
+    const older = await a;
+    await sleep(150);
+    const t = await fire({ source: 'supersede' });
+    await until(() => b.frames.some(f => meta(f)?.incidentId === t.id));
+    expect(older.frames.some(f => meta(f)?.incidentId === t.id)).toBe(false);
+    spy.mockRestore();
+    older.close();
+    b.close();
+  });
+});
+
+describe('a failed registry tool uses the Error shape (C1)', () => {
+  it('returns unavailable in _meta and as JSON text, and keeps the A2UI block', async () => {
+    const { client } = await connect('full');
+    const spy = vi.spyOn(store, 'page').mockRejectedValueOnce(new Error('database is down'));
+    const r: any = await client.callTool({ name: 'list_diagnoses', arguments: {} });
+    spy.mockRestore();
+    expect(r.isError).toBe(true);
+    expect(r.structuredContent).toBeUndefined();
+    const error = r._meta['headlamp-agent/error'];
+    expect(error).toMatchObject({ code: 'unavailable' });
+    expect(JSON.parse(r.content[0].text)).toEqual(error);
+    expect(r.content.some((c: any) => c.type === 'resource' && String(c.resource.uri).startsWith('a2ui://'))).toBe(true);
+    await client.close();
   });
 });
 
