@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig, loadModelRoutes, modelConfigured, type ModelRoute, type ModelRoutesConfig } from '../src/config.js';
-import { ModelCatalogue, UnknownModelError } from '../src/agent/catalogue.js';
+import { ModelCatalogue, parseModelList, UnknownIdentityError, UnknownModelError } from '../src/agent/catalogue.js';
 import { ModelClient } from '../src/agent/model.js';
 import { defaultModelId, modelConfigOptions, pickModel } from '../src/acp.js';
 
@@ -417,5 +417,184 @@ describe('model client', () => {
       expect(rs[1].body).not.toHaveProperty('tool_choice');
       expect(rs[1].body.instructions).toContain('You must call the q tool now.');
     });
+  });
+
+  describe('a saved trace with an empty assistant message', () => {
+    // An old trace, or a reply of only dropped tool calls, can hold an assistant message with no text and no tool call.
+    // Every provider refuses it (`content: []`, `content: null`), so no converter sends it.
+    const messages: any[] = [
+      { role: 'user', text: 'first' },
+      { role: 'assistant', text: '', toolCalls: [] },
+      { role: 'user', text: 'second' },
+    ];
+
+    it('anthropic: leaves it out, so no message has empty content', async () => {
+      const calls = capture(() => json({ content: [{ type: 'text', text: 'ok' }], usage: {} }));
+      await new ModelClient(route('e1', { style: 'anthropic' }), 'm').complete({ ...req, messages });
+      expect(calls[0].body.messages.every((m: any) => m.content.length > 0)).toBe(true);
+      expect(calls[0].body.messages.filter((m: any) => m.role === 'assistant')).toHaveLength(0);
+    });
+
+    it('openai: leaves it out, so no assistant message has null content and no tool calls', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'ok' } }] }));
+      await new ModelClient(route('e2'), 'm').complete({ ...req, messages });
+      expect(calls[0].body.messages.filter((m: any) => m.role === 'assistant')).toHaveLength(0);
+    });
+
+    it('responses: sends no item for it', async () => {
+      const calls = capture(() => new Response(sse([{ type: 'response.completed', response: { output: [] } }])));
+      await new ModelClient(route('e3', { style: 'responses' }), 'm').complete({ ...req, messages });
+      expect(calls[0].body.input.filter((i: any) => i.role === 'assistant')).toHaveLength(0);
+      expect(calls[0].body.input).toHaveLength(2);
+    });
+
+    it('keeps an assistant message that has only tool calls', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'ok' } }] }));
+      const withCalls: any[] = [
+        { role: 'user', text: 'go' },
+        { role: 'assistant', text: '', toolCalls: [{ id: 'c1', name: 'q', args: {} }] },
+        { role: 'tool', results: [{ id: 'c1', name: 'q', content: '{}', isError: false }] },
+      ];
+      await new ModelClient(route('e4'), 'm').complete({ ...req, messages: withCalls });
+      expect(calls[0].body.messages.filter((m: any) => m.role === 'assistant')).toHaveLength(1);
+    });
+  });
+
+  describe('no tool in the last call (noTools)', () => {
+    // The history holds tool calls and results, so the tool list must stay in the request: an endpoint refuses a history with tool blocks and no tools.
+    const hasToolBlocks = (body: any) => JSON.stringify(body).match(/tool_use|tool_calls|function_call/) !== null;
+
+    it('anthropic: keeps the tools and says tool_choice none', async () => {
+      const calls = capture(() => json({ content: [{ type: 'text', text: 'done' }], usage: {} }));
+      const out = await new ModelClient(route('n1', { style: 'anthropic' }), 'm').complete({ ...req, noTools: true });
+      expect(out.text).toBe('done');
+      expect(hasToolBlocks(calls[0].body.messages)).toBe(true);
+      expect(calls[0].body.tools.map((t: any) => t.name)).toEqual(['q']);
+      expect(calls[0].body.tool_choice).toEqual({ type: 'none' });
+    });
+
+    it('openai: keeps the tools and says tool_choice none', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'done' } }] }));
+      await new ModelClient(route('n2'), 'm').complete({ ...req, noTools: true });
+      expect(hasToolBlocks(calls[0].body.messages)).toBe(true);
+      expect(calls[0].body.tools).toHaveLength(1);
+      expect(calls[0].body.tool_choice).toBe('none');
+    });
+
+    it('responses: keeps the tools and says tool_choice none', async () => {
+      const calls = capture(() => new Response(sse([{ type: 'response.completed', response: { output: [] } }])));
+      await new ModelClient(route('n3', { style: 'responses' }), 'm').complete({ ...req, noTools: true });
+      expect(hasToolBlocks(calls[0].body.input)).toBe(true);
+      expect(calls[0].body.tools).toHaveLength(1);
+      expect(calls[0].body.tool_choice).toBe('none');
+    });
+
+    it('sends no tool_choice when the request has no tools at all, and names the rule in the prompt', async () => {
+      const calls = capture(() => json({ choices: [{ message: { content: 'done' } }] }));
+      await new ModelClient(route('n4'), 'm').complete({ ...req, tools: [], messages: [{ role: 'user', text: 'go' }], noTools: true });
+      expect(calls[0].body).not.toHaveProperty('tool_choice');
+      expect(calls[0].body.messages[0].content).toContain('Do not call a tool now.');
+    });
+
+    it('retries once with the rule in the prompt when the endpoint refuses tool_choice none, keeps the tools, and remembers the pair', async () => {
+      let n = 0;
+      const calls = capture(() => (n++ === 0 ? new Response('{"error":{"message":"tool_choice none is not supported"}}', { status: 400 }) : json({ choices: [{ message: { content: 'done' } }] })));
+      const client = new ModelClient(route('n5'), 'm');
+      await client.complete({ ...req, noTools: true });
+      expect(calls).toHaveLength(2);
+      expect(calls[0].body.tool_choice).toBe('none');
+      expect(calls[1].body).not.toHaveProperty('tool_choice');
+      expect(calls[1].body.tools).toHaveLength(1);
+      expect(calls[1].body.messages[0].content).toContain('Do not call a tool now.');
+      await client.complete({ ...req, noTools: true });
+      expect(calls).toHaveLength(3);
+      expect(calls[2].body).not.toHaveProperty('tool_choice');
+    });
+  });
+
+  describe('abort', () => {
+    it('stops a retry wait when the signal aborts, at once', async () => {
+      capture(() => new Response('busy', { status: 503 }));
+      const controller = new AbortController();
+      const started = Date.now();
+      const call = new ModelClient(route('a1'), 'm').complete({ ...req, signal: controller.signal });
+      setTimeout(() => controller.abort(), 50);
+      await expect(call).rejects.toThrow('cancelled');
+      // The first wait is 2 seconds: an abort at 50 ms must not wait for it.
+      expect(Date.now() - started).toBeLessThan(1000);
+    });
+  });
+});
+
+describe('identities of a provider', () => {
+  const two = (): ModelRoutesConfig => ({
+    routes: [
+      route('claude', { provider: 'claude', identity: 'Pool', models: ['opus'], contextWindow: 200000, pricing: { input: 3, output: 15 } }),
+      route('claude-account-a', { provider: 'claude', identity: 'Account A', models: ['opus'] }),
+      route('grok', { models: ['g'] }),
+    ],
+    defaultModel: 'grok/g',
+    skipped: [],
+  });
+
+  it('reads provider, identity, context window and pricing from a route, and refuses bad values', () => {
+    const file = JSON.stringify([
+      { id: 'claude-a', style: 'anthropic', urlEnv: 'AIS_GATEWAY_A_URL', tokenEnv: 'AIS_GATEWAY_A_TOKEN', provider: 'claude', identity: 'Account A', contextWindow: 200000, pricing: { input: 3, output: 15 } },
+    ]);
+    const base = { AGENT_MODEL_ROUTES: file, AGENT_MODEL: 'claude-a/m', AIS_GATEWAY_A_URL: 'https://gw.example.com/a', AIS_GATEWAY_A_TOKEN: 't' };
+    expect(loadModelRoutes(env(base)).routes[0]).toMatchObject({ provider: 'claude', identity: 'Account A', contextWindow: 200000, pricing: { input: 3, output: 15 } });
+    const bad = JSON.stringify([{ id: 'x', style: 'openai', urlEnv: 'AIS_GATEWAY_A_URL', tokenEnv: 'AIS_GATEWAY_A_TOKEN', provider: 'not valid!' }]);
+    expect(() => loadModelRoutes(env({ ...base, AGENT_MODEL_ROUTES: bad, AGENT_MODEL: 'x/m' }))).toThrow(/provider must be a short text/);
+  });
+
+  it('lists each model with its provider, its identity and its context window', async () => {
+    vi.stubGlobal('fetch', async () => json({ data: [{ id: 'opus', context_window: 123000 }] }));
+    const entries = await new ModelCatalogue(two()).list();
+    expect(entries.find(e => e.id === 'claude/opus')).toMatchObject({ provider: 'claude', identity: 'Pool', contextWindow: 123000 });
+    expect(entries.find(e => e.id === 'claude-account-a/opus')).toMatchObject({ provider: 'claude', identity: 'Account A' });
+    expect(entries.find(e => e.id === 'grok/g')).toMatchObject({ provider: 'grok', identity: 'Pool' });
+  });
+
+  it('reads the context size from the fields the gateways use', () => {
+    const sizes = parseModelList({ data: [{ id: 'a', context_window: 1 }, { id: 'b', max_input_tokens: 2 }, { id: 'c', context_length: 3 }, { id: 'd' }] }).map(m => m.contextWindow);
+    expect(sizes).toEqual([1, 2, 3, undefined]);
+  });
+
+  it('gives a bare model the prefix of the identity, keeps a matching id, and refuses a mismatch or an unknown identity', () => {
+    const c = new ModelCatalogue(two());
+    expect(c.withIdentity('opus', 'claude-account-a')).toBe('claude-account-a/opus');
+    expect(c.withIdentity('claude-account-a/opus', 'claude-account-a')).toBe('claude-account-a/opus');
+    expect(c.withIdentity('claude/opus', undefined)).toBe('claude/opus');
+    expect(() => c.withIdentity('claude/opus', 'claude-account-a')).toThrow(UnknownIdentityError);
+    expect(() => c.withIdentity('opus', 'nope')).toThrow(/Unknown identity "nope"/);
+    expect(() => c.withIdentity(undefined, 'grok')).toThrow(/needs a model/);
+  });
+
+  it('knows the context window and the price of a model of a route', () => {
+    const c = new ModelCatalogue(two());
+    expect(c.contextWindow('claude/opus')).toBe(200000);
+    expect(c.pricing('claude/opus')).toEqual({ input: 3, output: 15 });
+    expect(c.labels('claude-account-a/opus')).toEqual({ provider: 'claude', identity: 'Account A' });
+    expect(c.contextWindow('grok/g')).toBeUndefined();
+  });
+});
+
+describe('run time limit', () => {
+  it('replaces the tool budget: the old variable is accepted and ignored', () => {
+    const cfg = loadConfig({ AGENT_TOOL_BUDGET: '3' } as NodeJS.ProcessEnv);
+    expect(cfg.diagnosis).not.toHaveProperty('toolBudget');
+    expect(cfg.diagnosis.runTimeoutMs).toBe(15 * 60_000);
+    expect(loadConfig({ AGENT_RUN_TIMEOUT_MS: '120000' } as NodeJS.ProcessEnv).diagnosis.runTimeoutMs).toBe(120000);
+  });
+
+  it('gives a diagnosis a shorter limit than a chat turn, and a soft cap on model calls, both from the environment', () => {
+    const cfg = loadConfig({} as NodeJS.ProcessEnv);
+    expect(cfg.diagnosis.diagnosisTimeoutMs).toBe(8 * 60_000);
+    expect(cfg.diagnosis.maxModelCalls).toBe(60);
+    const set = loadConfig({ AGENT_DIAGNOSIS_TIMEOUT_MS: '90000', AGENT_MAX_MODEL_CALLS: '12' } as NodeJS.ProcessEnv);
+    expect(set.diagnosis.diagnosisTimeoutMs).toBe(90000);
+    expect(set.diagnosis.maxModelCalls).toBe(12);
+    // A cap below two would end every run on its first call.
+    expect(loadConfig({ AGENT_MAX_MODEL_CALLS: '1' } as NodeJS.ProcessEnv).diagnosis.maxModelCalls).toBe(2);
   });
 });

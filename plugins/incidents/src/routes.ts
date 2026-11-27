@@ -22,8 +22,25 @@ export const diagnosesUrl = (): string => Router.createRouteURL(ROUTE_DIAGNOSES)
 
 export const diagnosisUrl = (id: string): string => Router.createRouteURL(ROUTE_DIAGNOSIS, { id });
 
-export const chatUrl = (id?: string): string =>
-  id ? Router.createRouteURL(ROUTE_CHAT_THREAD, { id }) : Router.createRouteURL(ROUTE_CHAT);
+/** What a storage chat link may carry. The drive is the context of the chat and the other two focus one open item. */
+export interface ChatLinkParams {
+  drive?: string;
+  question?: string;
+  finding?: string;
+}
+
+/** The chat is a path segment. The drive context and the focused item are query strings, so the URL alone shows the view. */
+export const chatUrl = (id?: string, params: ChatLinkParams = {}): string => {
+  const path = id
+    ? Router.createRouteURL(ROUTE_CHAT_THREAD, { id })
+    : Router.createRouteURL(ROUTE_CHAT);
+  const query = new URLSearchParams();
+  if (params.drive) query.set('drive', params.drive);
+  if (params.question) query.set('question', params.question);
+  if (params.finding) query.set('finding', params.finding);
+  const text = query.toString();
+  return text ? `${path}?${text}` : path;
+};
 
 export const launchesUrl = (): string => Router.createRouteURL(ROUTE_LAUNCHES);
 
@@ -43,20 +60,21 @@ export const storageQuestionUrl = (driveId: string, id: string): string =>
 export const storageFindingUrl = (driveId: string, id: string): string =>
   Router.createRouteURL(ROUTE_STORAGE_FINDING, { driveId, actionId: id });
 
+/**
+ * The URL templates the plugin gives the agent for storage notifications. The agent fills `{chatId}`, `{driveId}` and
+ * `{id}`. A notification opens the storage investigation in the Chat tab, on the drive, with the item in focus.
+ */
 export function storageNotificationUrls() {
+  const chat = 'CHAT-MARK';
   const drive = 'DRIVE-MARK';
   const id = 'NOTICE-MARK';
-  const template = (path: string) => path.replace(drive, '{driveId}').replace(id, '{id}');
+  const template = (path: string) =>
+    path.replace(chat, '{chatId}').replace(drive, '{driveId}').replace(id, '{id}');
   return {
-    question: template(storageQuestionUrl(drive, id)),
-    cleanup: template(storageFindingUrl(drive, id)),
+    question: template(chatUrl(chat, { drive, question: id })),
+    cleanup: template(chatUrl(chat, { drive, finding: id })),
   };
 }
-
-export const storageChatUrl = (chatId: string, driveId?: string): string => {
-  const path = Router.createRouteURL(ROUTE_STORAGE_CHAT, { chatId });
-  return driveId ? `${path}?${new URLSearchParams({ drive: driveId })}` : path;
-};
 
 export const ROUTE_NOTIFICATIONS = 'incidents-notifications';
 

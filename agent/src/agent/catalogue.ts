@@ -8,9 +8,23 @@ import { ModelClient, routeHeaders, type ChatModel } from './model.js';
 export interface CatalogueEntry {
   /** Full id, `<route>/<model>`. */
   id: string;
+  /** The route is the identity: one gateway app, the pool or one pinned account. */
   route: string;
   model: string;
   name: string;
+  /** The provider the route belongs to, for grouping the identities of one provider. */
+  provider: string;
+  /** The display name of the identity of the route. */
+  identity: string;
+  /** Tokens of context of the model, when the gateway list or the route states it. */
+  contextWindow?: number;
+}
+
+type ListedModel = { id: string; name: string; contextWindow?: number };
+
+/** The display fields of a route: its provider and the name of its identity. */
+export function routeLabels(route: ModelRoute): { provider: string; identity: string } {
+  return { provider: route.provider ?? route.id, identity: route.identity ?? 'Pool' };
 }
 
 export interface Resolved {
@@ -27,9 +41,19 @@ export class UnknownModelError extends Error {
   }
 }
 
+export class UnknownIdentityError extends Error {
+  constructor(
+    readonly requested: string,
+    readonly valid: string[],
+    message?: string,
+  ) {
+    super(message ?? `Unknown identity "${requested}".${valid.length ? ` Valid identities: ${valid.join(', ')}` : ''}`);
+  }
+}
+
 interface Listed {
   at: number;
-  models: Array<{ id: string; name: string }>;
+  models: ListedModel[];
 }
 
 /** How long an exhausted default model is skipped when the endpoint gave no Retry-After. */
@@ -47,9 +71,9 @@ const FAILURE_TTL_MS = 30_000;
 const CODEX_CLIENT_VERSION = '1.0.0';
 
 /** Reads the model ids from the three list shapes the gateway returns. */
-export function parseModelList(body: unknown): Array<{ id: string; name: string }> {
+export function parseModelList(body: unknown): ListedModel[] {
   const items: unknown[] = Array.isArray(body) ? body : Array.isArray((body as any)?.data) ? (body as any).data : Array.isArray((body as any)?.models) ? (body as any).models : [];
-  const out: Array<{ id: string; name: string }> = [];
+  const out: ListedModel[] = [];
   for (const item of items) {
     if (typeof item === 'string') {
       out.push({ id: item, name: item });
@@ -61,7 +85,9 @@ export function parseModelList(body: unknown): Array<{ id: string; name: string 
     const id = typeof m.id === 'string' ? m.id : typeof m.slug === 'string' ? m.slug : '';
     if (!id) continue;
     const name = typeof m.display_name === 'string' && m.display_name ? m.display_name : id;
-    out.push({ id, name });
+    // Each gateway names the context size in its own field.
+    const size = [m.context_window, m.max_input_tokens, m.context_length, m.max_context_window].find(v => typeof v === 'number' && Number.isFinite(v) && v > 0);
+    out.push({ id, name, ...(typeof size === 'number' ? { contextWindow: Math.floor(size) } : {}) });
   }
   return out;
 }
@@ -189,6 +215,24 @@ export class ModelCatalogue {
     });
   }
 
+  /** The context window of a model in tokens, from the cached gateway list or the route. Undefined when unknown. */
+  contextWindow(id: string): number | undefined {
+    const q = this.qualified(id);
+    if (!q) return undefined;
+    return this.cache.get(q.route.id)?.models.find(m => m.id === q.model)?.contextWindow ?? q.route.contextWindow;
+  }
+
+  /** The price per million tokens of a model's route, when the route states one. */
+  pricing(id: string): { input: number; output: number } | undefined {
+    return this.qualified(id)?.route.pricing;
+  }
+
+  /** The provider and identity names of the route of a model id. */
+  labels(id: string): { provider: string; identity: string } | undefined {
+    const q = this.qualified(id);
+    return q ? routeLabels(q.route) : undefined;
+  }
+
   private fallback(route: ModelRoute): Listed['models'] {
     return (route.models ?? []).map(id => ({ id, name: id }));
   }
@@ -253,7 +297,7 @@ export class ModelCatalogue {
     const perRoute = await Promise.all(this.config.routes.map(async route => ({ route, models: await this.models(route, options.waitMs) })));
     const out: CatalogueEntry[] = [];
     for (const { route, models } of perRoute) {
-      for (const m of models) out.push({ id: `${route.id}/${m.id}`, route: route.id, model: m.id, name: m.name });
+      for (const m of models) out.push({ id: `${route.id}/${m.id}`, route: route.id, model: m.id, name: m.name, ...routeLabels(route), ...((m.contextWindow ?? route.contextWindow) ? { contextWindow: m.contextWindow ?? route.contextWindow } : {}) });
     }
     // The default model is always selectable, even when the gateway does not list it.
     for (const def of this.defaultOrder) {
@@ -261,9 +305,26 @@ export class ModelCatalogue {
       const target = this.qualified(def) ?? (this.defaultOrder.length < 2 ? this.legacy() : undefined);
       if (!target) continue;
       const id = `${target.route.id}/${target.model}`;
-      if (!out.some(e => e.id === id)) out.push({ id, route: target.route.id, model: target.model, name: target.model });
+      if (!out.some(e => e.id === id)) out.push({ id, route: target.route.id, model: target.model, name: target.model, ...routeLabels(target.route) });
     }
     return out;
+  }
+
+  /**
+   * The model id for a request that may name an identity. The identity is the id of a route. Without one the model stays as sent.
+   * With one: a model with another route prefix is refused, a model with the same prefix stays, and a bare model gets the prefix.
+   * An unknown identity throws UnknownIdentityError, so a person never gets an answer from an account they did not pick.
+   */
+  withIdentity(model: string | undefined, identity: string | undefined): string | undefined {
+    if (identity === undefined || identity === '') return model;
+    if (!this.config.routes.some(r => r.id === identity)) throw new UnknownIdentityError(identity, this.config.routes.map(r => r.id));
+    // An empty model clears the pick, so an identity that comes with it does not matter.
+    if (model === '') return model;
+    if (model === undefined) throw new UnknownIdentityError(identity, [], 'An identity needs a model.');
+    const prefix = this.qualified(model)?.route.id;
+    if (prefix === undefined) return `${identity}/${model}`;
+    if (prefix !== identity) throw new UnknownIdentityError(identity, [], `The model "${model}" belongs to the identity "${prefix}", not "${identity}".`);
+    return model;
   }
 
   private qualified(id: string): Resolved | undefined {

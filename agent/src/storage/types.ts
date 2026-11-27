@@ -135,7 +135,14 @@ export const decisionSchema = z.object({
   until: z.iso.datetime().optional(),
 }).strict().refine(d => (d.decision === 'defer') === Boolean(d.until), 'Defer needs an end time');
 export const answerSchema = z.object({ answer: z.string().trim().min(1).max(2000) }).strict();
-export const messageSchema = z.object({ text: z.string().trim().min(1).max(8000), driveId: z.uuid().optional() }).strict();
+// `model` and `identity` are what the model picker of the chat sends. The storage engine answers from scan evidence and
+// calls no model today, so it accepts both and ignores them. The body stays the same as the body of every other chat.
+export const messageSchema = z.object({
+  text: z.string().trim().min(1).max(8000),
+  driveId: z.uuid().optional(),
+  model: z.string().trim().min(1).max(200).optional(),
+  identity: z.string().trim().min(1).max(100).optional(),
+}).strict();
 export const approvalSchema = z.object({
   itemIds: z.array(z.uuid()).min(1).max(MAX_APPROVAL_ITEMS).refine(unique, 'The subset contains a duplicate item'),
 }).strict();

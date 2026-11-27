@@ -492,7 +492,7 @@ describe('hourly cap across pods', () => {
     const { AlertGate } = await import('../src/alerts.js');
     const a = await pod('A');
     const b = await pod('B');
-    const config = { toolBudget: 5, severities: ['critical'], maxPerHour: 2, maxConcurrentReruns: 2, ignoreAlerts: [] as string[] };
+    const config = { runTimeoutMs: 60_000, diagnosisTimeoutMs: 60_000, maxModelCalls: 60, severities: ['critical'], maxPerHour: 2, maxConcurrentReruns: 2, ignoreAlerts: [] as string[] };
     const recent = new Date().toISOString();
     await a.put(diagnosis('one', 'done', { createdAt: recent }));
     await a.put(diagnosis('two', 'done', { createdAt: recent }));

@@ -69,12 +69,66 @@ describe('ChatPage', () => {
   });
   it('collapses the tool steps and expands them on click', async () => {
     renderAt('/incidents/chat/c1');
-    const toggle = await screen.findByRole('button', { name: /Investigated 2 things/ });
+    const toggle = await screen.findByRole('button', { name: /Used 2 tools, 1 failed/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByText('get_pods')).toBeNull();
     fireEvent.click(toggle);
     expect(await screen.findByText('get_pods')).toBeTruthy();
     expect(screen.getByText('Read the logs')).toBeTruthy();
     expect(screen.getByLabelText('Failed')).toBeTruthy();
+    // A tool card opens to its arguments and its result, and closes again.
+    const card = screen.getByRole('button', { name: /get_logs/ });
+    expect(card.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(card);
+    expect(card.getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByText('Error')).toBeTruthy();
+    expect(screen.getByText('denied')).toBeTruthy();
+  });
+  it('shows the model, identity, tokens, cost and time under an answer, and the context meter', async () => {
+    chat.messages[1].usage = {
+      inputTokens: 12345,
+      outputTokens: 540,
+      contextTokens: 24000,
+      contextWindow: 200000,
+      calls: 2,
+      costUsd: 0.0123,
+      identity: 'Pool',
+      durationMs: 12000,
+    };
+    renderAt('/incidents/chat/c1');
+    const line = await screen.findByText('sonnet');
+    const usage = line.closest('[data-usage-line]') as HTMLElement;
+    expect(usage.textContent).toContain('Pool');
+    expect(usage.textContent).toContain('12k in');
+    expect(usage.textContent).toContain('540 out');
+    expect(usage.textContent).toContain('$0.012');
+    expect(usage.textContent).toContain('12 s');
+    expect(usage.textContent).toContain('2 tool calls');
+    const meter = screen.getByRole('meter', { name: 'Context window' });
+    expect(meter.getAttribute('aria-valuenow')).toBe('24000');
+    expect(meter.getAttribute('aria-valuemax')).toBe('200000');
+    expect(meter.textContent).toContain('24k / 200k');
+  });
+  it('shows the thinking section and a running tool with its live status while a turn runs', async () => {
+    chat.running = true;
+    chat.messages[1] = {
+      ...chat.messages[1],
+      status: 'running',
+      text: '',
+      thinking: 'Checking the pod first.',
+      steps: [
+        { id: 's1', tool: 'get_pods', reason: 'List the pods', ok: true, summary: '3 pods', status: 'done', durationMs: 420 },
+        { id: 's2', tool: 'get_logs', reason: 'Read the logs', status: 'running', startedAt: new Date().toISOString() },
+      ],
+    };
+    renderAt('/incidents/chat/c1');
+    // Open while the turn runs: the reader sees the work as it happens.
+    expect(await screen.findByText('Checking the pod first.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Thinking/ }).getAttribute('aria-expanded')).toBe('true');
+    expect(await screen.findByText('get_logs')).toBeTruthy();
+    expect(screen.getByLabelText('Running', { selector: '[role="progressbar"]' })).toBeTruthy();
+    expect(screen.getByText('420 ms')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
   });
   it('sends on Enter and keeps Shift+Enter as a newline', async () => {
     renderAt('/incidents/chat/c1');
@@ -123,7 +177,8 @@ describe('ChatPage', () => {
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'status?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(posts()).toHaveLength(2));
-    expect(posts()[0].body).toEqual({ model: 'claude/sonnet' });
+    // The identity of the pick goes with it, so the agent answers from the identity the person chose.
+    expect(posts()[0].body).toEqual({ model: 'claude/sonnet', identity: 'claude' });
     expect(posts()[0].headers?.['x-incidents-model-pick']).toBe('1');
   });
   it('links to the diagnosis and the chat list with cluster-scoped URLs', async () => {
@@ -140,7 +195,7 @@ describe('ChatPage', () => {
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'again' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => expect(posts()).toHaveLength(1));
-    expect(posts()[0].body).toEqual({ text: 'again', model: 'claude/opus' });
+    expect(posts()[0].body).toEqual({ text: 'again', model: 'claude/opus', identity: 'claude' });
   });
   it('shows a failed turn error', async () => {
     chat.messages[1].status = 'failed';
@@ -176,7 +231,7 @@ describe('ChatPage', () => {
       '5.3-flash',
       '5.3-flashx',
       '5.3-flashx-legal',
-    ].map(v => ({ id: `zai/glm-${v}`, route: 'zai', model: `glm-${v}`, name: `glm-${v}` }));
+    ].map(v => ({ id: `zai/glm-${v}`, route: 'zai', model: `glm-${v}`, name: `glm-${v}`, provider: 'zai', identity: 'Pool' }));
     const base = request.getMockImplementation()!;
     request.mockImplementation(async (url: string, params?: any) =>
       url.endsWith('/api/models')
@@ -192,12 +247,12 @@ describe('ChatPage', () => {
       renderAt('/incidents/chat');
       fireEvent.click(await screen.findByRole('button', { name: /^glm-5\.3$/ }));
       const checked = await screen.findByRole('option', { selected: true });
-      expect(checked.textContent).toContain('zai/glm-5.3');
+      expect(checked.textContent).toContain('glm-5.3');
       expect(checked.textContent).not.toContain('flash');
       const lit = document.querySelectorAll('[data-highlighted="true"]');
       expect(lit).toHaveLength(1);
-      expect(lit[0].textContent).toContain('zai/glm-5.3');
-      expect(scrolled.some(t => t.includes('zai/glm-5.3') && !t.includes('flash'))).toBe(true);
+      expect(lit[0].textContent).toContain('glm-5.3');
+      expect(scrolled.some(t => t.includes('glm-5.3') && !t.includes('flash'))).toBe(true);
     } finally {
       Element.prototype.scrollIntoView = orig;
     }

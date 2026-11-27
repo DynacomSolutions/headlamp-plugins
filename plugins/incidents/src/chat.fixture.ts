@@ -1,10 +1,27 @@
 import type { ChatDetail, ModelOption } from './chat-model';
 
+const pool = (route: string, model: string, name: string, contextWindow?: number): ModelOption => ({
+  id: `${route}/${model}`,
+  route,
+  model,
+  name,
+  provider: route,
+  identity: 'Pool',
+  ...(contextWindow ? { contextWindow } : {}),
+});
+
 export const MODELS: ModelOption[] = [
-  { id: 'claude/opus', route: 'claude', model: 'opus', name: 'Claude Opus' },
-  { id: 'claude/sonnet', route: 'claude', model: 'sonnet', name: 'Claude Sonnet' },
-  { id: 'codex/gpt-5', route: 'codex', model: 'gpt-5', name: 'GPT 5' },
-  { id: 'kimi/k2', route: 'kimi', model: 'k2', name: 'Kimi K2' },
+  pool('claude', 'opus', 'Claude Opus', 200000),
+  pool('claude', 'sonnet', 'Claude Sonnet', 200000),
+  pool('codex', 'gpt-5', 'GPT 5', 400000),
+  pool('kimi', 'k2', 'Kimi K2'),
+];
+
+/** The same list with a second Claude identity, a pinned account, as the agent lists it when it has two Claude routes. */
+export const MODELS_TWO_IDENTITIES: ModelOption[] = [
+  ...MODELS,
+  { id: 'claude-pinned/opus', route: 'claude-pinned', model: 'opus', name: 'Claude Opus', provider: 'claude', identity: 'Account A', contextWindow: 200000 },
+  { id: 'claude-pinned/sonnet', route: 'claude-pinned', model: 'sonnet', name: 'Claude Sonnet', provider: 'claude', identity: 'Account A', contextWindow: 200000 },
 ];
 
 export const CHAT: ChatDetail = {

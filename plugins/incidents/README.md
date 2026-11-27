@@ -31,6 +31,49 @@ is read-only.
   surface and the plugin renders it. The page polls every 5 seconds while the
   diagnosis is queued or running.
 
+## Chat
+
+There is one chat, the **Chat** tab (`/incidents/chat/<id>`). Incident chats and the storage
+investigation both open in it. The chat id is a path segment and is pushed to history. Filters are
+query strings and replace the history entry.
+
+- **Thread.** The thinking section shows what the agent said between tool calls. It is open while the
+  turn runs and closes when it ends (a click overrides it). Each tool call is a card with its status,
+  the question it answers and its duration (live while it runs). A card opens to the arguments and the
+  result. A working indicator with the elapsed time shows while the agent has nothing to say yet. The
+  answer is revealed smoothly, and an answer from the history shows at once. Under each answer: the
+  model, the identity, the tokens in and out, the cost (only when the agent knows a price), the time
+  and the number of tool calls, with a button that copies the answer.
+- **Composer.** The model and identity picker and a context meter (tokens in the context against the
+  window of the model) sit in its footer. While a turn runs the send button becomes a stop button. Stop
+  calls `POST /api/chats/<id>/cancel`, and the agent aborts the model call in flight.
+- **Motion.** Only transform, opacity and height move, on an ease without overshoot. With
+  `prefers-reduced-motion` every panel opens at full height at once, the answer shows whole and no
+  loop runs. Cards, the thinking row and the picker work with the keyboard. The look follows the free
+  design and motion rules of [Arc](https://uiarc.dev) and the Headlamp theme, in the dark and the
+  light theme.
+- **Live updates.** The page reads the chat every second while a turn runs. The agent writes each step,
+  the thinking and the usage as they happen. There is no event stream: the Kubernetes service proxy does
+  not stream, and the agent does not stream model tokens.
+- **Model picker.** It has the layout of the T3 Code picker: a rail with Favourites and one icon for
+  each identity, then a search box and one list of models. An identity is a gateway app of the agent:
+  the pool, or one pinned account. When a provider has several identities, each icon has a badge with
+  the initials of its identity, and the tooltip names both. A pick sends the model and its identity
+  (`identity`, the route id) with the chat request, and the agent answers from that identity or refuses.
+  With no pick the agent applies its default order and falls back by usage.
+- **Chats drawer on a phone.** The list opens as a modal above the Headlamp app bar, with its own
+  header and a close button. Its first item is fully visible and the list scrolls inside it.
+- **Storage investigation.** The first entry of the chat list is the storage investigation (when
+  storage incidents are on). Its thread is the storage transcript, with the A2UI results. The drive
+  context is the query `?drive=<id>`, and a notification names the open item with `&question=<id>` or
+  `&finding=<id>`. Below the thread sit the questions of the drive, the cleanup plan with its approval
+  card and the receipts. The quick buttons send the three investigations (consumers, capacity,
+  eligibility). The storage agent answers from evidence, so the picker does not show here. The
+  **Storage** tab keeps the drive overview and the drive pages, and links to the chat. The old links
+  (`/incidents/storage/chat/<id>` and the drive question and finding pages) redirect to the chat.
+  The storage notification templates are `…/incidents/chat/{chatId}?drive={driveId}&question={id}` and
+  `…&finding={id}`.
+
 ## Agents
 
 When `GET /api/launches/config` answers `enabled: true`, the diagnosis page has a

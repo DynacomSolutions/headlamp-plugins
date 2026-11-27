@@ -15,7 +15,6 @@ import { size, time } from './Capacity';
 import {
   DriveDetail,
   drivePath,
-  InvestigationKind,
   Item,
   mergeVerification,
   postStorage,
@@ -212,53 +211,6 @@ export function ItemActions({
   );
 }
 
-export function DriveInvestigation({
-  detail,
-  settings,
-  refresh,
-}: {
-  detail: DriveDetail;
-  settings: Settings;
-  refresh: () => void;
-}) {
-  const { busy, error, run } = useStorageAction(refresh);
-  const criticalEmpty =
-    detail.drive.status === 'critical' &&
-    !detail.items.some(item => item.eligible && mergeVerification(item) !== 'unavailable');
-  const investigate = (kind: InvestigationKind) =>
-    run(() => postStorage(settings, `${drivePath(detail.drive.id)}/investigate`, { kind }));
-  return (
-    <Stack spacing={1.5}>
-      <Typography component="h2" variant="h6">
-        Investigate drive
-      </Typography>
-      {criticalEmpty && (
-        <StorageAlert severity="warning">
-          This drive is below its free space reserve and has no eligible items. What would you like
-          to investigate?
-        </StorageAlert>
-      )}
-      <Stack direction="row" gap={1} flexWrap="wrap">
-        <Button variant="outlined" disabled={busy} onClick={() => investigate('inventory')}>
-          Investigate consumers
-        </Button>
-        <Button variant="outlined" disabled={busy} onClick={() => investigate('capacity')}>
-          Investigate capacity
-        </Button>
-        <Button variant="outlined" disabled={busy} onClick={() => investigate('eligibility')}>
-          Investigate eligibility
-        </Button>
-      </Stack>
-      {busy && (
-        <Typography variant="body2" role="status">
-          Gathering evidence…
-        </Typography>
-      )}
-      {error && <StorageAlert severity="error">{error}</StorageAlert>}
-    </Stack>
-  );
-}
-
 export function QuestionCard({
   question,
   settings,
@@ -307,30 +259,15 @@ export function QuestionCard({
   );
 }
 
-export function Questions({
-  questions,
-  settings,
-  refresh,
+export function ChildResults({
+  detail,
+  itemId,
+  titled = true,
 }: {
-  questions: Question[];
-  settings: Settings;
-  refresh: () => void;
+  detail: DriveDetail;
+  itemId?: string;
+  titled?: boolean;
 }) {
-  const questionsInOrder = [...questions].sort((a, b) => Number(!!a.answer) - Number(!!b.answer));
-  return (
-    <Stack spacing={2}>
-      <Typography component="h2" variant="h6">
-        Questions · {questions.filter(question => !question.answer).length} unanswered
-      </Typography>
-      {questions.length === 0 && <Typography color="text.secondary">No questions yet.</Typography>}
-      {questionsInOrder.map(question => (
-        <QuestionCard key={question.id} question={question} settings={settings} refresh={refresh} />
-      ))}
-    </Stack>
-  );
-}
-
-export function ChildResults({ detail, itemId }: { detail: DriveDetail; itemId?: string }) {
   const evidence = itemId
     ? detail.evidence.filter(entry => entry.itemIds.includes(itemId))
     : detail.evidence;
@@ -340,9 +277,11 @@ export function ChildResults({ detail, itemId }: { detail: DriveDetail; itemId?:
     : detail.children;
   return (
     <Stack spacing={1.5}>
-      <Typography component="h2" variant="h6">
-        Investigation results
-      </Typography>
+      {titled && (
+        <Typography component="h2" variant="h6">
+          Investigation results
+        </Typography>
+      )}
       {children.length === 0 && <Typography color="text.secondary">No results yet.</Typography>}
       {children.map(child => (
         <Box

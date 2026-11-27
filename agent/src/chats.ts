@@ -10,6 +10,34 @@ export interface ChatStep {
   ok?: boolean;
   summary?: string;
   status: 'running' | 'done';
+  /** When the call started and ended (ISO), so a client can show its duration while it runs and after. */
+  startedAt?: string;
+  endedAt?: string;
+  durationMs?: number;
+  /** The arguments of the call, masked and cut short. */
+  args?: Record<string, unknown>;
+  /** The result of the call as text, masked and cut short. */
+  output?: string;
+}
+
+/** What one assistant turn used: tokens, the context size after its last model call, and the cost when the route has a price. */
+export interface ChatUsage {
+  /** Tokens sent to the model, summed over the calls of the turn. */
+  inputTokens: number;
+  outputTokens: number;
+  /** Tokens of the last model call: the size of the context now. */
+  contextTokens: number;
+  /** The context window of the model in tokens, when known. */
+  contextWindow?: number;
+  /** Model calls of the turn. */
+  calls: number;
+  /** Cost in US dollars, only when the route states a price. */
+  costUsd?: number;
+  provider?: string;
+  /** The identity (route) that answered: `Pool` or the name of a pinned account. */
+  identity?: string;
+  /** Wall-clock time of the turn so far, or in total once it ended. */
+  durationMs?: number;
 }
 
 export interface ChatMessage {
@@ -21,6 +49,10 @@ export interface ChatMessage {
   error?: string;
   model?: string;
   steps: ChatStep[];
+  /** What the model said between tool calls, while it worked. The answer is in `text`. */
+  thinking?: string;
+  /** Tokens, context size and cost of the turn. */
+  usage?: ChatUsage;
   /** What the model saw and said in this turn, tool calls and results included. Never sent to clients. */
   trace?: Message[];
 }

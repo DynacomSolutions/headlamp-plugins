@@ -4,7 +4,7 @@ import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink } from 'react-router-dom';
-import { notificationsUrl, storageFindingUrl, storageQuestionUrl } from '../routes';
+import { chatUrl, notificationsUrl } from '../routes';
 import { driveLabel } from './Investigation';
 import {
   NoticeAction,
@@ -14,10 +14,12 @@ import {
 } from './storage-data';
 import { StorageAlert } from './StorageAlert';
 
+/** An open question or finding opens in the one chat, on its drive, with the item in focus. */
 export function noticeUrl(action: NoticeAction) {
-  return action.kind === 'question'
-    ? storageQuestionUrl(action.driveId, action.id)
-    : storageFindingUrl(action.driveId, action.id);
+  return chatUrl(action.chatId, {
+    drive: action.driveId,
+    ...(action.kind === 'question' ? { question: action.id } : { finding: action.id }),
+  });
 }
 
 const deliveryLabels = {
@@ -55,6 +57,24 @@ export function DeliveryEvidence({ delivery }: { delivery?: NoticeDelivery }) {
           : `Device receipts confirmed: ${delivery.clientReceived}`}
       </Typography>
     </Stack>
+  );
+}
+
+/** The push status of a notice on one small line, for under a message in the chat. */
+export function DeliveryLine({ delivery }: { delivery?: NoticeDelivery }) {
+  if (!delivery) return null;
+  const receipt =
+    typeof delivery.clientReceived !== 'number'
+      ? 'device receipt unverified'
+      : `${delivery.clientReceived} device receipts`;
+  const sent =
+    delivery.targetedRecipients > 0
+      ? `${deliveryLabels[delivery.status]} (${delivery.providerAccepted} of ${delivery.targetedRecipients})`
+      : deliveryLabels[delivery.status];
+  return (
+    <Typography variant="caption" color="text.secondary" data-delivery-line>
+      {sent} · {receipt}
+    </Typography>
   );
 }
 

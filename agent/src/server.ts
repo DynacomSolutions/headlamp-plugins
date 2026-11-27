@@ -241,7 +241,6 @@ export class Runner {
       alert: mask(alert),
       evidence: [],
       toolCalls: 0,
-      toolBudget: this.config.diagnosis.toolBudget,
       model: model ?? this.catalogue.currentDefault(),
       modelPinned: model !== undefined,
       a2ui: [],
@@ -285,7 +284,9 @@ export class Runner {
           alert,
           tools: this.runtime.toolHost(),
           model: client,
-          budget: this.config.diagnosis.toolBudget,
+          // Diagnoses run one after another, so a webhook diagnosis has a shorter limit than a chat turn.
+          timeoutMs: this.config.diagnosis.diagnosisTimeoutMs,
+          maxModelCalls: this.config.diagnosis.maxModelCalls,
           source,
           host: 'cluster',
           id: queued.id,
@@ -351,7 +352,8 @@ const publishSchema = z.object({
     error: z.string().max(2000).optional(),
     evidence: z.array(z.object({ id: z.string().max(16), tool: z.string().max(80), reason: z.string().max(400), summary: z.string().max(2000), ok: z.boolean(), data: z.unknown().refine(v => v === undefined || JSON.stringify(v).length <= 30_000, 'data is too large').optional() })).max(60).default([]),
     toolCalls: z.number().int().min(0).max(1000).default(0),
-    toolBudget: z.number().int().min(0).max(1000).default(0),
+    // Records of older releases carry a tool budget. It is accepted and not kept.
+    toolBudget: z.number().int().min(0).max(1000).optional(),
     model: z.string().max(120).default(''),
     createdAt: z.string().optional(),
   }),
@@ -359,14 +361,14 @@ const publishSchema = z.object({
 
 const rerunSchema = z.object({ model: z.string().max(200).nullish() }).strict();
 const createChatSchema = z
-  .object({ model: z.string().max(200).optional(), diagnosisId: z.string().max(200).optional(), diagnosisIds: z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
+  .object({ model: z.string().max(200).optional(), identity: z.string().max(60).optional(), diagnosisId: z.string().max(200).optional(), diagnosisIds: z.array(z.string().min(1).max(200)).min(1).max(20).optional(),
     groupName: z.string().min(1).max(200).optional(),
     summaryIds: z.array(z.string().min(1).max(200)).min(1).max(500).optional(),
     groupOmitted: z.number().int().min(1).max(1_000_000).optional(),
   })
   .strict();
-const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional(), push: z.string().regex(/^[0-9a-f]{32}$/).optional() });
-const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional() });
+const sendSchema = z.object({ text: z.string().min(1).max(8000), model: z.string().max(200).optional(), identity: z.string().max(60).optional(), push: z.string().regex(/^[0-9a-f]{32}$/).optional() });
+const patchChatSchema = z.object({ title: z.string().max(200).optional(), model: z.string().max(200).optional(), identity: z.string().max(60).optional() });
 
 const launchSchema = z
   .object({
@@ -432,7 +434,8 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
     diagnoses: store,
     tools: runtime.toolHost(),
     catalogue: runner.catalogue,
-    budget: config.diagnosis.toolBudget,
+    timeoutMs: config.diagnosis.runTimeoutMs,
+    maxModelCalls: config.diagnosis.maxModelCalls,
     maxTurns: config.maxChatTurns,
     onAnswer: e => void push.notifyChatAnswer(e.subscription, e.chatId, e.text),
   });
@@ -498,7 +501,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           mcp: '/mcp',
           tools: runtime.registry.tools.size,
           providers: runtime.registry.providers.map(p => p.name),
-          diagnosis: { model: config.models.defaultModel || null, defaultOrder: runner.catalogue.defaultOrder, models: (await runner.catalogue.list({ waitMs: 2000 })).length, configured: runner.configured, toolBudget: config.diagnosis.toolBudget },
+          diagnosis: { model: config.models.defaultModel || null, defaultOrder: runner.catalogue.defaultOrder, models: (await runner.catalogue.list({ waitMs: 2000 })).length, configured: runner.configured, runTimeoutMs: config.diagnosis.runTimeoutMs, diagnosisTimeoutMs: config.diagnosis.diagnosisTimeoutMs, maxModelCalls: config.diagnosis.maxModelCalls },
         });
       }
       // Alertmanager v2 API, the shape vmalert's notifier posts.
@@ -557,7 +560,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
         // With ordered default models `default` is the one that answers first now, and `defaultOrder` lists them all.
         const defaultOrder = runner.catalogue.defaultOrder;
         if (defaultOrder.length > 1) def = runner.catalogue.currentDefault();
-        return send(res, 200, { default: def || null, defaultOrder, models: models.map(({ id, route, model, name }) => ({ id, route, model, name })) });
+        return send(res, 200, { default: def || null, defaultOrder, models: models.map(({ id, route, model, name, provider, identity, contextWindow }) => ({ id, route, model, name, provider, identity, ...(contextWindow ? { contextWindow } : {}) })) });
       }
       if (path === '/api/widgets' && req.method === 'GET') return send(res, 200, listPanels());
       if (path.startsWith('/api/widgets/') && req.method === 'GET') {
@@ -676,7 +679,6 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           evidence: p.evidence.map(({ data: _data, ...e }) => e),
           published: true,
           toolCalls: p.toolCalls,
-          toolBudget: p.toolBudget,
           model: p.model,
           a2ui: [],
         });
@@ -732,7 +734,7 @@ export async function startServer(config: Config = loadConfig(), version = '0.0.
           }
           if (id && action === 'messages' && req.method === 'POST') {
             const body = await chatBody(req, sendSchema);
-            return send(res, 202, await chats.send(id, body.text, body.model, body.push));
+            return send(res, 202, await chats.send(id, body.text, body.model, body.push, body.identity));
           }
           if (id && action === 'cancel' && req.method === 'POST') {
             chats.cancel(id);

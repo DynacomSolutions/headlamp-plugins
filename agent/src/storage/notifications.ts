@@ -16,16 +16,26 @@ const ATTEMPT_MS = 60_000;
 const MAX_ATTEMPTS = 3;
 export const subscriptionSchema = z.string().regex(/^[0-9a-f]{32}$/);
 const authSchema = z.string().min(22).max(64).regex(/^[A-Za-z0-9_-]+$/);
-const pathSchema = z.string().max(220).regex(/^\/(?:[A-Za-z0-9_-][A-Za-z0-9_.~%-]*\/)*incidents\/storage\/drives\/\{driveId\}\/(questions|findings)\/\{id\}$/);
+const segments = String.raw`(?:[A-Za-z0-9_-][A-Za-z0-9_.~%-]*\/)*`;
+/** The routes of earlier releases: the drive question and finding pages, which now redirect to the chat. */
+const legacyPath = new RegExp(`^\\/${segments}incidents\\/storage\\/drives\\/\\{driveId\\}\\/(questions|findings)\\/\\{id\\}$`);
+/** The chat of the storage investigation: the chat is a path segment, the drive and the item in focus are query strings. */
+const chatPath = new RegExp(`^\\/${segments}incidents\\/chat\\/\\{chatId\\}\\?drive=\\{driveId\\}&(question|finding)=\\{id\\}$`);
+const pathSchema = z.string().max(220).refine(path => legacyPath.test(path) || chatPath.test(path), 'Invalid notification URL template');
 export const enrolSchema = z.object({
   subscriptionId: subscriptionSchema,
   enabled: z.boolean(),
   auth: authSchema.optional(),
   urls: z.object({
-    question: pathSchema.refine(path => path.endsWith('/questions/{id}')),
-    cleanup: pathSchema.refine(path => path.endsWith('/findings/{id}')),
+    question: pathSchema.refine(path => path.endsWith('/questions/{id}') || path.endsWith('&question={id}')),
+    cleanup: pathSchema.refine(path => path.endsWith('/findings/{id}') || path.endsWith('&finding={id}')),
   }).strict().optional(),
 }).strict().refine(body => !body.enabled || Boolean(body.auth && body.urls), 'Enabling needs the device key and both action URLs');
+
+/** Fills a URL template of a device. `{chatId}` is in the template of the chat form only. */
+export function notificationUrl(template: string, values: { chatId: string; driveId: string; id: string }): string {
+  return template.replace('{chatId}', values.chatId).replace('{driveId}', values.driveId).replace('{id}', values.id);
+}
 
 export type NotificationUrls = NonNullable<z.infer<typeof enrolSchema>['urls']>;
 type RecipientGrant = { recipient: Recipient; version: string };
@@ -293,7 +303,8 @@ export class StorageNotifications {
         }
 
         const id = notice.questionId ?? notice.id;
-        const url = registration.urls[notice.kind].replace('{driveId}', notice.driveId).replace('{id}', id);
+        // A template of the chat form names the storage chat too. The notice always belongs to the storage incident's chat.
+        const url = notificationUrl(registration.urls[notice.kind], { chatId: (await tx.parent()).chatId, driveId: notice.driveId, id });
         const provider = await push.sendStorageNotice(device, {
           kind: 'storage',
           title: notice.kind === 'question' ? 'Storage incident question' : 'Storage cleanup available',

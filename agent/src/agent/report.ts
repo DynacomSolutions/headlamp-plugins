@@ -79,7 +79,8 @@ export interface Diagnosis {
   result?: DiagnosisResult;
   evidence: EvidenceItem[];
   toolCalls: number;
-  toolBudget: number;
+  /** Kept on records of older releases only. A run has no tool budget any more. */
+  toolBudget?: number;
   /** The model that answered. With the default order it can differ from the first choice. */
   model: string;
   /** True when a person or an alert picked `model`: it was used as it is, with no fallback. Absent on records from before the default order. */
@@ -157,7 +158,7 @@ export function renderDiagnosis(d: Diagnosis): A2uiMessage[] {
     d.alert.severity || 'no severity',
     d.resolvedAt ? 'alert resolved' : 'alert firing',
     r ? `${r.confidence} confidence` : d.status,
-    `${d.toolCalls}/${d.toolBudget} tool calls`,
+    `${d.toolCalls} ${d.toolCalls === 1 ? 'tool call' : 'tool calls'}`,
     d.model,
     d.createdAt.replace('T', ' ').slice(0, 16) + ' UTC',
   ].filter(Boolean);
@@ -212,7 +213,7 @@ export function diagnosisMarkdown(d: Diagnosis): string {
   if (!r) return d.status === 'failed' ? `Diagnosis failed: ${d.error ?? 'unknown error'}` : 'Diagnosis in progress.';
   const lines = [
     `## ${d.alert.name}: ${r.likelyCause}`,
-    `${d.alert.severity || 'no severity'} · ${r.confidence} confidence · ${d.toolCalls}/${d.toolBudget} tool calls`,
+    `${d.alert.severity || 'no severity'} · ${r.confidence} confidence · ${d.toolCalls} ${d.toolCalls === 1 ? 'tool call' : 'tool calls'}`,
     '',
     r.summary,
     '',

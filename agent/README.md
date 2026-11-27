@@ -11,7 +11,7 @@ see, and diagnose incidents from it.
   typed tools. The server publishes their schemas and validates, masks and
   renders every result.
 - **Incident diagnosis**: a skill plus an engine that starts from an alert,
-  gathers evidence within a tool budget and returns the likely cause, the
+  gathers evidence with the tools it needs and returns the likely cause, the
   evidence and suggested fixes. It runs in the cluster (started by a vmalert
   webhook) or as an **ACP agent** in any Agent Client Protocol host.
 - **A2UI v1.0 at every layer**: tool results, diagnoses and ACP messages carry
@@ -175,12 +175,21 @@ It is the engine's system prompt, the MCP prompt and the MCP skill. The engine
 
 1. **Evidence pack**: a fixed first look chosen from the alert's labels (the
    rule, then the pod, its logs and events, the workload, node, disks or probes,
-   then recent warnings). It costs no budget, and its facts are numbered `e1`, `e2`, …
-2. **Investigation**: the model may make `AGENT_TOOL_BUDGET` more tool calls
-   (default 10). Each call must state the question it answers, and results are
-   numbered `t1`, `t2`, …
-3. **Answer**: once the budget is spent, the only tool left is
-   `submit_diagnosis`, and the model must call it. The answer holds the likely
+   then recent warnings). It calls no model, and its facts are numbered `e1`, `e2`, …
+2. **Investigation**: the model makes as many tool calls as it needs. There is
+   no cap on the count. Each call must state the question it answers, and results
+   are numbered `t1`, `t2`, … The oldest tool results are cut from the history
+   when it gets long.
+3. **Answer**: the model calls `submit_diagnosis` when the evidence is enough.
+   When the time left is the time of two model calls (the call limit of the
+   route, at most half of the run limit), or when the next call is the last one
+   allowed by `AGENT_MAX_MODEL_CALLS`, the only tool left is `submit_diagnosis`.
+   At the run time limit the run makes one last forced `submit_diagnosis` call
+   with its own short limit (at most 60 seconds), so the work is not lost. If that
+   call does not submit, the run fails. A tool call in flight stops at the limit.
+   A diagnosis shows its tool call count only. A diagnosis that the webhook, a rerun
+   or a resume starts has its own limit, `AGENT_DIAGNOSIS_TIMEOUT_MS` (8 minutes),
+   because diagnoses run one after another. The answer holds the likely
    cause, a summary, a confidence level, signals that cite fact ids, up to five
    fixes and how to confirm the fix.
 4. **Checks the model cannot skip**: signals that cite unknown ids are dropped,
@@ -338,6 +347,23 @@ system prompt; the anthropic style sends it as its own first system block,
 because the upstream rejects it inside one string with 429), `models` (allowlist, also the list used when the gateway cannot
 list models), `maxTokens` and `timeoutMs`.
 
+A gateway app serves one provider, with one identity: the pool, or one account
+(a pinned app). To offer several identities of a provider, add one route for each
+app and give the routes the same `provider` and different `identity` names:
+
+```json
+{ "id": "claude", "provider": "claude", "identity": "Pool", "style": "anthropic", ... },
+{ "id": "claude-account-a", "provider": "claude", "identity": "Account A", "style": "anthropic", ... }
+```
+
+`provider` groups the routes and defaults to the route id. `identity` is the name
+shown in the picker and defaults to `Pool`. Two more optional fields: `contextWindow`
+(tokens, for models whose gateway list does not state it) and `pricing`
+(`{ "input": 3, "output": 15 }`, US dollars per million tokens, for the cost line
+under an answer). `GET /api/models` lists each model with its `provider`,
+`identity` and `contextWindow`. A chat request may send `identity` (a route id)
+with `model`: the model must belong to that identity, or the agent answers 400.
+
 Provider notes:
 
 - **claude**: the system prompt must start with the Claude Code identity line.
@@ -458,7 +484,17 @@ The cool-down is kept in memory in each pod. A restart clears it.
 The Incidents plugin has a chat page. An operator talks to the agent about the
 cluster and about incidents. The agent uses the same read-only tools, masking and
 model routes as a diagnosis. There is no submit tool: a turn ends when the model
-answers without calling a tool. Each turn has the tool budget `AGENT_TOOL_BUDGET`.
+answers without calling a tool. A turn has no cap on tool calls. It ends when the
+model answers, when a person stops it, or at the run time limit `AGENT_RUN_TIMEOUT_MS`.
+The turn wraps up in the same way when the context window is 90% full, when the
+time left is the time of two model calls, and at the soft cap `AGENT_MAX_MODEL_CALLS`
+(60). The last call keeps the tool list, because the history holds tool calls and
+results, and sends `tool_choice: none` (Anthropic `{type:"none"}`, OpenAI and
+Responses `"none"`). When an endpoint refuses that, the call repeats once with the
+rule in the system prompt. A tool call that the model still sends is ignored. At the run
+time limit the turn makes one last call of this kind with its own short limit, so
+the work becomes an answer. When the pod stops, a running turn ends at once with
+the note that the agent restarted, and the person sends the message again.
 The whole history goes to the model on every turn. When it gets long, the oldest
 tool results are cut first. A chat can start from a diagnosis, and then the alert,
 the result and the evidence summaries are part of the system prompt.
@@ -468,19 +504,28 @@ All routes answer JSON and have the same protection as `POST /api/diagnoses`.
 | Route | Answer |
 | --- | --- |
 | `GET /api/chats?limit=50&diagnosisId=<id>` | `{ chats: [{ id, title, model, diagnosisId?, diagnosisIds?, updatedAt, running }] }`, newest first. `diagnosisId` keeps the chats linked to that incident |
-| `POST /api/chats` with `{ model?, diagnosisId?, diagnosisIds? }` | 201 `{ id }`. `diagnosisIds` links one chat to 1 to 20 incidents, and the system prompt holds all of them. `diagnosisId` is the same for one incident. An unknown model gets 400 with the valid ids. An unknown diagnosis gets 404. For a chat about a group of incidents the body may also hold `groupName`, `summaryIds` (1 to 500 more incidents, each listed as one short line in the system prompt, only with `diagnosisIds`) and `groupOmitted` (a count of older incidents the client left out). An id in `summaryIds` that no longer exists is dropped without an error. The chat then also returns `groupName` and `groupCount` |
+| `POST /api/chats` with `{ model?, identity?, diagnosisId?, diagnosisIds? }` | 201 `{ id }`. `diagnosisIds` links one chat to 1 to 20 incidents, and the system prompt holds all of them. `diagnosisId` is the same for one incident. An unknown model gets 400 with the valid ids. An unknown diagnosis gets 404. For a chat about a group of incidents the body may also hold `groupName`, `summaryIds` (1 to 500 more incidents, each listed as one short line in the system prompt, only with `diagnosisIds`) and `groupOmitted` (a count of older incidents the client left out). An id in `summaryIds` that no longer exists is dropped without an error. The chat then also returns `groupName` and `groupCount` |
 | `GET /api/chats/<id>` | `{ id, title, model, diagnosisId?, diagnosisIds?, createdAt, updatedAt, running, messages }` |
-| `POST /api/chats/<id>/messages` with `{ text, model? }` | 202 `{ messageId }`. `text` has 1 to 8000 characters. 409 when a turn runs in this chat. 429 above `AGENT_MAX_CHAT_TURNS`. A `model` switches the chat from this turn on, and pins it: no fallback. A chat with no pick uses the default order, and its `model` is the one that answered last |
+| `POST /api/chats/<id>/messages` with `{ text, model?, identity? }` | 202 `{ messageId }`. `text` has 1 to 8000 characters. 409 when a turn runs in this chat. 429 above `AGENT_MAX_CHAT_TURNS`. A `model` switches the chat from this turn on, and pins it: no fallback. A chat with no pick uses the default order, and its `model` is the one that answered last |
 | `POST /api/chats/<id>/cancel` | 200. Stops the running turn, which gets the status `cancelled` |
 | `PATCH /api/chats/<id>` with `{ title?, model? }` | 200 with the chat summary |
 | `DELETE /api/chats/<id>` | 204 |
 
 A message is `{ id, role: "user"|"assistant", text, createdAt, status:
 "done"|"running"|"failed"|"cancelled", error?, model?, steps }`. A step is
-`{ id, tool, reason, ok?, summary?, status: "running"|"done" }` and belongs to an
-assistant message, in call order. There is no event stream: the client reads
-`GET /api/chats/<id>` every second while `running` is true. The store holds the
-text and the steps during the turn.
+`{ id, tool, reason, ok?, summary?, status: "running"|"done", startedAt?, endedAt?,
+durationMs?, args?, output? }` and belongs to an assistant message, in call order.
+The step is written when the call starts and again when it ends, so a client shows
+the status and the duration live. `args` and `output` are masked and cut short.
+An assistant message also has `thinking` (what the model said between tool calls,
+live) and `usage`: `{ inputTokens, outputTokens, contextTokens, contextWindow?,
+calls, costUsd?, provider?, identity?, durationMs? }`. `contextTokens` is the size
+of the context after the last model call. `costUsd` is there only when the route
+has a `pricing`. The agent has no event stream: the service proxy of Kubernetes
+does not stream, and the model calls are not streamed. The client reads
+`GET /api/chats/<id>` every second while `running` is true, and the store holds the
+text, the steps, the thinking and the usage during the turn. Stop (`POST
+/api/chats/<id>/cancel`) aborts the model call in flight and ends the turn.
 
 Chats are one file each, `chats/<id>.json` under `DATA_DIR`, and live in memory
 without it. The title is the first user message, cut to 60 characters. A turn
@@ -819,7 +864,9 @@ turns launching off with a reason. It does not stop the service.
 | `DATABASE_URL` | memory only | PostgreSQL URI of the diagnosis history (`sslmode=require` encrypts without verifying the certificate). Diagnoses are never deleted |
 | `DATA_DIR` | memory only | Where chats and launches are kept, one file each in `chats/` and `launches/`. Old diagnosis files here are imported into the database at start |
 | `ALLOWED_ORIGINS` | none | Browser origins that may call `/mcp` and the write routes (`POST` on diagnoses, chats and launches). A request without an `Origin` header is always allowed |
-| `AGENT_TOOL_BUDGET` | `10` | Tool calls per diagnosis after the evidence pack, and per chat turn |
+| `AGENT_RUN_TIMEOUT_MS` | `900000` | Wall-clock limit of one chat turn, in milliseconds. There is no cap on tool calls. `AGENT_TOOL_BUDGET` of older releases is read and ignored |
+| `AGENT_DIAGNOSIS_TIMEOUT_MS` | `480000` | Wall-clock limit of one diagnosis that the webhook, a rerun or a resume starts. Diagnoses run one after another, so it is shorter than a chat turn |
+| `AGENT_MAX_MODEL_CALLS` | `60` | Soft cap on the model calls of one run (at least 2). The call that reaches it must submit (diagnosis) or answer without tools (chat) |
 | `AGENT_MAX_CHAT_TURNS` | `3` | Chat turns that may run at once across all chats. More get a 429 |
 | `T3_URL` | – | Base URL of the T3 server. Launching agents is off without it |
 | `T3_TOKEN_FILE` | – | Path of a mounted file with the T3 bearer token (plain text, or the JSON of `t3 auth session issue --json`). Read on each use, so a rotated token needs no restart. Needs the scopes `orchestration:read` and `orchestration:operate` |
@@ -848,5 +895,5 @@ KUBE_API=http://127.0.0.1:8001 METRICS_URL=… node dist/main.mjs serve
 
 The tests check masking, the Secret guard, A2UI payloads against the official
 v1.0 JSON schemas (vendored in `test/a2ui-v1`), report sanitising, alert
-parsing and gating, provider registration, the engine's budget, and the MCP
+parsing and gating, provider registration, the engine's time limit, and the MCP
 endpoint end to end.

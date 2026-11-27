@@ -120,6 +120,10 @@ export class FallbackModel implements ChatModel {
     return this.candidates[this.index]!.id;
   }
 
+  get callTimeoutMs(): number | undefined {
+    return Math.max(...this.candidates.map(c => c.client.callTimeoutMs ?? 0)) || undefined;
+  }
+
   async complete(req: CompleteRequest): Promise<Completion> {
     for (;;) {
       const current = this.candidates[this.index]!;

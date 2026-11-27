@@ -34,6 +34,8 @@ export async function createChat(
   s: Settings,
   body: {
     model?: string;
+    /** The identity (route) of the picked model. Sent with a pick only. */
+    identity?: string;
     diagnosisId?: string;
     diagnosisIds?: string[];
   } & Partial<GroupChatRequest>
@@ -79,11 +81,18 @@ export async function sendMessage(
   text: string,
   model?: string,
   /** The id of this device's push subscription: the agent may push the answer to it. */
-  push?: string
+  push?: string,
+  /** The identity (route) of the picked model: the agent answers from that identity, or refuses. */
+  identity?: string
 ): Promise<void> {
   await ApiProxy.request(
     backendUrl(s, `/api/chats/${encodeURIComponent(chatId)}/messages`),
-    json('POST', { text, ...(model ? { model } : {}), ...(push ? { push } : {}) })
+    json('POST', {
+      text,
+      ...(model ? { model } : {}),
+      ...(model && identity ? { identity } : {}),
+      ...(push ? { push } : {}),
+    })
   );
 }
 

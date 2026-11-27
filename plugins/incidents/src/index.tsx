@@ -24,6 +24,7 @@ import {
 } from './routes';
 import { Settings } from './settings';
 import {
+  StorageChatRedirect,
   StorageFindingPage,
   StorageIncidentPage,
   StorageQuestionPage,
@@ -127,7 +128,8 @@ registerRoute({
   sidebar: ROUTE_STORAGE,
   name: ROUTE_STORAGE_CHAT,
   exact: true,
-  component: StorageIncidentPage,
+  // The storage chat is in the Chat tab now. The old path redirects there.
+  component: StorageChatRedirect,
 });
 registerRoute({
   path: '/incidents/storage/drives/:driveId',
