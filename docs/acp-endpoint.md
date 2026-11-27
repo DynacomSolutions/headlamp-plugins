@@ -82,7 +82,7 @@ Each WebSocket is one ACP connection.
 
 A session runs one prompt at a time. A `session/prompt` that comes while the
 session still has a run fails with JSON-RPC error `-32000`. Send the next prompt
-after the answer, or after `session/cancel`. Use another session for parallel work.
+after the answer. After a `session/cancel`, wait for the `cancelled` answer. Use another session for parallel work.
 
 The tools of a session come from the registry in the agent process. There is no
 network hop to the agent's own `/mcp` endpoint.
