@@ -246,7 +246,7 @@ describe('SSE ids (contract section 7.3 and 8.4)', () => {
     await until(() => live.frames.some(f => meta(f)?.kind === 'reset'));
     const reset = live.frames.find(f => meta(f)?.kind === 'reset')!;
     expect(reset.id).toMatch(/^p\d+$/);
-    expect(meta(reset)).toMatchObject({ kind: 'reset', uri: 'headlamp://events', incidentId: null });
+    expect(meta(reset)).toMatchObject({ kind: 'reset', eventId: '0', uri: 'headlamp://events', incidentId: null });
     expect(meta(reset).logId).toMatch(/^[0-9a-f-]{36}$/);
     // After the reset the stream goes live.
     const t = await fire({ source: 'unknown' });

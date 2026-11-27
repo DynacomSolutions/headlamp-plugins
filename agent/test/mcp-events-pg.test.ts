@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Diagnosis } from '../src/agent/report.js';
 import type { EventRecord } from '../src/incidents/types.js';
-import { PgEventLog } from '../src/incidents/events.js';
+import { PgEventLog, publicEvent } from '../src/incidents/events.js';
 import { pgliteDb, podStore } from './helpers/pglite.js';
 
 // A real PostgreSQL (PGlite) starts here, so these tests get a long timeout.
@@ -95,6 +95,65 @@ describe('the event log in PostgreSQL', () => {
     expect((await store.events.readAfter(1n, 10)).reset).toBe(true);
     expect((await store.events.readAfter(2n, 10)).reset).toBe(false);
     expect((await store.events.readAfter(0n, 10)).reset).toBe(false);
+    await store.events.close();
+  });
+
+  it('keeps the state before and after and the full labels, and never sends them in the public event (N1, S9)', async () => {
+    const store = await podStore(db, { now: () => clock });
+    const many: Record<string, string> = { alertname: 'A', test: 'true' };
+    for (let i = 0; i < 40; i++) many[`k${String(i).padStart(2, '0')}`] = 'x';
+    many.zz_late = 'yes';
+    await store.putNew(record('a', { alert: { ...record('a').alert, labels: many } }));
+    await store.markResolved('f-a', '2026-11-28T00:02:00.000Z');
+    const events = (await store.events.readAfter(0n, 10)).events;
+    expect(events.map(e => [e.kind, e.stateBefore, e.state])).toEqual([['incident.created', undefined, 'open'], ['investigation.queued', undefined, 'open'], ['incident.resolved', 'open', 'resolved']]);
+    expect(events[0]!.fullLabels!.zz_late).toBe('yes');
+    expect(Object.keys(events[0]!.labels)).toHaveLength(32);
+    expect(events[0]!.labels.zz_late).toBeUndefined();
+    expect((await store.events.readAfter(0n, 10, { labels: { zz_late: 'yes' } })).events).toHaveLength(3);
+    expect(JSON.stringify(publicEvent(events[0]!))).not.toContain('fullLabels');
+    await store.events.close();
+  });
+
+  it('keeps latest when retention removed every event, so a stored cursor is not a reset (S6)', async () => {
+    const store = await podStore(db, { now: () => clock });
+    await store.putNew(record('a'));
+    await db.query('UPDATE mcp_events SET at = $1', [new Date(clock)]);
+    clock += 8 * 24 * 3600_000;
+    expect(await store.events.prune()).toBe(2); // created and queued
+    const head = await store.events.head();
+    expect(head).toMatchObject({ latest: '2', oldestRetained: null });
+    expect((await store.events.readAfter(2n, 10)).reset).toBe(false);
+    expect((await store.events.readAfter(3n, 10)).reset).toBe(true);
+    await store.events.close();
+  });
+
+  it('starts a reset page at the oldest retained event, also when the cursor is ahead of the log (S5)', async () => {
+    const store = await podStore(db, { now: () => clock });
+    await store.putNew(record('a'));
+    const page = await store.events.readAfter(99n, 10);
+    expect(page.reset).toBe(true);
+    expect(page.events.map(e => e.id)).toEqual(['1', '2']);
+    await store.events.close();
+  });
+
+  it('writes settings.changed in the transaction of the setting change (S13)', async () => {
+    const store = await podStore(db, { now: () => clock });
+    // A failed event write rolls the setting back: both commit or neither does.
+    const append = vi.spyOn(store.events, 'append').mockRejectedValueOnce(new Error('event insert failed'));
+    await expect(store.setSetting('automatic-investigations', false, 'ops', true, 'direct')).rejects.toThrow('event insert failed');
+    expect(await store.getSetting('automatic-investigations')).toBeUndefined();
+    expect(await store.settingAudit('automatic-investigations', 10)).toEqual([]);
+    append.mockRestore();
+    const entry = await store.setSetting('automatic-investigations', false, 'ops', true, 'direct');
+    expect(entry?.new).toBe(false);
+    expect((await store.events.readAfter(0n, 10)).events).toMatchObject([{ kind: 'settings.changed', uri: 'headlamp://settings/automatic-investigations', actor: 'ops' }]);
+    // The same value again changes nothing and writes no event.
+    expect(await store.setSetting('automatic-investigations', false, 'ops', true)).toBeUndefined();
+    expect((await store.events.readAfter(0n, 10)).events).toHaveLength(1);
+    // A change without a name has no actor.
+    await store.setSetting('automatic-investigations', true, '', true);
+    expect((await store.events.readAfter(0n, 10)).events.at(-1)?.actor).toBeNull();
     await store.events.close();
   });
 
