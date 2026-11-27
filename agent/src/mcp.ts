@@ -56,12 +56,16 @@ export async function mcpBuilder(runtime: Runtime, store: DiagnosisStore, versio
         async (args: unknown) => {
           contract.metrics.toolCall(tool.name, who.client);
           const out = await runtime.registry.call(tool.name, args, p => runtime.context(p));
-          if (!out.ok) contract.metrics.toolError(tool.name, 'tool_failed');
+          if (!out.ok) contract.metrics.toolError(tool.name, out.code ?? 'internal');
           const a2ui = {
             type: 'resource' as const,
             resource: { uri: `a2ui://headlamp-agent/results/${tool.name}/${randomUUID()}`, mimeType: A2UI_MIME, text: JSON.stringify(out.a2ui) },
           };
-          if (!out.ok) return { isError: true, content: [{ type: 'text' as const, text: out.summary }, a2ui], _meta: { ui } };
+          if (!out.ok) {
+            // The Error shape of the contract (section 5): the object in `_meta` and as JSON text. The A2UI block stays.
+            const error = { code: out.code ?? 'internal', message: out.summary };
+            return { isError: true, content: [{ type: 'text' as const, text: JSON.stringify(error) }, a2ui], _meta: { ui, 'headlamp-agent/error': error } };
+          }
           return {
             content: [{ type: 'text' as const, text: `${out.summary}\n${JSON.stringify(out.data)}` }, a2ui],
             structuredContent: out.data as Record<string, unknown>,
