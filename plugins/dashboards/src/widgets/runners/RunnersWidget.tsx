@@ -1,8 +1,11 @@
 /*
  * The runner widget (`runners.overview`): the pools, the queue and the running workflow runs of one
- * runner source in one widget. It reads the `pools` and `queue` panels, and the `runs` panel when
- * the source serves it (see `join.ts`). Each panel is fetched like the panel widget does, never
- * sooner than the panel's own `refreshSeconds`.
+ * runner source in one widget. It reads the `pools` and `queue` panels. It reads the `runs` panel
+ * and the `repos` panel when the source serves them (see `join.ts`). Each panel is fetched like the
+ * panel widget does, never sooner than the panel's own `refreshSeconds`. With the `runs` panel the
+ * list is a tree: repository, then branch or pull request, then workflow, then job. A click opens
+ * or folds a row in place. The open rows are in the page URL, in the param `w.<instanceId>` (see
+ * `RunnersView.tsx`).
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -26,14 +29,20 @@ export interface RunnersConfig {
    * strip) or `list` (the tree only).
    */
   view?: 'full' | 'summary' | 'list';
-  /** `all` opens every org, repo, run and job at first. A missing value keeps the default (orgs open). */
+  /** `all` opens every repo, branch, workflow and job at first. A missing value keeps the default (repos folded). */
   expand?: 'all';
 }
 
-/** The panel ids that the runner source serves. `runs` is optional. */
-export const RUNNER_PANELS = { pools: 'pools', queue: 'queue', runs: 'runs' } as const;
+/** The panel ids that the runner source serves. `runs` and `repos` are optional. */
+export const RUNNER_PANELS = {
+  pools: 'pools',
+  queue: 'queue',
+  runs: 'runs',
+  repos: 'repos',
+} as const;
 
 export function RunnersWidget({
+  instanceId,
   config,
   refreshSignal,
   reportRefreshed,
@@ -71,7 +80,17 @@ export function RunnersWidget({
     reportRefreshed,
     sourceId
   );
-  const states = [pools, queue, ...(hasRuns ? [runs] : [])];
+  // The `repos` panel is optional too, with the same rule.
+  const hasRepos = list.panels.some(p => p.id === RUNNER_PANELS.repos);
+  const repos = usePanel(
+    source,
+    hasRepos ? RUNNER_PANELS.repos : '',
+    refreshSignal,
+    min(RUNNER_PANELS.repos),
+    reportRefreshed,
+    sourceId
+  );
+  const states = [pools, queue, ...(hasRuns ? [runs] : []), ...(hasRepos ? [repos] : [])];
   useReportStale(
     states.reduce<number | undefined>(
       (a, s) =>
@@ -85,8 +104,9 @@ export function RunnersWidget({
         pools: pools.panel,
         queue: queue.panel,
         runs: hasRuns ? runs.panel : null,
+        repos: hasRepos ? repos.panel : null,
       }),
-    [pools.panel, queue.panel, runs.panel, hasRuns]
+    [pools.panel, queue.panel, runs.panel, repos.panel, hasRuns, hasRepos]
   );
   if (states.some(s => s.loading) || list.loading || pending) {
     return (
@@ -110,7 +130,7 @@ export function RunnersWidget({
         <Box sx={{ flex: '1 1 0', minHeight: 0, minWidth: 0 }}>
           <RunnersView
             model={model}
-            sourceId={sourceId}
+            instanceId={instanceId}
             editing={!!editing}
             view={viewOf(config.view)}
             expand={expandOf(config.expand)}
@@ -153,7 +173,7 @@ function RunnersSettings(props: WidgetSettingsProps<RunnersConfig>): JSX.Element
         size="small"
         label="View"
         value={viewOf(config.view)}
-        helperText="Full: tiles, rings and list. Summary: tiles and rings in one strip. List: the tree of runs only."
+        helperText="Full: tiles, rings and list. Summary: tiles and rings in one strip. List: the tree of repos, branches, workflows and jobs only."
         onChange={e => onChange({ ...config, view: e.target.value as RunnersConfig['view'] })}
       >
         {VIEW_MODES.map(v => (
@@ -167,7 +187,7 @@ function RunnersSettings(props: WidgetSettingsProps<RunnersConfig>): JSX.Element
         size="small"
         label="Open at first"
         value={expandOf(config.expand)}
-        helperText="Default: the orgs are open and the repos are folded. All: every org, repo, run and job is open."
+        helperText="Default: the repos are folded. All: every repo, branch, workflow and job is open."
         onChange={e => {
           const next: RunnersConfig = { ...config };
           if (e.target.value === 'all') next.expand = 'all';
@@ -175,7 +195,7 @@ function RunnersSettings(props: WidgetSettingsProps<RunnersConfig>): JSX.Element
           onChange(next);
         }}
       >
-        <MenuItem value="default">Orgs only</MenuItem>
+        <MenuItem value="default">Repos only</MenuItem>
         <MenuItem value="all">Everything</MenuItem>
       </TextField>
     </Box>
@@ -186,7 +206,7 @@ export const runnersWidget: WidgetDefinition<RunnersConfig> = {
   type: 'runners.overview',
   title: 'Runner pools and queue',
   description:
-    'One ring for each runner pool, the totals, and a tree of running and queued workflow runs with their jobs and steps.',
+    'One ring for each runner pool, the totals, and a tree of running and queued jobs by repository, branch or pull request and workflow.',
   icon: 'mdi:server-network',
   category: 'Monitoring',
   defaultSize: { w: 3, h: 8 },

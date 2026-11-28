@@ -545,87 +545,6 @@ needed.
   fetches a logo from another host. A plain logo uses the text colour, so it reads on the dark kiosk and on
   the light theme. A name with no known provider shows no logo. The logos stay in the name column and never
   move the bars, the countdowns or the percentages.
-- **Links** go only to the dashboard tab whose id is the source id (for example `ais-console`). With no such
-  tab, or in edit mode, a row has no link.
-- **Not available from the source**: the sessions are one total. The `agents` panel names a pool, not an
-  identity, so the widget cannot show sessions for each identity.
-
-### Alerts and incidents widget (`agent.issues`)
-
-One widget for the alerts and the incidents of a panel source (default source id `agent`). It fetches
-two panels of the source (`alerts` and `incidents`) and joins them in the browser. It replaces the two
-separate panels on the Overview.
-
-- **Fixed on top**: two rows of stat tiles with one numeral size. The alert row has the critical and the
-  warning alerts that fire, and the pending alerts. The incident row has the open incidents, the incidents
-  that an agent works on (in progress, also counted as open) and the incidents resolved today.
-- **One scroll area** under them, with one row for each issue group. A group is one alert name on one
-  target, for example `KubeDeploymentDown` on `shop/web`. The alerts and the incidents of that alert are in
-  the group. A group has the severity mark, the alert name, a count badge, the state (firing, pending, open
-  or resolved), the target and an agent chip: **Agent working** (a diagnosis or an approved launch runs),
-  **Diagnosed** (with the likely cause on the next line), **Failed**, or no chip. The worst group is first
-  (severity, then state, then count). There is no "Other" group, no top N and no "+N more" row.
-- **Members and count**: the members are the alerts that fire or are pending and the incidents that are open.
-  The count is the number of members. A group with no such member shows only when an incident of it was
-  resolved today (local time of the browser). Older resolved incidents are not shown.
-- **Group key**: the agent sets `meta.group` on the rows of both panels with one function (see `issueTarget`
-  in `agent/src/widgets.ts`). The target is the first of the labels `target`, `deployment`, `statefulset`,
-  `daemonset`, `cronjob`, `job_name`, `persistentvolumeclaim` and `pod` (with the namespace in front), else
-  `node:device` or `node:mountpoint`, else the namespace, else the instance. An older agent sends no `meta`:
-  the key is then the alert name alone.
-- **Links** go only to the Incidents page of Headlamp (`/incidents/<id>` for a group with an incident) or to the
-  dashboard tab with the id `incidents`. In edit mode a row has no link.
-
-### Optional row `meta` field (v1 extension)
-
-A row may have `meta`: named text fields for a widget that joins panels. Keys match `[a-z][A-Za-z0-9_]*`
-(at most 24 characters), values are strings (at most 240 characters) and a row keeps at most 16 fields. A bad
-entry is dropped and the row stays. The alerts and incidents panels of the agent use `kind`, `group`, `target`,
-`severity`, `state`, `at`, `resolvedAt`, `id` and `agent`.
-
-### Runner widget (`runners.overview`)
-
-One widget for the pools, the queue and the running workflow runs of a runner source. It fetches the `pools`
-and `queue` panels of the source, and the `runs` panel when the source lists it. The `runs` panel is optional.
-
-- **Fixed on top**: five stat tiles (running, queued, free, pools, oldest wait) with one numeral size. Then one
-  ring for each pool: the blue arc is the running slots, the amber arc is the queued jobs and the crosshatch is
-  the free capacity. The icon is in the ring. The pool name and its `running/cap` value sit under it, with the
-  same size in every pool.
-- **One scroll area** under them, with every row. There is no "+N more" row. With nothing to show, one quiet line
-  says "No queued jobs". A fixed summary line is at the bottom.
-- **With the `runs` panel the list is a tree**. The first level is the org (the part of `repo` before the first
-  slash). The second level is the repo name without the org. The third level is one row for each running or
-  queued run (workflow, branch or pull request, pool, time), so the row does not repeat the org and repo.
-  Each org and repo header shows its running and queued job counts and the longest time in the group. The counts
-  are jobs: the widget sums `counts` of each run, so the org headers add up to the top Running and Queued tiles.
-  Orgs are
-  open at first. Repos are collapsed at first, and a collapsed repo header still shows its running and queued
-  counts and its longest time. Orgs go by running count (most first), then by the longest time, and so do repos.
-  Runs keep their order inside a repo. A repo the user opens, or an org the user folds, keeps that state until
-  the page reloads, with no storage. After a reload, and on the kiosk, orgs are open and repos are collapsed. A repo name with no slash goes under the org "No org". Runs are collapsed at first. Open a run to see its jobs and open a job to see
-  its steps. A run row and a job row have a step bar with one segment for each step: done (green), running
-  (amber, a soft pulse that stops when the user prefers reduced motion), failed (red), skipped (grey) and
-  pending (faint). The bar is on its own line at the full row width. The text "step N of M" and the name of the current step are on the next line, cut with an ellipsis when too long, so the two never overlap. When the segments would be narrower than 4 px, the bar is one continuous strip with a block for each state, sized by its step count. Running runs come
-  first (longest first), then queued runs (longest wait first).
-- **Without the `runs` panel** the list is the rows of the `queue` panel: repository, pool, queued count and the
-  oldest wait. There is no tree.
-- **Options**. `view` is `full` (default: tiles, rings and list), `summary` (the tiles and the rings side by side
-  in one strip, with no list) or `list` (the tree only, with no tiles and no rings; the summary line is left out
-  and only the "jobs not listed" note stays). `expand: "all"` opens every org, repo, run and job at first, so a
-  tab can show the whole queue. A click still folds any group. Without `expand` the defaults above apply. The
-  folds of an `expand: "all"` widget and of a default widget are kept apart, so two tabs never change each other.
-- **Org and repo icons**. A header shows a small icon when the icon map has one. The map is the two ConfigMaps
-  `runner-icons` (the `gh.` keys) and `uptime-icons` (the app icons of the Uptime widget), merged, in the namespace `headlamp-dashboards`: a value is a small
-  `data:image/svg+xml` or `data:image/png` address, and a key is lower case. A ConfigMap key cannot hold a slash, so
-  the avatar of an org is the key `gh.<org>` and the own icon of a repo is `gh.<org>.<repo>`. A repo row takes its
-  own key, then a key with the repo name (the app icons of the Uptime widget, with the same suffix match), then the
-  avatar of its org. A repo that the source does not know has the avatar of its org. With no key there is no
-  icon: the widget never draws a made-up logo and never loads an icon from an external host. When one header has an
-  icon, every header keeps an empty slot of the same size, so the names line up.
-- **Links** go only to the dashboard tab whose id is the source id. With no such tab, or in edit mode, a row has
-  no link.
-
 #### Optional `runs` panel (v1 extension)
 
 ```json
@@ -641,7 +560,8 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
       "id": "run-1",
       "repo": "my-org/my-repo",
       "workflow": "CI",
-      "ref": "PR 12",
+      "ref": "my-branch",
+      "pr": 12,
       "pool": "pool-a",
       "state": "running",
       "seconds": 642,
@@ -651,6 +571,10 @@ and `queue` panels of the source, and the `runs` panel when the source lists it.
           "name": "build",
           "state": "running",
           "pool": "pool-a",
+          "node": "worker-1",
+          "hosted": false,
+          "waitedSeconds": 2,
+          "runningSeconds": 638,
           "seconds": 640,
           "steps": [
             { "name": "Checkout", "state": "done" },
@@ -671,6 +595,14 @@ before the source cuts its job list) and `repoKnown`. A job can have `phase` (`r
 listed runs hold fewer jobs than `jobs`, the summary line adds "+K jobs not listed". There is no "Other" row.
 A run with `repoKnown` set to `false` has only its owner in `repo`. It goes under that org, in the repo row
 "Repo not known".
+
+A run can have `pr` (a pull request number). A job can have `hosted`, `node`, `waitedSeconds` and
+`runningSeconds`. A wrong type is ignored. The widget works with and without these fields.
+
+The optional `repos` panel has `repos`: a list of `{ "repo": "my-org/my-repo", "lastRunAt": "2026-11-28T14:40:00Z",
+"lastConclusion": "success", "hosted": false }`. Only `repo` is required. `hosted` is true when every recent job
+of the repo ran on GitHub-hosted runners. The widget fetches this panel only when the panel list has the id
+`repos`. A bad entry is dropped.
 
 `state` of a run or job is `running` or `queued`. `state` of a step is `done`, `running`, `failed`, `skipped`
 or `pending`. `seconds` is the time that the run has run or waited. A bad value is dropped or replaced by a
