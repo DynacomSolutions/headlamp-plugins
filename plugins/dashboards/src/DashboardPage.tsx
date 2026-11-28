@@ -232,7 +232,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       filters: next.filters ?? filters,
     };
     const base = baseFilters(spec, merged.view);
-    history.replace({ pathname: location.pathname, search: serialiseQuery(merged, base) });
+    history.replace({
+      pathname: location.pathname,
+      // `keep` carries the `w.<widget id>` params, which belong to the widgets.
+      search: serialiseQuery(merged, base, location.search),
+    });
   };
 
   const base = pathBase(location.pathname);

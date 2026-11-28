@@ -16,6 +16,9 @@
  *   refresh=<s> automatic refresh in seconds (0 for off); without it the dashboard's own setting
  *   ns=a,b      namespaces        node=a,b   nodes
  *   sel=<text>  label selector    range=<r>  time range
+ *   w.<widget id>=<text>  the view state of one widget, for example which rows of a list are open.
+ *               A widget may add parts: w.<widget id>.<part>=<text>.
+ *               The widget owns the text. The page never reads it and keeps it when it rewrites the query.
  *
  * A filter key that is in the URL overrides the saved view (or the dashboard default), even
  * with an empty value, so "no namespace" can be told from "not set". Items are percent
@@ -134,10 +137,22 @@ export function baseFilters(spec: DashboardSpec | undefined, view: string): Dash
   return spec.views.find(v => v.id === view)?.filters ?? spec.filters;
 }
 
-/** A query string with the leading "?", or "" for the plain view. Only differences are written. */
+/** The prefix of the query keys that belong to one widget: `w.<widget id>`. */
+export const WIDGET_PARAM_PREFIX = 'w.';
+
+/** The query key of the view state of one widget, or of one named part of it: `w.<id>.<part>`. */
+export const widgetParam = (instanceId: string, part = ''): string =>
+  `${WIDGET_PARAM_PREFIX}${instanceId}${part ? `.${part}` : ''}`;
+
+/**
+ * A query string with the leading "?", or "" for the plain view. Only differences are written.
+ * `keep` is the current query (`location.search`): every param in it whose key starts with `w.`
+ * is copied as it is, so a widget keeps its own state when the page rewrites the query.
+ */
 export function serialiseQuery(
   q: { edit: boolean; kiosk: boolean; view: string; refresh?: number; filters: DashboardFilters },
-  base: DashboardFilters
+  base: DashboardFilters,
+  keep = ''
 ): string {
   const p = new URLSearchParams();
   if (q.edit) p.set('edit', '1');
@@ -148,6 +163,9 @@ export function serialiseQuery(
   if (!sameList(q.filters.nodes, base.nodes)) p.set('node', enc(q.filters.nodes));
   if (q.filters.labelSelector !== base.labelSelector) p.set('sel', q.filters.labelSelector);
   if (q.filters.range !== base.range) p.set('range', q.filters.range);
+  for (const [key, value] of new URLSearchParams(keep)) {
+    if (key.startsWith(WIDGET_PARAM_PREFIX)) p.append(key, value);
+  }
   const out = p.toString();
   return out ? `?${out}` : '';
 }
