@@ -90,7 +90,7 @@ describe('usage sunburst widget', () => {
     expect(container.querySelectorAll('[data-arc="child"]')).toHaveLength(2);
     expect(p.reportRefreshed).toHaveBeenCalledTimes(1);
     expect(fetchUsage).toHaveBeenCalledWith('1h', { live: false, labelKey: undefined });
-    expect(queryMetrics).toHaveBeenCalledWith('sum(kube_node_status_capacity{resource="cpu"})');
+    expect(queryMetrics).toHaveBeenCalledWith('sum(kube_node_status_allocatable{resource="cpu"})');
     expect(container.querySelector('[data-sunburst-centre]')?.textContent).toContain('3.00 cores');
   });
   it('refetches on a refresh signal and when the range changes, not otherwise', async () => {

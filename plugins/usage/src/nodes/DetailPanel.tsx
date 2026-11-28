@@ -14,6 +14,7 @@ import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
 import type { ChildRow, SegmentInfo, Selection } from './detail';
 import { TOUCH_MIN, TouchChoice, TouchSheet } from './TouchSheet';
+import { capacityWord } from './tree';
 import { useIconUrl } from './useIconUrl';
 
 const KIND: Record<string, string> = {
@@ -76,15 +77,17 @@ export function figures(
   label: string,
   fmt: (v: number) => string,
   info: SegmentInfo | null,
-  opts: { zoomed: boolean; section: string; selected: boolean }
+  opts: { zoomed: boolean; section: string; selected: boolean },
+  /** What the share is of: CPU is of allocatable, memory of capacity. */
+  base = capacityWord(label === 'CPU' ? 'cpu' : 'memory')
 ): string {
   if (!info) return `${label}: no data`;
   const parts = [fmt(info.value)];
-  if (!opts.zoomed) parts.push(`${formatPercent(info.ofCapacity, 1)} of capacity`);
+  if (!opts.zoomed) parts.push(`${formatPercent(info.ofCapacity, 1)} of ${base}`);
   else if (opts.selected) {
     parts.push(
       info.ofRoot === null
-        ? `${formatPercent(info.ofCapacity, 1)} of capacity`
+        ? `${formatPercent(info.ofCapacity, 1)} of ${base}`
         : `${formatPercent(info.ofRoot, 1)} of ${opts.section}`
     );
   }

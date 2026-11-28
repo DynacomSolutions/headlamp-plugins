@@ -28,7 +28,7 @@ import {
 import { ArcDatum, CENTRE, layoutSunburst } from './layout';
 import { nameOf } from './names';
 import { DEFAULT_RINGS } from './nodesUrl';
-import { capacityZoom, NodeTree, Resource, SunNode } from './tree';
+import { capacityWord, capacityZoom, NodeTree, Resource, SunNode } from './tree';
 import { useIconUrl } from './useIconUrl';
 
 const MOVE_LIMIT = 10;
@@ -196,7 +196,7 @@ export function Sunburst(props: {
   const scope = zoomed
     ? `of ${sectionName}`
     : capZoom !== null
-    ? 'of capacity'
+    ? `of ${capacityWord(resource)}`
     : tree.nodeRing
     ? 'of selection'
     : 'of node';
@@ -399,7 +399,7 @@ export function Sunburst(props: {
                       wholeNode.node
                     )}`
                   : `${formatPercent(arc.node.value, base)} ${
-                      arc.gap && !zoomed ? 'of capacity' : scope
+                      arc.gap && !zoomed ? `of ${capacityWord(resource)}` : scope
                     }`
               }`,
             };

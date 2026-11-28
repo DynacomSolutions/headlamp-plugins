@@ -35,8 +35,10 @@ export type RunnerQueryKey = 'runnerLabels' | 'runnerJobs';
 export type QueryKey =
   | 'cpuCount'
   | 'cpuIdleRate'
+  | 'cpuBusyRate'
   | 'macCpuRate'
   | 'kubeCpuCapacity'
+  | 'kubeCpuAllocatable'
   | 'memTotal'
   | 'memAvailable'
   | 'macMemTotal'
@@ -61,8 +63,14 @@ export type QueryKey =
 const STATIC_QUERIES: Record<Exclude<QueryKey, RunnerQueryKey>, string> = {
   cpuCount: 'count by (node) (node_cpu_seconds_total{mode="idle"})',
   cpuIdleRate: 'sum by (node) (rate(node_cpu_seconds_total{mode=~"idle|iowait"}[2m]))',
+  // The node's real busy CPU: every mode except idle, iowait and steal, over a short window so a
+  // burst of CI jobs shows at once. It is the figure the CPU ring reports for the node.
+  cpuBusyRate:
+    'sum by (node) (rate(node_cpu_seconds_total{mode!~"idle|iowait|steal"}[1m]))',
   macCpuRate: 'sum by (node) (rate(node_cpu_usage_seconds_total[2m]))',
   kubeCpuCapacity: 'sum by (node) (kube_node_status_capacity{resource="cpu"})',
+  // What Kubernetes can schedule. The CPU ring measures use against this, as `kubectl top` does.
+  kubeCpuAllocatable: 'sum by (node) (kube_node_status_allocatable{resource="cpu"})',
   memTotal: 'sum by (node) (node_memory_MemTotal_bytes)',
   memAvailable: 'sum by (node) (node_memory_MemAvailable_bytes)',
   macMemTotal: 'sum by (node) (node_memory_total_bytes)',
@@ -296,15 +304,22 @@ export function assembleNodeMetrics(
   return [...names]
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .map(node => {
-      const cpuCapacity = v.cpuCount.get(node) ?? v.kubeCpuCapacity.get(node) ?? 0;
+      // Allocatable is the denominator: the node's own count of cores (and its capacity) include
+      // the cores that Kubernetes reserves for the system, so the same load would read too low.
+      const cpuCapacity =
+        v.kubeCpuAllocatable.get(node) ?? v.cpuCount.get(node) ?? v.kubeCpuCapacity.get(node) ?? 0;
       const memCapacity =
         v.memTotal.get(node) ?? v.macMemTotal.get(node) ?? v.kubeMemCapacity.get(node) ?? 0;
 
       let cpuUsed: number | null = null;
+      const busy = v.cpuBusyRate.get(node);
       const idle = v.cpuIdleRate.get(node);
       const macCpu = v.macCpuRate.get(node);
-      if (idle !== undefined && v.cpuCount.has(node)) {
-        cpuUsed = Math.max(0, cpuCapacity - idle);
+      if (busy !== undefined) {
+        cpuUsed = Math.max(0, busy);
+      } else if (idle !== undefined && v.cpuCount.has(node)) {
+        // Older data without the busy series: the logical cores minus the idle time.
+        cpuUsed = Math.max(0, v.cpuCount.get(node)! - idle);
       } else if (macCpu !== undefined) {
         cpuUsed = macCpu;
       }

@@ -251,11 +251,20 @@ keeps its query.
 
 Data sources, refreshed every 10 seconds:
 
-- The metrics service (as above): node capacity and used CPU and memory from
-  node-exporter (`node_cpu_seconds_total`, `node_memory_MemTotal_bytes`,
-  `node_memory_MemAvailable_bytes`, or the macOS exporter equivalents, with
-  `kube_node_status_capacity` as a capacity fallback), and per-container CPU
-  and memory from cAdvisor.
+- The metrics service (as above): node CPU and memory from node-exporter
+  (`node_cpu_seconds_total`, `node_memory_MemTotal_bytes`,
+  `node_memory_MemAvailable_bytes`, or the macOS exporter equivalents), and
+  per-container CPU and memory from cAdvisor.
+  - **CPU used** is the node's busy CPU: the rate over one minute of every
+    `node_cpu_seconds_total` mode except `idle`, `iowait` and `steal`. Without
+    that series the page falls back to the logical cores minus the idle rate.
+  - **CPU capacity** is the allocatable cores
+    (`kube_node_status_allocatable`), the base of `kubectl top`. The charts
+    say "of allocatable". The node's logical core count and
+    `kube_node_status_capacity` are fallbacks. Memory keeps the node's memory
+    capacity.
+  - **System** is the node's busy CPU minus the pods and the agents. It never
+    goes below zero, so the ring adds up to the node figure.
 - The agent-resource backends (`/api/state`, read through the Kubernetes API
   service proxy): the agent orchestrators, projects, threads and processes of
   the node each backend runs on. CPU or memory not explained by Kubernetes or

@@ -111,7 +111,10 @@ describe('helpers', () => {
     expect(groupingOf('node', '')).toBe('node');
   });
   it('builds the capacity query, limited to the chosen nodes', () => {
-    expect(capacityQuery('cpu', [])).toBe('sum(kube_node_status_capacity{resource="cpu"})');
+    expect(capacityQuery('cpu', [])).toBe('sum(kube_node_status_allocatable{resource="cpu"})');
+    expect(capacityQuery('cpu', ['a'])).toBe(
+      'sum(kube_node_status_allocatable{resource="cpu", node=~"a"})'
+    );
     expect(capacityQuery('memory', ['a.b', 'c'])).toBe(
       'sum(kube_node_status_capacity{resource="memory", node=~"a\\.b|c"})'
     );

@@ -559,6 +559,14 @@ function onSeriesBasis(agents: AgentHost, sys: SystemUsage | undefined): AgentHo
   };
 }
 
+/**
+ * What the root share of a chart is measured against. CPU is measured against the allocatable
+ * cores, the figure `kubectl top` uses. Memory stays against the node's capacity.
+ */
+export function capacityWord(r: Resource): 'allocatable' | 'capacity' {
+  return r === 'cpu' ? 'allocatable' : 'capacity';
+}
+
 export function buildNodeTree(
   m: NodeMetrics,
   hostState: AgentHost | null,
