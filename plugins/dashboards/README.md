@@ -545,6 +545,116 @@ needed.
   fetches a logo from another host. A plain logo uses the text colour, so it reads on the dark kiosk and on
   the light theme. A name with no known provider shows no logo. The logos stay in the name column and never
   move the bars, the countdowns or the percentages.
+- **Links** go only to the dashboard tab whose id is the source id (for example `ais-console`). With no such
+  tab, or in edit mode, a row has no link.
+- **Not available from the source**: the sessions are one total. The `agents` panel names a pool, not an
+  identity, so the widget cannot show sessions for each identity.
+
+### Alerts and incidents widget (`agent.issues`)
+
+One widget for the alerts and the incidents of a panel source (default source id `agent`). It fetches
+two panels of the source (`alerts` and `incidents`) and joins them in the browser. It replaces the two
+separate panels on the Overview.
+
+- **Fixed on top**: two rows of stat tiles with one numeral size. The alert row has the critical and the
+  warning alerts that fire, and the pending alerts. The incident row has the open incidents, the incidents
+  that an agent works on (in progress, also counted as open) and the incidents resolved today.
+- **One scroll area** under them, with one row for each issue group. A group is one alert name on one
+  target, for example `KubeDeploymentDown` on `shop/web`. The alerts and the incidents of that alert are in
+  the group. A group has the severity mark, the alert name, a count badge, the state (firing, pending, open
+  or resolved), the target and an agent chip: **Agent working** (a diagnosis or an approved launch runs),
+  **Diagnosed** (with the likely cause on the next line), **Failed**, or no chip. The worst group is first
+  (severity, then state, then count). There is no "Other" group, no top N and no "+N more" row.
+- **Members and count**: the members are the alerts that fire or are pending and the incidents that are open.
+  The count is the number of members. A group with no such member shows only when an incident of it was
+  resolved today (local time of the browser). Older resolved incidents are not shown.
+- **Group key**: the agent sets `meta.group` on the rows of both panels with one function (see `issueTarget`
+  in `agent/src/widgets.ts`). The target is the first of the labels `target`, `deployment`, `statefulset`,
+  `daemonset`, `cronjob`, `job_name`, `persistentvolumeclaim` and `pod` (with the namespace in front), else
+  `node:device` or `node:mountpoint`, else the namespace, else the instance. An older agent sends no `meta`:
+  the key is then the alert name alone.
+- **Links** go only to the Incidents page of Headlamp (`/incidents/<id>` for a group with an incident) or to the
+  dashboard tab with the id `incidents`. In edit mode a row has no link.
+
+### Optional row `meta` field (v1 extension)
+
+A row may have `meta`: named text fields for a widget that joins panels. Keys match `[a-z][A-Za-z0-9_]*`
+(at most 24 characters), values are strings (at most 240 characters) and a row keeps at most 16 fields. A bad
+entry is dropped and the row stays. The alerts and incidents panels of the agent use `kind`, `group`, `target`,
+`severity`, `state`, `at`, `resolvedAt`, `id` and `agent`.
+
+### Runner widget (`runners.overview`)
+
+One widget for the pools, the queue and the running workflow runs of a runner source. It fetches the `pools`
+and `queue` panels of the source. It fetches the `runs` panel and the `repos` panel only when the source lists
+them. Both panels are optional.
+
+- **Fixed on top**: five stat tiles (running, queued, free, pools, oldest wait) with one numeral size. Then one
+  ring for each pool: the blue arc is the running slots, the amber arc is the queued jobs and the crosshatch is
+  the free capacity. The icon is in the ring. The pool name and its `running/cap` value sit under it, with the
+  same size in every pool. The tiles and the rings come from the pools panel. The GitHub-hosted filter does not
+  change them.
+- **One scroll area** under them, with every row. There is no "+N more" row. With nothing to show, one quiet line
+  says "No queued jobs". A fixed summary line is at the bottom.
+- **With the `runs` panel the list is a tree**. The levels are: the repository (`owner/repo`), the pull request
+  or branch, the workflow, the job, and the steps of the job. The ref row shows `PR #12` and the branch name
+  when the run has `pr`. It shows the branch name when the run has no `pr`. It shows "No branch" when the ref is
+  empty. A workflow row merges the runs of one workflow name under one ref. When a workflow row holds more than
+  one run, each job shows a short run id, for example `#abc123`. Every row shows its running and queued job
+  counts and its longest time. The counts are jobs: the widget sums `counts` of each run, so the repo rows add
+  up to the top Running and Queued tiles. Repos go by running count (most first), then by the longest time.
+  Refs and workflows go by the longest time. Repos are folded at first.
+- **Job row**. A job row shows its state (running, assigned or queued, with a mark and a word), its node, the
+  time it waited and the time it ran. The node is `node` of the job. When the source gives no node, the row
+  shows the pool in muted text, with the title "Node not reported, pool shown". The running time is
+  `runningSeconds`, or else `seconds` while the job runs. The waited time is `waitedSeconds`, or else `seconds`
+  while the job is queued or assigned. In any other case the row shows `-`.
+- **Steps**. A job with steps opens to its step list. A job row has a step bar with one segment for each step:
+  done (green), running (amber, a soft pulse that stops when the user prefers reduced motion), failed (red),
+  skipped (grey) and pending (faint). The bar is on its own line at the full row width. The text "step N of M"
+  and the name of the current step are on the next line, cut with an ellipsis when too long, so the two never
+  overlap. When the segments would be narrower than 4 px, the bar is one continuous strip with a block for each
+  state, sized by its step count.
+- **A click opens or folds a row in place**. Enter and Space do the same. No row and no label in the widget is
+  a link. Nothing in the list navigates, opens a tab or changes the dashboard tab.
+- **The view is in the URL**. The open rows are in the query param `w.<instanceId>`, where `instanceId` is the id
+  of the widget. The value is a comma-separated list of stable node keys that differ from the default. By
+  default the repos are folded, so the list holds the open rows. With `expand: "all"` everything is open, so the
+  list holds the folded rows. The widget writes the param with history replace, so Back does not step through
+  every click. The URL alone shows the same view. The view survives the refresh of the data, a page reload and
+  the kiosk mode (`?kiosk=1`). The widget drops the keys of rows that no longer exist only when it writes the
+  value, never when it reads it. In edit mode a click changes the view but not the URL. The dashboard keeps
+  every `w.` param when it rewrites the query.
+- **GitHub-hosted jobs**. A job is GitHub-hosted when the source sets `hosted: true` on it. When the source sets
+  `hosted: false` the job is not hosted. When `hosted` is missing, a job is hosted when its `pool` is empty, or
+  when the `pools` panel has rows and none of them has the name of the pool. By default the tree shows only the
+  jobs that the source runs. A run with only hosted jobs is hidden, and so is every group that has nothing
+  left. The switch "Show GitHub-hosted" shows them again. It appears when it would change the list, and while it
+  is on. The state is in the URL param `w.<instanceId>.hosted=1`, written with history replace. With the switch
+  on, each hosted job and each group with only hosted jobs carries a "GitHub-hosted" chip. The counts of the
+  rows count only the visible jobs.
+- **Idle repos**. Every repo stays listed. With the optional `repos` panel, a repo with no running or queued job
+  is a folded row with no children. It shows its last run time, for example "last run 1h 20m ago", and the
+  title has the full date, time and result. A repo with no known run time shows "no recent run". A repo that the
+  panel marks `hosted: true`, and that has no job of the source, is hidden unless the hosted switch is on. Repos
+  with running or queued jobs come first. Idle repos follow, by `lastRunAt`, newest first. Without the `repos`
+  panel the repos are those of the `runs` and `queue` panels, and no row shows a last run time.
+- **Without the `runs` panel** the list is the rows of the `queue` panel: repository, pool, queued count and the
+  oldest wait. There is no tree. These rows are plain rows.
+- **Options**. `view` is `full` (default: tiles, rings and list), `summary` (the tiles and the rings side by side
+  in one strip, with no list) or `list` (the tree only, with no tiles and no rings; the summary line is left out
+  and only the "jobs not listed" note stays). `expand: "all"` opens every repo, ref, workflow and job at first, so
+  a tab can show the whole queue. A click still folds any row. Without `expand` the defaults above apply. In the
+  settings, "Open at first" has the values "Repos only" and "Everything".
+- **Repo icons**. A repo row shows a small icon when the icon map has one. The map is the two ConfigMaps
+  `runner-icons` (the `gh.` keys) and `uptime-icons` (the app icons of the Uptime widget), merged, in the namespace `headlamp-dashboards`: a value is a small
+  `data:image/svg+xml` or `data:image/png` address, and a key is lower case. A ConfigMap key cannot hold a slash, so
+  the avatar of an org is the key `gh.<org>` and the own icon of a repo is `gh.<org>.<repo>`. A repo row takes its
+  own key, then a key with the repo name (the app icons of the Uptime widget, with the same suffix match), then the
+  avatar of its org. A repo that the source does not know has the avatar of its org. With no key there is no
+  icon: the widget never draws a made-up logo and never loads an icon from an external host. When one row has an
+  icon, every repo row keeps an empty slot of the same size, so the names line up.
+
 #### Optional `runs` panel (v1 extension)
 
 ```json
