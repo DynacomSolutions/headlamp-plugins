@@ -5,7 +5,7 @@ vi.mock('@iconify/react', () => ({ Icon: () => null }));
 
 import { formatCores } from '../units';
 import { figures } from './DetailPanel';
-import { agentAlertText, chartLayout, threadHref, usedText } from './NodeView';
+import { agentAlertText, chartLayout, showsCpuSource, threadHref, usedText } from './NodeView';
 import type { NodeTree } from './tree';
 
 describe('chartLayout', () => {
@@ -56,6 +56,17 @@ describe('chartLayout', () => {
   it('leaves the desktop layout alone when it is not a phone', () => {
     expect(chartLayout(390, 700, false, true)).toEqual(chartLayout(390, 700));
     expect(chartLayout(1800, 700, false, false)).toEqual({ size: 636, twoUp: true });
+  });
+
+  it('takes 16 px more for the CPU source label, and only then', () => {
+    expect(chartLayout(1800, 700, false, false, false, true)).toEqual({ size: 620, twoUp: true });
+    expect(chartLayout(1800, 700, false, false, false, false)).toEqual({ size: 636, twoUp: true });
+    expect(chartLayout(1576, 748, false, undefined, false, true).size).toBe(668);
+    // Widget, side by side and stacked (stacked: the one label adds 16 px for both charts, 8 each).
+    expect(chartLayout(1200, 500, false, false, true, true)).toEqual({ size: 420, twoUp: true });
+    expect(chartLayout(1200, 500, false, false, true, false)).toEqual({ size: 436, twoUp: true });
+    expect(chartLayout(520, 900, false, false, true, true)).toEqual({ size: 370, twoUp: false });
+    expect(chartLayout(520, 900, false, false, true, false)).toEqual({ size: 378, twoUp: false });
   });
 
   it('never goes below 200 px, and has no upper limit', () => {
@@ -154,5 +165,35 @@ describe('agentAlertText', () => {
       `agent data from ${new Date(at).toLocaleTimeString()}`
     );
     expect(agentAlertText('boom')).toBe('Agent detail unavailable: boom');
+  });
+});
+
+describe('showsCpuSource', () => {
+  const labelled: NodeTree = { ...tree, source: 'node exporter, 1 min average' };
+  const ring: NodeTree = {
+    ...labelled,
+    root: {
+      ...tree.root,
+      children: [
+        { key: 'node:a', label: 'a', value: 3, span: 8, capacity: 8, kind: 'node', children: [] },
+      ],
+    },
+    nodeRing: true,
+  };
+
+  it('shows at the node level', () => {
+    expect(showsCpuSource(labelled, [])).toBe(true);
+    expect(showsCpuSource(ring, [])).toBe(true);
+    // Zoomed into one node of a node ring is still the node level.
+    expect(showsCpuSource(ring, ['node:a'])).toBe(true);
+  });
+
+  it('hides when zoomed into a category or a pod, where the figure is a subtree total', () => {
+    expect(showsCpuSource(labelled, ['sys'])).toBe(false);
+    expect(showsCpuSource(ring, ['node:a', 'sys'])).toBe(false);
+  });
+
+  it('hides when the tree has no source', () => {
+    expect(showsCpuSource(tree, [])).toBe(false);
   });
 });

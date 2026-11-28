@@ -90,6 +90,34 @@ describe('usage.dashboard-rings widget definition', () => {
   });
 });
 
+describe('UsageRings CPU source label', () => {
+  it('shows the source and window under the CPU heading only', async () => {
+    fetchNodeMetrics.mockResolvedValue([
+      { ...metric('worker-1', 4), cpuSource: 'node exporter, 1 min average' },
+    ]);
+    mount();
+    await flush();
+    const labels = screen.getAllByTestId('cpu-source');
+    expect(labels).toHaveLength(1);
+    expect(labels[0].textContent).toBe('node exporter, 1 min average');
+  });
+
+  it('renders the caption as a block, so its margins apply', async () => {
+    fetchNodeMetrics.mockResolvedValue([
+      { ...metric('worker-1', 4), cpuSource: 'node exporter, 1 min average' },
+    ]);
+    mount();
+    await flush();
+    expect(screen.getByTestId('cpu-source').tagName).toBe('DIV');
+  });
+
+  it('shows no label when the data has no source', async () => {
+    mount();
+    await flush();
+    expect(screen.queryByTestId('cpu-source')).toBeNull();
+  });
+});
+
 describe('UsageRings', () => {
   it('shows a spinner, then both sunbursts of the Usage dashboard, and reports the refresh', async () => {
     const { container, p } = mount();

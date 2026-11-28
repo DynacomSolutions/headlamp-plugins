@@ -1,11 +1,11 @@
 /*
- * The runner widget (`runners.overview`): the pools, the queue and the running workflow runs of one
- * runner source in one widget. It reads the `pools` and `queue` panels. It reads the `runs` panel
- * and the `repos` panel when the source serves them (see `join.ts`). Each panel is fetched like the
- * panel widget does, never sooner than the panel's own `refreshSeconds`. With the `runs` panel the
- * list is a tree: repository, then branch or pull request, then workflow, then job. A click opens
- * or folds a row in place. The open rows are in the page URL, in the param `w.<instanceId>` (see
- * `RunnersView.tsx`).
+ * The runner widget (`runners.overview`): the pools, the queue and the running workflow runs of
+ * one runner source in one widget. It reads the `pools` and `queue` panels. It also reads the
+ * `runs`, `repos` and `nodes` panels, each one only when the source lists it (see `join.ts`).
+ * Each panel is fetched like the panel widget does, never sooner than the panel's own
+ * `refreshSeconds`. With the `runs` panel the list is a tree: repository, then branch or pull
+ * request, then workflow, then job. A click opens or folds a row in place. The open rows are in
+ * the page URL, in the param `w.<instanceId>` (see `RunnersView.tsx`).
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -33,12 +33,13 @@ export interface RunnersConfig {
   expand?: 'all';
 }
 
-/** The panel ids that the runner source serves. `runs` and `repos` are optional. */
+/** The panel ids that the runner source serves. `runs`, `repos` and `nodes` are optional. */
 export const RUNNER_PANELS = {
   pools: 'pools',
   queue: 'queue',
   runs: 'runs',
   repos: 'repos',
+  nodes: 'nodes',
 } as const;
 
 export function RunnersWidget({
@@ -90,7 +91,23 @@ export function RunnersWidget({
     reportRefreshed,
     sourceId
   );
-  const states = [pools, queue, ...(hasRuns ? [runs] : []), ...(hasRepos ? [repos] : [])];
+  // The `nodes` panel (the source's own CPU figure for each node) is optional, with the same rule.
+  const hasNodes = list.panels.some(p => p.id === RUNNER_PANELS.nodes);
+  const nodes = usePanel(
+    source,
+    hasNodes ? RUNNER_PANELS.nodes : '',
+    refreshSignal,
+    min(RUNNER_PANELS.nodes),
+    reportRefreshed,
+    sourceId
+  );
+  const states = [
+    pools,
+    queue,
+    ...(hasRuns ? [runs] : []),
+    ...(hasRepos ? [repos] : []),
+    ...(hasNodes ? [nodes] : []),
+  ];
   useReportStale(
     states.reduce<number | undefined>(
       (a, s) =>
@@ -105,8 +122,9 @@ export function RunnersWidget({
         queue: queue.panel,
         runs: hasRuns ? runs.panel : null,
         repos: hasRepos ? repos.panel : null,
+        nodes: hasNodes ? nodes.panel : null,
       }),
-    [pools.panel, queue.panel, runs.panel, repos.panel, hasRuns, hasRepos]
+    [pools.panel, queue.panel, runs.panel, repos.panel, nodes.panel, hasRuns, hasRepos, hasNodes]
   );
   if (states.some(s => s.loading) || list.loading || pending) {
     return (
@@ -134,6 +152,7 @@ export function RunnersWidget({
             editing={!!editing}
             view={viewOf(config.view)}
             expand={expandOf(config.expand)}
+            sourceTitle={source?.title}
           />
         </Box>
       )}

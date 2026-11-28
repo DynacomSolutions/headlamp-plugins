@@ -39,8 +39,24 @@ export interface QueueRow {
   oldest: string;
 }
 
+/** One node of the optional `nodes` panel, with the CPU figure that the source measured. */
+export interface RunnerNode {
+  name: string;
+  /** Busy cores and allocatable cores; null when the source gave no figure that we can read. */
+  busy: number | null;
+  allocatable: number | null;
+  /** Where the figure comes from, for example "metrics-server". Empty when not given. */
+  source: string;
+  /** The sample window as the source wrote it, for example "10s". Empty when not given. */
+  window: string;
+  /** The row detail text. It shows when the figure cannot be read. */
+  detail: string;
+}
+
 export interface RunnerModel {
   pools: RunnerPool[];
+  /** The nodes of the optional `nodes` panel, most busy first. Empty when the source has none. */
+  nodes: RunnerNode[];
   stats: Stat[];
   /** The runs, running first (longest first), then queued (oldest first). Empty when the source has no `runs` panel. */
   runs: PanelRun[];
@@ -85,6 +101,81 @@ export function poolsOf(panel: PanelModel | null | undefined): RunnerPool[] {
     const c = countsOf(r.detail);
     return { name: r.label, ...c, cap: capOf(r.value), status: r.status };
   });
+}
+
+const cores = (text: string | undefined): number | null => {
+  if (text === undefined || !/^\s*\d+(?:\.\d+)?\s*$/.test(text)) return null;
+  return Number(text);
+};
+
+/** "CPU busy 37.9/62.0 cores" gives both numbers. Case, spacing and the word "cores" are loose. */
+export function cpuFromDetail(detail: string): { busy: number; allocatable: number } | null {
+  const m = /cpu\s+busy\s+(\d+(?:\.\d+)?)\s*(?:\/|of)\s*(\d+(?:\.\d+)?)/i.exec(detail);
+  return m ? { busy: Number(m[1]), allocatable: Number(m[2]) } : null;
+}
+
+/** The share of allocatable that is busy, or null when it cannot be worked out. */
+export function busyShare(n: Pick<RunnerNode, 'busy' | 'allocatable'>): number | null {
+  return n.busy !== null && n.allocatable !== null && n.allocatable > 0
+    ? n.busy / n.allocatable
+    : null;
+}
+
+/**
+ * The rows of the `nodes` panel: one node each, the row label is the node name. The row `meta`
+ * keys `cpuBusy`, `cpuAllocatable`, `cpuSource` and `cpuWindow` win. A key that is missing or not
+ * a number falls back to the row detail text "CPU busy 37.9/62.0 cores". Most busy first; a node
+ * with no readable figure comes last, by name.
+ */
+export function nodesOf(panel: PanelModel | null | undefined): RunnerNode[] {
+  const nodes = (panel?.rows ?? []).map<RunnerNode>(r => {
+    const fromText = cpuFromDetail(r.detail);
+    return {
+      name: r.label,
+      busy: cores(r.meta?.cpuBusy) ?? fromText?.busy ?? null,
+      allocatable: cores(r.meta?.cpuAllocatable) ?? fromText?.allocatable ?? null,
+      source: (r.meta?.cpuSource ?? '').trim(),
+      window: (r.meta?.cpuWindow ?? '').trim(),
+      detail: r.detail,
+    };
+  });
+  return nodes.sort((a, b) => {
+    const x = busyShare(a);
+    const y = busyShare(b);
+    if (x === null || y === null)
+      return x === y ? a.name.localeCompare(b.name) : x === null ? 1 : -1;
+    return y - x || a.name.localeCompare(b.name);
+  });
+}
+
+/** "10s" as "10 s", "1m" as "1 min". Text that is not a plain window stays as it is. */
+export function windowText(window: string): string {
+  const m = /^(\d+)\s*(s|m|h)$/.exec(window);
+  return m ? `${m[1]} ${m[2] === 'm' ? 'min' : m[2]}` : window;
+}
+
+/** The name that the label has when the runner source has no title. */
+export const DEFAULT_SOURCE_TITLE = 'Runner source';
+
+/**
+ * "My runners, metrics-server, 10 s sample": the title of the runner source, then what the source
+ * gave. The title is the one the panel source has in the dashboard settings. It names only what
+ * the source gave: no window means no "sample" part.
+ */
+export function nodeSourceLabel(n: Pick<RunnerNode, 'source' | 'window'>, title?: string): string {
+  return [
+    title?.trim() || DEFAULT_SOURCE_TITLE,
+    n.source,
+    n.window ? `${windowText(n.window)} sample` : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
+}
+
+/** "37.9 of 62.0 cores busy", or the row detail text when the figure cannot be read. */
+export function nodeBusyText(n: RunnerNode): string {
+  if (n.busy === null || n.allocatable === null) return n.detail;
+  return `${n.busy.toFixed(1)} of ${n.allocatable.toFixed(1)} cores busy`;
 }
 
 export function queueRowsOf(panel: PanelModel | null | undefined): QueueRow[] {
@@ -584,6 +675,8 @@ export function joinRunners(input: {
   runs: PanelModel | null;
   /** The optional `repos` panel. */
   repos?: PanelModel | null;
+  /** The optional `nodes` panel. */
+  nodes?: PanelModel | null;
 }): RunnerModel {
   const pools = poolsOf(input.pools);
   const queueStats = input.queue?.stats ?? [];
@@ -618,6 +711,7 @@ export function joinRunners(input: {
     : input.pools?.summary || input.queue?.summary || '';
   return {
     pools,
+    nodes: nodesOf(input.nodes),
     stats: [running, queued, free, poolCount, { ...oldest, label: 'Oldest wait' }],
     runs,
     unlisted,

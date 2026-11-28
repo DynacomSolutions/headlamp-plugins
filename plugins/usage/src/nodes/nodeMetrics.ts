@@ -60,14 +60,37 @@ export type QueryKey =
   | 'remainderCpu'
   | 'remainderMem';
 
+/** Window of the rate in the busy CPU query. The CPU label reads it, so label and query agree. */
+export const CPU_BUSY_WINDOW = '1m';
+/** Window of the older CPU queries, used when a node has no busy series. */
+export const CPU_FALLBACK_WINDOW = '2m';
+
+const WINDOW_UNITS: Record<string, string> = { s: 's', m: 'min', h: 'h', d: 'd' };
+
+/** "1m" as "1 min", "30s" as "30 s". Text that is not a plain window stays as it is. */
+export function windowText(window: string): string {
+  const m = /^(\d+)([smhd])$/.exec(window);
+  return m ? `${m[1]} ${WINDOW_UNITS[m[2]]}` : window;
+}
+
+/** The name of the series that a CPU figure comes from. */
+export type CpuOrigin = 'node exporter' | 'node agent';
+
+/** Where a CPU figure comes from and over what time: "node exporter, 1 min average". */
+export function cpuSourceLabel(
+  window: string = CPU_BUSY_WINDOW,
+  origin: CpuOrigin = 'node exporter'
+): string {
+  return `${origin}, ${windowText(window)} average`;
+}
+
 const STATIC_QUERIES: Record<Exclude<QueryKey, RunnerQueryKey>, string> = {
   cpuCount: 'count by (node) (node_cpu_seconds_total{mode="idle"})',
-  cpuIdleRate: 'sum by (node) (rate(node_cpu_seconds_total{mode=~"idle|iowait"}[2m]))',
+  cpuIdleRate: `sum by (node) (rate(node_cpu_seconds_total{mode=~"idle|iowait"}[${CPU_FALLBACK_WINDOW}]))`,
   // The node's real busy CPU: every mode except idle, iowait and steal, over a short window so a
   // burst of CI jobs shows at once. It is the figure the CPU ring reports for the node.
-  cpuBusyRate:
-    'sum by (node) (rate(node_cpu_seconds_total{mode!~"idle|iowait|steal"}[1m]))',
-  macCpuRate: 'sum by (node) (rate(node_cpu_usage_seconds_total[2m]))',
+  cpuBusyRate: `sum by (node) (rate(node_cpu_seconds_total{mode!~"idle|iowait|steal"}[${CPU_BUSY_WINDOW}]))`,
+  macCpuRate: `sum by (node) (rate(node_cpu_usage_seconds_total[${CPU_FALLBACK_WINDOW}]))`,
   kubeCpuCapacity: 'sum by (node) (kube_node_status_capacity{resource="cpu"})',
   // What Kubernetes can schedule. The CPU ring measures use against this, as `kubectl top` does.
   kubeCpuAllocatable: 'sum by (node) (kube_node_status_allocatable{resource="cpu"})',
@@ -312,16 +335,21 @@ export function assembleNodeMetrics(
         v.memTotal.get(node) ?? v.macMemTotal.get(node) ?? v.kubeMemCapacity.get(node) ?? 0;
 
       let cpuUsed: number | null = null;
+      let cpuSource: string | undefined;
       const busy = v.cpuBusyRate.get(node);
       const idle = v.cpuIdleRate.get(node);
       const macCpu = v.macCpuRate.get(node);
       if (busy !== undefined) {
         cpuUsed = Math.max(0, busy);
+        cpuSource = cpuSourceLabel(CPU_BUSY_WINDOW);
       } else if (idle !== undefined && v.cpuCount.has(node)) {
         // Older data without the busy series: the logical cores minus the idle time.
         cpuUsed = Math.max(0, v.cpuCount.get(node)! - idle);
+        cpuSource = cpuSourceLabel(CPU_FALLBACK_WINDOW);
       } else if (macCpu !== undefined) {
+        // `node_cpu_usage_seconds_total` is not a node exporter series: name it as it is.
         cpuUsed = macCpu;
+        cpuSource = cpuSourceLabel(CPU_FALLBACK_WINDOW, 'node agent');
       }
 
       let memUsed: number | null = null;
@@ -338,6 +366,7 @@ export function assembleNodeMetrics(
         node,
         cpuCapacity,
         cpuUsed,
+        ...(cpuSource ? { cpuSource } : {}),
         memCapacity,
         memUsed,
         pods: [...(pods.get(node)?.values() ?? [])].map(p => {

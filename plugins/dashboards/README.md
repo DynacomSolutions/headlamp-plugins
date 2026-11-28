@@ -599,8 +599,8 @@ entry is dropped and the row stays. The alerts and incidents panels of the agent
 ### Runner widget (`runners.overview`)
 
 One widget for the pools, the queue and the running workflow runs of a runner source. It fetches the `pools`
-and `queue` panels of the source. It fetches the `runs` panel and the `repos` panel only when the source lists
-them. Both panels are optional.
+and `queue` panels of the source. It fetches the `runs` panel, the `repos` panel and the `nodes` panel only when
+the source lists them. These three panels are optional.
 
 - **Fixed on top**: five stat tiles (running, queued, free, pools, oldest wait) with one numeral size. Then one
   ring for each pool: the blue arc is the running slots, the amber arc is the queued jobs and the crosshatch is
@@ -726,6 +726,26 @@ The optional `repos` panel has `repos`: a list of `{ "repo": "my-org/my-repo", "
 "lastConclusion": "success", "hosted": false }`. Only `repo` is required. `hosted` is true when every recent job
 of the repo ran on GitHub-hosted runners. The widget fetches this panel only when the panel list has the id
 `repos`. A bad entry is dropped.
+
+The optional `nodes` panel has one row for each node. `label` is the node name. The widget shows a "Nodes"
+strip in the `full` and `summary` views (not in `list`): the node name and "37.9 of 62.0 cores busy", busiest
+share first, with a label that starts with the title of the runner source, for example "My runners,
+metrics-server, 10 s sample", so the figure can be compared with the node exporter figure of the Usage plugin. A row is not a link. The widget fetches the panel only when the panel
+list has the id `nodes`, and it honours the `refreshSeconds` of the panel. The row `meta` keys are strings and
+each may be missing:
+
+| Key | Meaning | Example |
+| --- | --- | --- |
+| `cpuBusy` | Busy cores | `37.9` |
+| `cpuAllocatable` | Allocatable cores | `62.0` |
+| `cpuSource` | Where the figure comes from | `metrics-server` |
+| `cpuWindow` | Sample window | `10s` |
+
+When `cpuBusy` or `cpuAllocatable` is missing or not a number, the widget reads the row `detail` text
+`CPU busy 37.9/62.0 cores`. When that does not match either, the row stays in the list with the node name and the
+`detail` text, after the nodes that have a figure. The label names only what the source gave: with no
+`cpuSource` and no `cpuWindow` it is the source title alone, or "Runner source" when the source has no title.
+The widget never invents a window.
 
 `state` of a run or job is `running` or `queued`. `state` of a step is `done`, `running`, `failed`, `skipped`
 or `pending`. `seconds` is the time that the run has run or waited. A bad value is dropped or replaced by a

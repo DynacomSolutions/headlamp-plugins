@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { MetricSample } from '../metrics';
+import {
+  CPU_BUSY_WINDOW,
+  CPU_FALLBACK_WINDOW,
+  cpuSourceLabel,
+  windowText,
+} from './nodeMetrics';
 import { assembleNodeMetrics, NODE_QUERIES, type QueryKey,runnerQueries } from './queries';
 
 const s = (labels: Record<string, string>, v: number): MetricSample => ({
@@ -68,6 +74,37 @@ describe('assembleNodeMetrics', () => {
     expect(NODE_QUERIES.kubeCpuAllocatable).toContain('kube_node_status_allocatable');
   });
 
+  it('words the source label from the window constant, and the query uses the same constant', () => {
+    expect(cpuSourceLabel()).toBe(`node exporter, ${windowText(CPU_BUSY_WINDOW)} average`);
+    expect(NODE_QUERIES.cpuBusyRate).toContain(`[${CPU_BUSY_WINDOW}]`);
+    expect(NODE_QUERIES.cpuIdleRate).toContain(`[${CPU_FALLBACK_WINDOW}]`);
+    expect(cpuSourceLabel()).toBe('node exporter, 1 min average');
+  });
+
+  it('writes a window as short text', () => {
+    expect(windowText('1m')).toBe('1 min');
+    expect(windowText('30s')).toBe('30 s');
+    expect(windowText('2h')).toBe('2 h');
+    expect(windowText('soon')).toBe('soon');
+  });
+
+  it('labels the CPU figure with the series that gave it', () => {
+    const [busy] = assembleNodeMetrics(
+      results({
+        cpuCount: [s({ node: 'w' }, 8)],
+        cpuBusyRate: [s({ node: 'w' }, 2)],
+        cpuIdleRate: [s({ node: 'w' }, 3)],
+      })
+    );
+    expect(busy.cpuSource).toBe(cpuSourceLabel(CPU_BUSY_WINDOW));
+    const [idle] = assembleNodeMetrics(
+      results({ cpuCount: [s({ node: 'w' }, 8)], cpuIdleRate: [s({ node: 'w' }, 3)] })
+    );
+    expect(idle.cpuSource).toBe(cpuSourceLabel(CPU_FALLBACK_WINDOW));
+    const [none] = assembleNodeMetrics(results({ memTotal: [s({ node: 'w' }, 1)] }));
+    expect(none.cpuSource).toBeUndefined();
+  });
+
   it('computes Mac CPU and memory used', () => {
     const [n] = assembleNodeMetrics(
       results({
@@ -81,6 +118,10 @@ describe('assembleNodeMetrics', () => {
     );
     expect(n.cpuCapacity).toBe(16);
     expect(n.cpuUsed).toBe(2.5);
+    // The node agent series is not a node exporter series: the label must not say so.
+    expect(n.cpuSource).toBe(cpuSourceLabel(CPU_FALLBACK_WINDOW, 'node agent'));
+    expect(n.cpuSource).toBe('node agent, 2 min average');
+    expect(n.cpuSource).not.toContain('node exporter');
     expect(n.memCapacity).toBe(128e9);
     expect(n.memUsed).toBe(48e9);
   });
