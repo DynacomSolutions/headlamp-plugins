@@ -15,6 +15,7 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
 
 import { parsePanel } from '../panels/model';
 import {
+  busyShare,
   capOf,
   countsOf,
   formatNodeKeys,
@@ -168,6 +169,7 @@ interface MountOptions {
   editing?: boolean;
   expand?: 'all' | 'default';
   view?: 'full' | 'summary' | 'list';
+  sourceTitle?: string;
 }
 
 /** Mounts the view in a router, so the URL state can be read and written. */
@@ -182,6 +184,7 @@ const mount = (model: Model, o: MountOptions = {}) => {
           instanceId={o.instanceId === null ? undefined : o.instanceId ?? 'w1'}
           expand={o.expand}
           view={o.view}
+          sourceTitle={o.sourceTitle}
         />
       </MemoryRouter>
     </ThemeProvider>
@@ -1578,7 +1581,7 @@ describe('GitHub-hosted jobs and idle repos', () => {
   });
 });
 
-describe('Runwarden node CPU strip (nodes panel)', () => {
+describe('node CPU strip (nodes panel)', () => {
   const nodesPanel = (rows: unknown[]) =>
     parsePanel({ version: 1, id: 'nodes', title: 'Nodes', status: 'ok', summary: '', rows });
   const row = (label: string, detail: string, meta?: Record<string, string>) => ({
@@ -1594,8 +1597,11 @@ describe('Runwarden node CPU strip (nodes panel)', () => {
     cpuSource: 'metrics-server',
     cpuWindow: '10s',
   });
-  const strip = (nodes: ReturnType<typeof nodesPanel> | null, view?: 'full' | 'summary' | 'list') =>
-    mount(joinRunners({ pools, queue: emptyQueue, runs: null, nodes }), { view });
+  const strip = (
+    nodes: ReturnType<typeof nodesPanel> | null,
+    view?: 'full' | 'summary' | 'list',
+    sourceTitle?: string
+  ) => mount(joinRunners({ pools, queue: emptyQueue, runs: null, nodes }), { view, sourceTitle });
   const nodeRows = (c: HTMLElement) =>
     [...c.querySelectorAll('[data-runner-node]')].map(r => [
       r.getAttribute('data-runner-node'),
@@ -1607,14 +1613,16 @@ describe('Runwarden node CPU strip (nodes panel)', () => {
       nodesPanel([
         row('worker-1', 'CPU busy 5.0/62.0 cores', metaFor('5.0', '62.0')),
         row('worker-2', 'CPU busy 37.9/62.0 cores', metaFor('37.9', '62.0')),
-      ])
+      ]),
+      undefined,
+      'My runners'
     );
     expect(nodeRows(container)).toEqual([
       ['worker-2', '37.9 of 62.0 cores busy'],
       ['worker-1', '5.0 of 62.0 cores busy'],
     ]);
     expect(container.querySelector('[data-runner-nodes-source]')?.textContent).toBe(
-      'Runwarden, metrics-server, 10 s sample'
+      'My runners, metrics-server, 10 s sample'
     );
   });
 
@@ -1628,15 +1636,29 @@ describe('Runwarden node CPU strip (nodes panel)', () => {
   it('falls back to the detail text when meta is missing, and names only what is known', () => {
     const { container } = strip(nodesPanel([row('worker-1', 'CPU busy 37.9/62.0 cores')]));
     expect(nodeRows(container)).toEqual([['worker-1', '37.9 of 62.0 cores busy']]);
-    // No source and no window in the data: the label is just "Runwarden".
-    expect(container.querySelector('[data-runner-nodes-source]')?.textContent).toBe('Runwarden');
+    // No source and no window in the data, and no source title: the label is "Runner source".
+    expect(container.querySelector('[data-runner-nodes-source]')?.textContent).toBe(
+      'Runner source'
+    );
+  });
+
+  it('starts the label with the source title, and falls back for a blank title', () => {
+    const { container } = strip(
+      nodesPanel([row('worker-1', 'CPU busy 1.0/4.0 cores')]),
+      undefined,
+      'Build farm'
+    );
+    expect(container.querySelector('[data-runner-nodes-source]')?.textContent).toBe('Build farm');
+    expect(nodeSourceLabel({ source: '', window: '' }, '  ')).toBe('Runner source');
   });
 
   it('does not invent a window: source alone, or window alone', () => {
-    expect(nodeSourceLabel({ source: 'metrics-server', window: '' })).toBe(
-      'Runwarden, metrics-server'
+    expect(nodeSourceLabel({ source: 'metrics-server', window: '' }, 'My runners')).toBe(
+      'My runners, metrics-server'
     );
-    expect(nodeSourceLabel({ source: '', window: '1m' })).toBe('Runwarden, 1 min sample');
+    expect(nodeSourceLabel({ source: '', window: '1m' }, 'My runners')).toBe(
+      'My runners, 1 min sample'
+    );
   });
 
   it('shows nothing without a nodes panel', () => {
@@ -1663,6 +1685,76 @@ describe('Runwarden node CPU strip (nodes panel)', () => {
       nodesPanel([row('worker-1', 'CPU busy 3.0/8.0 cores', metaFor('lots', '8.0'))])
     );
     expect(nodeBusyText(n)).toBe('3.0 of 8.0 cores busy');
+  });
+
+  it('reads a comma decimal as missing and uses the detail text', () => {
+    const [n] = nodesOf(
+      nodesPanel([row('worker-1', 'CPU busy 37.9/62.0 cores', metaFor('37,9', '62,0'))])
+    );
+    expect(n.busy).toBe(37.9);
+    expect(n.allocatable).toBe(62);
+    expect(nodeBusyText(n)).toBe('37.9 of 62.0 cores busy');
+    // Neither the meta nor the detail has a readable figure: the detail text stays.
+    const [m] = nodesOf(
+      nodesPanel([row('worker-2', 'CPU busy 37,9/62,0', metaFor('37,9', '62,0'))])
+    );
+    expect(m.busy).toBeNull();
+    expect(nodeBusyText(m)).toBe('CPU busy 37,9/62,0');
+  });
+
+  it('keeps a node that is busier than allocatable, first, and shows the figure as it is', () => {
+    const { container } = strip(
+      nodesPanel([
+        row('worker-1', '', metaFor('4.0', '8.0')),
+        row('worker-2', '', metaFor('9.5', '8.0')),
+      ])
+    );
+    expect(nodeRows(container)).toEqual([
+      ['worker-2', '9.5 of 8.0 cores busy'],
+      ['worker-1', '4.0 of 8.0 cores busy'],
+    ]);
+  });
+
+  it('shows allocatable 0 as a figure, with no share, after the nodes that have a share', () => {
+    const [n] = nodesOf(nodesPanel([row('worker-1', '', metaFor('1.0', '0.0'))]));
+    expect(busyShare(n)).toBeNull();
+    expect(nodeBusyText(n)).toBe('1.0 of 0.0 cores busy');
+    const { container } = strip(
+      nodesPanel([
+        row('worker-1', '', metaFor('1.0', '0.0')),
+        row('worker-2', '', metaFor('1.0', '8.0')),
+      ])
+    );
+    expect(nodeRows(container).map(r => r[0])).toEqual(['worker-2', 'worker-1']);
+  });
+
+  it('uses the scroll area, a list with items, and a title with the full busy text', () => {
+    const { container } = strip(
+      nodesPanel([
+        row('worker-1', '', metaFor('1.0', '4.0')),
+        row('worker-2', '', metaFor('2.0', '4.0')),
+      ])
+    );
+    const box = container.querySelector('[data-runner-nodes]') as HTMLElement;
+    expect(box.querySelector('[data-scroll-area][aria-label="Nodes"]')).not.toBeNull();
+    expect(box.querySelector('[role="list"]')).not.toBeNull();
+    expect(box.querySelectorAll('[role="list"] > [role="listitem"]')).toHaveLength(2);
+    expect(
+      [...box.querySelectorAll('[data-runner-node-busy]')].map(e => e.getAttribute('title'))
+    ).toEqual(['2.0 of 4.0 cores busy', '1.0 of 4.0 cores busy']);
+  });
+
+  it('draws two nodes with the same name, with no key collision', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { container } = strip(
+      nodesPanel([
+        row('worker-1', '', metaFor('1.0', '4.0')),
+        row('worker-1', '', metaFor('2.0', '4.0')),
+      ])
+    );
+    expect(container.querySelectorAll('[data-runner-node="worker-1"]')).toHaveLength(2);
+    expect(spy.mock.calls.flat().join(' ')).not.toMatch(/same key/);
+    spy.mockRestore();
   });
 
   it('has no link and nothing to click', () => {

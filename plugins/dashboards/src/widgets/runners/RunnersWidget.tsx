@@ -1,11 +1,11 @@
 /*
- * The runner widget (`runners.overview`): the pools, the queue and the running workflow runs of one
- * runner source in one widget. It reads the `pools` and `queue` panels. It reads the `runs` panel
- * and the `repos` panel and the `nodes` panel when the source serves them (see `join.ts`). Each panel is fetched like the
- * panel widget does, never sooner than the panel's own `refreshSeconds`. With the `runs` panel the
- * list is a tree: repository, then branch or pull request, then workflow, then job. A click opens
- * or folds a row in place. The open rows are in the page URL, in the param `w.<instanceId>` (see
- * `RunnersView.tsx`).
+ * The runner widget (`runners.overview`): the pools, the queue and the running workflow runs of
+ * one runner source in one widget. It reads the `pools` and `queue` panels. It also reads the
+ * `runs`, `repos` and `nodes` panels, each one only when the source lists it (see `join.ts`).
+ * Each panel is fetched like the panel widget does, never sooner than the panel's own
+ * `refreshSeconds`. With the `runs` panel the list is a tree: repository, then branch or pull
+ * request, then workflow, then job. A click opens or folds a row in place. The open rows are in
+ * the page URL, in the param `w.<instanceId>` (see `RunnersView.tsx`).
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -91,7 +91,7 @@ export function RunnersWidget({
     reportRefreshed,
     sourceId
   );
-  // The `nodes` panel (Runwarden's own CPU figure for each node) is optional, with the same rule.
+  // The `nodes` panel (the source's own CPU figure for each node) is optional, with the same rule.
   const hasNodes = list.panels.some(p => p.id === RUNNER_PANELS.nodes);
   const nodes = usePanel(
     source,
@@ -152,6 +152,7 @@ export function RunnersWidget({
             editing={!!editing}
             view={viewOf(config.view)}
             expand={expandOf(config.expand)}
+            sourceTitle={source?.title}
           />
         </Box>
       )}

@@ -142,7 +142,8 @@ export function nodesOf(panel: PanelModel | null | undefined): RunnerNode[] {
   return nodes.sort((a, b) => {
     const x = busyShare(a);
     const y = busyShare(b);
-    if (x === null || y === null) return x === y ? a.name.localeCompare(b.name) : x === null ? 1 : -1;
+    if (x === null || y === null)
+      return x === y ? a.name.localeCompare(b.name) : x === null ? 1 : -1;
     return y - x || a.name.localeCompare(b.name);
   });
 }
@@ -153,9 +154,20 @@ export function windowText(window: string): string {
   return m ? `${m[1]} ${m[2] === 'm' ? 'min' : m[2]}` : window;
 }
 
-/** "Runwarden, metrics-server, 10 s sample". It names only what the source gave. */
-export function nodeSourceLabel(n: Pick<RunnerNode, 'source' | 'window'>): string {
-  return ['Runwarden', n.source, n.window ? `${windowText(n.window)} sample` : '']
+/** The name that the label has when the runner source has no title. */
+export const DEFAULT_SOURCE_TITLE = 'Runner source';
+
+/**
+ * "My runners, metrics-server, 10 s sample": the title of the runner source, then what the source
+ * gave. The title is the one the panel source has in the dashboard settings. It names only what
+ * the source gave: no window means no "sample" part.
+ */
+export function nodeSourceLabel(n: Pick<RunnerNode, 'source' | 'window'>, title?: string): string {
+  return [
+    title?.trim() || DEFAULT_SOURCE_TITLE,
+    n.source,
+    n.window ? `${windowText(n.window)} sample` : '',
+  ]
     .filter(Boolean)
     .join(', ');
 }
