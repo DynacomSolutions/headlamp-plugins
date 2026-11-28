@@ -729,8 +729,8 @@ of the repo ran on GitHub-hosted runners. The widget fetches this panel only whe
 
 The optional `nodes` panel has one row for each node. `label` is the node name. The widget shows a "Nodes"
 strip in the `full` and `summary` views (not in `list`): the node name and "37.9 of 62.0 cores busy", busiest
-share first, with the label "Runwarden, metrics-server, 10 s sample" so the figure can be compared with the
-node exporter figure of the Usage plugin. A row is not a link. The widget fetches the panel only when the panel
+share first, with a label that starts with the title of the runner source, for example "My runners,
+metrics-server, 10 s sample", so the figure can be compared with the node exporter figure of the Usage plugin. A row is not a link. The widget fetches the panel only when the panel
 list has the id `nodes`, and it honours the `refreshSeconds` of the panel. The row `meta` keys are strings and
 each may be missing:
 
@@ -744,7 +744,8 @@ each may be missing:
 When `cpuBusy` or `cpuAllocatable` is missing or not a number, the widget reads the row `detail` text
 `CPU busy 37.9/62.0 cores`. When that does not match either, the row stays in the list with the node name and the
 `detail` text, after the nodes that have a figure. The label names only what the source gave: with no
-`cpuSource` and no `cpuWindow` it reads "Runwarden". The widget never invents a window.
+`cpuSource` and no `cpuWindow` it is the source title alone, or "Runner source" when the source has no title.
+The widget never invents a window.
 
 `state` of a run or job is `running` or `queued`. `state` of a step is `done`, `running`, `failed`, `skipped`
 or `pending`. `seconds` is the time that the run has run or waited. A bad value is dropped or replaced by a

@@ -118,6 +118,10 @@ describe('assembleNodeMetrics', () => {
     );
     expect(n.cpuCapacity).toBe(16);
     expect(n.cpuUsed).toBe(2.5);
+    // The node agent series is not a node exporter series: the label must not say so.
+    expect(n.cpuSource).toBe(cpuSourceLabel(CPU_FALLBACK_WINDOW, 'node agent'));
+    expect(n.cpuSource).toBe('node agent, 2 min average');
+    expect(n.cpuSource).not.toContain('node exporter');
     expect(n.memCapacity).toBe(128e9);
     expect(n.memUsed).toBe(48e9);
   });

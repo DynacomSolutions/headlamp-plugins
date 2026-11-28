@@ -73,9 +73,15 @@ export function windowText(window: string): string {
   return m ? `${m[1]} ${WINDOW_UNITS[m[2]]}` : window;
 }
 
+/** The name of the series that a CPU figure comes from. */
+export type CpuOrigin = 'node exporter' | 'node agent';
+
 /** Where a CPU figure comes from and over what time: "node exporter, 1 min average". */
-export function cpuSourceLabel(window: string = CPU_BUSY_WINDOW): string {
-  return `node exporter, ${windowText(window)} average`;
+export function cpuSourceLabel(
+  window: string = CPU_BUSY_WINDOW,
+  origin: CpuOrigin = 'node exporter'
+): string {
+  return `${origin}, ${windowText(window)} average`;
 }
 
 const STATIC_QUERIES: Record<Exclude<QueryKey, RunnerQueryKey>, string> = {
@@ -341,8 +347,9 @@ export function assembleNodeMetrics(
         cpuUsed = Math.max(0, v.cpuCount.get(node)! - idle);
         cpuSource = cpuSourceLabel(CPU_FALLBACK_WINDOW);
       } else if (macCpu !== undefined) {
+        // `node_cpu_usage_seconds_total` is not a node exporter series: name it as it is.
         cpuUsed = macCpu;
-        cpuSource = cpuSourceLabel(CPU_FALLBACK_WINDOW);
+        cpuSource = cpuSourceLabel(CPU_FALLBACK_WINDOW, 'node agent');
       }
 
       let memUsed: number | null = null;
