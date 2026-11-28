@@ -344,7 +344,7 @@ describe('list and chat on one dashboard', () => {
     expect(within(row).queryByRole('link')).toBeNull();
     fireEvent.click(row);
     expect(await screen.findByText('About incident: HighCPU')).toBeTruthy();
-    expect(row.getAttribute('aria-selected')).toBe('true');
+    expect(row.getAttribute('aria-pressed')).toBe('true');
     // The same row again clears the selection.
     fireEvent.click(row);
     expect(await screen.findByText(/No incident selected/)).toBeTruthy();
@@ -584,12 +584,12 @@ describe('a group as the chat context', () => {
     expect(url()).toBe('/d/t/incident/c1');
     expect(await screen.findByText('About incident: KubePodCrashLooping')).toBeTruthy();
     expect(groupButton('KubePodCrashLooping').getAttribute('aria-pressed')).toBe('false');
-    expect(row.getAttribute('aria-selected')).toBe('true');
+    expect(row.getAttribute('aria-pressed')).toBe('true');
     // The group button replaces the row selection.
     fireEvent.click(groupButton('KubePodCrashLooping'));
     expect(url()).toBe('/d/t/group/KubePodCrashLooping');
     expect(await screen.findByText(/^About group: /)).toBeTruthy();
-    expect(row.getAttribute('aria-selected')).toBe('false');
+    expect(row.getAttribute('aria-pressed')).toBe('false');
     // Back goes to the incident, then to the first group view.
     fireEvent.click(screen.getByTestId('back'));
     expect(url()).toBe('/d/t/incident/c1');

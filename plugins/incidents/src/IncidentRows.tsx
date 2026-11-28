@@ -174,12 +174,28 @@ function Row(props: {
   const text = d.likelyCause || d.alertName || d.id;
   // An analysed row is the usual case, and the header counts it. Other states stay visible.
   const showStatus = !(narrow && d.status === 'done');
+  const activate = () => (onSelect ? onSelect(d) : setExpanded(e => !e));
   return (
     <Box
       data-incident-row={d.id}
       data-severity-group={sev}
-      aria-selected={onSelect ? selected : undefined}
-      onClick={() => (onSelect ? onSelect(d) : setExpanded(e => !e))}
+      role="button"
+      tabIndex={0}
+      // A fixed name, so the Rerun button inside the row does not become part of the row name.
+      aria-label={`${SEVERITY_WORD[sev]}, ${text}, ${STATUS_WORD[d.status]}`}
+      // A row that selects for the chat is a toggle button (pressed). A row that shows the cause in
+      // place is a disclosure button (expanded). `aria-selected` has no role here, so it is not used.
+      aria-pressed={onSelect ? selected : undefined}
+      aria-expanded={onSelect ? undefined : expanded}
+      onClick={activate}
+      onKeyDown={e => {
+        // Keys of the Rerun button inside the row stay with that button.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          activate();
+        }
+      }}
       sx={{
         display: 'grid',
         gridTemplateColumns: '20px minmax(0, 1fr) auto',
@@ -195,6 +211,7 @@ function Row(props: {
         cursor: 'pointer',
         outline: selected ? `2px solid ${theme.palette.text.primary}` : 'none',
         outlineOffset: -2,
+        '&:focus-visible': { outline: '2px solid', outlineColor: theme.palette.primary.main },
       }}
     >
       <SeverityMark severity={sev} size={sev === 'critical' ? 16 : 14} />
