@@ -13,8 +13,8 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import { formatBytes, formatCores, formatPercent } from '../units';
 import type { ChildRow, SegmentInfo, Selection } from './detail';
-import { capacityWord } from './tree';
 import { TOUCH_MIN, TouchChoice, TouchSheet } from './TouchSheet';
+import { capacityWord } from './tree';
 import { useIconUrl } from './useIconUrl';
 
 const KIND: Record<string, string> = {
