@@ -155,6 +155,39 @@ describe('dashboard page', () => {
     expect(await screen.findByText('Hello header')).toBeTruthy();
   });
 
+  it('keeps a widget param when a filter changes in the same tick, and when the tab changes', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Hello header');
+    const where = () => screen.getByTestId('where').textContent ?? '';
+    const selector = screen.getByLabelText('Label selector') as HTMLInputElement;
+    fireEvent.change(selector, { target: { value: 'app=web' } });
+    // A widget writes `w.x` and the filter commits before the page renders again.
+    act(() => {
+      const h = router.history!;
+      h.replace({ pathname: h.location.pathname, search: '?w.x=1' });
+      fireEvent.keyDown(selector, { key: 'Enter' });
+    });
+    await waitFor(() => expect(where()).toContain('sel=app%3Dweb'));
+    expect(new URLSearchParams(where().split('?')[1]).get('w.x')).toBe('1');
+    // A tab change keeps the whole query, also the param of a widget on another tab.
+    fireEvent.click(screen.getByRole('tab', { name: /Nodes/ }));
+    await waitFor(() => expect(where()).toContain('/dashboards/ops/nodes?'));
+    const query = new URLSearchParams(where().split('?')[1]);
+    expect(query.get('w.x')).toBe('1');
+    expect(query.get('sel')).toBe('app=web');
+  });
+
+  it('keeps a widget param when a tab changes in the same tick as the write', async () => {
+    mount('/dashboards/ops');
+    await screen.findByText('Hello header');
+    act(() => {
+      const h = router.history!;
+      h.replace({ pathname: h.location.pathname, search: '?w.x=1' });
+      fireEvent.click(screen.getByRole('tab', { name: /Nodes/ }));
+    });
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/dashboards/ops/nodes?w.x=1'));
+  });
+
   it('moves to the next and the previous tab with a swipe on the tab area, one history entry each', async () => {
     mount('/dashboards/ops');
     await screen.findByText('Hello header');

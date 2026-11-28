@@ -1,5 +1,7 @@
+import './chat-links-standalone';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { ChatLinkContext, TextLink } from './chat-links';
 import { ChatMarkdown } from './chat-markdown';
 
 const ANSWER = `# Findings
@@ -44,6 +46,15 @@ describe('ChatMarkdown', () => {
     expect(container.querySelector('pre code')?.textContent).toBe('kubectl top pod api');
     expect(container.querySelector('blockquote')?.textContent).toContain('Be careful');
     expect(container.querySelector('del')).toBeTruthy();
+  });
+  it('draws a link as plain text in a dashboard', () => {
+    const { container } = render(
+      <ChatLinkContext.Provider value={TextLink}>
+        <ChatMarkdown source={ANSWER} />
+      </ChatLinkContext.Provider>
+    );
+    expect(container.querySelector('a')).toBeNull();
+    expect(screen.getByText('the docs').getAttribute('title')).toBe('https://example.com/docs');
   });
   it('does not render a javascript: link', () => {
     render(<ChatMarkdown source={ANSWER} />);

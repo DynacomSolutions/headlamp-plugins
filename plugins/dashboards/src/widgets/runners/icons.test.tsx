@@ -14,7 +14,6 @@ vi.mock('@kinvolk/headlamp-plugin/lib', () => ({
   },
 }));
 
-import { LinkContext } from '../../links';
 import { parsePanel } from '../panels/model';
 import { DEFAULT_DISPLAY, PanelView } from '../panels/PanelView';
 import {
@@ -31,7 +30,7 @@ import {
   repoIconKey,
 } from './icons';
 import { joinRunners } from './join';
-import { resetRunnerFolds, RunnersView } from './RunnersView';
+import { RunnersView } from './RunnersView';
 
 const PNG = 'data:image/png;base64,AAAA';
 const SVG = 'data:image/svg+xml;base64,BBBB';
@@ -48,7 +47,6 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  resetRunnerFolds();
 });
 
 describe('the icon map', () => {
@@ -198,14 +196,11 @@ const draw = () =>
   render(
     <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
       <MemoryRouter>
-        <LinkContext.Provider value={{ base: '/c/main', dashboard: 'ops', tabs: ['runners'] }}>
-          <RunnersView
-            model={joinRunners({ pools: null, queue: null, runs })}
-            sourceId="runners"
-            editing={false}
-            expand="all"
-          />
-        </LinkContext.Provider>
+        <RunnersView
+          model={joinRunners({ pools: null, queue: null, runs })}
+          editing={false}
+          expand="all"
+        />
       </MemoryRouter>
     </ThemeProvider>
   );
@@ -219,24 +214,25 @@ describe('the icons in the runner list', () => {
     expect(container.querySelector('[data-group-icon]')).toBeNull();
   });
 
-  it('shows the org avatar on an org, and the own icon, then the avatar, on a repo', async () => {
+  it('shows the own icon of a repo, then the avatar of its org', async () => {
     request.mockResolvedValue({ data: { 'gh.acme': PNG, 'gh.acme.web': SVG } });
     const { container } = draw();
     const icon = (key: string) =>
       container.querySelector(`[data-group-key="${key}"] [data-group-icon]`)?.getAttribute('src');
-    await waitFor(() => expect(icon('acme')).toBe(PNG));
-    expect(icon('acme/web')).toBe(SVG);
-    expect(icon('acme/docs')).toBe(PNG);
-    expect(icon('acme/Repo not known')).toBe(PNG);
+    await waitFor(() => expect(icon('r|acme/docs')).toBe(PNG));
+    expect(icon('r|acme/web')).toBe(SVG);
+    expect(icon('r|acme/Repo not known')).toBe(PNG);
   });
 
-  it('keeps the names aligned: an org with no avatar has an empty slot of the same size', async () => {
+  it('keeps the names aligned: a repo with no icon has an empty slot of the same size', async () => {
     request.mockResolvedValue({ data: { 'gh.acme': PNG } });
     const { container } = draw();
     await waitFor(() =>
-      expect(container.querySelector('[data-group-key="acme"] [data-group-icon]')).not.toBeNull()
+      expect(
+        container.querySelector('[data-group-key="r|acme/web"] [data-group-icon]')
+      ).not.toBeNull()
     );
-    const none = container.querySelector('[data-group-key="nobody"]')!;
+    const none = container.querySelector('[data-group-key="r|nobody/tool"]')!;
     expect(none.querySelector('[data-group-icon-slot]')).not.toBeNull();
     expect(none.querySelector('[data-group-icon]')).toBeNull();
     expect(none.querySelector('[data-group-icon-slot]')?.children).toHaveLength(0);

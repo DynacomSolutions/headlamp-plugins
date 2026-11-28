@@ -1,12 +1,10 @@
 import Box from '@mui/material/Box';
-import Link from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import ReactMarkdown, { Components } from 'react-markdown';
-import { Link as RouterLink } from 'react-router-dom';
 import remarkGfm from 'remark-gfm';
 import type { WidgetDefinition, WidgetProps, WidgetSettingsProps } from '../contract';
-import { isAppPath, useResolveLink } from '../links';
+import { InternalLink, isAppPath, useResolveLink } from '../links';
 import { SettingsForm } from './SettingsForm';
 
 export interface NoteConfig {
@@ -14,25 +12,26 @@ export interface NoteConfig {
   align: 'left' | 'center' | 'right';
 }
 
-/** A note link stays inside Headlamp: only a path is followed. Any other address is shown as text. */
+/**
+ * A note link stays inside the dashboard: only a path of this dashboard is followed (a tab or a focus
+ * path, see ../links.tsx). Any other address, and any other page, is shown as text.
+ */
 export function safeHref(url: string | undefined): string | undefined {
   return isAppPath(url?.trim()) ? url?.trim() : undefined;
 }
 
-function NoteLink(props: { href?: string; children?: React.ReactNode }): JSX.Element {
+function NoteLink(props: { url?: string; children?: React.ReactNode }): JSX.Element {
   const resolve = useResolveLink();
-  const to = resolve(safeHref(props.href));
-  return to ? (
-    <Link component={RouterLink} to={to}>
+  const to = resolve(safeHref(props.url));
+  return (
+    <InternalLink to={to} style={{ color: 'inherit', textDecoration: 'underline' }}>
       {props.children}
-    </Link>
-  ) : (
-    <span>{props.children}</span>
+    </InternalLink>
   );
 }
 
 const COMPONENTS: Components = {
-  a: ({ href, children }) => <NoteLink href={href}>{children}</NoteLink>,
+  a: ({ href, children }) => <NoteLink url={href}>{children}</NoteLink>,
   h1: ({ children }) => (
     <Typography variant="h5" component="h2" gutterBottom>
       {children}

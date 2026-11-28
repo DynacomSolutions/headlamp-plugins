@@ -184,6 +184,54 @@ describe('incident groups', () => {
     const header = container.querySelector('[data-incident-group] [title]') as HTMLElement;
     expect(header.getAttribute('title')).toBe('Alert1');
   });
+  describe('a row is a button', () => {
+    const openRow = (node: React.ReactNode) => {
+      const { container } = wrap(node);
+      fireEvent.click(container.querySelector('[data-incident-group]')!);
+      return container.querySelector('[data-incident-row]') as HTMLElement;
+    };
+    it('shows the cause in place with a click, Enter or Space, and reports it with aria-expanded', () => {
+      const row = openRow(<IncidentRows rows={[d('1', 'critical')]} />);
+      expect(row.getAttribute('role')).toBe('button');
+      expect(row.getAttribute('tabindex')).toBe('0');
+      expect(row.hasAttribute('aria-selected')).toBe(false);
+      expect(row.getAttribute('aria-expanded')).toBe('false');
+      fireEvent.click(row);
+      expect(row.getAttribute('aria-expanded')).toBe('true');
+      fireEvent.keyDown(row, { key: 'Enter' });
+      expect(row.getAttribute('aria-expanded')).toBe('false');
+      fireEvent.keyDown(row, { key: ' ' });
+      expect(row.getAttribute('aria-expanded')).toBe('true');
+      fireEvent.keyDown(row, { key: 'a' });
+      expect(row.getAttribute('aria-expanded')).toBe('true');
+    });
+    it('selects for the chat with Enter or Space and reports it with aria-pressed', () => {
+      const onSelect = vi.fn();
+      const row = openRow(
+        <IncidentRows rows={[d('1', 'critical')]} selectedId="1" onSelect={onSelect} />
+      );
+      expect(row.getAttribute('aria-pressed')).toBe('true');
+      expect(row.hasAttribute('aria-expanded')).toBe(false);
+      expect(row.hasAttribute('aria-selected')).toBe(false);
+      fireEvent.keyDown(row, { key: 'Enter' });
+      fireEvent.keyDown(row, { key: ' ' });
+      fireEvent.click(row);
+      expect(onSelect).toHaveBeenCalledTimes(3);
+    });
+    it('leaves the keys of a button inside the row to that button', () => {
+      const onSelect = vi.fn();
+      const row = openRow(
+        <IncidentRows
+          rows={[d('1', 'critical', 'failed')]}
+          onSelect={onSelect}
+          onRerun={async () => undefined}
+        />
+      );
+      const inner = row.querySelector('button') as HTMLElement;
+      fireEvent.keyDown(inner, { key: 'Enter' });
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+  });
   it('shows no "other" or "more" text, because every group has its own row', () => {
     const { container } = wrap(<IncidentRows rows={many} />);
     expect(container.textContent).not.toMatch(/\bmore\b|\bother\b/i);

@@ -9,7 +9,9 @@ import {
   parseQuery,
   pathBase,
   resolveFilters,
+  safeDecode,
   serialiseQuery,
+  widgetParam,
 } from './urlState';
 
 describe('paths', () => {
@@ -108,6 +110,36 @@ describe('query', () => {
     expect(resolveFilters(viewBase, parseQuery(search).filters).namespaces).toEqual([]);
   });
 
+  it('keeps the params of widgets (w.<id>) and drops other unknown params', () => {
+    const f = { ...base, namespaces: ['a'] };
+    const s = serialiseQuery(
+      { edit: false, kiosk: true, view: '', filters: f },
+      base,
+      '?kiosk=1&junk=1&w.runners-1=r%7Cmy-org%2Fmy-repo%2Cf%7Cx&w.b=%20&ns=old'
+    );
+    const p = new URLSearchParams(s);
+    expect(p.get('w.runners-1')).toBe('r|my-org/my-repo,f|x');
+    expect(p.get('w.b')).toBe(' ');
+    expect(p.has('junk')).toBe(false);
+    expect(p.get('kiosk')).toBe('1');
+    expect(p.get('ns')).toBe('a');
+    expect(parseQuery(s).filters.namespaces).toEqual(['a']);
+  });
+
+  it('writes the plain view for a query with no widget params, and keeps widget params alone', () => {
+    expect(
+      serialiseQuery({ edit: false, kiosk: false, view: '', filters: base }, base, '?junk=1')
+    ).toBe('');
+    expect(
+      serialiseQuery({ edit: false, kiosk: false, view: '', filters: base }, base, '?w.a=1')
+    ).toBe('?w.a=1');
+    expect(widgetParam('a')).toBe('w.a');
+    expect(widgetParam('a', 'hosted')).toBe('w.a.hosted');
+    expect(
+      serialiseQuery({ edit: false, kiosk: false, view: '', filters: base }, base, '?w.a.hosted=1')
+    ).toBe('?w.a.hosted=1');
+  });
+
   it('uses the spec filters when the view is unknown', () => {
     expect(baseFilters(emptySpec('x'), 'nope')).toEqual(base);
     expect(baseFilters(undefined, '')).toEqual(base);
@@ -151,5 +183,13 @@ describe('focus segments', () => {
   it('writes no focus for an empty list, and keeps a path with no tab as it was', () => {
     expect(buildPath({ name: 'ops', tab: 'nodes', focus: [] })).toBe('/dashboards/ops/nodes');
     expect(buildPath({ name: 'ops', tab: '' })).toBe('/dashboards/ops');
+  });
+});
+
+describe('safeDecode', () => {
+  it('decodes percent-encoding and leaves bad text as it is, without a throw', () => {
+    expect(safeDecode('a%2Fb%20c')).toBe('a/b c');
+    expect(safeDecode('100%')).toBe('100%');
+    expect(safeDecode('%E0%A4%A')).toBe('%E0%A4%A');
   });
 });

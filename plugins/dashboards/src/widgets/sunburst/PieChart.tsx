@@ -199,7 +199,7 @@ export function PieChart({
               <li key={s.key} data-legend-row={s.key}>
                 <ButtonBase
                   onClick={() => select(s.key)}
-                  {...hover(s.key)}
+                  {...hover(s.key)} // dashboard-links: allow hover handlers only
                   title={`${s.label}, ${s.group}: ${s.valueText} (${share(s.value)})`}
                   focusRipple={false}
                   disableRipple={kiosk}

@@ -82,7 +82,7 @@ function FieldPicker(props: {
       sx={{ minWidth: 200, flex: 1 }}
       renderInput={params => (
         <TextField
-          {...params}
+          {...params} // dashboard-links: allow MUI Autocomplete input props, no link
           label={label}
           error={invalid}
           helperText={invalid ? 'Not a valid path. Example: .spec.replicas' : props.help}
@@ -158,7 +158,7 @@ function SourceStep(props: { cfg: ReportConfig; patch: Patch }): JSX.Element {
         onChange={(_, k) => choose(k)}
         renderInput={params => (
           <TextField
-            {...params}
+            {...params} // dashboard-links: allow MUI Autocomplete input props, no link
             label="Resource kind"
             helperText={
               current

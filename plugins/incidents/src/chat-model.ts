@@ -354,3 +354,11 @@ export function cleanErrorText(e: unknown): string {
   const text = raw.replace(/^[\s\-*\u2022\u2013\u2014:]+/, '').trim();
   return text || 'Something went wrong.';
 }
+
+/** The prompts that the empty chat offers. */
+export const EXAMPLE_PROMPTS = [
+  'Which pods are failing right now, and why?',
+  'Summarise the most recent incidents.',
+  'Are any nodes under memory or disk pressure?',
+  'What changed in the cluster in the last hour?',
+];

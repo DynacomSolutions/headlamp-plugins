@@ -10,6 +10,7 @@ import Tabs from '@mui/material/Tabs';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { renderMarkdown } from './markdown';
+import { safeUrl } from './safeUrl';
 import { processMessages } from './state';
 import { A2uiComponent, A2uiMessage, Surface } from './types';
 import { resolveChildren, resolveString, Scope } from './values';
@@ -52,15 +53,7 @@ const ALIGN: Record<string, string> = {
   stretch: 'stretch',
 };
 
-/** Returns the url when it is http(s), otherwise null. */
-export function safeUrl(url: string, protocols: string[] = ['http:', 'https:']): string | null {
-  try {
-    const u = new URL(url);
-    return protocols.includes(u.protocol) ? u.toString() : null;
-  } catch {
-    return null;
-  }
-}
+export { safeUrl };
 
 /** The URL of an `openUrl` function call action, or null for any other action. */
 export function openUrlOf(action: unknown, scope: Scope): string | null {

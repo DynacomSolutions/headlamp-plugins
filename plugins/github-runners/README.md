@@ -59,7 +59,7 @@ The sections below describe the ARC feed. The page uses it when the runner servi
 - **Overview**: summary stats, one card per node (ready/offline, busy marks,
   best-effort external workers), live jobs (job, repository, workflow, run,
   node, runner, scale set, status) and starting runners. Job, repository,
-  workflow and run cells link out to github.com.
+  workflow and run cells are plain text with the github.com address in the tooltip. No link opens a new tab.
 - **Capacity**: live, from watched Kubernetes lists and the polled endpoint.
   Pools (one row per `AutoscalingRunnerSet`: repo or organisation served, cap,
   running, waiting to start with a short reason such as "not enough CPU",

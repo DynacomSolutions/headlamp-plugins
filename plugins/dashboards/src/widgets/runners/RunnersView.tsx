@@ -1,49 +1,68 @@
 /*
  * Draws the runner model (see `join.ts`): fixed stat tiles on top, one ring for each pool (use,
  * queued and free), then one scroll area with the list. With the `runs` panel the list is a tree:
- * an org, its repos, their runs, then the jobs and steps of a run. Orgs are open by default.
- * Repos and runs are collapsed. A group the user flips stays flipped only until the page reloads.
+ * a repository, then its branch or pull request, then the workflow, then the job. The steps of a
+ * job are one more level that opens under the job. Each row shows the running and queued job
+ * counts and the longest time. A job row shows its state, node, waited time and running time.
  * Without the `runs` panel the list is the queue rows.
- * Every row is drawn: nothing folds into a "+N more" line. A link goes only to a dashboard tab.
+ * Every row is drawn: nothing folds into a "+N more" line.
+ *
+ * A click, or Enter or Space, opens or folds a row in place. No row is a link: nothing in the
+ * list navigates, opens a tab or changes the dashboard tab. Repos are folded at first. The open
+ * rows are in the page URL, in the param `w.<widget id>`, written with history replace. The URL
+ * holds the node keys that differ from the default, so a reload, a refresh of the data and the
+ * kiosk mode keep the view. In edit mode a click changes the view only, not the URL.
  *
  * Two options change the look, so one tab can use the widget as a compact strip and another as a
  * full list: `view` (`full`, `summary` for the tiles and rings only, `list` for the tree only) and
- * `expand` (`all` opens every org, repo, run and job at first; the default opens only the orgs).
- * An org and a repo show their icon when the icon map has one (see `icons.ts`).
+ * `expand` (`all` opens every row at first; the default folds the repos).
+ * A repo row shows its icon when the icon map has one (see `icons.ts`).
  */
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
 import React from 'react';
 import { ScrollArea } from '../../components/ScrollArea';
-import { InternalLink, useResolveLink } from '../../links';
+import { useWidgetUrlState } from '../../widgetUrlState';
 import { WidgetFooter } from '../footer';
-import type { PanelJob, PanelRun, PanelStep, Stat, StepState } from '../panels/model';
+import type { JobPhase, PanelStatus, PanelStep, Stat, StepState } from '../panels/model';
+import { StatusMark } from '../panels/StatusMark';
 import { useTokens } from '../panels/tokens';
 import { useElementSize } from '../promql/useElementSize';
 import { GroupIcon } from './GroupIcon';
-import { type IconMap, orgIconFor, repoIconFor, useIconMap } from './icons';
+import { type IconMap, repoIconFor, useIconMap } from './icons';
 import {
+  type Counted,
+  formatNodeKeys,
   formatWait,
-  groupRuns,
-  type OrgGroup,
+  groupTree,
+  type JobEntry,
+  jobNodeOf,
+  jobRunSecondsOf,
+  jobWaitSecondsOf,
+  NO_BRANCH,
+  parseNodeKeys,
   progressOf,
   type QueueRow,
-  type RepoGroup,
+  type RepoNode,
   type RunnerModel,
   type RunnerPool,
+  runSuffixOf,
   STEP_GAP,
   STEP_GROUP_ORDER,
   STEP_MIN_SEGMENT,
   stepBarLayout,
-  stepsOfRun,
+  treeKeys,
+  type TreeOptions,
 } from './join';
 
 /** What the widget draws: the tiles, the rings and the list, or only one part. */
 export type RunnersViewMode = 'full' | 'summary' | 'list';
 export const VIEW_MODES: ReadonlyArray<RunnersViewMode> = ['full', 'summary', 'list'];
 
-/** `all` opens every group, run and job at first. Anything else keeps the default. */
+/** `all` opens every row at first. Anything else keeps the default (repos folded). */
 export type RunnersExpand = 'default' | 'all';
 
 /** Reads the `view` option of a saved config. A missing or wrong value gives `full`. */
@@ -61,8 +80,8 @@ const RING_STROKE = 6;
 const HATCH_STEP = 3.4;
 let hatchCounter = 0;
 
-const LINK_STYLE: React.CSSProperties = { color: 'inherit', textDecoration: 'none' };
 const EMPTY = 'No queued jobs';
+export const HOSTED_WORD = 'GitHub-hosted';
 
 /** The words for a step state, for the tooltip and the screen reader. */
 export const STEP_WORD: Record<StepState, string> = {
@@ -489,157 +508,6 @@ function StepList(props: { steps: ReadonlyArray<PanelStep>; depth: number }): JS
   );
 }
 
-function JobRow(props: {
-  job: PanelJob;
-  depth: number;
-  open: boolean;
-  toggle: () => void;
-}): JSX.Element {
-  const { job, depth, open, toggle } = props;
-  const tk = useTokens();
-  const hasSteps = job.steps.length > 0;
-  return (
-    <>
-      <Box
-        data-job={job.id}
-        data-open={open ? '' : undefined}
-        role={hasSteps ? 'button' : undefined}
-        tabIndex={hasSteps ? 0 : undefined}
-        aria-expanded={hasSteps ? open : undefined}
-        onClick={hasSteps ? toggle : undefined}
-        onKeyDown={e => {
-          if (hasSteps && (e.key === 'Enter' || e.key === ' ')) {
-            e.preventDefault();
-            toggle();
-          }
-        }}
-        sx={{ ...rowSx(tk, depth), cursor: hasSteps ? 'pointer' : 'default' }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
-          <Chevron open={open} show={hasSteps} />
-          <Box
-            sx={{
-              fontSize: 13,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {job.name}
-          </Box>
-          <Box data-time sx={{ ...TIME_SX, ml: 'auto', minWidth: 52, textAlign: 'right' }}>
-            {formatWait(job.seconds)}
-          </Box>
-        </Box>
-        <Box sx={{ pl: '20px' }}>
-          <Progress steps={job.steps} waiting={job.phase === 'queued'} />
-        </Box>
-      </Box>
-      {open && hasSteps && <StepList steps={job.steps} depth={depth} />}
-    </>
-  );
-}
-
-function RunRow(props: {
-  run: PanelRun;
-  link?: string;
-  depth: number;
-  open: boolean;
-  /** Whether a run or job key is open. */
-  isOpen: (key: string) => boolean;
-  toggle: (id: string) => void;
-}): JSX.Element {
-  const { run, link, depth, open, isOpen, toggle } = props;
-  const tk = useTokens();
-  const steps = stepsOfRun(run);
-  const expandable = run.jobs.length > 0;
-  // The org and the repo are the group headers, so the row starts with the workflow.
-  const workflow = (
-    <Box
-      component="span"
-      data-run-workflow
-      sx={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}
-    >
-      {run.workflow || run.id}
-    </Box>
-  );
-  return (
-    <>
-      <Box
-        data-run={run.id}
-        data-run-state={run.state}
-        data-open={open ? '' : undefined}
-        role={expandable ? 'button' : undefined}
-        tabIndex={expandable ? 0 : undefined}
-        aria-expanded={expandable ? open : undefined}
-        onClick={expandable ? () => toggle(run.id) : undefined}
-        onKeyDown={e => {
-          if (expandable && (e.key === 'Enter' || e.key === ' ')) {
-            e.preventDefault();
-            toggle(run.id);
-          }
-        }}
-        sx={{ ...rowSx(tk, depth), cursor: expandable ? 'pointer' : 'default' }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
-          <Chevron open={open} show={expandable} />
-          {link ? (
-            <InternalLink to={link} style={{ ...LINK_STYLE, display: 'flex', minWidth: 0 }}>
-              {workflow}
-            </InternalLink>
-          ) : (
-            workflow
-          )}
-          <Box
-            data-run-meta
-            sx={{
-              fontSize: 11.5,
-              color: tk.fg2,
-              whiteSpace: 'nowrap',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              minWidth: 0,
-              flex: '0 1 auto',
-            }}
-          >
-            {run.ref}
-          </Box>
-          <Box
-            data-run-pool
-            sx={{
-              ml: 'auto',
-              flex: 'none',
-              fontSize: 11,
-              px: '6px',
-              borderRadius: '8px',
-              color: tk.fg2,
-              boxShadow: `inset 0 0 0 1px ${tk.line2}`,
-            }}
-          >
-            {run.pool}
-          </Box>
-          <Box data-time sx={{ ...TIME_SX, minWidth: 52, textAlign: 'right' }}>
-            {formatWait(run.seconds)}
-          </Box>
-        </Box>
-        <Box sx={{ pl: '20px' }}>
-          <Progress steps={steps} waiting={run.state === 'queued'} />
-        </Box>
-      </Box>
-      {open &&
-        run.jobs.map(job => (
-          <JobRow
-            key={job.id}
-            job={job}
-            depth={depth + 1}
-            open={isOpen(`${run.id}\u0000${job.id}`)}
-            toggle={() => toggle(`${run.id}\u0000${job.id}`)}
-          />
-        ))}
-    </>
-  );
-}
-
 /** "2 running, 1 queued". A count of 0 is left out. Both 0 gives "idle". */
 export function countsText(g: { running: number; queued: number }): string {
   const parts = [
@@ -649,60 +517,37 @@ export function countsText(g: { running: number; queued: number }): string {
   return parts.length > 0 ? parts.join(', ') : 'idle';
 }
 
-/** The header of an org or a repo: chevron, name, the counts and the longest time. */
-function GroupHeader(props: {
-  kind: 'org' | 'repo';
-  group: OrgGroup | RepoGroup;
-  depth: number;
-  open: boolean;
-  toggle: () => void;
-  /** The icon address, or undefined. Used only when `slot` is true. */
-  icon?: string;
-  /** Draw the icon slot, even when this header has no icon. */
-  slot?: boolean;
-}): JSX.Element {
-  const { kind, group, depth, open, toggle, icon, slot = false } = props;
+/** Fold or open a row from the keyboard: Enter and Space. */
+const keyToggle =
+  (toggle: () => void) =>
+  (e: React.KeyboardEvent): void => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  };
+
+/** The props that make a row open and close in place when it is clicked. It never navigates. */
+function toggleProps(expandable: boolean, open: boolean, toggle: () => void, label: string) {
+  return expandable
+    ? {
+        role: 'button' as const,
+        tabIndex: 0,
+        'aria-expanded': open,
+        'aria-label': `${open ? 'Fold' : 'Expand'} ${label}`,
+        onClick: toggle,
+        onKeyDown: keyToggle(toggle),
+      }
+    : {};
+}
+
+/** The running and queued counts of a group row, then its longest time. */
+function GroupCounts(props: Counted): JSX.Element {
   const tk = useTokens();
   const c = useRingColours();
   return (
-    <Box
-      data-group={kind}
-      data-group-key={group.key}
-      data-open={open ? '' : undefined}
-      role="button"
-      tabIndex={0}
-      aria-expanded={open}
-      aria-label={`${open ? 'Fold' : 'Expand'} ${group.name}`}
-      onClick={toggle}
-      onKeyDown={e => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          toggle();
-        }
-      }}
-      sx={{
-        ...rowSx(tk, depth),
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: '4px',
-        cursor: 'pointer',
-      }}
-    >
-      <Chevron open={open} show />
-      {slot && <GroupIcon src={icon} name={group.name} />}
-      <Box
-        data-group-name
-        sx={{
-          fontSize: kind === 'org' ? 13.5 : 13,
-          fontWeight: kind === 'org' ? 700 : 600,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          minWidth: 0,
-        }}
-      >
-        {group.name}
-      </Box>
+    <>
       <Box
         data-group-counts
         sx={{
@@ -716,14 +561,14 @@ function GroupHeader(props: {
           color: tk.fg2,
         }}
       >
-        {group.running > 0 && (
+        {props.running > 0 && (
           <Box component="span" data-group-running sx={{ color: c.running }}>
-            {group.running} running
+            {props.running} running
           </Box>
         )}
-        {group.queued > 0 && (
+        {props.queued > 0 && (
           <Box component="span" data-group-queued sx={{ color: c.queued }}>
-            {group.queued} queued
+            {props.queued} queued
           </Box>
         )}
       </Box>
@@ -732,127 +577,371 @@ function GroupHeader(props: {
         title="Longest time in this group"
         sx={{ ...TIME_SX, minWidth: 52, ml: '8px', textAlign: 'right' }}
       >
-        {formatWait(group.longest)}
+        {formatWait(props.longest)}
       </Box>
+    </>
+  );
+}
+
+/** The chip on a job, a group or a repo that runs on GitHub-hosted runners only. */
+function HostedChip(): JSX.Element {
+  const tk = useTokens();
+  return (
+    <Box
+      component="span"
+      data-hosted-chip
+      title="Runs on GitHub-hosted runners, not on the runners of this source"
+      sx={{
+        flex: 'none',
+        fontSize: 10.5,
+        lineHeight: 1.4,
+        px: '6px',
+        borderRadius: '8px',
+        fontWeight: 400,
+        color: tk.fg2,
+        boxShadow: `inset 0 0 0 1px ${tk.line2}`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {HOSTED_WORD}
     </Box>
   );
 }
 
-/**
- * The groups that the user flipped from their default, for each runner source and expand mode. An
- * org is open by default and a repo is folded by default (all groups are open with `expand: all`),
- * so a key here means the opposite of the default. This lives in the page, not in storage: a tab
- * switch keeps it, and a reload goes back to the defaults. The mode is part of the key, so two tabs
- * with different modes never flip each other's groups.
- */
-const FLIPPED = new Map<string, ReadonlySet<string>>();
+/** "last run 1h 20m ago", with the full local date and time in the title. */
+function LastRun(props: { at?: string; conclusion?: string }): JSX.Element {
+  const tk = useTokens();
+  const t = props.at ? Date.parse(props.at) : NaN;
+  const known = Number.isFinite(t);
+  const text = known ? `last run ${formatWait((Date.now() - t) / 1000)} ago` : 'no recent run';
+  const title = known
+    ? `${new Date(t).toLocaleString()}${props.conclusion ? `, ${props.conclusion}` : ''}`
+    : 'The source has no recent run for this repository';
+  return (
+    <Box
+      data-last-run
+      title={title}
+      sx={{
+        ml: 'auto',
+        flex: 'none',
+        fontSize: 11.5,
+        fontVariantNumeric: 'tabular-nums',
+        whiteSpace: 'nowrap',
+        color: tk.mut,
+      }}
+    >
+      {text}
+    </Box>
+  );
+}
 
-/** Forget every flip. Tests use it to start from the default state. */
-export function resetRunnerFolds(): void {
-  FLIPPED.clear();
+type GroupKind = 'repo' | 'ref' | 'workflow';
+
+/**
+ * The row of a repo, a branch or pull request, or a workflow: chevron, name, the counts and the
+ * longest time. A click or Enter or Space opens or folds it in place. It is never a link.
+ */
+function GroupRow(props: {
+  kind: GroupKind;
+  nodeKey: string;
+  group: Counted;
+  label: React.ReactNode;
+  /** The plain text of the label, for the screen reader. */
+  name: string;
+  depth: number;
+  open: boolean;
+  expandable: boolean;
+  toggle: () => void;
+  /** The icon address, or undefined. Used only when `slot` is true. */
+  icon?: string;
+  /** Draw the icon slot, even when this row has no icon. */
+  slot?: boolean;
+  /** Show the chip: every job of this row is GitHub-hosted. */
+  hosted?: boolean;
+  /** Show the last run time instead of the counts: the row has no running or queued job. */
+  lastRun?: { at?: string; conclusion?: string };
+}): JSX.Element {
+  const { kind, group, depth, open, expandable, toggle, icon, slot = false } = props;
+  const tk = useTokens();
+  return (
+    <Box
+      data-group={kind}
+      data-group-key={props.nodeKey}
+      data-open={open ? '' : undefined}
+      {...toggleProps(expandable, open, toggle, props.name)} // dashboard-links: allow row toggle props: role, tabIndex, aria and key handlers only
+      sx={{
+        ...rowSx(tk, depth),
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: '4px',
+        cursor: expandable ? 'pointer' : 'default',
+      }}
+    >
+      <Chevron open={open} show={expandable} />
+      {slot && <GroupIcon src={icon} name={props.name} />}
+      <Box
+        data-group-name
+        sx={{
+          fontSize: kind === 'repo' ? 13.5 : 13,
+          fontWeight: kind === 'workflow' ? 500 : 600,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          minWidth: 0,
+          display: 'flex',
+          gap: '6px',
+          alignItems: 'baseline',
+        }}
+      >
+        {props.label}
+      </Box>
+      {props.hosted && <HostedChip />}
+      {props.lastRun ? (
+        <LastRun at={props.lastRun.at} conclusion={props.lastRun.conclusion} />
+      ) : (
+        <GroupCounts running={group.running} queued={group.queued} longest={group.longest} />
+      )}
+    </Box>
+  );
+}
+
+/** The mark of a job state: a shape and a word. Running is a circle, assigned a ring, queued a triangle. */
+const JOB_MARK: Record<JobPhase, PanelStatus> = {
+  running: 'ok',
+  assigned: 'unknown',
+  queued: 'warn',
+};
+
+/** One job: its state, node, waited time and running time. A click opens its steps. */
+function JobRow(props: {
+  entry: JobEntry;
+  /** The suffix that tells the runs of one workflow apart. Empty when the workflow has one run. */
+  suffix: string;
+  depth: number;
+  open: boolean;
+  toggle: () => void;
+}): JSX.Element {
+  const { entry, suffix, depth, open, toggle } = props;
+  const { job } = entry;
+  const tk = useTokens();
+  const hasSteps = job.steps.length > 0;
+  const node = jobNodeOf(job);
+  const waited = jobWaitSecondsOf(job);
+  const ran = jobRunSecondsOf(job);
+  const timeCell = (word: string, value: number | undefined, attr: Record<string, string>) => (
+    <Box
+      component="span"
+      title={word === 'wait' ? 'Waited for a runner' : 'Running time'}
+      sx={{ ...TIME_SX, color: tk.fg2, fontSize: 12, minWidth: 40, textAlign: 'right' }}
+    >
+      <Box component="span" sx={{ fontSize: 10.5, mr: '3px', color: tk.mut }}>
+        {word}
+      </Box>
+      <Box
+        component="span"
+        {...attr} // dashboard-links: allow timing attributes: data attributes only
+        sx={{ color: tk.fg }}
+      >
+        {value === undefined ? '-' : formatWait(value)}
+      </Box>
+    </Box>
+  );
+  return (
+    <>
+      <Box
+        data-job={job.id}
+        data-job-key={entry.key}
+        data-open={open ? '' : undefined}
+        {...toggleProps(hasSteps, open, toggle, job.name)} // dashboard-links: allow row toggle props: role, tabIndex, aria and key handlers only
+        sx={{ ...rowSx(tk, depth), cursor: hasSteps ? 'pointer' : 'default' }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+          <Chevron open={open} show={hasSteps} />
+          <StatusMark status={JOB_MARK[job.phase]} size={11} />
+          <Box
+            component="span"
+            data-job-state={job.phase}
+            sx={{ fontSize: 11, color: tk.fg2, flex: 'none' }}
+          >
+            {job.phase}
+          </Box>
+          <Box
+            data-job-name
+            sx={{
+              fontSize: 13,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              minWidth: 0,
+            }}
+          >
+            {job.name}
+            {suffix && (
+              <Box
+                component="span"
+                data-run-suffix
+                title={`Run ${entry.run.id}`}
+                sx={{ ml: '6px', fontSize: 11, color: tk.fg2 }}
+              >
+                {suffix}
+              </Box>
+            )}
+          </Box>
+          {entry.hosted && <HostedChip />}
+          <Box
+            data-job-node
+            data-node-reported={node.reported ? 'true' : 'false'}
+            title={node.reported ? 'Node' : 'Node not reported, pool shown'}
+            sx={{
+              ml: 'auto',
+              flex: '0 1 auto',
+              minWidth: 0,
+              maxWidth: 110,
+              fontSize: 12,
+              color: node.reported ? tk.fg : tk.mut,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {node.text || '-'}
+          </Box>
+          {timeCell('wait', waited, { 'data-job-waited': '' })}
+          {timeCell('run', ran, { 'data-job-running': '' })}
+        </Box>
+        {hasSteps && (
+          <Box sx={{ pl: '20px' }}>
+            <Progress steps={job.steps} waiting={job.phase === 'queued'} />
+          </Box>
+        )}
+      </Box>
+      {open && hasSteps && <StepList steps={job.steps} depth={depth} />}
+    </>
+  );
+}
+
+/** The label of a ref row: `PR #12` with the branch after it, the branch name, or "No branch". */
+function RefLabel(props: { name: string; pr?: number }): JSX.Element {
+  const tk = useTokens();
+  const { name, pr } = props;
+  if (pr !== undefined) {
+    return (
+      <>
+        <span data-ref-pr>{`PR #${pr}`}</span>
+        {name && (
+          <Box component="span" data-ref-branch sx={{ color: tk.fg2, fontWeight: 400 }}>
+            {name}
+          </Box>
+        )}
+      </>
+    );
+  }
+  if (name === '') {
+    return (
+      <Box component="span" data-ref-none sx={{ color: tk.mut, fontStyle: 'italic' }}>
+        {NO_BRANCH}
+      </Box>
+    );
+  }
+  return <span>{name}</span>;
 }
 
 /**
- * The runs as org groups, then repo groups, then run rows. An org is open until the user folds it.
- * A repo is folded until the user opens it. A folded repo header still shows its counts and its
- * longest time. With `expandAll` every org, repo, run and job is open until the user folds it.
+ * The tree: repo, then branch or pull request, then workflow, then job (and the steps of a job).
+ * Every row opens and folds in place. `toggled` holds the node keys that differ from the default:
+ * with no `expandAll` they are the open rows, with `expandAll` they are the rows that the user
+ * folded. No row is a link.
  */
 function RunTree(props: {
-  runs: PanelRun[];
-  link?: string;
-  sourceId: string;
+  tree: RepoNode[];
+  toggled: ReadonlySet<string>;
   expandAll: boolean;
+  toggle: (key: string) => void;
   icons: IconMap;
 }): JSX.Element {
-  const { sourceId, expandAll, icons } = props;
-  const foldKey = `${sourceId}\u0000${expandAll ? 'all' : 'default'}`;
-  // The run and job rows that the user flipped. Without `expandAll` they are the open ones.
-  const [toggled, setToggled] = React.useState<ReadonlySet<string>>(new Set());
-  const [flipped, setFlippedState] = React.useState<ReadonlySet<string>>(
-    () => FLIPPED.get(foldKey) ?? new Set()
-  );
-  const setFlipped = React.useCallback(
-    (update: (prev: ReadonlySet<string>) => ReadonlySet<string>) =>
-      setFlippedState(prev => {
-        const next = update(prev);
-        FLIPPED.set(foldKey, next);
-        return next;
-      }),
-    [foldKey]
-  );
-  const toggle = React.useCallback(
-    (id: string) =>
-      setToggled(prev => {
-        const next = new Set(prev);
-        if (!next.delete(id)) next.add(id);
-        return next;
-      }),
-    []
-  );
-  const flip = React.useCallback(
-    (key: string) =>
-      setFlipped(prev => {
-        const next = new Set(prev);
-        if (!next.delete(key)) next.add(key);
-        return next;
-      }),
-    [setFlipped]
-  );
-  const groups = React.useMemo(() => groupRuns(props.runs), [props.runs]);
-  // One slot for every header as soon as one header has an icon, so the names stay aligned.
+  const { tree, toggled, expandAll, toggle, icons } = props;
+  // One slot for every repo row as soon as one has an icon, so the names stay aligned.
   const slot = React.useMemo(
-    () =>
-      groups.some(
-        o =>
-          orgIconFor(o.name, icons) !== undefined ||
-          o.repos.some(r => repoIconFor(o.name, r.name, icons) !== undefined)
-      ),
-    [groups, icons]
+    () => tree.some(r => repoIconFor(r.org, r.short, icons) !== undefined),
+    [tree, icons]
   );
-  const runOpen = (id: string): boolean => (expandAll ? !toggled.has(id) : toggled.has(id));
+  const isOpen = (key: string): boolean => (expandAll ? !toggled.has(key) : toggled.has(key));
   return (
     <>
-      {groups.map(org => {
-        const orgKey = `org\u0000${org.key}`;
-        const orgOpen = !flipped.has(orgKey);
+      {tree.map(repo => {
+        const repoOpen = isOpen(repo.key);
         return (
-          <React.Fragment key={orgKey}>
-            <GroupHeader
-              kind="org"
-              group={org}
+          <React.Fragment key={repo.key}>
+            <GroupRow
+              kind="repo"
+              nodeKey={repo.key}
+              group={repo}
+              label={repo.name}
+              name={repo.name}
               depth={0}
-              open={orgOpen}
-              toggle={() => flip(orgKey)}
-              icon={orgIconFor(org.name, icons)}
+              open={repoOpen && !repo.idle}
+              expandable={!repo.idle}
+              toggle={() => toggle(repo.key)}
+              icon={repoIconFor(repo.org, repo.short, icons)}
               slot={slot}
+              hosted={repo.hosted}
+              lastRun={
+                repo.idle && repo.queued === 0
+                  ? { at: repo.lastRunAt, conclusion: repo.lastConclusion }
+                  : undefined
+              }
             />
-            {orgOpen &&
-              org.repos.map(repo => {
-                const repoKey = `repo\u0000${repo.key}`;
-                const repoOpen = expandAll ? !flipped.has(repoKey) : flipped.has(repoKey);
+            {repoOpen &&
+              !repo.idle &&
+              repo.refs.map(ref => {
+                const refOpen = isOpen(ref.key);
                 return (
-                  <React.Fragment key={repoKey}>
-                    <GroupHeader
-                      kind="repo"
-                      group={repo}
+                  <React.Fragment key={ref.key}>
+                    <GroupRow
+                      kind="ref"
+                      nodeKey={ref.key}
+                      group={ref}
+                      label={<RefLabel name={ref.name} pr={ref.pr} />}
+                      name={
+                        ref.pr !== undefined ? `PR #${ref.pr} ${ref.name}` : ref.name || NO_BRANCH
+                      }
                       depth={1}
-                      open={repoOpen}
-                      toggle={() => flip(repoKey)}
-                      icon={repoIconFor(org.name, repo.name, icons)}
-                      slot={slot}
+                      open={refOpen}
+                      expandable
+                      toggle={() => toggle(ref.key)}
+                      hosted={ref.hosted}
                     />
-                    {repoOpen &&
-                      repo.runs.map(run => (
-                        <RunRow
-                          key={run.id}
-                          run={run}
-                          link={props.link}
-                          depth={2}
-                          open={runOpen(run.id)}
-                          isOpen={runOpen}
-                          toggle={toggle}
-                        />
-                      ))}
+                    {refOpen &&
+                      ref.workflows.map(wf => {
+                        const wfOpen = isOpen(wf.key);
+                        return (
+                          <React.Fragment key={wf.key}>
+                            <GroupRow
+                              kind="workflow"
+                              nodeKey={wf.key}
+                              group={wf}
+                              label={wf.name}
+                              name={wf.name}
+                              depth={2}
+                              open={wfOpen}
+                              expandable={wf.jobs.length > 0}
+                              toggle={() => toggle(wf.key)}
+                              hosted={wf.hosted}
+                            />
+                            {wfOpen &&
+                              wf.jobs.map(entry => (
+                                <JobRow
+                                  key={entry.key}
+                                  entry={entry}
+                                  suffix={wf.runs.length > 1 ? runSuffixOf(entry.run) : ''}
+                                  depth={3}
+                                  open={isOpen(entry.key)}
+                                  toggle={() => toggle(entry.key)}
+                                />
+                              ))}
+                          </React.Fragment>
+                        );
+                      })}
                   </React.Fragment>
                 );
               })}
@@ -863,35 +952,20 @@ function RunTree(props: {
   );
 }
 
-function QueueRows(props: { rows: QueueRow[]; link?: string }): JSX.Element {
+/** The queue rows of a source with no `runs` panel. They are plain rows, never links. */
+function QueueRows(props: { rows: QueueRow[] }): JSX.Element {
   const tk = useTokens();
   return (
     <>
       {props.rows.map(r => (
         <Box key={r.key} data-queue-row sx={rowSx(tk, 0)}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-            {props.link ? (
-              <InternalLink to={props.link} style={{ ...LINK_STYLE, display: 'flex', minWidth: 0 }}>
-                <Box
-                  component="span"
-                  sx={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {r.repo}
-                </Box>
-              </InternalLink>
-            ) : (
-              <Box
-                component="span"
-                sx={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}
-              >
-                {r.repo}
-              </Box>
-            )}
+            <Box
+              component="span"
+              sx={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}
+            >
+              {r.repo}
+            </Box>
             <Box data-time sx={{ ...TIME_SX, ml: 'auto' }}>
               {r.oldest}
             </Box>
@@ -905,23 +979,134 @@ function QueueRows(props: { rows: QueueRow[]; link?: string }): JSX.Element {
   );
 }
 
+/**
+ * The filter "Show GitHub-hosted", kept in the page URL as `w.<instanceId>.hosted=1` (history
+ * replace). In edit mode, or with no `instanceId`, a change is local to the view and the URL stays.
+ */
+function useHostedFilter(props: {
+  instanceId?: string;
+  editing: boolean;
+}): [boolean, (on: boolean) => void] {
+  const { instanceId, editing } = props;
+  const [text, write] = useWidgetUrlState(instanceId, 'hosted');
+  const localOnly = editing || !instanceId;
+  const [local, setLocal] = React.useState<boolean | null>(null);
+  React.useEffect(() => {
+    if (!localOnly) setLocal(null);
+  }, [localOnly]);
+  const on = localOnly && local !== null ? local : text === '1';
+  const set = React.useCallback(
+    (next: boolean) => {
+      if (localOnly) setLocal(next);
+      else write(next ? '1' : '');
+    },
+    [localOnly, write]
+  );
+  return [on, set];
+}
+
+/** The small switch that shows or hides the GitHub-hosted jobs. */
+function HostedToggle(props: { on: boolean; set: (on: boolean) => void }): JSX.Element {
+  const tk = useTokens();
+  return (
+    <FormControlLabel
+      data-hosted-toggle
+      sx={{
+        m: 0,
+        flex: 'none',
+        alignSelf: 'flex-end',
+        // A small gap, so the label does not touch the thumb of the switch.
+        '& .MuiFormControlLabel-label': { fontSize: 11.5, color: tk.fg2, ml: 0.75 },
+      }}
+      control={
+        <Switch
+          size="small"
+          checked={props.on}
+          onChange={e => props.set(e.target.checked)}
+          inputProps={{ 'aria-label': `Show ${HOSTED_WORD}` }}
+        />
+      }
+      label={`Show ${HOSTED_WORD}`}
+    />
+  );
+}
+
+/**
+ * The open rows of the tree, kept in the page URL (`w.<instanceId>`, written with history replace)
+ * so the URL alone reproduces the view. In edit mode, or with no `instanceId`, a toggle changes
+ * the view only and the URL stays as it is. A key that no longer exists is dropped only when the
+ * state is written, never when it is read.
+ */
+function useTreeState(props: {
+  instanceId?: string;
+  editing: boolean;
+  /** The tree with every node, also the hidden ones: only keys outside it are dropped on a write. */
+  tree: RepoNode[];
+}): [ReadonlySet<string>, (key: string) => void] {
+  const { instanceId, editing, tree } = props;
+  const [text, write] = useWidgetUrlState(instanceId);
+  const [local, setLocal] = React.useState<ReadonlySet<string> | null>(null);
+  const localOnly = editing || !instanceId;
+  React.useEffect(() => {
+    // The view in edit mode is a draft. Leaving edit mode goes back to the URL.
+    if (!localOnly) setLocal(null);
+  }, [localOnly]);
+  const fromUrl = React.useMemo(() => parseNodeKeys(text), [text]);
+  const current = localOnly && local ? local : fromUrl;
+  const treeRef = React.useRef(tree);
+  treeRef.current = tree;
+  const currentRef = React.useRef(current);
+  currentRef.current = current;
+  const toggle = React.useCallback(
+    (key: string) => {
+      const next = new Set(currentRef.current);
+      if (!next.delete(key)) next.add(key);
+      currentRef.current = next;
+      if (localOnly) {
+        setLocal(next);
+        return;
+      }
+      write(formatNodeKeys(next, treeKeys(treeRef.current)));
+    },
+    [localOnly, write]
+  );
+  return [current, toggle];
+}
+
 export function RunnersView(props: {
   model: RunnerModel;
-  sourceId: string;
   editing: boolean;
   /** What to draw. Default: the tiles, the rings and the list. */
   view?: RunnersViewMode;
-  /** `all` opens every group, run and job at first. */
+  /** `all` opens every row at first. */
   expand?: RunnersExpand;
+  /** The id of the widget on the page: the open rows are in the URL param `w.<instanceId>`. */
+  instanceId?: string;
 }): JSX.Element {
-  const { model, sourceId, editing, view = 'full', expand = 'default' } = props;
+  const { model, editing, view = 'full', expand = 'default', instanceId } = props;
   const tk = useTokens();
-  const resolveLink = useResolveLink();
   const root = useElementSize<HTMLDivElement>();
   const icons = useIconMap();
-  // Every link goes to the runner tab of the dashboard, or is dropped.
-  const link = editing ? undefined : resolveLink(model.link, { panelId: 'runners', sourceId });
-  const empty = model.tree ? model.runs.length === 0 : model.queue.length === 0;
+  const [showHosted, setShowHosted] = useHostedFilter({ instanceId, editing });
+  const treeOptions = React.useMemo<TreeOptions>(
+    () => ({
+      showHosted,
+      pools: new Set(model.poolNames),
+      repos: model.repos,
+      queue: model.queue,
+    }),
+    [showHosted, model.poolNames, model.repos, model.queue]
+  );
+  const tree = React.useMemo(() => groupTree(model.runs, treeOptions), [model.runs, treeOptions]);
+  // The switch shows when the filter hides something, and while it is on (so it can be turned off).
+  const everything = React.useMemo(
+    () => (showHosted ? tree : groupTree(model.runs, { ...treeOptions, showHosted: true })),
+    [showHosted, tree, model.runs, treeOptions]
+  );
+  const hasHosted = model.tree && (showHosted || treeKeys(everything).size !== treeKeys(tree).size);
+
+  const [toggled, toggle] = useTreeState({ instanceId, editing, tree: everything });
+  const empty = model.tree ? tree.length === 0 : model.queue.length === 0;
   const showSummary = view !== 'list';
   const showList = view !== 'summary';
   const unlisted = model.tree && model.unlisted > 0;
@@ -967,6 +1152,7 @@ export function RunnersView(props: {
         ) : (
           summary
         ))}
+      {showList && model.tree && hasHosted && <HostedToggle on={showHosted} set={setShowHosted} />}
       {showList && (
         <ScrollArea label="Running and queued runs">
           {empty ? (
@@ -975,14 +1161,14 @@ export function RunnersView(props: {
             </Box>
           ) : model.tree ? (
             <RunTree
-              runs={model.runs}
-              link={link}
-              sourceId={sourceId}
+              tree={tree}
+              toggled={toggled}
               expandAll={expand === 'all'}
+              toggle={toggle}
               icons={icons}
             />
           ) : (
-            <QueueRows rows={model.queue} link={link} />
+            <QueueRows rows={model.queue} />
           )}
         </ScrollArea>
       )}

@@ -121,7 +121,9 @@ export const usagePairWidget: WidgetDefinition<UsagePairConfig> = {
   },
   SettingsComponent: props => (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-      <SourcePanelPicker {...props} />
+      <SourcePanelPicker
+        {...props} // dashboard-links: allow settings props of the widget, no link props
+      />
       <SettingsForm
         config={props.config}
         onChange={props.onChange}

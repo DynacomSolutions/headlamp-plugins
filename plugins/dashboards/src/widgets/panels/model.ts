@@ -176,6 +176,14 @@ export interface PanelJob {
   pool: string;
   /** Seconds the job has run (running) or waited (queued). */
   seconds: number;
+  /** True when the job ran, or runs, on a GitHub-hosted runner. A source may not report it. */
+  hosted?: boolean;
+  /** The node that runs the job. A source may not report it yet. */
+  node?: string;
+  /** Seconds the job waited for a runner, when the source reports it apart from `seconds`. */
+  waitedSeconds?: number;
+  /** Seconds the job has run, when the source reports it apart from `seconds`. */
+  runningSeconds?: number;
   steps: PanelStep[];
 }
 
@@ -192,6 +200,8 @@ export interface PanelRun {
   workflow: string;
   /** The branch or pull request of the run. */
   ref: string;
+  /** The number of the pull request, when the run belongs to one. */
+  pr?: number;
   pool: string;
   state: RunState;
   /** Seconds the run has run (running) or waited (queued). */
@@ -203,6 +213,21 @@ export interface PanelRun {
    */
   counts?: JobCounts;
   jobs: PanelJob[];
+}
+
+/**
+ * One repository of an optional `repos` panel: every repository that the source knows, also when
+ * it has no running or queued job.
+ */
+export interface PanelRepo {
+  /** `owner/repo`. */
+  repo: string;
+  /** When the last run of the repository started, as an RFC 3339 time. */
+  lastRunAt?: string;
+  /** The result of the last run, for example `success` or `failure`. */
+  lastConclusion?: string;
+  /** True when every recent job of the repository ran on GitHub-hosted runners. */
+  hosted?: boolean;
 }
 
 export interface PanelModel {
@@ -218,6 +243,8 @@ export interface PanelModel {
   rings: PanelRing[];
   tables: PanelTable[];
   runs: PanelRun[];
+  /** The repositories of the optional `repos` panel. Missing when the source has none. */
+  repos?: PanelRepo[];
   /**
    * The totals of all jobs of the source, counted before the source cut the list of runs. Missing
    * in the data of an older source.
@@ -451,11 +478,23 @@ function parseJobCounts(raw: unknown): JobCounts | undefined {
   return running === undefined || queued === undefined ? undefined : { running, queued };
 }
 
+/** A non-negative finite number, or undefined for any other value. */
+const optSeconds = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+
+/** A positive whole number, or undefined for any other value. */
+const optCount = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isInteger(v) && v > 0 ? v : undefined;
+
 function parseJob(raw: unknown): PanelJob | null {
   if (!isObject(raw)) return null;
   const name = str(raw.name);
   if (name === '') return null;
   const state = oneOf(raw.state, RUN_STATES, 'running');
+  const node = typeof raw.node === 'string' && raw.node.trim() !== '' ? raw.node : undefined;
+  const hosted = typeof raw.hosted === 'boolean' ? raw.hosted : undefined;
+  const waitedSeconds = optSeconds(raw.waitedSeconds);
+  const runningSeconds = optSeconds(raw.runningSeconds);
   return {
     id: str(raw.id, name),
     name,
@@ -463,6 +502,10 @@ function parseJob(raw: unknown): PanelJob | null {
     phase: oneOf(raw.phase, JOB_PHASES, state),
     pool: str(raw.pool),
     seconds: seconds(raw.seconds),
+    ...(hosted !== undefined ? { hosted } : {}),
+    ...(node !== undefined ? { node } : {}),
+    ...(waitedSeconds !== undefined ? { waitedSeconds } : {}),
+    ...(runningSeconds !== undefined ? { runningSeconds } : {}),
     steps: array(raw.steps)
       .filter(isObject)
       .map(s => ({ name: str(s.name), state: oneOf(s.state, STEP_STATES, 'pending') })),
@@ -476,12 +519,14 @@ function parseRun(raw: unknown): PanelRun | null {
   const workflow = str(raw.workflow);
   const ref = str(raw.ref);
   const counts = parseJobCounts(raw.counts);
+  const pr = optCount(raw.pr);
   return {
     id: str(raw.id, `${repo} ${workflow} ${ref}`),
     repo,
     repoKnown: raw.repoKnown !== false,
     workflow,
     ref,
+    ...(pr !== undefined ? { pr } : {}),
     pool: str(raw.pool),
     state: oneOf(raw.state, RUN_STATES, 'queued'),
     seconds: seconds(raw.seconds),
@@ -490,6 +535,26 @@ function parseRun(raw: unknown): PanelRun | null {
     jobs: array(raw.jobs)
       .map(parseJob)
       .filter((j): j is PanelJob => j !== null),
+  };
+}
+
+/** A repo of the `repos` panel. A bad time or a wrong type is left out, and a missing name drops the entry. */
+function parseRepo(raw: unknown): PanelRepo | null {
+  if (!isObject(raw)) return null;
+  const repo = typeof raw.repo === 'string' ? raw.repo.trim() : '';
+  if (repo === '') return null;
+  const at = typeof raw.lastRunAt === 'string' ? raw.lastRunAt : '';
+  const lastRunAt = at !== '' && Number.isFinite(Date.parse(at)) ? at : undefined;
+  const lastConclusion =
+    typeof raw.lastConclusion === 'string' && raw.lastConclusion !== ''
+      ? raw.lastConclusion
+      : undefined;
+  const hosted = typeof raw.hosted === 'boolean' ? raw.hosted : undefined;
+  return {
+    repo,
+    ...(lastRunAt !== undefined ? { lastRunAt } : {}),
+    ...(lastConclusion !== undefined ? { lastConclusion } : {}),
+    ...(hosted !== undefined ? { hosted } : {}),
   };
 }
 
@@ -537,6 +602,9 @@ export function parsePanel(json: unknown): PanelModel {
   const id = str(json.id);
   if (id === '') throw new Error('The source sent a panel with no id.');
   const jobs = parseJobCounts(json.jobs);
+  const repos = Array.isArray(json.repos)
+    ? json.repos.map(parseRepo).filter((r): r is PanelRepo => r !== null)
+    : undefined;
   return {
     id,
     title: str(json.title, id),
@@ -593,6 +661,7 @@ export function parsePanel(json: unknown): PanelModel {
     runs: array(json.runs)
       .map(parseRun)
       .filter((r): r is PanelRun => r !== null),
+    ...(repos ? { repos } : {}),
     ...(jobs ? { jobs } : {}),
   };
 }
@@ -624,6 +693,7 @@ export const isEmptyPanel = (p: PanelModel): boolean =>
   p.rings.every(r => r.segments.length === 0) &&
   p.tables.every(t => t.rows.length === 0) &&
   p.runs.length === 0 &&
+  (p.repos?.length ?? 0) === 0 &&
   p.summary === '';
 
 /** A ring as sunburst data. Every segment stays its own arc: nothing is merged or cut. */

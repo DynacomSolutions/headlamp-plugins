@@ -72,9 +72,9 @@ const arcId = (a: Pick<ArcShape, 'level' | 'categoryKey' | 'key'>): string =>
  */
 export function SunburstChart(props: SunburstChartProps): JSX.Element {
   return props.data.nodes && props.data.nodes.length > 0 ? (
-    <NodeSunburstChart {...props} />
+    <NodeSunburstChart {...props} /> // dashboard-links: allow own widget props, no link props
   ) : (
-    <CategorySunburstChart {...props} />
+    <CategorySunburstChart {...props} /> // dashboard-links: allow own widget props, no link props
   );
 }
 
@@ -302,7 +302,7 @@ function CategorySunburstChart({
               <li key={c.key} data-legend-group={c.key} style={{ minWidth: 0 }}>
                 <ButtonBase
                   onClick={() => select(id)}
-                  {...hoverProps(id)}
+                  {...hoverProps(id)} // dashboard-links: allow hover handlers only
                   title={`${c.label}: ${format(c.value)}`}
                   focusRipple={false}
                   disableRipple={kiosk}

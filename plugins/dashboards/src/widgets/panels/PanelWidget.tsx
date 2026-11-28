@@ -158,7 +158,9 @@ function PanelSettings(props: WidgetSettingsProps<PanelConfig>): JSX.Element {
   };
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-      <SourcePanelPicker {...props} />
+      <SourcePanelPicker
+        {...props} // dashboard-links: allow settings props of the widget, no link props
+      />
       <SettingsForm fields={DISPLAY_FIELDS} config={shown} onChange={onChange} />
     </Box>
   );

@@ -259,7 +259,7 @@ export function SunburstChart({
                 <li key={c.key}>
                   <ButtonBase
                     onClick={() => select(id)}
-                    {...hoverProps(id)}
+                    {...hoverProps(id)} // dashboard-links: allow hover handlers only
                     title={`${c.label}: ${format(c.value)}`}
                     focusRipple={false}
                     disableRipple={kiosk}

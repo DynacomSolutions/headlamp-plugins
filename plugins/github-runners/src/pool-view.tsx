@@ -2,7 +2,6 @@ import { CommonComponents } from '@kinvolk/headlamp-plugin/lib';
 const { SectionBox, StatusLabel, Table } = CommonComponents;
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
-import MuiLink from '@mui/material/Link';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import type { Board } from './data';
@@ -434,13 +433,19 @@ export function PoolNotice({ board }: { board: Board }) {
   );
 }
 
-/** Link to the runner service site, taken from the panel's own link. Only http and https links are shown. */
+/**
+ * The address of the runner service site, taken from the panel's own link. It is selectable text and
+ * has no link: a link would open a new tab. Only an http or https address is shown.
+ */
 export function PoolLink({ board }: { board: Board }) {
   const link = board.pool.board?.panels.pools?.link;
-  if (!link) return null;
+  if (!link || !/^https?:\/\//i.test(link)) return null;
   return (
-    <MuiLink href={link} target="_blank" rel="noopener noreferrer">
-      Open the runner service
-    </MuiLink>
+    <Typography variant="body2" component="span" title={link}>
+      Runner service:{' '}
+      <Box component="span" sx={{ userSelect: 'all', fontFamily: 'monospace' }}>
+        {link}
+      </Box>
+    </Typography>
   );
 }

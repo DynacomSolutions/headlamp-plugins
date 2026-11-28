@@ -19,7 +19,7 @@ import Tabs from '@mui/material/Tabs';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Link as RouterLink, Prompt, useHistory, useLocation } from 'react-router-dom';
+import { Prompt, useHistory, useLocation } from 'react-router-dom';
 import { writeCachedDashboard } from './cache/dashboardCache';
 import { lastGoodStore } from './cache/lastGood';
 import { BandActions, BandView } from './components/BandView';
@@ -232,14 +232,25 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       filters: next.filters ?? filters,
     };
     const base = baseFilters(spec, merged.view);
-    history.replace({ pathname: location.pathname, search: serialiseQuery(merged, base) });
+    // Read the live location, not the render value. A widget can write its `w.<widget id>` param
+    // in the same tick, and `keep` must carry it.
+    const now = history.location;
+    history.replace({
+      pathname: now.pathname,
+      // `keep` carries the `w.<widget id>` params, which belong to the widgets.
+      search: serialiseQuery(merged, base, now.search),
+    });
   };
 
   const base = pathBase(location.pathname);
   const listPath = buildPath({ name: '', tab: '' }, base);
   // Each tab change is a history push, so Back returns to the tab before. The query stays.
   const goTab = (id: string) =>
-    history.push({ pathname: buildPath({ name, tab: id }, base), search: location.search });
+    history.push({
+      pathname: buildPath({ name, tab: id }, base),
+      // The live query, so a `w.*` write in the same tick stays.
+      search: history.location.search,
+    });
   // What a widget focuses on (a selected incident) is in the path after the tab. A change is a
   // history push, so Back undoes it. A tab change drops it.
   const focusKey = parseFocus(location.pathname).join('/');
@@ -529,9 +540,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <Alert
           severity="error"
           action={
-            <Button color="inherit" component={RouterLink} to={listPath}>
-              All dashboards
-            </Button>
+            // No dashboard is on screen here. In kiosk mode the button is not shown, so a click
+            // cannot leave full screen.
+            !query.kiosk && (
+              <Button color="inherit" onClick={() => history.push(listPath)}>
+                All dashboards
+              </Button>
+            )
           }
         >
           {loaded.error?.message ?? 'The dashboard could not be loaded.'}
@@ -545,9 +560,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <Alert
           severity="error"
           action={
-            <Button color="inherit" component={RouterLink} to={listPath}>
-              All dashboards
-            </Button>
+            // No dashboard is on screen here. In kiosk mode the button is not shown, so a click
+            // cannot leave full screen.
+            !query.kiosk && (
+              <Button color="inherit" onClick={() => history.push(listPath)}>
+                All dashboards
+              </Button>
+            )
           }
         >
           This dashboard cannot be shown. {stored.error}
@@ -837,7 +856,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <WidgetSettingsHost
           spec={spec}
           tabId={tabOf(widgetSettings.sectionId, activeTabId)}
-          target={widgetSettings}
+          place={widgetSettings}
           onCancel={() => setWidgetSettings(null)}
           onApply={r => {
             edit(s =>
@@ -1252,14 +1271,14 @@ function RailLabel({ text }: { text: string }): JSX.Element {
 function WidgetSettingsHost(props: {
   spec: DashboardSpec;
   tabId: string;
-  target: { sectionId: string; widgetId: string };
+  place: { sectionId: string; widgetId: string };
   onCancel: () => void;
   onApply: (r: WidgetSettingsResult) => void;
 }): JSX.Element | null {
-  const { spec, tabId, target } = props;
+  const { spec, tabId, place } = props;
   const widget = sectionsOf(spec, tabId)
-    .find(s => s.id === target.sectionId)
-    ?.widgets.find(w => w.id === target.widgetId);
+    .find(s => s.id === place.sectionId)
+    ?.widgets.find(w => w.id === place.widgetId);
   const def = useWidgetDefinition(widget?.type ?? '');
   if (!widget) return null;
   return (

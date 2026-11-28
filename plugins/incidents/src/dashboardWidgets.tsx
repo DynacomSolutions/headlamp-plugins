@@ -12,6 +12,8 @@
  * Both reuse the code of the Incidents pages (DiagnosesTable, ChatPage parts, chat-data). They
  * fetch when the dashboard refresh signal changes, never on a layout change. The chat also polls
  * its own chat once a second while the agent answers, as the chat page does.
+ * No link in these widgets leaves the dashboard: a row selects or expands in place, and an address in a
+ * chat answer is plain text (see chat-links.tsx and AGENTS.md, "Dashboard and kiosk links").
  */
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
@@ -29,8 +31,9 @@ import {
   useFavourites,
   useModels,
 } from './chat-data';
-import { cleanErrorText } from './chat-model';
-import { Composer, EXAMPLE_PROMPTS, MessageView, useStickToBottom } from './ChatPage';
+import { ChatLinkContext, TextLink } from './chat-links';
+import { cleanErrorText, EXAMPLE_PROMPTS } from './chat-model';
+import { Composer, MessageView } from './ChatParts';
 import {
   registerDashboardWidget,
   WidgetCache,
@@ -68,6 +71,7 @@ import {
   useSelection,
 } from './selection';
 import { SEVERITY_WORD } from './severity';
+import { useStickToBottom } from './useStickToBottom';
 
 /** A scroll area that scrolls by touch, with a thin scrollbar that always shows (also in the kiosk). */
 const scrollSx = () => ({
@@ -218,7 +222,6 @@ function IncidentListWidget({
             selectedGroup={selected?.kind === 'group' ? selected.name : null}
             onSelect={hasChat ? onSelect : undefined}
             onSelectGroup={hasChat ? onSelectGroup : undefined}
-            disableNavigation={editing}
             onRerun={editing ? undefined : rerun}
           />
         )}
@@ -376,6 +379,8 @@ function IncidentChatWidget({
     selected?.kind === 'group' ? GROUP_PROMPTS : selected ? INCIDENT_PROMPTS : EXAMPLE_PROMPTS;
   const loadError = chat.error || models.error;
   return (
+    // A link in an answer is plain text here: a dashboard link never leaves the dashboard.
+    <ChatLinkContext.Provider value={TextLink}>
     <Box
       data-incident-chat
       sx={{
@@ -500,6 +505,7 @@ function IncidentChatWidget({
         />
       </Box>
     </Box>
+    </ChatLinkContext.Provider>
   );
 }
 

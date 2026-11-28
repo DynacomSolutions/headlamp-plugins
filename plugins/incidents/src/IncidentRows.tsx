@@ -11,13 +11,10 @@
  * width is the width of the widget (a ResizeObserver), not the width of the window.
  */
 import Box from '@mui/material/Box';
-import Link from '@mui/material/Link';
 import { alpha, useTheme } from '@mui/material/styles';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
 import { DiagnosisSummary, severityGroup, Status } from './model';
 import { RerunButton } from './RerunButton';
-import { diagnosisUrl } from './routes';
 import { SEVERITY_WORD, SeverityGroup, SeverityMark, useSeverityColours } from './severity';
 import { useElementWidth } from './useElementWidth';
 
@@ -162,27 +159,43 @@ function Row(props: {
   d: DiagnosisSummary;
   selected: boolean;
   onSelect?: (d: DiagnosisSummary) => void;
-  disableNavigation: boolean;
   onRerun?: (d: DiagnosisSummary) => Promise<void>;
   touch: boolean;
   narrow: boolean;
 }): JSX.Element {
-  const { d, selected, onSelect, disableNavigation, onRerun, touch, narrow } = props;
+  const { d, selected, onSelect, onRerun, touch, narrow } = props;
+  // Without a chat to select for, a click shows the whole cause in place. A row never links away.
+  const [expanded, setExpanded] = React.useState(false);
   const theme = useTheme();
   const colours = useSeverityColours();
   const tintOf = useTint();
   const sev = severityGroup(d.severity);
   const t = formatTime(d.createdAt);
-  const clickable = !!onSelect;
   const text = d.likelyCause || d.alertName || d.id;
   // An analysed row is the usual case, and the header counts it. Other states stay visible.
   const showStatus = !(narrow && d.status === 'done');
+  const activate = () => (onSelect ? onSelect(d) : setExpanded(e => !e));
   return (
     <Box
       data-incident-row={d.id}
       data-severity-group={sev}
-      aria-selected={onSelect ? selected : undefined}
-      onClick={() => onSelect?.(d)}
+      role="button"
+      tabIndex={0}
+      // A fixed name, so the Rerun button inside the row does not become part of the row name.
+      aria-label={`${SEVERITY_WORD[sev]}, ${text}, ${STATUS_WORD[d.status]}`}
+      // A row that selects for the chat is a toggle button (pressed). A row that shows the cause in
+      // place is a disclosure button (expanded). `aria-selected` has no role here, so it is not used.
+      aria-pressed={onSelect ? selected : undefined}
+      aria-expanded={onSelect ? undefined : expanded}
+      onClick={activate}
+      onKeyDown={e => {
+        // Keys of the Rerun button inside the row stay with that button.
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          activate();
+        }
+      }}
       sx={{
         display: 'grid',
         gridTemplateColumns: '20px minmax(0, 1fr) auto',
@@ -195,9 +208,10 @@ function Row(props: {
         py: 0.5,
         borderRadius: 1,
         bgcolor: tintOf(sev, 0.7),
-        cursor: clickable ? 'pointer' : 'default',
+        cursor: 'pointer',
         outline: selected ? `2px solid ${theme.palette.text.primary}` : 'none',
         outlineOffset: -2,
+        '&:focus-visible': { outline: '2px solid', outlineColor: theme.palette.primary.main },
       }}
     >
       <SeverityMark severity={sev} size={sev === 'critical' ? 16 : 14} />
@@ -208,23 +222,13 @@ function Row(props: {
           lineHeight: 1.3,
           minWidth: 0,
           overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
+          textOverflow: expanded ? 'clip' : 'ellipsis',
+          whiteSpace: expanded ? 'normal' : 'nowrap',
+          overflowWrap: 'anywhere',
           color: sev === 'critical' ? 'text.primary' : 'text.secondary',
         }}
       >
-        {disableNavigation ? (
-          text
-        ) : (
-          <Link
-            component={RouterLink}
-            to={diagnosisUrl(d.id)}
-            color="inherit"
-            onClick={e => e.stopPropagation()}
-          >
-            {text}
-          </Link>
-        )}
+        {text}
       </Box>
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25 }}>
         <Box
@@ -398,7 +402,6 @@ export function IncidentRows(props: {
   /** Selects (or, for the selected group, clears) a group for the chat. */
   onSelectGroup?: (g: IncidentGroup) => void;
   touch?: boolean;
-  disableNavigation?: boolean;
   onRerun?: (d: DiagnosisSummary) => Promise<void>;
 }): JSX.Element {
   const groups = React.useMemo(() => groupByAlert(props.rows), [props.rows]);
@@ -441,7 +444,6 @@ export function IncidentRows(props: {
                   d={d}
                   selected={props.selectedId === d.id}
                   onSelect={props.onSelect}
-                  disableNavigation={!!props.disableNavigation}
                   onRerun={props.onRerun}
                   touch={!!props.touch}
                   narrow={narrow}

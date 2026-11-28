@@ -13,6 +13,13 @@ repos:
         entry: scripts/check-identifiers.sh
         language: system
         stages: [pre-commit]
+      - id: dashboard-links
+        name: dashboard links (no link leaves a dashboard or kiosk view)
+        entry: node scripts/check-dashboard-links.mjs
+        language: system
+        pass_filenames: false
+        files: ^(plugins/.*/src/|scripts/check-dashboard-links|scripts/fixtures/dashboard-links/)
+        stages: [pre-commit]
       - id: identifiers-all
         name: identifier check, whole tree (pre-push)
         entry: scripts/check-identifiers.sh --all
