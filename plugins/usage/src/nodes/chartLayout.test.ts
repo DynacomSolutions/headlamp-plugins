@@ -81,7 +81,7 @@ const tree: NodeTree = {
 
 describe('usedText', () => {
   it('shows used against capacity at the root', () => {
-    expect(usedText(tree, 'cpu')).toBe('4.00 cores of 8.00 cores (50%)');
+    expect(usedText(tree, 'cpu')).toBe('4.00 cores of 8.00 cores allocatable (50%)');
   });
 
   it('shows the focus total when zoomed, with no capacity share', () => {
@@ -99,7 +99,7 @@ describe('usedText', () => {
       },
       nodeRing: true,
     };
-    expect(usedText(ring, 'cpu', ['node:a'], 'a')).toBe('3.00 cores of 8.00 cores (38%)');
+    expect(usedText(ring, 'cpu', ['node:a'], 'a')).toBe('3.00 cores of 8.00 cores allocatable (38%)');
   });
 
   it('says so when the tree does not have the focus', () => {
@@ -109,13 +109,20 @@ describe('usedText', () => {
 });
 
 describe('detail figures', () => {
+  it('keeps memory shares against capacity', () => {
+    const i = { value: 2, ofCapacity: 0.25, ofParent: 0.5, ofRoot: 0.4 };
+    expect(figures('Memory', formatCores, i, { zoomed: false, section: 'x', selected: true })).toBe(
+      'Memory: 2.00 cores, 25% of capacity'
+    );
+  });
+
   const info = { value: 2, ofCapacity: 0.25, ofParent: 0.5, ofRoot: 0.4 };
   const fig = (zoomed: boolean, selected: boolean, i = info) =>
     figures('CPU', formatCores, i, { zoomed, section: 'System', selected });
 
   it('shows the share of capacity at the root', () => {
-    expect(fig(false, true)).toBe('CPU: 2.00 cores, 25% of capacity');
-    expect(fig(false, false)).toBe('CPU: 2.00 cores, 25% of capacity');
+    expect(fig(false, true)).toBe('CPU: 2.00 cores, 25% of allocatable');
+    expect(fig(false, false)).toBe('CPU: 2.00 cores, 25% of allocatable');
   });
 
   it('shows the share of the active section for a selection when zoomed', () => {
@@ -123,7 +130,7 @@ describe('detail figures', () => {
   });
 
   it('keeps unused capacity as a share of capacity', () => {
-    expect(fig(true, true, { ...info, ofRoot: null })).toBe('CPU: 2.00 cores, 25% of capacity');
+    expect(fig(true, true, { ...info, ofRoot: null })).toBe('CPU: 2.00 cores, 25% of allocatable');
   });
 
   it('shows the value only for the zoom root', () => {

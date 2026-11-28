@@ -148,6 +148,7 @@ describe('NodesPage', () => {
     const panel = container.querySelector('[data-detail-panel]') as HTMLElement;
     expect(panel.textContent).toContain('Kubernetes');
     expect(panel.textContent).toContain('of capacity');
+    expect(panel.textContent).toContain('of allocatable');
     expect(panel.textContent).not.toContain('of parent');
     expect(panel.textContent).not.toContain('of root');
     fireEvent.click(screen.getByRole('button', { name: 'Open the selected segment' }));

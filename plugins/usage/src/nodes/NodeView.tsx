@@ -49,6 +49,8 @@ export function usedText(
   focusName = ''
 ): string {
   const fmt = resource === 'cpu' ? formatCores : formatBytes;
+  // CPU is measured against the allocatable cores, so the line says so; memory keeps plain capacity.
+  const suffix = resource === 'cpu' ? ' allocatable' : '';
   if (focus.length > 0 && capacityZoom(tree, focus) === null) {
     const v = valueAt(tree, focus);
     if (v === null) return `no ${resource === 'cpu' ? 'CPU' : 'memory'} data`;
@@ -58,10 +60,15 @@ export function usedText(
   if (cap !== null) {
     // One node of a node ring reads like a single-node root.
     const v = valueAt(tree, focus) ?? 0;
-    return `${fmt(v)} of ${fmt(cap)} (${formatPercent(v, cap)})`;
+    return `${fmt(v)} of ${fmt(cap)}${suffix} (${formatPercent(v, cap)})`;
   }
-  if (tree.used === null) return `${fmt(tree.root.value)} attributed of ${fmt(tree.capacity)}`;
-  return `${fmt(tree.used)} of ${fmt(tree.capacity)} (${formatPercent(tree.used, tree.capacity)})`;
+  if (tree.used === null) {
+    return `${fmt(tree.root.value)} attributed of ${fmt(tree.capacity)}${suffix}`;
+  }
+  return `${fmt(tree.used)} of ${fmt(tree.capacity)}${suffix} (${formatPercent(
+    tree.used,
+    tree.capacity
+  )})`;
 }
 
 /** The per-node agent alert: stale data with its time, or no agent detail at all. */

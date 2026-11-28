@@ -34,6 +34,40 @@ describe('assembleNodeMetrics', () => {
     expect(n.memUsed).toBe(24e9);
   });
 
+  it('measures the busy CPU against the allocatable cores', () => {
+    // 64 logical cores, 62 allocatable, 59.4 busy: the ring reads 96 % of allocatable.
+    const [n] = assembleNodeMetrics(
+      results({
+        cpuCount: [s({ node: 'big-1' }, 64)],
+        cpuIdleRate: [s({ node: 'big-1' }, 10)],
+        cpuBusyRate: [s({ node: 'big-1' }, 59.4)],
+        kubeCpuAllocatable: [s({ node: 'big-1' }, 62)],
+        kubeCpuCapacity: [s({ node: 'big-1' }, 64)],
+      })
+    );
+    expect(n.cpuCapacity).toBe(62);
+    expect(n.cpuUsed).toBe(59.4);
+  });
+
+  it('falls back to logical cores minus idle when the busy series is missing', () => {
+    const [n] = assembleNodeMetrics(
+      results({
+        cpuCount: [s({ node: 'w' }, 8)],
+        cpuIdleRate: [s({ node: 'w' }, 3)],
+        kubeCpuAllocatable: [s({ node: 'w' }, 7.5)],
+      })
+    );
+    expect(n.cpuCapacity).toBe(7.5);
+    expect(n.cpuUsed).toBe(5);
+  });
+
+  it('queries the busy CPU without idle, iowait and steal over one minute', () => {
+    expect(NODE_QUERIES.cpuBusyRate).toBe(
+      'sum by (node) (rate(node_cpu_seconds_total{mode!~"idle|iowait|steal"}[1m]))'
+    );
+    expect(NODE_QUERIES.kubeCpuAllocatable).toContain('kube_node_status_allocatable');
+  });
+
   it('computes Mac CPU and memory used', () => {
     const [n] = assembleNodeMetrics(
       results({

@@ -99,10 +99,13 @@ export function buildSunburst(
 const escapeRegex = (s: string): string =>
   s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/"/g, '\\\\"');
 
-/** The PromQL for the cluster capacity of CPU (cores) or memory (bytes), limited to the chosen nodes. */
+/**
+ * The PromQL for the cluster size of CPU (allocatable cores, as `kubectl top` measures) or memory
+ * (capacity, bytes), limited to the chosen nodes.
+ */
 export function capacityQuery(resource: SunburstResource, nodes: string[]): string {
   const node = nodes.length > 0 ? `, node=~"${nodes.map(escapeRegex).join('|')}"` : '';
-  return `sum(kube_node_status_capacity{resource="${
-    resource === 'cpu' ? 'cpu' : 'memory'
-  }"${node}})`;
+  return resource === 'cpu'
+    ? `sum(kube_node_status_allocatable{resource="cpu"${node}})`
+    : `sum(kube_node_status_capacity{resource="memory"${node}})`;
 }

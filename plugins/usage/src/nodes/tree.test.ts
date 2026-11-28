@@ -55,6 +55,39 @@ function host(units: AgentUnit[]): AgentHost {
 const keys = (n: SunNode) => n.children.map(c => c.key);
 
 describe('buildNodeTree', () => {
+  it('node at 95% with pods at 87% of allocatable: the ring adds up to the node figure', () => {
+    // 100 allocatable cores: the node is busy 95, the pods hold 87, System holds the other 8.
+    const t = buildNodeTree(
+      metrics({
+        cpuCapacity: 100,
+        cpuUsed: 95,
+        pods: [
+          { namespace: 'ns', pod: 'p1', container: 'c1', cpuCores: 50, memBytes: 1 },
+          { namespace: 'ns', pod: 'p2', container: 'c1', cpuCores: 37, memBytes: 1 },
+        ],
+      }),
+      null,
+      'cpu',
+      icon
+    );
+    expect(t.capacity).toBe(100);
+    expect(t.used).toBe(95);
+    expect(t.root.value).toBe(95);
+    expect(t.root.children.map(c => [c.key, c.value])).toEqual([
+      ['k8s', 87],
+      ['system', 8],
+    ]);
+    expect(t.root.children.reduce((a, c) => a + c.value, 0)).toBe(t.root.value);
+  });
+
+  it('never gives System a negative value when the pods exceed the node figure', () => {
+    const t = buildNodeTree(metrics({ cpuCapacity: 10, cpuUsed: 3 }), null, 'cpu', icon);
+    const system = t.root.children.find(c => c.key === 'system');
+    expect(system === undefined || system.value >= 0).toBe(true);
+    expect(t.root.value).toBe(3);
+    expect(t.root.children.reduce((a, c) => a + c.value, 0)).toBeLessThanOrEqual(3 + 1e-9);
+  });
+
   it('pods only: Kubernetes plus System', () => {
     const t = buildNodeTree(metrics(), null, 'memory', icon);
     expect(t.capacity).toBe(16);
