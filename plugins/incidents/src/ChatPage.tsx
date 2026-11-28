@@ -18,7 +18,7 @@ import {
   useIncidentNames,
   useModels,
 } from './chat-data';
-import { chatIncidentIds, ChatSummary, cleanErrorText } from './chat-model';
+import { chatIncidentIds, ChatSummary, cleanErrorText, EXAMPLE_PROMPTS } from './chat-model';
 import { Composer, ContextMeter, latestContext, MessageView } from './ChatParts';
 import { ChatShell, useStickToBottom } from './ChatShell';
 import { useSettings } from './data';
@@ -32,12 +32,7 @@ import { StorageChatView, storageSummary } from './storage/StorageChat';
 export { CHAT_RAIL_WIDTH, useStickToBottom } from './ChatShell';
 export { Composer, MessageView } from './ChatParts';
 
-export const EXAMPLE_PROMPTS = [
-  'Which pods are failing right now, and why?',
-  'Summarise the most recent incidents.',
-  'Are any nodes under memory or disk pressure?',
-  'What changed in the cluster in the last hour?',
-];
+export { EXAMPLE_PROMPTS } from './chat-model';
 
 /* ---------- Linked incidents ---------- */
 

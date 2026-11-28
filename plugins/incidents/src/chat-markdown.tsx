@@ -1,7 +1,6 @@
 import { Icon } from '@iconify/react';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
-import Link from '@mui/material/Link';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -11,7 +10,8 @@ import Typography from '@mui/material/Typography';
 import React from 'react';
 import ReactMarkdown, { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { safeUrl } from './a2ui/Renderer';
+import { safeUrl } from './a2ui/safeUrl';
+import { useChatLink } from './chat-links';
 
 /*
  * Chat answers: full GFM Markdown through react-markdown, styled with the MUI theme.
@@ -34,6 +34,18 @@ export function useCopy(): [boolean, (text: string) => Promise<void>] {
     }
   };
   return [copied, copy];
+}
+
+/**
+ * A link in an answer. Unsafe or missing targets (javascript:, data:, relative) show as plain text.
+ * A safe address is drawn by the link component in use (see chat-links.ts): an anchor on the
+ * plugin's own pages, plain text in a dashboard.
+ */
+function MarkdownLink({ address, children }: { address?: string; children?: React.ReactNode }) {
+  const LinkComponent = useChatLink();
+  const url = address ? safeUrl(address) : null;
+  if (!url) return <span>{children}</span>;
+  return <LinkComponent url={url}>{children}</LinkComponent>;
 }
 
 function CodeBlock({ code }: { code: string }) {
@@ -128,16 +140,7 @@ const COMPONENTS: Components = {
       {children}
     </Typography>
   ),
-  a: ({ href, children }) => {
-    const url = href ? safeUrl(href) : null;
-    // Unsafe or missing targets (javascript:, data:, relative) show as plain text.
-    if (!url) return <span>{children}</span>;
-    return (
-      <Link href={url} target="_blank" rel="noopener noreferrer">
-        {children}
-      </Link>
-    );
-  },
+  a: ({ href, children }) => <MarkdownLink address={href}>{children}</MarkdownLink>,
   blockquote: ({ children }) => (
     <Box
       component="blockquote"

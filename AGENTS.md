@@ -43,3 +43,30 @@ your copy with `IDENTIFIERS_DENYLIST=<path> scripts/check-identifiers.sh --all
 5. Build one plugin at a time (`npm ci && npm run tsc && npm run lint && npm run build`
    inside `plugins/<name>`) to keep memory bounded.
 6. PR titles, bodies and commit messages follow the same no-identifier rule.
+
+## Dashboard and kiosk links
+
+No link in a dashboard view (`/dashboards/<name>...`) or in a kiosk view (`?kiosk=1`) leaves the
+dashboard. This covers every component that a dashboard shows, also the widgets that other plugins
+add with `registerDashboardWidget`.
+
+- A link goes to a tab of the same dashboard or to a focus path under it. Nothing else.
+- No new tab or window: no `target`, no `window.open`.
+- No external address as a link: no `href`, no `location.assign`, `location.replace` or `location.href =`.
+  An address shows as plain text, with a copy button if the user needs it.
+- No router link or Headlamp route link to another page (`RouterLink`, `routeName=`).
+  `InternalLink` in `plugins/dashboards/src/links.tsx` is the one sanctioned link. It keeps the
+  current query, so a click never exits kiosk or full screen mode.
+- Expand in place instead of navigating: show the whole text, open a panel in the widget, or use the
+  focus path (`setFocus`).
+
+Why: the app runs as an installed web app with no browser bar, and a wall kiosk runs in full screen.
+A link that leaves the dashboard traps the user on another page, or exits full screen.
+
+`scripts/check-dashboard-links.mjs` enforces the rule. It starts at `plugins/dashboards/src/index.tsx`
+and at every `plugins/*/src/dashboardWidgets.tsx`, follows relative imports, and fails with
+`file:line`. It runs in `make check`, in pre-commit and in the `generic-checks` job. A shared file
+that a dashboard widget imports must not contain such a link. Move the link into a file that only a
+standalone page imports. A line can carry `// dashboard-links: allow <reason>` for a case that is
+not a link, such as the `href` of an SVG `<image>`. Do not add a marker for an external address.
+

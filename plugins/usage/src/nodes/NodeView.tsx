@@ -193,8 +193,11 @@ export function NodeView(props: {
   /** Zoom to a path; this clears the selection. */
   onPath: (path: string[]) => void;
   onSelect: (sel: string[]) => void;
+  /** Draws the link to a thread (see DetailPanel). Only the usage page passes it. */
+  threadLink?: (url: string) => React.ReactNode;
 }) {
   const {
+    threadLink,
     cpu,
     mem,
     alerts,
@@ -397,6 +400,7 @@ export function NodeView(props: {
         zoomed={detail.path.length > 0 && !nodeZoom}
         section={detail.focus.label}
         onSelect={key => onSelect([...base, key])}
+        threadLink={threadLink}
       />
       <Box
         ref={ref}

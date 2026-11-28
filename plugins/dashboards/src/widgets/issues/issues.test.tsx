@@ -290,17 +290,29 @@ describe('IssuesView', () => {
     expect(d.querySelector('[data-issue-cause]')!.textContent).toBe('Disk full');
   });
 
-  it('links to the Incidents page of Headlamp, or to the Incidents tab', () => {
-    const hrefs = [...view().querySelectorAll('a')].map(a => a.getAttribute('href'));
-    expect(hrefs).toContain('/c/main/incidents/i2');
-    expect(hrefs).toContain('/c/main/incidents');
-    expect(hrefs.every(h => h!.startsWith('/c/main/incidents'))).toBe(true);
-    cleanup();
-    const tab = [...view(false, ['overview', 'incidents']).querySelectorAll('a')].map(a =>
-      a.getAttribute('href')
-    );
-    expect(tab).toContain('/c/main/dashboards/ops/incidents');
-    expect(tab).toContain('/c/main/incidents/i2');
+  it('has no link when the dashboard has no Incidents tab, and none to a Headlamp page', () => {
+    const c = view();
+    expect(c.querySelectorAll('a')).toHaveLength(0);
+    expect(c.innerHTML).not.toContain('/c/main/incidents');
+  });
+
+  it('links to the Incidents tab, or to one incident on it, and keeps the query', () => {
+    const c = render(
+      <MemoryRouter initialEntries={['/c/main/dashboards/ops?kiosk=1']}>
+        <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+          <LinkContext.Provider
+            value={{ base: '/c/main', dashboard: 'ops', tabs: ['overview', 'incidents'] }}
+          >
+            <IssuesView model={model()} sourceId="agent" editing={false} />
+          </LinkContext.Provider>
+        </ThemeProvider>
+      </MemoryRouter>
+    ).container;
+    const hrefs = [...c.querySelectorAll('a')].map(a => a.getAttribute('href'));
+    expect(hrefs).toContain('/c/main/dashboards/ops/incidents/incident/i2?kiosk=1');
+    expect(hrefs).toContain('/c/main/dashboards/ops/incidents?kiosk=1');
+    expect(hrefs.every(h => h!.startsWith('/c/main/dashboards/ops/incidents'))).toBe(true);
+    expect(c.querySelector('a[target]')).toBeNull();
   });
 
   it('draws no link in the editor', () => {

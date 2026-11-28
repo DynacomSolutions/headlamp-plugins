@@ -10,7 +10,8 @@ import Box from '@mui/material/Box';
 import { alpha } from '@mui/material/styles';
 import React from 'react';
 import { ScrollArea } from '../../components/ScrollArea';
-import { InternalLink, useResolveLink } from '../../links';
+import { InternalLink, LinkContext, useResolveLink } from '../../links';
+import { buildPath } from '../../urlState';
 import { WidgetFooter } from '../footer';
 import { StatTiles } from '../panels/StatTiles';
 import { STATUS_WORD, StatusMark } from '../panels/StatusMark';
@@ -234,9 +235,18 @@ export function IssuesView(props: {
   const { model, sourceId, editing } = props;
   const resolveLink = useResolveLink();
   const root = useElementSize<HTMLDivElement>();
-  // Every link goes to the Incidents page or its tab, or is dropped.
-  const linkOf = (raw: string | undefined): string | undefined =>
-    resolveLink(raw, { panelId: 'incidents', sourceId });
+  const targets = React.useContext(LinkContext);
+  // Every link stays on this dashboard, or is dropped. A link to one incident selects it on the
+  // Incidents tab (`<tab>/incident/<id>`, the focus path of the Incidents list widget).
+  const linkOf = (raw: string | undefined): string | undefined => {
+    const id = /\/incidents\/([^/?#]+)$/.exec(raw ?? '')?.[1];
+    if (id && targets?.tabs.includes('incidents'))
+      return buildPath(
+        { name: targets.dashboard, tab: 'incidents', focus: ['incident', decodeURIComponent(id)] },
+        targets.base
+      );
+    return resolveLink(raw, { panelId: 'incidents', sourceId });
+  };
   const all = [...model.alertStats, ...model.incidentStats];
   return (
     <Box

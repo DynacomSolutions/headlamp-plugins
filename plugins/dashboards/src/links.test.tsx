@@ -31,16 +31,46 @@ const TARGETS: LinkTargets = {
 };
 
 describe('resolveLink', () => {
-  it('keeps a path inside Headlamp as it is', () => {
-    expect(resolveLink('/c/main/nodes/a', TARGETS)).toBe('/c/main/nodes/a');
-    expect(resolveLink('/dashboards/other/tab', null)).toBe('/dashboards/other/tab');
+  it('keeps a path of the same dashboard, with its focus segments', () => {
+    expect(resolveLink('/c/main/dashboards/operations/uptime', TARGETS)).toBe(
+      '/c/main/dashboards/operations/uptime'
+    );
+    expect(resolveLink('/c/main/dashboards/operations/incidents/group/HighCPU', TARGETS)).toBe(
+      '/c/main/dashboards/operations/incidents/group/HighCPU'
+    );
+    expect(resolveLink('/c/main/dashboards/operations', TARGETS)).toBe(
+      '/c/main/dashboards/operations'
+    );
+    // The query and the hash belong to the current view, so the link does not carry its own.
+    expect(resolveLink('/c/main/dashboards/operations/uptime?kiosk=0#x', TARGETS)).toBe(
+      '/c/main/dashboards/operations/uptime'
+    );
+  });
+
+  it('gives no link to another dashboard, another cluster, another tab or the list', () => {
+    expect(resolveLink('/c/main/dashboards/other/uptime', TARGETS)).toBeUndefined();
+    expect(resolveLink('/c/second/dashboards/operations/uptime', TARGETS)).toBeUndefined();
+    expect(resolveLink('/c/main/dashboards/operations/nosuchtab', TARGETS)).toBeUndefined();
+    expect(resolveLink('/c/main/dashboards', TARGETS)).toBeUndefined();
+    expect(resolveLink('/dashboards/other/tab', null)).toBeUndefined();
+  });
+
+  it('gives no link to a Headlamp page that is not a tab of the dashboard', () => {
+    expect(resolveLink('/c/main/nodes/a', TARGETS)).toBeUndefined();
+    expect(resolveLink('/c/main/github-runners', TARGETS)).toBeUndefined();
+    expect(resolveLink('/c/{cluster}/nodes', TARGETS)).toBeUndefined();
+    expect(resolveLink('/c/main/nodes', null)).toBeUndefined();
   });
 
   it('fills in the cluster of the {cluster} placeholder', () => {
-    expect(resolveLink('/c/{cluster}/uptime', TARGETS)).toBe('/c/main/uptime');
+    expect(resolveLink('/c/{cluster}/dashboards/operations/uptime', TARGETS)).toBe(
+      '/c/main/dashboards/operations/uptime'
+    );
     // No cluster in the route: the placeholder cannot be filled, so there is no link.
-    expect(resolveLink('/c/{cluster}/uptime', { ...TARGETS, base: '' })).toBeUndefined();
-    expect(resolveLink('/c/{cluster}/uptime', null)).toBeUndefined();
+    expect(
+      resolveLink('/c/{cluster}/dashboards/operations/uptime', { ...TARGETS, base: '' })
+    ).toBeUndefined();
+    expect(resolveLink('/c/{cluster}/dashboards/operations/uptime', null)).toBeUndefined();
   });
 
   const MAPPING: Array<[string, { sourceId?: string; panelId?: string }, string]> = [
@@ -79,20 +109,20 @@ describe('resolveLink', () => {
       expect(resolveLink('/c/main/uptime?x=1', TARGETS, UPTIME)).toBe(TAB);
     });
 
-    it('keeps the path when there is no such tab or the row comes from another panel', () => {
-      expect(resolveLink('/c/main/uptime', { ...TARGETS, tabs: ['overview'] }, UPTIME)).toBe(
-        '/c/main/uptime'
-      );
-      expect(resolveLink('/c/main/uptime', TARGETS, { sourceId: 'agent', panelId: 'disks' })).toBe(
-        '/c/main/uptime'
-      );
-      expect(resolveLink('/c/main/uptime', TARGETS)).toBe('/c/main/uptime');
-      expect(resolveLink('/c/main/uptime', null, UPTIME)).toBe('/c/main/uptime');
+    it('gives no link when there is no such tab or the row comes from another panel', () => {
+      expect(
+        resolveLink('/c/main/uptime', { ...TARGETS, tabs: ['overview'] }, UPTIME)
+      ).toBeUndefined();
+      expect(
+        resolveLink('/c/main/uptime', TARGETS, { sourceId: 'agent', panelId: 'disks' })
+      ).toBeUndefined();
+      expect(resolveLink('/c/main/uptime', TARGETS)).toBeUndefined();
+      expect(resolveLink('/c/main/uptime', null, UPTIME)).toBeUndefined();
     });
 
-    it('keeps a path that goes deeper than the page', () => {
-      expect(resolveLink('/c/main/uptime/site-a', TARGETS, UPTIME)).toBe('/c/main/uptime/site-a');
-      expect(resolveLink('/c/main/nodes/a', TARGETS, { panelId: 'nodes' })).toBe('/c/main/nodes/a');
+    it('gives no link for a path that goes deeper than the page', () => {
+      expect(resolveLink('/c/main/uptime/site-a', TARGETS, UPTIME)).toBeUndefined();
+      expect(resolveLink('/c/main/nodes/a', TARGETS, { panelId: 'nodes' })).toBeUndefined();
     });
 
     it('never gives a link to another host', () => {
@@ -151,6 +181,31 @@ describe('InternalLink', () => {
     expect(container.querySelector('a')).toBeNull();
     expect(container.textContent).toBe('AIS');
   });
+
+  it('keeps the current query, so a click never leaves kiosk mode', () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/c/main/dashboards/operations?kiosk=1&ns=a&w.x=2']}>
+        <InternalLink to="/c/main/dashboards/operations/uptime">Uptime</InternalLink>
+      </MemoryRouter>
+    );
+    const a = container.querySelector('a') as HTMLAnchorElement;
+    expect(a.getAttribute('href')).toBe(
+      '/c/main/dashboards/operations/uptime?kiosk=1&ns=a&w.x=2'
+    );
+    expect(a.getAttribute('target')).toBeNull();
+  });
+
+  it('keeps the query after a click', () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/c/main/dashboards/operations?kiosk=1&refresh=30']}>
+        <Route path="*" component={Spy} />
+        <InternalLink to="/c/main/dashboards/operations/uptime">Uptime</InternalLink>
+      </MemoryRouter>
+    );
+    fireEvent.click(container.querySelector('a') as HTMLAnchorElement);
+    expect(where.current).toBe('/c/main/dashboards/operations/uptime');
+    expect(search.current).toBe('?kiosk=1&refresh=30');
+  });
 });
 
 const source = (id: string): PanelSource => ({
@@ -164,11 +219,13 @@ const source = (id: string): PanelSource => ({
 });
 
 const where = { current: '' };
+const search = { current: '' };
 const history = { current: null as ReturnType<typeof useHistory> | null };
 const Spy = () => {
   const l = useLocation();
   history.current = useHistory();
   where.current = l.pathname;
+  search.current = l.search;
   return null;
 };
 
@@ -251,12 +308,19 @@ describe('panel row links', () => {
       expect(a.getAttribute('href')).toBe('/c/main/dashboards/operations/uptime');
   });
 
-  it('keeps the Headlamp path of an uptime row when the dashboard has no uptime tab', () => {
+  it('shows an uptime row as text when the dashboard has no uptime tab', () => {
     const { container } = view('uptime', '/c/{cluster}/uptime', 'list', 'agent', {
       ...TARGETS,
       tabs: ['overview'],
     });
-    expect(container.querySelector('a')?.getAttribute('href')).toBe('/c/main/uptime');
+    expect(container.querySelector('a')).toBeNull();
+    expect(container.textContent).toContain('acme');
+  });
+
+  it('shows a row with a link to another Headlamp page as text', () => {
+    const { container } = view('nodes', '/c/{cluster}/nodes', 'list', 'agent');
+    expect(container.querySelector('a')).toBeNull();
+    expect(container.textContent).toContain('acme');
   });
 
   it('follows a link with a history push, so Back returns to the dashboard', () => {

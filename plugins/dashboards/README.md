@@ -58,13 +58,21 @@ when they have their default value.
 
 A filter key in the URL overrides the saved view, even with an empty value.
 
-### Links and swipes stay inside Headlamp
+### Links and swipes stay inside the dashboard
 
-The app can run as an installed web app with no browser bar, so no widget link leaves Headlamp.
+No link in a dashboard view or in a kiosk view leaves the dashboard, and a click never exits kiosk or full screen mode.
+The app can run as an installed web app with no browser bar, and a wall kiosk runs in full screen. The root
+[`AGENTS.md`](../../AGENTS.md) has the rule ("Dashboard and kiosk links"), and `scripts/check-dashboard-links.mjs`
+enforces it in CI.
 
-- A widget link goes to a Headlamp route: a dashboard, a dashboard tab or a Headlamp page. It is a history push, so Back
-  returns to the dashboard. `{cluster}` in a path becomes the current cluster. A path to a Headlamp page that is also a
-  tab of the dashboard (for example `/c/{cluster}/uptime` on an uptime row) opens that tab.
+- A widget link goes to the same dashboard only: one of its tabs, or a focus path under it
+  (`/dashboards/<name>/<tab>/<a>/<b>`). It is a history push, so Back returns to where the user was. The link keeps the
+  current query (`kiosk`, filters, `refresh`, `w.*`), so a click stays in kiosk mode. `{cluster}` in a path becomes the
+  current cluster. A path to a Headlamp page that is also a tab of the dashboard (for example `/c/{cluster}/uptime` on an
+  uptime row) opens that tab.
+- Any other path (a Headlamp page, another dashboard) and any address on another host is plain text. A link never opens
+  a new tab or window. Widgets from other plugins follow the same rule: `scripts/check-dashboard-links.mjs` follows
+  their imports from `src/dashboardWidgets.tsx`.
 - A panel row with an `http` or `https` link goes to the tab of the dashboard whose id is the panel id, else the source id
   (for example `ais-console`, `hoarddb`, `uptime`). With no such tab the row has no link. A note shows an address on
   another host as text.
@@ -305,7 +313,8 @@ Rules for a widget:
   touch scroll, and the wheel never scrolls the page). Never fold rows into a "+N more" line.
   Set `selfScroll: true` only for a widget that scrolls as a whole. The user can override it per widget.
 - Do not rely on hover (the kiosk is a touch screen). When `kiosk` is true, show no focus rings and keep
-  the thin scrollbar. When `editing` is true, disable links that leave the page.
+  the thin scrollbar. A widget link must never leave the dashboard (see Links above): use the focus path
+  (`setFocus`) or text. Do not use `href`, `target`, `window.open` or a router link to another page.
 - A widget that throws shows an error in its own card and leaves the rest alone.
 - A dashboard that uses a type nobody registered shows a placeholder card ("The plugin that supplies
   this widget is not installed") and keeps its settings.
@@ -315,7 +324,7 @@ Rules for a widget:
 | Type          | Settings                                                                                                                          |
 | ------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `core.clock`  | Hours, minutes and seconds on or off, 12 or 24 hour, date on or off, a date format (preset or custom), time zone, size, zone name |
-| `core.note`   | Markdown text (no raw HTML, no images, only path links), alignment                                                                |
+| `core.note`   | Markdown text (no raw HTML, no images, only links to tabs of the same dashboard), alignment                                                                |
 | `core.header` | Header text, subtitle, header or line or both, size, alignment                                                                    |
 
 The date format uses these letters: `yyyy`, `yy` (year), `MMMM`, `MMM`, `MM`, `M` (month),
@@ -451,7 +460,7 @@ Shows one panel of a source. The widget settings pick a **source**, then a **pan
   reloads. This includes the cluster sources.
 - **What it draws**: the status and summary, the stats as tiles, the rows as a table (a fraction bar and a link
   when the row has them), the series as sparklines, the rings as sunbursts and the tables. A status is a shape and a
-  word, never colour alone. A link goes to a Headlamp route only (see Links and swipes above). Links are off in edit mode.
+  word, never colour alone. A link goes to a tab of the same dashboard only (see Links above).
 - **Row icons**: a row may have `icon: { src, alt }`. `src` is a path relative to the source's `/api/widgets/`
   base, for example `icons/postgresql.svg` (for a service source that is the service proxy path, for a URL source
   it is relative to the base URL). `alt` is the kind, for example `PostgreSQL`, and defaults to the row label. A
@@ -546,7 +555,7 @@ needed.
   the light theme. A name with no known provider shows no logo. The logos stay in the name column and never
   move the bars, the countdowns or the percentages.
 - **Links** go only to the dashboard tab whose id is the source id (for example `ais-console`). With no such
-  tab, or in edit mode, a row has no link.
+  tab a row has no link.
 - **Not available from the source**: the sessions are one total. The `agents` panel names a pool, not an
   identity, so the widget cannot show sessions for each identity.
 
@@ -573,8 +582,7 @@ separate panels on the Overview.
   `daemonset`, `cronjob`, `job_name`, `persistentvolumeclaim` and `pod` (with the namespace in front), else
   `node:device` or `node:mountpoint`, else the namespace, else the instance. An older agent sends no `meta`:
   the key is then the alert name alone.
-- **Links** go only to the Incidents page of Headlamp (`/incidents/<id>` for a group with an incident) or to the
-  dashboard tab with the id `incidents`. In edit mode a row has no link.
+- **Links** go only to the dashboard tab with the id `incidents`. With no such tab a row has no link.
 
 ### Optional row `meta` field (v1 extension)
 
@@ -880,8 +888,8 @@ and a live preview that uses the real cluster data.
 - **Chart** (summary only): bar, horizontal bar, donut or stacked bar (two group fields). Every group is its
   own bar or slice at its real size. There is no "Other" group and no top-N cut. After eight groups the
   chart reuses the eight series hues at lower opacity, and the tooltips and the legend name every group.
-- **Table**: sort by any column header, a link to the Headlamp page of each resource (turned off in edit
-  mode), a sticky header, windowed rows (only the visible rows are in the DOM) and a CSV export (hidden in
+- **Table**: sort by any column header, no link to the Headlamp page of a resource (a dashboard link never leaves the
+  dashboard), a sticky header, windowed rows (only the visible rows are in the DOM) and a CSV export (hidden in
   the kiosk). The CSV neutralises cells that start with `=`, `+`, `-` or `@`.
 - **Live data**: one Headlamp list and watch stream per chosen namespace (or one for the cluster).
   Updates are coalesced. The streams restart only when the kind, the namespaces, the label selector or the

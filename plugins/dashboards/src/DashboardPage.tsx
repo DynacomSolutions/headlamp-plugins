@@ -19,7 +19,7 @@ import Tabs from '@mui/material/Tabs';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import React from 'react';
-import { Link as RouterLink, Prompt, useHistory, useLocation } from 'react-router-dom';
+import { Prompt, useHistory, useLocation } from 'react-router-dom';
 import { writeCachedDashboard } from './cache/dashboardCache';
 import { lastGoodStore } from './cache/lastGood';
 import { BandActions, BandView } from './components/BandView';
@@ -533,9 +533,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <Alert
           severity="error"
           action={
-            <Button color="inherit" component={RouterLink} to={listPath}>
-              All dashboards
-            </Button>
+            // No dashboard is on screen here. In kiosk mode the button is not shown, so a click
+            // cannot leave full screen.
+            !query.kiosk && (
+              <Button color="inherit" onClick={() => history.push(listPath)}>
+                All dashboards
+              </Button>
+            )
           }
         >
           {loaded.error?.message ?? 'The dashboard could not be loaded.'}
@@ -549,9 +553,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <Alert
           severity="error"
           action={
-            <Button color="inherit" component={RouterLink} to={listPath}>
-              All dashboards
-            </Button>
+            // No dashboard is on screen here. In kiosk mode the button is not shown, so a click
+            // cannot leave full screen.
+            !query.kiosk && (
+              <Button color="inherit" onClick={() => history.push(listPath)}>
+                All dashboards
+              </Button>
+            )
           }
         >
           This dashboard cannot be shown. {stored.error}

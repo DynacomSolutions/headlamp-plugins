@@ -5,7 +5,6 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
-import MuiLink from '@mui/material/Link';
 import Tab from '@mui/material/Tab';
 import Tabs from '@mui/material/Tabs';
 import TextField from '@mui/material/TextField';
@@ -50,12 +49,18 @@ import type { Job, NodeStatus, Raw } from './types';
 
 type HLStatus = 'success' | 'warning' | 'error' | '';
 
+/**
+ * The name of a GitHub object (a repository, a workflow, a run, a job). It is plain text, not a link:
+ * a link would open github.com in a new tab, and a page that runs as an installed web app has no
+ * browser bar to come back with. The address is in the tooltip, and a double click selects the
+ * name, so a reader can copy the address with the tooltip or from the title of the cell.
+ */
 function Ext({ href, children }: { href?: string | null; children: React.ReactNode }) {
   if (!href) return <>{children}</>;
   return (
-    <MuiLink href={href} target="_blank" rel="noopener noreferrer">
+    <span title={href} data-address={href}>
       {children}
-    </MuiLink>
+    </span>
   );
 }
 
@@ -827,7 +832,7 @@ export function GitHubRunnersPage() {
       <Typography variant="caption" color="text.secondary" display="block" mt={2}>
         {rwOn
           ? `Updated ${generated}. Numbers come from the runner service through the Kubernetes API service proxy. This plugin makes no GitHub API calls.`
-          : `Updated ${generated}. Links open github.com; this plugin makes no GitHub API calls.`}
+          : `Updated ${generated}. Hover a name to see its github.com address; this plugin makes no GitHub API calls.`}
       </Typography>
     </Box>
   );
