@@ -105,7 +105,7 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
         onChange={(_e, v) => onChange({ ...filters, namespaces: v as string[] })}
         renderInput={p => (
           <TextField
-            {...p}
+            {...p} // dashboard-links: allow MUI Autocomplete input props, no link
             label="Namespaces"
             placeholder={filters.namespaces.length ? '' : 'All'}
           />
@@ -120,7 +120,7 @@ export function FilterBar(props: FilterBarProps): JSX.Element {
         value={filters.nodes}
         onChange={(_e, v) => onChange({ ...filters, nodes: v as string[] })}
         renderInput={p => (
-          <TextField {...p} label="Nodes" placeholder={filters.nodes.length ? '' : 'All'} />
+          <TextField {...p} label="Nodes" placeholder={filters.nodes.length ? '' : 'All'} /> // dashboard-links: allow MUI Autocomplete input props, no link
         )}
         sx={compact ? { width: '100%' } : { minWidth: 150, maxWidth: 300, flex: '1 1 160px' }}
       />

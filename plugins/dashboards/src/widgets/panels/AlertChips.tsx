@@ -111,6 +111,6 @@ export const alertChipsWidget: WidgetDefinition<AlertChipsConfig> = {
   defaultSize: { w: 5, h: 2 },
   minSize: { w: 3, h: 2 },
   defaultConfig: { source: AGENT_SOURCE_ID, panel: 'alerts' },
-  SettingsComponent: props => <SourcePanelPicker {...props} />,
+  SettingsComponent: props => <SourcePanelPicker {...props} />, // dashboard-links: allow settings props of the widget, no link props
   Component: AlertChips,
 };

@@ -413,7 +413,7 @@ function orchestrator(
     const key = `${name}/p:${gid}/t:${u.name}`;
     g.threads.push(
       node(key, u.thread || u.name, 'thread', v, procNodes(u.procs, key, r), {
-        href: u.threadUrl,
+        href: u.threadUrl, // dashboard-links: allow data field, shown as a copy control, never as an anchor
         icon: GENERIC.thread,
         note: cpuNote(u),
       })

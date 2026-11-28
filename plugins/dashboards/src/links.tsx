@@ -145,7 +145,10 @@ export function InternalLink(props: {
   const { search } = useLocation();
   if (!isAppPath(to)) return <>{children}</>;
   return (
-    <RouterLink to={to.includes('?') ? to : { pathname: to, search }} style={style}>
+    <RouterLink
+      to={to.includes('?') ? to : { pathname: to, search }} // dashboard-links: allow the one router link, the path passed isAppPath
+      style={style}
+    >
       {children}
     </RouterLink>
   );

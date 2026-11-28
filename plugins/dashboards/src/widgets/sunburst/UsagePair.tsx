@@ -131,7 +131,7 @@ export function UsagePair({ first, second, kiosk = false }: UsagePairProps): JSX
                   data-lit={shownRow === s.id ? 'true' : undefined}
                   aria-label={tip}
                   onClick={() => select(s.id)}
-                  {...hover(s.id)}
+                  {...hover(s.id)} // dashboard-links: allow hover handlers only
                   focusRipple={false}
                   disableRipple
                   sx={theme => ({
@@ -176,7 +176,7 @@ export function UsagePair({ first, second, kiosk = false }: UsagePairProps): JSX
           data-legend-row={n.key}
           data-lit={lit ? 'true' : undefined}
           onClick={() => select(n.id)}
-          {...hover(n.id)}
+          {...hover(n.id)} // dashboard-links: allow hover handlers only
           title={n.label}
           focusRipple={false}
           disableRipple={kiosk}

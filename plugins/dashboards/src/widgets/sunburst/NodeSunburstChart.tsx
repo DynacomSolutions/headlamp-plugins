@@ -162,7 +162,7 @@ export function NodeSunburstChart({
       key={key}
       data-legend-row={opts.dataKey}
       onClick={() => select(id)}
-      {...hoverProps(id)}
+      {...hoverProps(id)} // dashboard-links: allow hover handlers only
       title={tooltip ? undefined : `${label}: ${format(value)} (${percent(share(value))})`}
       focusRipple={false}
       disableRipple={kiosk}

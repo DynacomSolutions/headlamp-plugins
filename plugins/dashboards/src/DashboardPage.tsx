@@ -856,7 +856,7 @@ function DashboardView({ name }: { name: string }): JSX.Element {
         <WidgetSettingsHost
           spec={spec}
           tabId={tabOf(widgetSettings.sectionId, activeTabId)}
-          target={widgetSettings}
+          place={widgetSettings}
           onCancel={() => setWidgetSettings(null)}
           onApply={r => {
             edit(s =>
@@ -1271,14 +1271,14 @@ function RailLabel({ text }: { text: string }): JSX.Element {
 function WidgetSettingsHost(props: {
   spec: DashboardSpec;
   tabId: string;
-  target: { sectionId: string; widgetId: string };
+  place: { sectionId: string; widgetId: string };
   onCancel: () => void;
   onApply: (r: WidgetSettingsResult) => void;
 }): JSX.Element | null {
-  const { spec, tabId, target } = props;
+  const { spec, tabId, place } = props;
   const widget = sectionsOf(spec, tabId)
-    .find(s => s.id === target.sectionId)
-    ?.widgets.find(w => w.id === target.widgetId);
+    .find(s => s.id === place.sectionId)
+    ?.widgets.find(w => w.id === place.widgetId);
   const def = useWidgetDefinition(widget?.type ?? '');
   if (!widget) return null;
   return (

@@ -668,7 +668,7 @@ function GroupRow(props: {
       data-group={kind}
       data-group-key={props.nodeKey}
       data-open={open ? '' : undefined}
-      {...toggleProps(expandable, open, toggle, props.name)}
+      {...toggleProps(expandable, open, toggle, props.name)} // dashboard-links: allow row toggle props: role, tabIndex, aria and key handlers only
       sx={{
         ...rowSx(tk, depth),
         flexDirection: 'row',
@@ -737,7 +737,11 @@ function JobRow(props: {
       <Box component="span" sx={{ fontSize: 10.5, mr: '3px', color: tk.mut }}>
         {word}
       </Box>
-      <Box component="span" {...attr} sx={{ color: tk.fg }}>
+      <Box
+        component="span"
+        {...attr} // dashboard-links: allow timing attributes: data attributes only
+        sx={{ color: tk.fg }}
+      >
         {value === undefined ? '-' : formatWait(value)}
       </Box>
     </Box>
@@ -748,7 +752,7 @@ function JobRow(props: {
         data-job={job.id}
         data-job-key={entry.key}
         data-open={open ? '' : undefined}
-        {...toggleProps(hasSteps, open, toggle, job.name)}
+        {...toggleProps(hasSteps, open, toggle, job.name)} // dashboard-links: allow row toggle props: role, tabIndex, aria and key handlers only
         sx={{ ...rowSx(tk, depth), cursor: hasSteps ? 'pointer' : 'default' }}
       >
         <Box sx={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>

@@ -10,6 +10,10 @@
  *   node scripts/check-dashboard-links.mjs                 check the real entry files
  *   node scripts/check-dashboard-links.mjs --entry <file>  check from the given entry files only
  *
+ * It is a text check. It blocks the usual ways to build a link that leaves the dashboard: anchors,
+ * link components, `href`, `to` and `target` props or keys, prop spreads on components, history and
+ * location calls, and `window.open`. It cannot prove that code is safe.
+ *
  * A line can opt out with a comment on the same line: `// dashboard-links: allow <reason>`.
  * The reason is required. Add no marker for an external URL.
  */
@@ -31,23 +35,84 @@ const NOT_A_DASHBOARD_VIEW = new Set(['plugins/dashboards/src/DashboardsListPage
 
 const ALLOW = /dashboard-links:\s*allow\s+\S/;
 
-/** [pattern, message, applies to the router-link file too]. Patterns run on the line without comments. */
+/**
+ * Files that may drive the router or the history directly. Each one only writes a path or the query
+ * of the dashboard that is on screen. No other file may call these functions.
+ */
+const HISTORY_FILES = new Set([
+  // Writes the dashboard path (tab and focus) and the query (filters, kiosk, edit) of this dashboard.
+  'plugins/dashboards/src/DashboardPage.tsx',
+  // Writes the `w.*` query parameters of one widget. The path of the current page stays.
+  'plugins/dashboards/src/widgetUrlState.ts',
+  // The one place that builds router links. It keeps every link inside the dashboard.
+  ROUTER_LINK_FILE,
+]);
+
+/**
+ * Rules that run on the whole text without comments, so a call split over lines is found too.
+ * `router`: the rule also applies to the router-link file. `files`: files where the rule is off.
+ */
 const RULES = [
-  [/['"`]_(blank|new|top|parent)['"`]/, 'opens a new tab or window (target _blank)', true],
-  [/\bwindow\.open\s*\(/, 'window.open leaves the dashboard', true],
-  [/\b(?:window|document|globalThis|self)\.location\s*=(?!=)/, 'assigns the location', true],
-  [/\blocation\.href\s*=(?!=)/, 'assigns location.href', true],
-  [/\blocation\.(assign|replace)\s*\(/, 'location.assign or location.replace leaves the dashboard', true],
-  [/\bcomponent\s*=\s*["']a["']/, 'a link element (component="a")', true],
-  [/<a[\s>]/, 'an anchor element', true],
-  [/\bRouterLink\b/, 'RouterLink (use InternalLink from links.tsx)', false],
-  [/\broute(Name|Params)\s*=/, 'a Headlamp route link (routeName=)', false],
-  [/<(NavLink|Link)[\s>]/, 'a link component (use InternalLink from links.tsx)', false],
-  [
-    /\bimport\s*\{[^}]*\b(Link|NavLink)\b[^}]*\}\s*from\s*['"](react-router-dom|@kinvolk\/headlamp-plugin\/lib\/CommonComponents)['"]/,
-    'imports a router or Headlamp link',
-    false,
-  ],
+  { re: /['"`]_(blank|new|top|parent)['"`]/, msg: 'opens a new tab or window (target _blank)', router: true },
+  // Any reference to `window.open`, also `window['open']` and `const o = window.open`, not only a call.
+  {
+    re: /\b(?:window|globalThis|self|top|parent)\s*(?:\.\s*open\b|\[\s*['"`]open['"`]\s*\])/,
+    msg: 'a reference to window.open leaves the dashboard',
+    router: true,
+  },
+  { re: /\bopen\s*\(\s*['"`]https?:/i, msg: 'open() of an address', router: true },
+  {
+    re: /\b(?:window|document|globalThis|self)\s*\.\s*location\s*\+?=(?!=)/,
+    msg: 'assigns the location',
+    router: true,
+  },
+  {
+    re: /(?<![\w$.])(?<!\b(?:const|let|var)\s+)location\s*\+?=(?![=>])/,
+    msg: 'assigns the location',
+    router: true,
+  },
+  {
+    re: /\blocation\s*(?:\.\s*href|\[\s*['"`]href['"`]\s*\])\s*\+?=(?!=)/,
+    msg: 'assigns location.href',
+    router: true,
+  },
+  {
+    re: /\blocation\s*(?:\.\s*(?:assign|replace)|\[\s*['"`](?:assign|replace)['"`]\s*\])\s*\(/,
+    msg: 'location.assign or location.replace leaves the dashboard',
+    router: true,
+  },
+  { re: /\bcomponent\s*=\s*["']a["']/, msg: 'a link element (component="a")', router: true },
+  {
+    re: /\bcomponent\s*=\s*\{\s*(?:RouterLink|Link|NavLink)\s*\}/,
+    msg: 'a router link as component (use InternalLink from links.tsx)',
+    router: true,
+  },
+  { re: /<a[\s>]/, msg: 'an anchor element', router: true },
+  {
+    // A type annotation (`to: string`) and a style object (`to: { opacity: 1 }`) are not links.
+    re: /(?<=(?:^|[{,(])\s*)['"]?(?:href|to)['"]?\s*:(?!\s*(?:(?:string|number|boolean|unknown|any|null|undefined|void|never)\b|\{(?!\s*(?:pathname|search|hash)\b)))/m,
+    msg: 'an href or to key (an object can feed a link by prop spread)',
+    router: true,
+  },
+  { re: /\bRouterLink\b/, msg: 'RouterLink (use InternalLink from links.tsx)' },
+  { re: /\broute(Name|Params)\s*=/, msg: 'a Headlamp route link (routeName=)' },
+  { re: /<(NavLink|Link)[\s>]/, msg: 'a link component (use InternalLink from links.tsx)' },
+  {
+    re: /\bimport\s*\{[^}]*\b(Link|NavLink)\b[^}]*\}\s*from\s*['"](react-router-dom|@kinvolk\/headlamp-plugin\/lib\/CommonComponents)['"]/,
+    msg: 'imports a router or Headlamp link',
+  },
+  {
+    re: /\bhistory\s*\.\s*(?:push|replace|go)\s*\(/,
+    msg: 'history call outside the files that may write the URL (HISTORY_FILES)',
+    router: true,
+    files: HISTORY_FILES,
+  },
+  {
+    re: /\b(?:pushState|replaceState|createRouteURL)\s*\(/,
+    msg: 'router or history call outside the files that may write the URL (HISTORY_FILES)',
+    router: true,
+    files: HISTORY_FILES,
+  },
 ];
 
 /** The line without `//` and block comments. Quotes are tracked so `https://` in a string stays. */
@@ -88,8 +153,8 @@ export function stripComments(line, state) {
 const HREF_OK_TAGS = new Set(['image', 'use', 'feImage']);
 
 /**
- * The attributes of each JSX tag in the text, without the `{...}` values: [tag, attributes, offset].
- * `href=` and `target=` are checked here, because a tag can span several lines.
+ * The attributes of each JSX tag in the text, without the `{...}` values: [tag, attributes, offset,
+ * offset of a prop spread or -1, offset of the end of the tag]. The attributes are checked here, because a tag can span lines.
  */
 function jsxTags(text) {
   const tags = [];
@@ -98,6 +163,7 @@ function jsxTags(text) {
     let depth = 0;
     let quote = '';
     let attrs = '';
+    let spread = -1;
     let i = m.index + m[0].length;
     const limit = Math.min(text.length, i + 4000);
     for (; i < limit; i++) {
@@ -106,8 +172,10 @@ function jsxTags(text) {
         if (c === '\\') i++;
         else if (c === quote) quote = '';
         if (depth === 0) attrs += c;
-      } else if (c === '{') depth++;
-      else if (c === '}') depth--;
+      } else if (c === '{') {
+        if (depth === 0 && spread < 0 && /^\{\s*\.\.\./.test(text.slice(i, i + 24))) spread = i;
+        depth++;
+      } else if (c === '}') depth--;
       else if (depth === 0 && c === '>') break;
       else {
         if (depth === 0) {
@@ -116,34 +184,48 @@ function jsxTags(text) {
         } else if (c === '"' || c === "'" || c === '`') quote = c;
       }
     }
-    tags.push([m[1], attrs, m.index]);
+    tags.push([m[1], attrs, m.index, spread, i]);
   }
   return tags;
 }
+
+const lineAt = (text, offset) => text.slice(0, offset).split('\n').length;
+
+/** A spread on a component can carry href, to or target. A plain DOM tag is safe, except a and form. */
+const isDomTag = tag => /^[a-z][a-z0-9]*$/.test(tag) && tag !== 'a' && tag !== 'form';
+
+const attr = (attrs, name) => new RegExp(`(?<![\\w.-])${name}\\s*=`).test(attrs);
 
 export function checkSource(file, text) {
   const problems = [];
   const state = { block: false };
   const isRouterFile = file === ROUTER_LINK_FILE;
   const raws = text.split('\n');
-  const lines = raws.map(raw => stripComments(raw, state));
+  const stripped = raws.map(raw => stripComments(raw, state)).join('\n');
   const allowed = raws.map(raw => ALLOW.test(raw));
-  lines.forEach((line, i) => {
-    if (allowed[i]) return;
-    for (const [pattern, message, always] of RULES) {
-      if (isRouterFile && !always) continue;
-      if (pattern.test(line)) problems.push(`${file}:${i + 1}: ${message}`);
+  for (const { re, msg, router, files } of RULES) {
+    if (isRouterFile && !router) continue;
+    if (files?.has(file)) continue;
+    for (const m of stripped.matchAll(new RegExp(re.source, re.flags.replace('g', '') + 'g'))) {
+      const line = lineAt(stripped, m.index);
+      if (!allowed[line - 1]) problems.push(`${file}:${line}: ${msg}`);
     }
-  });
-  const stripped = lines.join('\n');
+  }
   if (!file.endsWith('.tsx')) return [...new Set(problems)];
-  for (const [tag, attrs, offset] of jsxTags(stripped)) {
-    const line = stripped.slice(0, offset).split('\n').length;
-    if (allowed[line - 1]) continue;
-    if (/(?<![\w.-])href\s*=/.test(attrs) && !HREF_OK_TAGS.has(tag))
-      problems.push(`${file}:${line}: <${tag}> has href`);
-    if (/(?<![\w.-])target\s*=\s*["']/.test(attrs))
-      problems.push(`${file}:${line}: <${tag}> sets a link target`);
+  for (const [tag, attrs, offset, spread, end] of jsxTags(stripped)) {
+    const line = lineAt(stripped, offset);
+    // A marker on any line of the tag opens it, because a tag can span several lines.
+    const last = lineAt(stripped, end);
+    if (allowed.slice(line - 1, last).some(Boolean)) continue;
+    if (attr(attrs, 'href') && !HREF_OK_TAGS.has(tag)) problems.push(`${file}:${line}: <${tag}> has href`);
+    if (attr(attrs, 'target'))
+      problems.push(`${file}:${line}: <${tag}> sets a link target (a link has no target)`);
+    if (tag === 'form' && attr(attrs, 'action'))
+      problems.push(`${file}:${line}: <form> has action (a form submit can leave the dashboard)`);
+    if (isRouterFile && tag !== 'InternalLink' && attr(attrs, 'to'))
+      problems.push(`${file}:${line}: <${tag}> has to (only InternalLink may take a to prop)`);
+    if (spread >= 0 && !isDomTag(tag))
+      problems.push(`${file}:${line}: <${tag}> has a prop spread (it can carry href, to or target)`);
   }
   return [...new Set(problems)];
 }

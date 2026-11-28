@@ -318,7 +318,7 @@ export function viewFor(model: FlowModel, selection: Selection): FlowView {
       rate = sumKnown(rate, n.rate);
       for (const d of [n.ab, n.ba]) {
         if (d.loss !== null && (!worst || d.loss > worst.loss))
-          worst = { from: d.from, to: d.to, loss: d.loss, network: n.network };
+          worst = { from: d.from, to: d.to, loss: d.loss, network: n.network }; // dashboard-links: allow a host pair (from, to), not a link
       }
     }
     const status = cellStatus(loss, warnAbove, critAbove);

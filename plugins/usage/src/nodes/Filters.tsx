@@ -120,7 +120,7 @@ export function Filters(props: {
   const field = (label: string, selected: boolean) => (params: object) =>
     (
       <TextField
-        {...params}
+        {...params} // dashboard-links: allow MUI Autocomplete input props, no link
         label={label}
         placeholder={selected ? undefined : 'All'}
         InputLabelProps={{ sx: { fontSize: 16 } }}

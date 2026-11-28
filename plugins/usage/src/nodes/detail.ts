@@ -38,7 +38,7 @@ export function detailFor(cpu: NodeTree, mem: NodeTree, path: string[]): Detail 
       key: node.key,
       label: nameOf(node),
       icon: m?.icon ?? c?.icon,
-      href: m?.href ?? c?.href,
+      href: m?.href ?? c?.href, // dashboard-links: allow data field, shown as a copy control, never as an anchor
     },
     trail: chosen.map((n, i) => ({ key: n.key, label: nameOf(n), path: keys.slice(0, i) })),
   };
@@ -114,7 +114,7 @@ export function selectionFor(
     id: raw !== shown ? raw : undefined,
     kind: n.kind,
     icon: m?.node.icon ?? c?.node.icon,
-    href: m?.node.href ?? c?.node.href,
+    href: m?.node.href ?? c?.node.href, // dashboard-links: allow data field, shown as a copy control, never as an anchor
     note: m?.node.note ?? c?.node.note,
     canOpen:
       n.kind !== 'unused' &&
