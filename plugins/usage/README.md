@@ -262,8 +262,9 @@ Data sources, refreshed every 10 seconds:
     The CPU chart carries a small label under its heading that says where the
     figure comes from and over what time, for example "node exporter, 1 min
     average". The window in the label is the same constant that builds the
-    query. The Runwarden runner widget shows its own node figure (a short
-    metrics-server sample), so the two numbers can differ for the same node.
+    query. The runner widget of the Dashboards plugin shows the node figure of
+    the runner source (a short metrics-server sample), so the two numbers can
+    differ for the same node.
   - **CPU capacity** is the allocatable cores
     (`kube_node_status_allocatable`), the base of `kubectl top`. The charts
     say "of allocatable". The node's logical core count and
