@@ -9,6 +9,7 @@ import {
   parseQuery,
   pathBase,
   resolveFilters,
+  safeDecode,
   serialiseQuery,
   widgetParam,
 } from './urlState';
@@ -182,5 +183,13 @@ describe('focus segments', () => {
   it('writes no focus for an empty list, and keeps a path with no tab as it was', () => {
     expect(buildPath({ name: 'ops', tab: 'nodes', focus: [] })).toBe('/dashboards/ops/nodes');
     expect(buildPath({ name: 'ops', tab: '' })).toBe('/dashboards/ops');
+  });
+});
+
+describe('safeDecode', () => {
+  it('decodes percent-encoding and leaves bad text as it is, without a throw', () => {
+    expect(safeDecode('a%2Fb%20c')).toBe('a/b c');
+    expect(safeDecode('100%')).toBe('100%');
+    expect(safeDecode('%E0%A4%A')).toBe('%E0%A4%A');
   });
 });

@@ -52,7 +52,8 @@ export interface DashboardQuery {
   filters: Partial<DashboardFilters>;
 }
 
-const safeDecode = (s: string): string => {
+/** Decodes a URL part. Text that is not valid percent-encoding stays as it is, so it cannot throw. */
+export const safeDecode = (s: string): string => {
   try {
     return decodeURIComponent(s);
   } catch {

@@ -13,6 +13,7 @@
  * A group with no such member is shown only when an incident of it was resolved today. Nothing folds
  * into a "+N more" line and no group is named "Other": every group appears once.
  */
+import { safeDecode } from '../../urlState';
 import type { PanelModel, PanelRow, PanelStatus, Stat } from '../panels/model';
 
 export type IssueState = 'firing' | 'pending' | 'open' | 'resolved';
@@ -97,7 +98,7 @@ const asAgent = (v: string | undefined): AgentState | undefined =>
 /** The incident id from a link such as `/c/{cluster}/incidents/abc`. */
 const idFromLink = (link: string | undefined): string => {
   const m = /\/incidents\/([^/?#]+)$/.exec(link ?? '');
-  return m ? decodeURIComponent(m[1]) : '';
+  return m ? safeDecode(m[1]) : '';
 };
 
 function alertOf(row: PanelRow): AlertRec | undefined {

@@ -315,6 +315,24 @@ describe('IssuesView', () => {
     expect(c.querySelector('a[target]')).toBeNull();
   });
 
+  it('does not throw for an incident id that is not valid percent-encoding', () => {
+    const bad = model();
+    const text = JSON.stringify(bad).replace('/incidents/i2', '/incidents/100%');
+    expect(() =>
+      render(
+        <MemoryRouter initialEntries={['/c/main/dashboards/ops?kiosk=1']}>
+          <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
+            <LinkContext.Provider
+              value={{ base: '/c/main', dashboard: 'ops', tabs: ['overview', 'incidents'] }}
+            >
+              <IssuesView model={JSON.parse(text)} sourceId="agent" editing={false} />
+            </LinkContext.Provider>
+          </ThemeProvider>
+        </MemoryRouter>
+      )
+    ).not.toThrow();
+  });
+
   it('draws no link in the editor', () => {
     expect(view(true).querySelectorAll('a')).toHaveLength(0);
   });

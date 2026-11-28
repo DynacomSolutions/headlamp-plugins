@@ -11,7 +11,7 @@ import { alpha } from '@mui/material/styles';
 import React from 'react';
 import { ScrollArea } from '../../components/ScrollArea';
 import { InternalLink, LinkContext, useResolveLink } from '../../links';
-import { buildPath } from '../../urlState';
+import { buildPath, safeDecode } from '../../urlState';
 import { WidgetFooter } from '../footer';
 import { StatTiles } from '../panels/StatTiles';
 import { STATUS_WORD, StatusMark } from '../panels/StatusMark';
@@ -242,7 +242,7 @@ export function IssuesView(props: {
     const id = /\/incidents\/([^/?#]+)$/.exec(raw ?? '')?.[1];
     if (id && targets?.tabs.includes('incidents'))
       return buildPath(
-        { name: targets.dashboard, tab: 'incidents', focus: ['incident', decodeURIComponent(id)] },
+        { name: targets.dashboard, tab: 'incidents', focus: ['incident', safeDecode(id)] },
         targets.base
       );
     return resolveLink(raw, { panelId: 'incidents', sourceId });
