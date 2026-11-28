@@ -1011,7 +1011,8 @@ function HostedToggle(props: { on: boolean; set: (on: boolean) => void }): JSX.E
         m: 0,
         flex: 'none',
         alignSelf: 'flex-end',
-        '& .MuiFormControlLabel-label': { fontSize: 11.5, color: tk.fg2 },
+        // A small gap, so the label does not touch the thumb of the switch.
+        '& .MuiFormControlLabel-label': { fontSize: 11.5, color: tk.fg2, ml: 0.75 },
       }}
       control={
         <Switch
