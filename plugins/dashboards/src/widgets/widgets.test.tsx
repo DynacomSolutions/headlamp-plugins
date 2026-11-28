@@ -17,6 +17,7 @@ import { PlaceholderWidget } from '../components/PlaceholderWidget';
 import { WidgetFrame } from '../components/WidgetFrame';
 import { DashboardContext, DashboardContextValue } from '../context';
 import { WidgetDefinition } from '../contract';
+import { LinkContext } from '../links';
 import { getRegistry } from '../registry';
 import { defaultFilters } from '../spec/model';
 import { DEFAULT_CLOCK } from './clockFormat';
@@ -82,24 +83,28 @@ describe('clock widget', () => {
 describe('note widget', () => {
   it('renders Markdown and does not run HTML', () => {
     const { container } = render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/dashboards/ops?kiosk=1']}>
+        <LinkContext.Provider value={{ base: '', dashboard: 'ops', tabs: ['hoarddb'] }}>
         <NoteView
           config={{
             markdown:
-              '# Title\n\n**bold** <script>x</script> [ok](/dashboards/ops/hoarddb) [web](https://example.com) [bad](javascript:alert(1))',
+              '# Title\n\n**bold** <script>x</script> [ok](/dashboards/ops/hoarddb) [page](/c/main/nodes) [web](https://example.com) [bad](javascript:alert(1))',
             align: 'left',
           }}
         />
+        </LinkContext.Provider>
       </MemoryRouter>
     );
     expect(container.querySelector('h2')?.textContent).toBe('Title');
     expect(container.querySelector('strong')?.textContent).toBe('bold');
     expect(container.querySelector('script')).toBeNull();
-    // Only the path is a link. The web address and the script address are plain text.
+    // Only the path of this dashboard is a link, and it keeps the query. The web address, the script
+    // address and the path of another Headlamp page are plain text.
     const links = Array.from(container.querySelectorAll('a'));
-    expect(links.map(a => a.getAttribute('href'))).toEqual(['/dashboards/ops/hoarddb']);
+    expect(links.map(a => a.getAttribute('href'))).toEqual(['/dashboards/ops/hoarddb?kiosk=1']);
     expect(links.some(a => a.getAttribute('target') === '_blank')).toBe(false);
     expect(container.textContent).toContain('web');
+    expect(container.textContent).toContain('page');
   });
   it('shows a hint for an empty note', () => {
     const { container } = render(<NoteView config={{ markdown: '  ', align: 'left' }} />);

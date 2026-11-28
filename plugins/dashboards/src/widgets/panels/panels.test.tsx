@@ -94,7 +94,9 @@ describe('PanelView', () => {
     expect(container.querySelectorAll('[data-row]')).toHaveLength(2);
     expect(container.querySelector('[data-rows-fold]')).toBeNull();
     expect(container.querySelectorAll('[data-fraction]')).toHaveLength(2);
-    expect(container.querySelector('a[href="/c/main/nodes/node-a"]')?.textContent).toBe('node-a');
+    // A row link to a Headlamp page of another place is plain text: no link leaves the dashboard.
+    expect(container.querySelector('a')).toBeNull();
+    expect(container.textContent).toContain('node-a');
     expect(container.querySelectorAll('[data-sparkline]')).toHaveLength(1);
     expect(container.querySelectorAll('[data-arc="category"]')).toHaveLength(2);
     expect(container.querySelectorAll('[data-arc="child"]')).toHaveLength(1);

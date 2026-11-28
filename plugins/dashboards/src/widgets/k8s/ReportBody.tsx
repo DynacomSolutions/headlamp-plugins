@@ -7,11 +7,9 @@ import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import React from 'react';
-import { Link as RouterLink } from 'react-router-dom';
 import { chartData } from './chart';
 import type { ReportConfig } from './config';
 import { GridColumn, GridLine, GridSort, GridTable } from './GridTable';
-import { resourceLink } from './links';
 import {
   buildReport,
   fieldHeader,
@@ -60,7 +58,8 @@ export interface ReportBodyProps {
   config: ReportConfig;
   scope: ScopeFilters;
   kiosk: boolean;
-  editing: boolean;
+  /** True in edit mode. A row has no link, so the body does not use it. */
+  editing?: boolean;
   loading?: boolean;
   error?: string | null;
   /** Compact mode for the settings preview: no export, smaller chart. */
@@ -68,7 +67,7 @@ export interface ReportBodyProps {
 }
 
 export function ReportBody(props: ReportBodyProps): JSX.Element {
-  const { objects, config, scope, kiosk, editing, loading, error, preview } = props;
+  const { objects, config, scope, kiosk, loading, error, preview } = props;
   const colors = useReportColors(kiosk);
   const now = useMinute();
   const [sort, setSort] = React.useState<GridSort | null>(null);
@@ -178,7 +177,6 @@ export function ReportBody(props: ReportBodyProps): JSX.Element {
           onSort={onSort}
           rowHeight={rowHeight}
           kiosk={kiosk}
-          editing={editing}
         />
       )}
       {report.type === 'summary' && (
@@ -191,7 +189,6 @@ export function ReportBody(props: ReportBodyProps): JSX.Element {
           onSort={onSort}
           rowHeight={rowHeight}
           kiosk={kiosk}
-          editing={editing}
         />
       )}
       {report.type === 'matrix' && (
@@ -203,44 +200,12 @@ export function ReportBody(props: ReportBodyProps): JSX.Element {
 
 /* ----------------------------------- cells ----------------------------------- */
 
-function CellLink(props: {
-  row: RowView;
-  config: ReportConfig;
-  children: React.ReactNode;
-  editing: boolean;
-  color: string;
-}): JSX.Element {
-  const { row, config, children, editing, color } = props;
-  const to = editing ? null : resourceLink(row.obj, config.source);
-  if (!to) return <>{children}</>;
-  return (
-    <RouterLink to={to} style={{ color, textDecoration: 'none', fontWeight: 500 }}>
-      {children}
-    </RouterLink>
-  );
-}
-
-function rowCells(
-  row: RowView,
-  report: { columns: Array<{ field: string }> },
-  config: ReportConfig,
-  editing: boolean,
-  color: string
-): React.ReactNode[] {
-  const linkColumn = Math.max(
-    0,
-    report.columns.findIndex(c => c.field === 'name')
-  );
-  return row.cells.map((cell, i) => {
-    const text = <span title={cell.text}>{cell.text}</span>;
-    return i === linkColumn ? (
-      <CellLink key={i} row={row} config={config} editing={editing} color={color}>
-        {text}
-      </CellLink>
-    ) : (
-      text
-    );
-  });
+/*
+ * The name cell is plain text. A row never links to the Headlamp page of its resource: a link in a
+ * dashboard stays inside the dashboard and never exits kiosk mode (see ../../links.tsx).
+ */
+function rowCells(row: RowView): React.ReactNode[] {
+  return row.cells.map((cell, i) => <span key={i} title={cell.text}>{cell.text}</span>);
 }
 
 function isNumericField(report: { rows?: RowView[] }, i: number): boolean {
@@ -257,9 +222,8 @@ function TabularTable(props: {
   onSort: (id: string) => void;
   rowHeight: number;
   kiosk: boolean;
-  editing: boolean;
 }): JSX.Element {
-  const { report, config, sort, onSort, rowHeight, kiosk, editing } = props;
+  const { report, config, sort, onSort, rowHeight, kiosk } = props;
   const colors = useReportColors(kiosk);
   const columns: GridColumn[] = report.columns.map((c, i) => ({
     id: c.field,
@@ -275,10 +239,10 @@ function TabularTable(props: {
       return {
         key: row.key,
         kind: 'row',
-        cells: rowCells(row, report, config, editing, colors.link),
+        cells: rowCells(row),
       };
     },
-    [report, config, editing, colors.link]
+    [report]
   );
   return (
     <GridTable
@@ -312,9 +276,8 @@ function SummaryTable(props: {
   onSort: (id: string) => void;
   rowHeight: number;
   kiosk: boolean;
-  editing: boolean;
 }): JSX.Element {
-  const { report, config, toggled, onToggle, sort, onSort, rowHeight, kiosk, editing } = props;
+  const { report, config, toggled, onToggle, sort, onSort, rowHeight, kiosk } = props;
   const colors = useReportColors(kiosk);
   const items = React.useMemo(
     () => flattenSummary(report, toggled, config.expandGroups, config.showRows),
@@ -364,7 +327,7 @@ function SummaryTable(props: {
         return {
           key: `r:${item.row.key}`,
           kind: 'row',
-          cells: rowCells(item.row, report, config, editing, colors.link),
+          cells: rowCells(item.row),
         };
       }
       if (item.kind === 'total') {
@@ -425,7 +388,7 @@ function SummaryTable(props: {
             ],
           };
     },
-    [items, withRows, report, config, editing, colors.link, colors.muted, onToggle]
+    [items, withRows, report, config, colors.muted, onToggle]
   );
   return (
     <GridTable
