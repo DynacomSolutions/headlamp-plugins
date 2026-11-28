@@ -102,6 +102,15 @@ describe('UsageRings CPU source label', () => {
     expect(labels[0].textContent).toBe('node exporter, 1 min average');
   });
 
+  it('renders the caption as a block, so its margins apply', async () => {
+    fetchNodeMetrics.mockResolvedValue([
+      { ...metric('worker-1', 4), cpuSource: 'node exporter, 1 min average' },
+    ]);
+    mount();
+    await flush();
+    expect(screen.getByTestId('cpu-source').tagName).toBe('DIV');
+  });
+
   it('shows no label when the data has no source', async () => {
     mount();
     await flush();

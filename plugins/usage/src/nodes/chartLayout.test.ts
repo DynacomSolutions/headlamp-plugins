@@ -5,22 +5,22 @@ vi.mock('@iconify/react', () => ({ Icon: () => null }));
 
 import { formatCores } from '../units';
 import { figures } from './DetailPanel';
-import { agentAlertText, chartLayout, threadHref, usedText } from './NodeView';
+import { agentAlertText, chartLayout, showsCpuSource, threadHref, usedText } from './NodeView';
 import type { NodeTree } from './tree';
 
 describe('chartLayout', () => {
   it('puts CPU and Memory side by side in landscape, half the width each', () => {
-    // (1800 - 16) / 2 = 892, under the height limit 1300 - 80.
+    // (1800 - 16) / 2 = 892, under the height limit 1300 - 64.
     expect(chartLayout(1800, 1300)).toEqual({ size: 892, twoUp: true });
   });
 
   it('keeps the charts within the height under their headings', () => {
-    expect(chartLayout(1800, 700)).toEqual({ size: 620, twoUp: true });
+    expect(chartLayout(1800, 700)).toEqual({ size: 636, twoUp: true });
   });
 
   it('has no details column to take width: the width limits when there is height to spare', () => {
     expect(chartLayout(1576, 1000).size).toBe(780);
-    expect(chartLayout(1576, 748).size).toBe(668);
+    expect(chartLayout(1576, 748).size).toBe(684);
   });
 
   it('puts the charts side by side in portrait when each is 45% of the width or more', () => {
@@ -33,9 +33,9 @@ describe('chartLayout', () => {
 
   it('lets a widget pick the layout with the bigger charts', () => {
     // Wide and short: side by side.
-    expect(chartLayout(1200, 500, false, false, true)).toEqual({ size: 420, twoUp: true });
-    // Narrow and tall: stacked at 362, instead of two charts at 252.
-    expect(chartLayout(520, 900, false, false, true)).toEqual({ size: 362, twoUp: false });
+    expect(chartLayout(1200, 500, false, false, true)).toEqual({ size: 436, twoUp: true });
+    // Narrow and tall: stacked at 378, instead of two charts at 252.
+    expect(chartLayout(520, 900, false, false, true)).toEqual({ size: 378, twoUp: false });
     // The page rule would have chosen side by side at 252 here.
     expect(chartLayout(520, 900).twoUp).toBe(true);
     // Never under the minimum chart size.
@@ -55,12 +55,23 @@ describe('chartLayout', () => {
 
   it('leaves the desktop layout alone when it is not a phone', () => {
     expect(chartLayout(390, 700, false, true)).toEqual(chartLayout(390, 700));
-    expect(chartLayout(1800, 700, false, false)).toEqual({ size: 620, twoUp: true });
+    expect(chartLayout(1800, 700, false, false)).toEqual({ size: 636, twoUp: true });
+  });
+
+  it('takes 16 px more for the CPU source label, and only then', () => {
+    expect(chartLayout(1800, 700, false, false, false, true)).toEqual({ size: 620, twoUp: true });
+    expect(chartLayout(1800, 700, false, false, false, false)).toEqual({ size: 636, twoUp: true });
+    expect(chartLayout(1576, 748, false, undefined, false, true).size).toBe(668);
+    // Widget, side by side and stacked (stacked: the one label adds 16 px for both charts, 8 each).
+    expect(chartLayout(1200, 500, false, false, true, true)).toEqual({ size: 420, twoUp: true });
+    expect(chartLayout(1200, 500, false, false, true, false)).toEqual({ size: 436, twoUp: true });
+    expect(chartLayout(520, 900, false, false, true, true)).toEqual({ size: 370, twoUp: false });
+    expect(chartLayout(520, 900, false, false, true, false)).toEqual({ size: 378, twoUp: false });
   });
 
   it('never goes below 200 px, and has no upper limit', () => {
     expect(chartLayout(1000, 200).size).toBe(200);
-    expect(chartLayout(6000, 3000).size).toBe(2920);
+    expect(chartLayout(6000, 3000).size).toBe(2936);
   });
 });
 
@@ -154,5 +165,35 @@ describe('agentAlertText', () => {
       `agent data from ${new Date(at).toLocaleTimeString()}`
     );
     expect(agentAlertText('boom')).toBe('Agent detail unavailable: boom');
+  });
+});
+
+describe('showsCpuSource', () => {
+  const labelled: NodeTree = { ...tree, source: 'node exporter, 1 min average' };
+  const ring: NodeTree = {
+    ...labelled,
+    root: {
+      ...tree.root,
+      children: [
+        { key: 'node:a', label: 'a', value: 3, span: 8, capacity: 8, kind: 'node', children: [] },
+      ],
+    },
+    nodeRing: true,
+  };
+
+  it('shows at the node level', () => {
+    expect(showsCpuSource(labelled, [])).toBe(true);
+    expect(showsCpuSource(ring, [])).toBe(true);
+    // Zoomed into one node of a node ring is still the node level.
+    expect(showsCpuSource(ring, ['node:a'])).toBe(true);
+  });
+
+  it('hides when zoomed into a category or a pod, where the figure is a subtree total', () => {
+    expect(showsCpuSource(labelled, ['sys'])).toBe(false);
+    expect(showsCpuSource(ring, ['node:a', 'sys'])).toBe(false);
+  });
+
+  it('hides when the tree has no source', () => {
+    expect(showsCpuSource(tree, [])).toBe(false);
   });
 });

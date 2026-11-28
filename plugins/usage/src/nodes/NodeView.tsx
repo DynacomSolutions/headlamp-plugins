@@ -34,8 +34,10 @@ const rootCrumb = (tree: NodeTree) => (tree.nodeRing ? 'All nodes' : tree.root.l
 const RING_OPTIONS = Array.from({ length: MAX_RINGS - MIN_RINGS + 1 }, (_, i) => MIN_RINGS + i);
 const GAP = 16;
 const MIN_CHART = 200;
-/** Room the heading, the used text and the source label above a chart need. */
-const CHART_HEAD = 80;
+/** Room the heading and the used text above a chart need. */
+const CHART_HEAD = 64;
+/** Extra room the CPU source label needs. Only a chart that shows the label adds it. */
+const LABEL_HEAD = 16;
 
 /**
  * The line under a chart heading. At the root: used against capacity. Zoomed in (`focus` not
@@ -69,6 +71,15 @@ export function usedText(
     tree.used,
     tree.capacity
   )})`;
+}
+
+/**
+ * True when the CPU chart shows its source label. The label is for the figure of a whole node (or
+ * of the selected nodes): at the root, or zoomed into one node of a node ring. Inside a pod or a
+ * category the figure is the total of a subtree, so the label would be wrong there.
+ */
+export function showsCpuSource(tree: NodeTree, focus: string[]): boolean {
+  return !!tree.source && (focus.length === 0 || capacityZoom(tree, focus) !== null);
 }
 
 /** The per-node agent alert: stale data with its time, or no agent detail at all. */
@@ -136,19 +147,24 @@ function useBox(
  * stacked, each as wide as the room; in landscape they are side by side, half the width each.
  * `portrait` is the viewport's, and defaults to the room being no wider than tall.
  * `largest` (a dashboard widget) ignores those rules and takes the layout with the bigger charts.
+ * `label` is true when the CPU chart shows its source label: the label needs `LABEL_HEAD` more
+ * height. Without the label the size is the same as before.
  */
 export function chartLayout(
   width: number,
   height: number,
   phone = false,
   portrait = width <= height,
-  largest = false
+  largest = false,
+  label = false
 ): { size: number; twoUp: boolean } {
   const clamp = (v: number) => Math.floor(Math.max(MIN_CHART, v));
+  // Both charts share one size, so the one label makes the room under the headings smaller.
+  const extra = label ? LABEL_HEAD : 0;
   if (largest) {
     // A dashboard widget: whichever layout gives the bigger charts in the room it has.
-    const side = clamp(Math.min((width - GAP) / 2, height - CHART_HEAD));
-    const stacked = clamp(Math.min(width, (height - 2 * CHART_HEAD - GAP) / 2));
+    const side = clamp(Math.min((width - GAP) / 2, height - CHART_HEAD - extra));
+    const stacked = clamp(Math.min(width, (height - 2 * CHART_HEAD - extra - GAP) / 2));
     return side >= stacked ? { size: side, twoUp: true } : { size: stacked, twoUp: false };
   }
   if (phone) {
@@ -156,9 +172,12 @@ export function chartLayout(
       ? { size: clamp(width), twoUp: false }
       : { size: clamp((width - GAP) / 2), twoUp: true };
   }
-  const beside = Math.min((width - GAP) / 2, height - CHART_HEAD);
+  const beside = Math.min((width - GAP) / 2, height - CHART_HEAD - extra);
   if (width > height || beside >= 0.45 * width) return { size: clamp(beside), twoUp: true };
-  return { size: clamp(Math.min(width, (height - 2 * CHART_HEAD - GAP) / 2)), twoUp: false };
+  return {
+    size: clamp(Math.min(width, (height - 2 * CHART_HEAD - extra - GAP) / 2)),
+    twoUp: false,
+  };
 }
 
 /** A thread link, only for http(s) URLs. */
@@ -245,7 +264,8 @@ export function NodeView(props: {
     // A fitted view (kiosk, widget) fills its box and does not scroll, so the phone rule is for the page only.
     box.phone && !fit,
     box.portrait,
-    fit && widget
+    fit && widget,
+    showsCpuSource(cpu, detail.path)
   );
   const centreSubject = { label: detail.focus.label, icon: detail.focus.icon };
   const crumb = { minHeight: 48, textTransform: 'none', fontSize: 16 } as const;
@@ -271,9 +291,10 @@ export function NodeView(props: {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontSize: 14 }}>
         {usedText(tree, resource, detail.path, detail.focus.label)}
       </Typography>
-      {resource === 'cpu' && tree.source ? (
+      {resource === 'cpu' && showsCpuSource(tree, detail.path) ? (
         <Typography
           variant="caption"
+          component="div"
           color="text.secondary"
           data-testid="cpu-source"
           sx={{ mt: -0.5, mb: 0.5, lineHeight: 1.2 }}
