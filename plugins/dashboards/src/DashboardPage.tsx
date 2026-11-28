@@ -232,10 +232,13 @@ function DashboardView({ name }: { name: string }): JSX.Element {
       filters: next.filters ?? filters,
     };
     const base = baseFilters(spec, merged.view);
+    // Read the live location, not the render value. A widget can write its `w.<widget id>` param
+    // in the same tick, and `keep` must carry it.
+    const now = history.location;
     history.replace({
-      pathname: location.pathname,
+      pathname: now.pathname,
       // `keep` carries the `w.<widget id>` params, which belong to the widgets.
-      search: serialiseQuery(merged, base, location.search),
+      search: serialiseQuery(merged, base, now.search),
     });
   };
 
@@ -243,7 +246,11 @@ function DashboardView({ name }: { name: string }): JSX.Element {
   const listPath = buildPath({ name: '', tab: '' }, base);
   // Each tab change is a history push, so Back returns to the tab before. The query stays.
   const goTab = (id: string) =>
-    history.push({ pathname: buildPath({ name, tab: id }, base), search: location.search });
+    history.push({
+      pathname: buildPath({ name, tab: id }, base),
+      // The live query, so a `w.*` write in the same tick stays.
+      search: history.location.search,
+    });
   // What a widget focuses on (a selected incident) is in the path after the tab. A change is a
   // history push, so Back undoes it. A tab change drops it.
   const focusKey = parseFocus(location.pathname).join('/');

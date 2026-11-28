@@ -58,6 +58,11 @@ when they have their default value.
 
 A filter key in the URL overrides the saved view, even with an empty value.
 
+A widget keeps its own state in the param `w.<widget id>` (a widget with a second value uses
+`w.<widget id>.<part>`). The page keeps every `w.*` param when it rewrites the query, also the
+params of widgets on other tabs, so a link or a Back step restores the widget as it was. A widget
+id must not contain a dot, because the first dot ends the id in the param name.
+
 ### Links and swipes stay inside the dashboard
 
 No link in a dashboard view or in a kiosk view leaves the dashboard, and a click never exits kiosk or full screen mode.
