@@ -25,7 +25,10 @@ import {
   jobRunSecondsOf,
   jobWaitSecondsOf,
   joinRunners,
+  nodeBusyText,
   nodeKey,
+  nodesOf,
+  nodeSourceLabel,
   orderRuns,
   parseNodeKeys,
   placeOf,
@@ -1572,5 +1575,102 @@ describe('GitHub-hosted jobs and idle repos', () => {
     );
     expect(names(container, 'repo').filter(n => n === 'my-org/my-repo')).toHaveLength(1);
     expect(byKey(container, MY).querySelector('[data-last-run]')).toBeNull();
+  });
+});
+
+describe('Runwarden node CPU strip (nodes panel)', () => {
+  const nodesPanel = (rows: unknown[]) =>
+    parsePanel({ version: 1, id: 'nodes', title: 'Nodes', status: 'ok', summary: '', rows });
+  const row = (label: string, detail: string, meta?: Record<string, string>) => ({
+    label,
+    detail,
+    value: '',
+    status: 'ok',
+    ...(meta ? { meta } : {}),
+  });
+  const metaFor = (busy: string, alloc: string) => ({
+    cpuBusy: busy,
+    cpuAllocatable: alloc,
+    cpuSource: 'metrics-server',
+    cpuWindow: '10s',
+  });
+  const strip = (nodes: ReturnType<typeof nodesPanel> | null, view?: 'full' | 'summary' | 'list') =>
+    mount(joinRunners({ pools, queue: emptyQueue, runs: null, nodes }), { view });
+  const nodeRows = (c: HTMLElement) =>
+    [...c.querySelectorAll('[data-runner-node]')].map(r => [
+      r.getAttribute('data-runner-node'),
+      r.querySelector('[data-runner-node-busy]')?.textContent,
+    ]);
+
+  it('shows each node with its busy cores and the source label from meta, busiest first', () => {
+    const { container } = strip(
+      nodesPanel([
+        row('worker-1', 'CPU busy 5.0/62.0 cores', metaFor('5.0', '62.0')),
+        row('worker-2', 'CPU busy 37.9/62.0 cores', metaFor('37.9', '62.0')),
+      ])
+    );
+    expect(nodeRows(container)).toEqual([
+      ['worker-2', '37.9 of 62.0 cores busy'],
+      ['worker-1', '5.0 of 62.0 cores busy'],
+    ]);
+    expect(container.querySelector('[data-runner-nodes-source]')?.textContent).toBe(
+      'Runwarden, metrics-server, 10 s sample'
+    );
+  });
+
+  it('shows the strip in the summary view and hides it in the list view', () => {
+    const p = nodesPanel([row('worker-1', '', metaFor('1.0', '4.0'))]);
+    expect(strip(p, 'summary').container.querySelector('[data-runner-nodes]')).not.toBeNull();
+    cleanup();
+    expect(strip(p, 'list').container.querySelector('[data-runner-nodes]')).toBeNull();
+  });
+
+  it('falls back to the detail text when meta is missing, and names only what is known', () => {
+    const { container } = strip(nodesPanel([row('worker-1', 'CPU busy 37.9/62.0 cores')]));
+    expect(nodeRows(container)).toEqual([['worker-1', '37.9 of 62.0 cores busy']]);
+    // No source and no window in the data: the label is just "Runwarden".
+    expect(container.querySelector('[data-runner-nodes-source]')?.textContent).toBe('Runwarden');
+  });
+
+  it('does not invent a window: source alone, or window alone', () => {
+    expect(nodeSourceLabel({ source: 'metrics-server', window: '' })).toBe(
+      'Runwarden, metrics-server'
+    );
+    expect(nodeSourceLabel({ source: '', window: '1m' })).toBe('Runwarden, 1 min sample');
+  });
+
+  it('shows nothing without a nodes panel', () => {
+    const { container } = strip(null);
+    expect(container.querySelector('[data-runner-nodes]')).toBeNull();
+    expect(joinRunners({ pools, queue: emptyQueue, runs: null }).nodes).toEqual([]);
+  });
+
+  it('keeps a node with an unparsable detail: its name and the detail text, last in the order', () => {
+    const { container } = strip(
+      nodesPanel([
+        row('worker-1', 'metrics not available'),
+        row('worker-2', '', metaFor('2.0', '8.0')),
+      ])
+    );
+    expect(nodeRows(container)).toEqual([
+      ['worker-2', '2.0 of 8.0 cores busy'],
+      ['worker-1', 'metrics not available'],
+    ]);
+  });
+
+  it('reads a bad meta number as missing and uses the detail text', () => {
+    const [n] = nodesOf(
+      nodesPanel([row('worker-1', 'CPU busy 3.0/8.0 cores', metaFor('lots', '8.0'))])
+    );
+    expect(nodeBusyText(n)).toBe('3.0 of 8.0 cores busy');
+  });
+
+  it('has no link and nothing to click', () => {
+    const { container } = strip(
+      nodesPanel([row('worker-1', '', metaFor('1.0', '4.0'))]),
+      'summary'
+    );
+    const box = container.querySelector('[data-runner-nodes]') as HTMLElement;
+    expect(box.querySelector('a, button, [role="button"], [href]')).toBeNull();
   });
 });

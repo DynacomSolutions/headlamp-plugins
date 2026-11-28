@@ -43,11 +43,14 @@ import {
   jobRunSecondsOf,
   jobWaitSecondsOf,
   NO_BRANCH,
+  nodeBusyText,
+  nodeSourceLabel,
   parseNodeKeys,
   progressOf,
   type QueueRow,
   type RepoNode,
   type RunnerModel,
+  type RunnerNode,
   type RunnerPool,
   runSuffixOf,
   STEP_GAP,
@@ -208,6 +211,59 @@ function PoolRing(props: { pool: RunnerPool; hatchId: string }): JSX.Element {
         </Box>
       </Box>
     </Tooltip>
+  );
+}
+
+/**
+ * Runwarden's own CPU figure for each node, most busy first. A plain list: no row is a link or
+ * opens anything. The source label says where the figure comes from and over what time.
+ */
+function Nodes(props: { nodes: RunnerNode[] }): JSX.Element {
+  const tk = useTokens();
+  const labels = props.nodes.map(nodeSourceLabel);
+  // One shared label sits in the heading. Nodes with different labels each carry their own.
+  const shared = labels.every(l => l === labels[0]) ? labels[0] : '';
+  const small = { fontSize: 11, color: tk.fg2, minWidth: 0 } as const;
+  return (
+    <Box data-runner-nodes sx={{ flex: 'none', minWidth: 0, maxHeight: 112, overflowY: 'auto' }}>
+      <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0 }}>
+        <Box component="span" sx={{ fontSize: 12, fontWeight: 600, color: tk.fg2 }}>
+          Nodes
+        </Box>
+        {shared && (
+          <Box component="span" data-runner-nodes-source sx={small}>
+            {shared}
+          </Box>
+        )}
+      </Box>
+      {props.nodes.map((n, i) => (
+        <Box
+          key={n.name}
+          data-runner-node={n.name}
+          sx={{ display: 'flex', alignItems: 'baseline', gap: 1, minWidth: 0, fontSize: 13 }}
+        >
+          <Box component="span" sx={{ fontWeight: 600, flex: 'none' }}>
+            {n.name}
+          </Box>
+          <Box
+            component="span"
+            data-runner-node-busy
+            sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+          >
+            {nodeBusyText(n)}
+          </Box>
+          {!shared && (
+            <Box
+              component="span"
+              data-runner-node-source
+              sx={{ ...small, marginLeft: 'auto', whiteSpace: 'nowrap' }}
+            >
+              {labels[i]}
+            </Box>
+          )}
+        </Box>
+      ))}
+    </Box>
   );
 }
 
@@ -1110,6 +1166,8 @@ export function RunnersView(props: {
   const showSummary = view !== 'list';
   const showList = view !== 'summary';
   const unlisted = model.tree && model.unlisted > 0;
+  // The nodes strip is not in the list view. It sits below the strip, so it reads with the summary.
+  const nodesStrip = showSummary && model.nodes.length > 0 ? <Nodes nodes={model.nodes} /> : null;
   const summary = (
     <>
       <Box data-runners-tiles sx={{ flex: view === 'summary' ? '1 1 0' : 'none', minWidth: 0 }}>
@@ -1152,6 +1210,7 @@ export function RunnersView(props: {
         ) : (
           summary
         ))}
+      {nodesStrip}
       {showList && model.tree && hasHosted && <HostedToggle on={showHosted} set={setShowHosted} />}
       {showList && (
         <ScrollArea label="Running and queued runs">
