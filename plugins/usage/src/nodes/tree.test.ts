@@ -450,6 +450,18 @@ describe('buildCombinedTree', () => {
   ];
   const noHost = () => null;
 
+  it('carries the CPU source label when every node agrees, and drops it when they differ', () => {
+    const a = metrics({ node: 'worker-1', cpuCapacity: 8, cpuUsed: 6, cpuSource: 'src A' });
+    const b = metrics({ node: 'worker-2', cpuCapacity: 16, cpuUsed: 10, cpuSource: 'src A' });
+    expect(buildCombinedTree([a, b], noHost, 'cpu', src).source).toBe('src A');
+    expect(buildCombinedTree([a, { ...b, cpuSource: 'src B' }], noHost, 'cpu', src).source).toBe(
+      undefined
+    );
+    expect(buildCombinedTree([a], noHost, 'cpu', src).source).toBe('src A');
+    // Memory has no CPU source.
+    expect(buildCombinedTree([a, b], noHost, 'memory', src).source).toBeUndefined();
+  });
+
   it('gives one node its own tree, with no node ring', () => {
     const t = buildCombinedTree([two[0]], noHost, 'cpu', src);
     expect(t.nodeRing).toBeUndefined();

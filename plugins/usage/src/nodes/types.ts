@@ -71,6 +71,8 @@ export interface NodeMetrics {
   cpuCapacity: number;
   /** null when the node has no host metrics (no exporter). */
   cpuUsed: number | null;
+  /** Where `cpuUsed` comes from and over what time, for example "node exporter, 1 min average". */
+  cpuSource?: string;
   memCapacity: number;
   /** null when the node has no host metrics (no exporter). */
   memUsed: number | null;

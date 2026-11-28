@@ -62,6 +62,8 @@ export interface NodeTree {
   capacity: number;
   used: number | null;
   hostMetrics: boolean;
+  /** CPU trees only: where the used figure comes from and over what time. Absent when unknown or mixed. */
+  source?: string;
   /** The first ring is one arc per node (more than one node selected), not the categories. */
   nodeRing?: boolean;
 }
@@ -610,7 +612,8 @@ export function buildNodeTree(
   const root = node('root', m.node, 'node', used ?? attributed, kept);
   fitChildren(root);
   applyNames(root, names);
-  return { root, capacity, used, hostMetrics: used !== null };
+  const source = r === 'cpu' && used !== null ? m.cpuSource : undefined;
+  return { root, capacity, used, hostMetrics: used !== null, ...(source ? { source } : {}) };
 }
 
 /** The nodes along `path` (keys), starting with the root; stops at the deepest existing prefix. */
@@ -676,6 +679,9 @@ export function buildCombinedTree(
     .sort((a, b) => b.span - a.span || byValue(a, b));
   const hostMetrics = trees.length > 0 && trees.every(x => x.t.hostMetrics);
   const total = sum(nodes);
+  // One label for the ring only when every node with a figure reports the same source.
+  const sources = new Set(trees.filter(x => x.t.used !== null).map(x => x.t.source));
+  const [source] = sources.size === 1 ? [...sources] : [];
   return {
     // Built by hand: `node` would drop an idle node, which keeps its wedge.
     root: {
@@ -689,6 +695,7 @@ export function buildCombinedTree(
     // Nodes without host metrics count by what is attributed to them.
     used: trees.some(x => x.t.used !== null) ? total : null,
     hostMetrics,
+    ...(source ? { source } : {}),
     nodeRing: true,
   };
 }

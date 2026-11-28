@@ -34,8 +34,8 @@ const rootCrumb = (tree: NodeTree) => (tree.nodeRing ? 'All nodes' : tree.root.l
 const RING_OPTIONS = Array.from({ length: MAX_RINGS - MIN_RINGS + 1 }, (_, i) => MIN_RINGS + i);
 const GAP = 16;
 const MIN_CHART = 200;
-/** Room the heading and the used text above a chart need. */
-const CHART_HEAD = 64;
+/** Room the heading, the used text and the source label above a chart need. */
+const CHART_HEAD = 80;
 
 /**
  * The line under a chart heading. At the root: used against capacity. Zoomed in (`focus` not
@@ -271,6 +271,16 @@ export function NodeView(props: {
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontSize: 14 }}>
         {usedText(tree, resource, detail.path, detail.focus.label)}
       </Typography>
+      {resource === 'cpu' && tree.source ? (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          data-testid="cpu-source"
+          sx={{ mt: -0.5, mb: 0.5, lineHeight: 1.2 }}
+        >
+          {tree.source}
+        </Typography>
+      ) : null}
       <Sunburst
         tree={tree}
         resource={resource}

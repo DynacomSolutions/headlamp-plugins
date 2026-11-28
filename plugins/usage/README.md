@@ -259,6 +259,11 @@ Data sources, refreshed every 10 seconds:
   - **CPU used** is the node's busy CPU: the rate over one minute of every
     `node_cpu_seconds_total` mode except `idle`, `iowait` and `steal`. Without
     that series the page falls back to the logical cores minus the idle rate.
+    The CPU chart carries a small label under its heading that says where the
+    figure comes from and over what time, for example "node exporter, 1 min
+    average". The window in the label is the same constant that builds the
+    query. The Runwarden runner widget shows its own node figure (a short
+    metrics-server sample), so the two numbers can differ for the same node.
   - **CPU capacity** is the allocatable cores
     (`kube_node_status_allocatable`), the base of `kubectl top`. The charts
     say "of allocatable". The node's logical core count and
