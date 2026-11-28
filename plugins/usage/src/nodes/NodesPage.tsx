@@ -25,6 +25,7 @@ import {
   serialiseNodesUrl,
 } from './nodesUrl';
 import { NodeView } from './NodeView';
+import { threadLink } from './ThreadLink';
 import { useIdle } from './useIdle';
 import { useNodesData } from './useNodesData';
 import { useNodeTrees } from './useNodeTrees';
@@ -147,6 +148,7 @@ export function NodesPage(): JSX.Element {
           onPath={setPath}
           toolbar={filters}
           trailing={trailing}
+          threadLink={threadLink}
         />
       </>
     );

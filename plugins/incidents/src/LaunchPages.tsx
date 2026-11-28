@@ -17,7 +17,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import React from 'react';
 import { Link as RouterLink, useHistory, useLocation, useParams } from 'react-router-dom';
-import { safeUrl } from './a2ui/Renderer';
+import { safeUrl } from './a2ui/safeUrl';
 import { AgentStatusPill } from './AgentStatusPill';
 import { AgentTimeline } from './AgentTimeline';
 import { ChatMarkdown } from './chat-markdown';

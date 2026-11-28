@@ -235,7 +235,7 @@ depend on the incidents code, so other plugins can copy it.
   supported is `openUrl` in a Button action.
 - Components: Text (simple Markdown: headings, bold, italic, code, line breaks,
   bullets; no HTML, no images, links as plain text), Row, Column, List, Card,
-  Divider, Icon, Tabs, Button (`openUrl` with http(s) URLs opens a new tab; any
+  Divider, Icon, Tabs, Button (`openUrl` with http(s) URLs opens a new tab on the plugin's own pages; any
   other action is disabled), Image (https only) and a grey note for unknown
   components. Nothing uses `dangerouslySetInnerHTML`.
 

@@ -205,7 +205,8 @@ keeps its query.
   little and gets an outline. Tap it again, or empty space, to clear it. A card
   below the charts gives its icon, name and kind, its CPU and memory with the
   share of capacity, of its parent and of the zoom root, and an **Open thread**
-  link for a T3 thread. Next to it is the list of its children (tap a row to
+  link for a T3 thread (on the usage page; in a dashboard widget it is a **Copy thread link** button, because no
+  dashboard link leaves the dashboard). Next to it is the list of its children (tap a row to
   select it). **Open** zooms both charts to the selected segment. **Up**, the
   centre of a chart and the breadcrumb go up a level.
 - **Empty space:** the capacity nothing uses (**Unused**) and what a parent

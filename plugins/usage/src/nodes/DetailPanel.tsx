@@ -101,6 +101,32 @@ function withShare(value: string, share: number | null): string {
 /** Most chips the kiosk shows; the touch list under "All" holds the rest, so the row never scrolls. */
 export const KIOSK_CHIPS = 6;
 
+function CopyThreadLink({ url }: { url: string }): JSX.Element {
+  const [copied, setCopied] = React.useState(false);
+  const timer = React.useRef<ReturnType<typeof setTimeout>>();
+  React.useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // The clipboard is not available: the address stays in the tooltip.
+    }
+  };
+  return (
+    <Button
+      onClick={copy}
+      title={url}
+      variant="outlined"
+      sx={{ minHeight: TOUCH_MIN, minWidth: 48, fontSize: 16 }}
+    >
+      {copied ? 'Copied' : 'Copy thread link'}
+    </Button>
+  );
+}
+
 export function DetailPanel(props: {
   /** Kiosk: no scrolling row. A few compact chips and a button that opens the full list. */
   kiosk?: boolean;
@@ -115,8 +141,14 @@ export function DetailPanel(props: {
   /** Name of the active section (the zoom focus). */
   section: string;
   onSelect: (key: string) => void;
+  /**
+   * Draws the link to the thread. Only the usage page passes it. Without it the panel offers a
+   * button that copies the address, so it works in a dashboard, where a link never leaves.
+   */
+  threadLink?: (url: string) => React.ReactNode;
 }): JSX.Element {
   const {
+    threadLink,
     subject,
     selected,
     rootKind,
@@ -186,16 +218,13 @@ export function DetailPanel(props: {
             </Typography>
           )}
           {subject.href && /^https?:\/\//i.test(subject.href) && (
-            <Button
-              component="a"
-              href={subject.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              variant="outlined"
-              sx={{ minHeight: 48, minWidth: 48, fontSize: 16 }}
-            >
-              Open thread
-            </Button>
+            // On the usage page a thread opens in a new tab. In a dashboard no link may leave the
+            // dashboard, so the address is copied instead (see AGENTS.md, "Dashboard and kiosk links").
+            threadLink ? (
+              threadLink(subject.href)
+            ) : (
+              <CopyThreadLink url={subject.href} />
+            )
           )}
         </Box>
       )}
